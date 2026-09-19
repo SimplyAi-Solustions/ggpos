@@ -63,7 +63,7 @@ function Input({
           "min-w-0 flex-1 border-0 bg-transparent p-0 pl-0 text-foreground caret-foreground outline-none",
           "placeholder:text-muted-foreground-2 disabled:cursor-not-allowed",
           size === "scan"
-            ? "text-[28px] leading-[1.25] font-light"
+            ? "text-[24px] leading-[1.3] font-light sm:text-[28px] sm:leading-[1.25]"
             : "text-base leading-[1.5] font-normal",
           className
         )}

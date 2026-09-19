@@ -55,7 +55,7 @@ export function AtlasScanRebuild() {
             size="scan"
             leadingIcon={<BarcodeGlyph />}
             trailingHint={
-              <span className="inline-flex items-center gap-2">
+              <span className="hidden items-center gap-2 sm:inline-flex">
                 Press enter
                 <svg viewBox="0 0 24 12" className="h-2.5 w-6" aria-hidden="true">
                   <path
