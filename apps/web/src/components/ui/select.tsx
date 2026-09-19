@@ -43,7 +43,7 @@ function SelectTrigger({
         "group/input relative flex w-full items-center justify-between gap-3 border-0 bg-transparent p-0 text-left outline-none",
         size === "scan"
           ? "min-h-16 pt-2 pb-3 text-[28px] leading-[1.25] font-light"
-          : "min-h-10 pt-1 pb-2 text-base leading-[1.5]",
+          : "min-h-10 pt-1 pb-3.5 text-base leading-[1.5]",
         "text-foreground data-disabled:cursor-not-allowed data-disabled:opacity-50",
         "data-[popup-open]:text-foreground [&[data-placeholder]]:text-muted-foreground-2",
         "*:data-[slot=select-value]:truncate",

@@ -40,7 +40,7 @@ function Textarea({
       data-invalid={invalid || undefined}
       data-disabled={props.disabled || undefined}
       className={cn(
-        "group/input relative flex w-full items-end gap-3 pt-1 pb-2 data-disabled:opacity-50",
+        "group/input relative flex w-full items-end gap-3 pt-1 pb-3.5 data-disabled:opacity-50",
         containerClassName
       )}
     >

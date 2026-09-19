@@ -17,7 +17,7 @@ const buttonVariants = cva(
       variant: {
         /** The one primary action on a screen: a 56px black block. */
         block:
-          "h-14 gap-3 rounded-none bg-primary px-8 font-mono text-[12px] font-bold tracking-[0.16em] text-primary-foreground uppercase hover:bg-primary-hover [&_svg]:size-4 [&_svg]:stroke-[1.5]",
+          "h-14 min-w-44 gap-3 rounded-none bg-primary px-10 font-mono text-[12px] font-bold tracking-[0.16em] text-primary-foreground uppercase hover:bg-primary-hover [&_svg]:size-4 [&_svg]:stroke-[1.5]",
         /** The same action as a 56px circle, used beside a MicroLabel. */
         circle:
           "size-14 rounded-full bg-primary text-primary-foreground hover:bg-primary-hover [&_svg]:size-5 [&_svg]:stroke-[1.5]",

@@ -114,7 +114,9 @@ migrate((app) => {
     deleteRule: ADMIN_ONLY,
     fields: [
       { name: "name", type: "text", required: true, max: 100 },
-      { name: "threshold_points", type: "number", required: true, onlyInt: true, min: 0 },
+      // Not required: the Member tier's threshold is legitimately 0, and
+      // PocketBase's required check on a number field treats 0 as blank.
+      { name: "threshold_points", type: "number", onlyInt: true, min: 0 },
       { name: "colour_token", type: "text", max: 60 },
       { name: "sort", type: "number", onlyInt: true },
       { name: "perks", type: "json", maxSize: 20000 },
@@ -170,7 +172,9 @@ migrate((app) => {
     fields: [
       { name: "name", type: "text", required: true, max: 200 },
       { name: "description", type: "editor" },
-      { name: "cost_points", type: "number", required: true, onlyInt: true, min: 0 },
+      // Not required - see loyalty_tiers.threshold_points for why (a free
+      // promotional reward could legitimately cost 0 points).
+      { name: "cost_points", type: "number", onlyInt: true, min: 0 },
       {
         name: "type",
         type: "select",
@@ -233,7 +237,9 @@ migrate((app) => {
     deleteRule: null,
     fields: [
       { name: "customer", type: "relation", required: true, collectionId: customers.id, maxSelect: 1 },
-      { name: "delta", type: "number", required: true, onlyInt: true },
+      // Not required - see credit_ledger.amount for why (0 is a valid
+      // signed value that PocketBase's required check would reject).
+      { name: "delta", type: "number", onlyInt: true },
       {
         name: "reason",
         type: "select",

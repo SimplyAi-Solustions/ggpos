@@ -42,7 +42,11 @@ migrate((app) => {
         maxSelect: 1,
         values: ["single", "graded", "retro", "sealed", "accessory", "other"],
       },
-      { name: "condition", type: "select", maxSelect: 1, values: ["NM", "LP", "MP", "HP", "DMG"] },
+      // Free text, not the items.condition select: a pricing rule also
+      // needs to key on retro completeness (loose/boxed/cib), which is a
+      // different enum, and "" acts as a wildcard (see the seed's retro
+      // and sealed rows, which apply regardless of completeness).
+      { name: "condition", type: "text", max: 40 },
       { name: "finish", type: "text", max: 60 },
       { name: "rarity", type: "text", max: 100 },
       { name: "band_min", type: "number", onlyInt: true, min: 0 },
@@ -71,8 +75,8 @@ migrate((app) => {
     fields: [
       { name: "key", type: "text", required: true, max: 60 },
       { name: "name", type: "text", required: true, max: 100 },
-      { name: "width_mm", type: "number", required: true, min: 0 },
-      { name: "height_mm", type: "number", required: true, min: 0 },
+      { name: "width_mm", type: "number", required: true, min: 1 },
+      { name: "height_mm", type: "number", required: true, min: 1 },
       { name: "dpi", type: "number", onlyInt: true, min: 0 },
       { name: "active", type: "bool" },
       ...autodates(),

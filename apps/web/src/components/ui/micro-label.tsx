@@ -51,7 +51,7 @@ function SectionHeading({
       data-slot="section-heading"
       className={cn(
         microVariants({ tone: "ink" }),
-        "mt-8 mb-5 first:mt-0",
+        "mt-8 mb-5",
         className
       )}
       {...props}

@@ -86,7 +86,10 @@ migrate((app) => {
       { name: "ean", type: "text", max: 32 },
       // 1 for singles/graded/retro; n for sealed/accessories (one SKU per
       // stock line, a sale decrements qty).
-      { name: "qty", type: "number", required: true, onlyInt: true, min: 0 },
+      // Not required: PocketBase's required check on a number field treats
+      // an explicit 0 as blank, and a sale legitimately decrements a
+      // sealed/accessory line's qty to exactly 0.
+      { name: "qty", type: "number", onlyInt: true, min: 0 },
       { name: "cost", type: "number", onlyInt: true, min: 0 },
       { name: "market_at_intake", type: "number", onlyInt: true, min: 0 },
       { name: "price", type: "number", onlyInt: true, min: 0 },

@@ -23,8 +23,8 @@ const NAV = ["Stock", "Trade", "Customers", "Reports"]
  */
 export function AtlasScanRebuild() {
   return (
-    <div className="flex min-h-full w-full flex-col bg-background">
-      <header className="flex items-center justify-between px-5 py-7 sm:px-10">
+    <div className="flex min-h-svh w-full flex-col bg-background">
+      <header className="mx-auto flex w-full max-w-[1040px] items-center justify-between px-5 py-7 sm:px-10">
         <Wordmark />
         <nav className="flex items-center gap-8" aria-label="Main">
           <ul className="hidden items-center gap-8 sm:flex">
@@ -48,7 +48,7 @@ export function AtlasScanRebuild() {
 
       <main className="mx-auto w-full max-w-[1040px] flex-1 px-5 pt-16 pb-16 sm:px-10 sm:pt-24">
         <section aria-labelledby="scan-item">
-          <SectionHeading id="scan-item" className="mt-0 mb-5">
+          <SectionHeading id="scan-item" className="mt-0 mb-7">
             Scan item
           </SectionHeading>
           <Input
@@ -75,8 +75,8 @@ export function AtlasScanRebuild() {
           </p>
         </section>
 
-        <section aria-labelledby="details">
-          <SectionHeading id="details" className="mt-24 mb-5">
+        <section aria-labelledby="details" className="mt-24">
+          <SectionHeading id="details" className="mt-0 mb-7">
             Details
           </SectionHeading>
           <div className="grid grid-cols-1 gap-x-10 gap-y-8 sm:grid-cols-3">
@@ -92,8 +92,8 @@ export function AtlasScanRebuild() {
           </div>
         </section>
 
-        <section aria-labelledby="additional">
-          <SectionHeading id="additional" className="mt-24 mb-5">
+        <section aria-labelledby="additional" className="mt-24">
+          <SectionHeading id="additional" className="mt-0 mb-7">
             Additional
           </SectionHeading>
           <div className="grid grid-cols-1 gap-x-10 gap-y-8 sm:grid-cols-2">

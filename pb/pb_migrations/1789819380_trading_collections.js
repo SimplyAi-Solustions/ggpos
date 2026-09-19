@@ -199,7 +199,10 @@ migrate((app) => {
     deleteRule: null,
     fields: [
       { name: "customer", type: "relation", required: true, collectionId: customers.id, maxSelect: 1 },
-      { name: "amount", type: "number", required: true, onlyInt: true }, // signed pence
+      // Not required: PocketBase's required check treats an explicit 0 as
+      // blank, and signed pence can legitimately be 0 (e.g. a no-op
+      // corrective entry kept for the audit trail).
+      { name: "amount", type: "number", onlyInt: true }, // signed pence
       {
         name: "reason",
         type: "select",

@@ -73,7 +73,8 @@ migrate((app) => {
         maxSelect: 1,
         values: ["float_in", "payout", "cash_sale", "refund", "bank_drop", "adjustment"],
       },
-      { name: "amount", type: "number", required: true, onlyInt: true }, // signed pence
+      // Not required - see the same field on credit_ledger for why.
+      { name: "amount", type: "number", onlyInt: true }, // signed pence
       { name: "ref", type: "text", max: 100 },
       { name: "staff", type: "relation", collectionId: staff.id, maxSelect: 1 },
       ...autodates(),
@@ -153,7 +154,9 @@ migrate((app) => {
     deleteRule: null,
     fields: [
       { name: "key", type: "text", required: true, max: 40 },
-      { name: "value", type: "number", required: true, onlyInt: true, min: 0 },
+      // Not required: a fresh counter legitimately starts at 0, and
+      // PocketBase's required check on a number field treats 0 as blank.
+      { name: "value", type: "number", onlyInt: true, min: 0 },
       ...autodates(),
     ],
   });

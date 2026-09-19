@@ -27,8 +27,8 @@ export function NovaAddItemRebuild() {
   const [note, setNote] = React.useState("")
 
   return (
-    <div className="flex min-h-full w-full flex-col bg-background">
-      <header className="flex items-center justify-between px-5 py-7 sm:px-10">
+    <div className="flex min-h-svh w-full flex-col bg-background">
+      <header className="mx-auto flex w-full max-w-[780px] items-center justify-between px-5 py-7 sm:px-10">
         <Wordmark />
         <nav className="flex items-center gap-8" aria-label="Utility">
           <a
@@ -46,7 +46,7 @@ export function NovaAddItemRebuild() {
         </nav>
       </header>
 
-      <main className="mx-auto w-full max-w-[860px] flex-1 px-5 pt-12 pb-16 sm:px-10 sm:pt-20">
+      <main className="mx-auto w-full max-w-[780px] flex-1 px-5 pt-12 pb-16 sm:px-10 sm:pt-20">
         <PageTitle>Add new item</PageTitle>
         <Lede>Every card, cart and box in one place, priced and findable.</Lede>
 
@@ -119,7 +119,7 @@ export function NovaAddItemRebuild() {
             </Field>
           </FieldRow>
 
-          <div className="mt-14 flex flex-wrap items-center gap-8 min-[900px]:pl-[calc(10rem+1.5rem)]">
+          <div className="mt-14 flex flex-wrap items-center gap-8">
             <Button type="submit">Save item</Button>
             <Button variant="text" type="button">
               Cancel

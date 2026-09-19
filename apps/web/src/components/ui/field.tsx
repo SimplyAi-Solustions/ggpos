@@ -76,12 +76,12 @@ function Field({
       data-layout={layout}
       className={cn(
         "grid w-full",
-        icon ? "grid-cols-[1.25rem_1fr] gap-x-4" : "grid-cols-1",
+        icon ? "grid-cols-[1.25rem_1fr] gap-x-6" : "grid-cols-1",
         layout === "auto"
           ? icon
-            ? "gap-y-1 min-[900px]:grid-cols-[1.25rem_10rem_1fr] min-[900px]:gap-x-6 min-[900px]:gap-y-0"
+            ? "gap-y-1.5 min-[900px]:grid-cols-[1.25rem_10rem_1fr] min-[900px]:gap-x-6 min-[900px]:gap-y-0"
             : "gap-y-1 min-[900px]:grid-cols-[10rem_1fr] min-[900px]:gap-x-6 min-[900px]:gap-y-0"
-          : "gap-y-1",
+          : "gap-y-1.5",
         className
       )}
       {...props}
