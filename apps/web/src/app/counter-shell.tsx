@@ -53,11 +53,10 @@ const BAR = [
   { to: "/counter/trade", label: "Trade", exact: false, Icon: ArrowLeftRightIcon },
 ] as const
 
-function AvatarMenu({ onOpenMore }: { onOpenMore: () => void }) {
+function AvatarMenu() {
   const staff = useStaff()
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
-  void onOpenMore
 
   return (
     <Menu>
@@ -208,7 +207,7 @@ export function CounterShell() {
             ))}
           </ul>
           {demo ? <Badge variant="outline">Demo</Badge> : null}
-          <AvatarMenu onOpenMore={() => setMoreOpen(true)} />
+          <AvatarMenu />
         </nav>
       </header>
 
