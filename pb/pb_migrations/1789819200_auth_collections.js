@@ -65,7 +65,9 @@ migrate((app) => {
     // Staff create customers at the counter (customers.pb.js assigns the
     // code and a random password on this same create request).
     createRule: STAFF_ONLY,
-    updateRule: `${STAFF_ONLY} || id = @request.auth.id`,
+    // A customer may edit their own contact details and consent, never the
+    // code, QR token, referral or source that staff and hooks own.
+    updateRule: `${STAFF_ONLY} || (id = @request.auth.id && @request.body.code:isset = false && @request.body.qr_token:isset = false && @request.body.referred_by:isset = false && @request.body.source:isset = false)`,
     deleteRule: ADMIN_ONLY,
     passwordAuth: { enabled: false },
     otp: { enabled: true, duration: 300, length: 8 },

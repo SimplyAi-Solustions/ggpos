@@ -38,7 +38,9 @@ migrate((app) => {
     listRule: `${STAFF_ONLY} || customer = @request.auth.id`,
     viewRule: `${STAFF_ONLY} || customer = @request.auth.id`,
     createRule: `${STAFF_ONLY} || (@request.auth.collectionName = "customers" && customer = @request.auth.id)`,
-    updateRule: `${STAFF_ONLY} || customer = @request.auth.id`,
+    // A customer may add photos, reply, pick drop-off and accept or decline;
+    // the offer itself (lines, total, expiry) and the owner are staff-only.
+    updateRule: `${STAFF_ONLY} || (customer = @request.auth.id && @request.body.customer:isset = false && @request.body.offer_total:isset = false && @request.body.lines:isset = false && @request.body.offer_expires_at:isset = false)`,
     deleteRule: STAFF_ONLY,
     fields: [
       { name: "customer", type: "relation", required: true, collectionId: customers.id, maxSelect: 1 },

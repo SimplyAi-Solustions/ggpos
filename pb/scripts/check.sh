@@ -245,5 +245,45 @@ AUDIT_LIST_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$AUDIT_LIST_STATUS" = "403" ] || [ "$AUDIT_LIST_STATUS" = "404" ] || fail "customer listing audit_log returned $AUDIT_LIST_STATUS, expected 403 or 404"
 ok "customer token cannot list audit_log (got $AUDIT_LIST_STATUS)"
 
+# -----------------------------------------------------------------------
+# 8. Customer self-update guards and portal reads
+# -----------------------------------------------------------------------
+CU_CODE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"code":"GGCAAAAAA"}' "$BASE/api/collections/customers/records/$CUSTOMER_ID")"
+[ "$CU_CODE_STATUS" != "200" ] || fail "a customer was able to change their own code"
+ok "customer cannot change their own code (got $CU_CODE_STATUS)"
+
+CU_CONSENT_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"marketing_consent":true}' "$BASE/api/collections/customers/records/$CUSTOMER_ID")"
+[ "$CU_CONSENT_STATUS" = "200" ] || fail "customer updating marketing_consent returned $CU_CONSENT_STATUS, expected 200"
+ok "customer can update their own marketing consent"
+
+QUOTE_JSON="$(curl -s -X POST "$BASE/api/collections/quotes/records" \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$CUSTOMER_ID\",\"status\":\"submitted\",\"message\":\"Loft box of cards\"}")"
+QUOTE_ID="$(echo "$QUOTE_JSON" | jval id)"
+[ -n "$QUOTE_ID" ] || fail "customer could not create a quote: $QUOTE_JSON"
+QUOTE_OFFER_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"offer_total":999999}' "$BASE/api/collections/quotes/records/$QUOTE_ID")"
+[ "$QUOTE_OFFER_STATUS" != "200" ] || fail "a customer was able to set offer_total on their quote"
+ok "customer cannot set the offer on their own quote (got $QUOTE_OFFER_STATUS)"
+QUOTE_REPLY_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"customer_reply":"Can I drop it in Saturday?"}' "$BASE/api/collections/quotes/records/$QUOTE_ID")"
+[ "$QUOTE_REPLY_STATUS" = "200" ] || fail "customer replying on their quote returned $QUOTE_REPLY_STATUS, expected 200"
+ok "customer can reply on their own quote"
+
+# List rules act as a filter: a signed-in customer sees the seeded tiers,
+# an anonymous caller gets 200 with no rows at all.
+TIERS_COUNT="$(curl -s -H "Authorization: $CUSTOMER_TOKEN" "$BASE/api/collections/loyalty_tiers/records" | jval totalItems)"
+[ "${TIERS_COUNT:-0}" -ge 1 ] || fail "customer listing loyalty_tiers saw '$TIERS_COUNT' rows, expected the seeded tiers"
+ok "customer can read the loyalty tiers ($TIERS_COUNT rows)"
+TIERS_ANON_COUNT="$(curl -s "$BASE/api/collections/loyalty_tiers/records" | jval totalItems)"
+[ "${TIERS_ANON_COUNT:-0}" = "0" ] || fail "loyalty_tiers is readable without signing in ($TIERS_ANON_COUNT rows)"
+ok "loyalty tiers are hidden from anonymous callers"
+
 echo
 echo "All checks passed ($PASS_COUNT)."

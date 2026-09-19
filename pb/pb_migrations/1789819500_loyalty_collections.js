@@ -20,6 +20,8 @@
 migrate((app) => {
   const STAFF_ONLY = '@request.auth.collectionName = "staff"';
   const ADMIN_ONLY = '@request.auth.collectionName = "staff" && @request.auth.role = "admin"';
+  // Any signed-in staff member or customer: the portal shows the programme, tiers and rewards.
+  const SIGNED_IN = '@request.auth.id != ""';
   const autodates = () => [
     { name: "created", type: "autodate", onCreate: true },
     { name: "updated", type: "autodate", onCreate: true, onUpdate: true },
@@ -36,8 +38,8 @@ migrate((app) => {
   const loyaltyProgramme = new Collection({
     name: "loyalty_programme",
     type: "base",
-    listRule: ADMIN_ONLY,
-    viewRule: ADMIN_ONLY,
+    listRule: SIGNED_IN,
+    viewRule: SIGNED_IN,
     createRule: ADMIN_ONLY,
     updateRule: ADMIN_ONLY,
     deleteRule: ADMIN_ONLY,
@@ -107,8 +109,8 @@ migrate((app) => {
   const loyaltyTiers = new Collection({
     name: "loyalty_tiers",
     type: "base",
-    listRule: ADMIN_ONLY,
-    viewRule: ADMIN_ONLY,
+    listRule: SIGNED_IN,
+    viewRule: SIGNED_IN,
     createRule: ADMIN_ONLY,
     updateRule: ADMIN_ONLY,
     deleteRule: ADMIN_ONLY,
@@ -164,8 +166,8 @@ migrate((app) => {
   const loyaltyRewards = new Collection({
     name: "loyalty_rewards",
     type: "base",
-    listRule: ADMIN_ONLY,
-    viewRule: ADMIN_ONLY,
+    listRule: SIGNED_IN,
+    viewRule: SIGNED_IN,
     createRule: ADMIN_ONLY,
     updateRule: ADMIN_ONLY,
     deleteRule: ADMIN_ONLY,
