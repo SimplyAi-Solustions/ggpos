@@ -1,0 +1,7 @@
+node_modules
+dist
+pnpm-lock.yaml
+pb/pb_data
+pb/pb_migrations/*.js
+docs/design-references
+.claude

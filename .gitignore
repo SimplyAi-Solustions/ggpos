@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+apps/web/dev-dist/
+
+# PocketBase runtime data (never commit)
+pb/pb_data/
+pb/pocketbase
+pb/pocketbase.zip
+pb/pb_public/
+services/pricesync/cache/
+
+# environment and secrets
+.env
+.env.*
+!.env.example
+deploy/.env
+
+# test artefacts
+coverage/
+playwright-report/
+test-results/
+apps/web/e2e/screenshots/
+
+# editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
