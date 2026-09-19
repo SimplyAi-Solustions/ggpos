@@ -79,6 +79,6 @@ describe("offer maths", () => {
     expect(roundToRetailEnding(1210)).toBe(1249)
     expect(roundToRetailEnding(1250)).toBe(1299)
     expect(roundToRetailEnding(1249)).toBe(1249)
-    expect(roundToRetailEnding(1200)).toBe(1200)
+    expect(roundToRetailEnding(1200)).toBe(1249)
   })
 })

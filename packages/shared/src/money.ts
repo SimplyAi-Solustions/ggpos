@@ -81,12 +81,10 @@ export function roundToStep(pence: number, step: RoundingStep): number {
   return roundHalfUp(pence / step) * step
 }
 
-/** Sell-price rounding to .49 or .99 endings (never below the input). */
+/** Sell-price rounding up to the next .49 or .99 ending (never below the input). */
 export function roundToRetailEnding(pence: number): number {
   const pounds = Math.floor(pence / 100)
   const rem = pence % 100
-  if (rem === 0) return pence
   if (rem <= 49) return pounds * 100 + 49
-  if (rem <= 99) return pounds * 100 + 99
-  return pence
+  return pounds * 100 + 99
 }
