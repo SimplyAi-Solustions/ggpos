@@ -1,6 +1,6 @@
 name: CI
 
-# Runs on every push (any branch) and every pull request: lint, typecheck,
+# Runs on every pull request and on pushes to main: lint, typecheck,
 # unit tests and the build for the whole pnpm workspace, plus a separate
 # job that downloads the pinned PocketBase binary and runs the pb-side
 # checks, if they exist yet (pb/scripts/check.sh is written alongside the
@@ -8,6 +8,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 # Cancel a still-running run for the same branch/PR when a new push
