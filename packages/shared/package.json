@@ -12,7 +12,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:hooks": "rm -rf ../../pb/pb_hooks/lib/shared && tsc -p tsconfig.hooks.json && node ./scripts/stamp-hooks.mjs",
+    "check:hooks": "pnpm build:hooks && git diff --exit-code -- ../../pb/pb_hooks/lib/shared"
   },
   "devDependencies": {
     "typescript": "~6",

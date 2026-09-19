@@ -1,0 +1,150 @@
+// GENERATED FILE. Do not edit.
+// Source: packages/shared/src. Regenerate with: pnpm --filter @gg/shared build:hooks
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.evaluateSalePoints = evaluateSalePoints;
+exports.evaluateTradeInPoints = evaluateTradeInPoints;
+exports.pointsToPence = pointsToPence;
+exports.penceToPoints = penceToPoints;
+exports.checkPointsRedemption = checkPointsRedemption;
+exports.tierForPoints = tierForPoints;
+exports.pointsToNextTier = pointsToNextTier;
+/**
+ * GG Guild loyalty evaluator. Pure functions so the admin preview in the app and
+ * the PocketBase hook produce the same points for the same sale.
+ */
+const money_1 = require("./money");
+function ruleIsLive(rule, at) {
+    if (!rule.active)
+        return false;
+    if (rule.startsAt && new Date(rule.startsAt) > at)
+        return false;
+    if (rule.endsAt && new Date(rule.endsAt) < at)
+        return false;
+    return true;
+}
+function lineMatches(line, c) {
+    if (c.games && c.games.length > 0 && (!line.game || !c.games.includes(line.game)))
+        return false;
+    if (c.kinds && c.kinds.length > 0 && !c.kinds.includes(line.kind))
+        return false;
+    return true;
+}
+/**
+ * Points earned on a sale: base points per pound on the eligible spend (spend
+ * paid with points earns nothing), then rules in priority order (multipliers
+ * stack multiplicatively on matching lines, bonuses add once), then the tier
+ * multiplier. Result is rounded half-up.
+ */
+function evaluateSalePoints(programme, rules, ctx) {
+    var _a, _b, _c;
+    if (!programme.enabled)
+        return { base: 0, ruleAdjustments: [], tierMultiplier: 1, total: 0 };
+    const gross = ctx.lines.reduce((s, l) => s + l.total, 0);
+    const eligibleShare = gross > 0 ? Math.max(0, gross - ctx.paidWithPoints) / gross : 0;
+    const live = rules.filter((r) => ruleIsLive(r, ctx.at)).sort((a, b) => b.priority - a.priority);
+    let base = 0;
+    const perLine = ctx.lines.map((line) => {
+        const pounds = (line.total * eligibleShare) / 100;
+        let points = pounds * programme.earnPerPoundSales;
+        base += points;
+        return { line, points };
+    });
+    const ruleAdjustments = [];
+    for (const rule of live) {
+        const c = rule.conditions;
+        if (c.minSpend !== undefined && gross < c.minSpend)
+            continue;
+        switch (rule.type) {
+            case "multiplier":
+            case "day_of_week": {
+                if (rule.type === "day_of_week" && c.weekdays && !c.weekdays.includes(ctx.at.getDay()))
+                    break;
+                if (rule.type === "multiplier" && c.weekdays && c.weekdays.length > 0 && !c.weekdays.includes(ctx.at.getDay()))
+                    break;
+                let delta = 0;
+                for (const entry of perLine) {
+                    if (!lineMatches(entry.line, c))
+                        continue;
+                    const before = entry.points;
+                    entry.points = before * rule.value;
+                    delta += entry.points - before;
+                }
+                if (delta !== 0)
+                    ruleAdjustments.push({ rule, delta });
+                break;
+            }
+            case "fixed_bonus": {
+                if (ctx.lines.some((l) => lineMatches(l, c)))
+                    ruleAdjustments.push({ rule, delta: rule.value });
+                break;
+            }
+            case "first_purchase": {
+                if (ctx.isFirstPurchase)
+                    ruleAdjustments.push({ rule, delta: rule.value });
+                break;
+            }
+            case "birthday_month": {
+                if (ctx.isBirthdayMonth)
+                    ruleAdjustments.push({ rule, delta: rule.value });
+                break;
+            }
+            case "trade_in_credit_bonus":
+            case "event_checkin":
+                // Not sale rules; handled by evaluateTradeInPoints and check-in flows.
+                break;
+        }
+    }
+    const afterRules = perLine.reduce((s, e) => s + e.points, 0) +
+        ruleAdjustments.filter((a) => a.rule.type !== "multiplier" && a.rule.type !== "day_of_week").reduce((s, a) => s + a.delta, 0);
+    const tierMultiplier = (_c = (_b = (_a = ctx.tier) === null || _a === void 0 ? void 0 : _a.perks.find((p) => p.type === "points_multiplier")) === null || _b === void 0 ? void 0 : _b.value) !== null && _c !== void 0 ? _c : 1;
+    const total = (0, money_1.roundHalfUp)(afterRules * tierMultiplier);
+    return { base: (0, money_1.roundHalfUp)(base), ruleAdjustments, tierMultiplier, total };
+}
+/** Points earned on the credit portion of a trade-in, plus any credit bonus rules. */
+function evaluateTradeInPoints(programme, rules, creditPence, at) {
+    if (!programme.enabled || creditPence <= 0)
+        return 0;
+    let points = (creditPence / 100) * programme.earnPerPoundTradeInCredit;
+    for (const rule of rules.filter((r) => ruleIsLive(r, at) && r.type === "trade_in_credit_bonus")) {
+        if (rule.conditions.minSpend !== undefined && creditPence < rule.conditions.minSpend)
+            continue;
+        points += rule.value;
+    }
+    return (0, money_1.roundHalfUp)(points);
+}
+/** Value of points in pence at the programme rate. */
+function pointsToPence(points, programme) {
+    return (0, money_1.roundHalfUp)((points / programme.pointsPerPoundRedemption) * 100);
+}
+/** Points needed to cover a pence amount (rounded up to whole points). */
+function penceToPoints(pence, programme) {
+    return Math.ceil((pence / 100) * programme.pointsPerPoundRedemption);
+}
+/** Can this customer pay `points` towards a sale of `saleTotal` pence? */
+function checkPointsRedemption(programme, balance, points, saleTotal) {
+    const maxPence = (0, money_1.roundHalfUp)((saleTotal * programme.maxPointsShareOfSale) / 100);
+    const maxPointsForSale = Math.min(balance, penceToPoints(maxPence, programme));
+    if (!programme.enabled)
+        return { ok: false, reason: "disabled", maxPointsForSale: 0 };
+    if (points < programme.minRedeemPoints)
+        return { ok: false, reason: "below_minimum", maxPointsForSale };
+    if (points > balance)
+        return { ok: false, reason: "insufficient", maxPointsForSale };
+    if (points > maxPointsForSale)
+        return { ok: false, reason: "over_share", maxPointsForSale };
+    return { ok: true, reason: "ok", maxPointsForSale };
+}
+/** Tier for a rolling-window points total; paid plans are pinned by the caller. */
+function tierForPoints(tiers, windowPoints) {
+    var _a;
+    const earned = tiers.filter((t) => !t.paidPlan).sort((a, b) => b.thresholdPoints - a.thresholdPoints);
+    return (_a = earned.find((t) => windowPoints >= t.thresholdPoints)) !== null && _a !== void 0 ? _a : null;
+}
+/** Points to the next tier, or null at the top. */
+function pointsToNextTier(tiers, windowPoints) {
+    const next = tiers
+        .filter((t) => !t.paidPlan && t.thresholdPoints > windowPoints)
+        .sort((a, b) => a.thresholdPoints - b.thresholdPoints)[0];
+    return next ? { tier: next, points: next.thresholdPoints - windowPoints } : null;
+}

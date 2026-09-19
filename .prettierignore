@@ -5,3 +5,5 @@ pb/pb_data
 pb/pb_migrations/*.js
 docs/design-references
 .claude
+
+pb/pb_hooks/lib/shared
