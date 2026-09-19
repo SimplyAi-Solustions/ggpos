@@ -13,8 +13,10 @@ export interface RecentScan {
   display: string
   /** One word for what it turned out to be. */
   kind: "Item" | "Customer" | "Voucher" | "Barcode" | "Not recognised"
-  /** Where it went, when it went anywhere. */
-  href?: string
+  /** Set when the row links back to an item page. */
+  sku?: string
+  /** Set when the row links back to a customer. */
+  customerCode?: string
   at: number
 }
 
