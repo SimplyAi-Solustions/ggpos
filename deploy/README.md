@@ -117,7 +117,7 @@ account used to actually sign in to The Counter and set everything else
 up (pricing rules, the loyalty programme, other staff logins). The
 migrations that run automatically on first start read `GG_ADMIN_EMAIL`
 and `GG_ADMIN_PASSWORD` from `.env` and create this account for you, so
-there is nothing to run by hand here - just sign in to the app with
+there is nothing to run by hand here: sign in to the app with
 those same credentials once it's up, and change the password on first
 login.
 
@@ -155,7 +155,7 @@ restic init
 
 This creates the (empty) backup repository. Run it once, ever, per
 bucket - running it again on an already-initialised repository is
-harmless (restic just says so and does nothing).
+harmless (restic says so and does nothing).
 
 **Cron lines** (edit with `crontab -e`; use `sudo crontab -e` if
 `deploy/data/pb_data` ends up owned by `root`, which is the default
@@ -286,7 +286,7 @@ trade.
 ## 12. Phones
 
 Staff phones and the shop's own phone/tablet for the customer portal
-just need the PWA installed from the browser, the same as any website
+need only the PWA installed from the browser, the same as any website
 that supports "install as app":
 
 - **Android (Chrome):** open `https://vault.ggentertainment.co.uk`, tap
