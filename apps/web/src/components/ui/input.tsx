@@ -73,7 +73,12 @@ function Input({
       {trailingHint ? (
         <span
           data-slot="input-trailing-hint"
-          className="shrink-0 pl-4 text-right font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground-2 uppercase group-data-[invalid]/input:text-destructive"
+          className={cn(
+            "shrink-0 pl-4 text-right font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground-2 uppercase",
+            "group-data-[invalid]/input:text-destructive",
+            // A phone has no room for both a 28px placeholder and a hint.
+            size === "scan" && "max-sm:hidden"
+          )}
         >
           {trailingHint}
         </span>

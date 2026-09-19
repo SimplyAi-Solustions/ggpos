@@ -65,6 +65,12 @@ function ProductImage({
 
   const [loaded, setLoaded] = React.useState(false)
   const isEdge = resolvedFinish === "edge"
+
+  // A cached or instantly decoded image can finish before React attaches
+  // onLoad. Without this the frame would keep an invisible <img> forever.
+  const settle = (node: HTMLImageElement | null) => {
+    if (node?.complete && node.naturalWidth > 0) setLoaded(true)
+  }
   const resolvedSrc = src
     ? isPocketBaseFileUrl(src)
       ? thumbUrl(src, bestThumbWidth(size.width))
@@ -80,18 +86,10 @@ function ProductImage({
       style={{ width: size.width, height: size.height }}
       {...props}
     >
-      {/* The silhouette: the shape it will be, in ink at 4 percent. */}
-      <div
-        aria-hidden="true"
-        className={cn(
-          "absolute inset-0 bg-silhouette transition-opacity duration-150 ease-gg",
-          isEdge ? "rounded-none" : "rounded-[var(--radius)]",
-          loaded && "opacity-0"
-        )}
-      />
-
       {resolvedSrc ? (
         <img
+          key={resolvedSrc}
+          ref={settle}
           src={resolvedSrc}
           srcSet={thumbSrcSet(resolvedSrc)}
           sizes={`${size.width}px`}
@@ -103,11 +101,7 @@ function ProductImage({
           fetchPriority={priority ? "high" : undefined}
           onLoad={() => setLoaded(true)}
           onError={() => setLoaded(false)}
-          className={cn(
-            "absolute inset-0 size-full object-contain transition-opacity duration-150 ease-gg",
-            loaded ? "opacity-100" : "opacity-0",
-            imgClassName
-          )}
+          className={cn("absolute inset-0 size-full object-contain", imgClassName)}
           style={
             isEdge
               ? undefined
@@ -118,6 +112,23 @@ function ProductImage({
           }
         />
       ) : null}
+
+      {/* The silhouette: the shape it will be, in ink at 4 percent, sitting over
+          the image and dissolving on load so nothing ever renders invisible. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-0 bg-background transition-opacity duration-150 ease-gg",
+          loaded && "opacity-0"
+        )}
+      >
+        <div
+          className={cn(
+            "size-full bg-silhouette",
+            isEdge ? "rounded-none" : "rounded-[var(--radius)]"
+          )}
+        />
+      </div>
 
       {/* The edge finish: a hairline around the art plus a 1px printed offset. */}
       {isEdge ? (

@@ -77,7 +77,7 @@ function ReferenceMatch() {
             Atlas, scan item
           </MicroLabel>
           <div className="grid grid-cols-1 gap-8 xl:grid-cols-2">
-            <ComparePanel label="Rebuilt in GG Vault">
+            <ComparePanel label="Rebuilt">
               <ScaleToFit>
                 <AtlasScanRebuild />
               </ScaleToFit>
@@ -99,7 +99,7 @@ function ReferenceMatch() {
             Nova, add new item
           </MicroLabel>
           <div className="grid grid-cols-1 gap-8 xl:grid-cols-2">
-            <ComparePanel label="Rebuilt in GG Vault">
+            <ComparePanel label="Rebuilt">
               <ScaleToFit>
                 <NovaAddItemRebuild />
               </ScaleToFit>
@@ -120,7 +120,7 @@ function ReferenceMatch() {
           <MicroLabel tone="ink" className="mb-5">
             Atlas, details
           </MicroLabel>
-          <ComparePanel label="Reference: label treatment, right-aligned hints, block button">
+          <ComparePanel label="Reference">
             <img
               src="/kit/atlas-details.png"
               alt="The Atlas details reference screen"

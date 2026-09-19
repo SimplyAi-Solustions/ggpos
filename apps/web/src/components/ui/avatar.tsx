@@ -39,7 +39,6 @@ function AvatarFallback({ className, ...props }: AvatarPrimitive.Fallback.Props)
       className={cn(
         "flex size-full items-center justify-center rounded-full bg-transparent",
         "font-mono text-[11px] font-bold tracking-[0.08em] text-foreground uppercase",
-        "group-data-[size=sm]/avatar:text-[10px]",
         className
       )}
       {...props}

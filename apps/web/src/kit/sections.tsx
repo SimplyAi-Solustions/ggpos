@@ -99,16 +99,19 @@ export function KitSection({
 
 function Specimen({
   label,
+  note,
   children,
   className,
 }: {
   label: string
+  note?: string
   children: React.ReactNode
   className?: string
 }) {
   return (
     <div className={cn("flex flex-col gap-3 border-t border-hairline-faint pt-5", className)}>
       <Hint>{label}</Hint>
+      {note ? <p className="-mt-1 max-w-[64ch] text-[13px] text-muted-foreground">{note}</p> : null}
       {children}
     </div>
   )
@@ -171,7 +174,7 @@ export function ColourSection() {
       </ul>
 
       <div className="mt-10 flex flex-col gap-3">
-        <Hint>Chart series: ink, three greys, volt</Hint>
+        <Hint>Chart series</Hint>
         <div className="flex h-12 w-full max-w-md overflow-hidden rounded-[var(--radius)] border border-hairline-soft">
           {CHARTS.map((token) => (
             <span key={token} className="flex-1" style={{ background: `var(${token})` }} />
@@ -192,17 +195,17 @@ export function TypeSection() {
       note="Anton for the one page title per screen, Space Mono for every tracked micro-label and code, Jost for body, inputs and table cells. Poppins does not appear in the app."
     >
       <div className="flex flex-col gap-8">
-        <Specimen label="Anton 400, clamp 28 to 36px, .01em - page title">
+        <Specimen label="Page title" note="Anton 400, clamp 28 to 36px, .01em tracking.">
           <PageTitle>Add stock</PageTitle>
         </Specimen>
 
-        <Specimen label="Anton 400, 28px - KPI figure and offer total">
+        <Specimen label="KPI figure" note="Anton 400, 28px, for offer totals and report numbers.">
           <p className="tnum font-display text-[28px] leading-[1.05] tracking-[0.01em] uppercase">
             &pound;1,240.00
           </p>
         </Specimen>
 
-        <Specimen label="Space Mono 700, 11px, .16em - section heading, field label, button label">
+        <Specimen label="Micro-label" note="Space Mono 700, 11px, .16em: section headings, field labels, helper text, button labels.">
           <div className="flex flex-wrap items-center gap-8">
             <MicroLabel tone="ink">Scan item</MicroLabel>
             <MicroLabel>Assigned to</MicroLabel>
@@ -211,30 +214,30 @@ export function TypeSection() {
           </div>
         </Specimen>
 
-        <Specimen label="Space Mono 400, 13px - SKU, customer code, set number, timestamp">
+        <Specimen label="Code and time" note="Space Mono 400, 13px: SKUs, customer codes, set numbers, timestamps.">
           <p className="tnum font-mono text-[13px] text-muted-foreground">
             GG-0043-AB &middot; SV151-199 &middot; 19 Sep 2026, 14:32
           </p>
         </Specimen>
 
-        <Specimen label="Jost 300, 28px - the scan field">
+        <Specimen label="Scan field" note="Jost 300, 28px.">
           <p className="text-[28px] leading-[1.25] font-light text-muted-foreground-2">
             Scan barcode or type here
           </p>
         </Specimen>
 
-        <Specimen label="Jost 400, 16px - body, max 56ch">
+        <Specimen label="Body" note="Jost 400, 16px, measured to 56 characters.">
           <Lede className="mt-0">
             Scan a barcode or enter an item code to continue. The counter screen keeps
             focus in the scan field, so a wedge scanner works without a click.
           </Lede>
         </Specimen>
 
-        <Specimen label="Jost 500, 15px - emphasis, chips and table cells">
+        <Specimen label="Emphasis" note="Jost 500, 15px: chips and table cells.">
           <p className="text-[15px] font-medium">Charizard ex 199/165, near mint</p>
         </Specimen>
 
-        <Specimen label="Tabular figures (tnum) - money and counts line up">
+        <Specimen label="Tabular figures" note="The tnum utility, so money and counts line up in a column.">
           <div className="tnum flex flex-col text-[15px]">
             <span>&pound;1,240.00</span>
             <span>&pound;89.50</span>
@@ -250,16 +253,19 @@ export function TypeSection() {
 
 function KitDemo({
   label,
+  note,
   className,
   children,
 }: {
   label: string
+  note?: string
   className?: string
   children: React.ReactNode
 }) {
   return (
     <div className={cn("flex flex-col gap-4 border-t border-hairline-faint pt-5", className)}>
       <Hint>{label}</Hint>
+      {note ? <p className="-mt-2 max-w-[64ch] text-[13px] text-muted-foreground">{note}</p> : null}
       {children}
     </div>
   )
@@ -279,7 +285,7 @@ export function ControlsSection() {
       note="Every control is a hairline, a fill or a piece of micro-text. No boxes, no fills behind inputs, no shadows on anything except a panel and the done seal."
     >
       <div className="flex flex-col gap-10">
-        <KitDemo label="Input: default, leading icon, trailing hint">
+        <KitDemo label="Input" note="Plain, with a leading icon, with a trailing hint, and invalid.">
           <div className="grid gap-8 md:grid-cols-2">
             <Input placeholder="Your name" aria-label="Your name" />
             <Input
@@ -303,7 +309,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Input size scan: 28px Jost 300, the biggest thing on a counter screen">
+        <KitDemo label="Scan input" note="Jost 300 at 28px: the biggest thing on a counter screen.">
           <Input
             size="scan"
             leadingIcon={<BarcodeGlyph />}
@@ -313,7 +319,7 @@ export function ControlsSection() {
           />
         </KitDemo>
 
-        <KitDemo label="Textarea: same underline, grows as you type">
+        <KitDemo label="Textarea" note="The same underline, growing as you type.">
           <Textarea
             placeholder="Add a note (optional)"
             maxLength={200}
@@ -324,7 +330,7 @@ export function ControlsSection() {
           />
         </KitDemo>
 
-        <KitDemo label="Select: the same underline with a thin chevron">
+        <KitDemo label="Select" note="The same underline with a thin chevron.">
           <div className="grid gap-8 md:grid-cols-2">
             <Select>
               <SelectTrigger aria-label="Category">
@@ -354,7 +360,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Switch: ink on, paper thumb, never yellow">
+        <KitDemo label="Switch" note="Ink when on, paper thumb, never yellow.">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-4">
               <Switch
@@ -370,7 +376,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Button: block, circle, text, destructive text, ghost icon, loading">
+        <KitDemo label="Button" note="Block, circle, text, destructive text, ghost icon, and the loading state.">
           <div className="flex flex-wrap items-center gap-8">
             <Button trailingArrow>Save changes</Button>
             <Button variant="circle">Save item</Button>
@@ -391,7 +397,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Chip group: single select (condition) and multi select (finish)">
+        <KitDemo label="Chip group" note="Single select for condition, multi select for finish.">
           <div className="flex flex-col gap-5">
             <ChipGroup
               aria-label="Condition"
@@ -419,7 +425,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Field: label left from 900px, stacked below, with an optional icon column">
+        <KitDemo label="Field" note="Label left from 900px, stacked below it, with an optional icon column.">
           <FieldRow className="max-w-[640px]">
             <Field label="Name" htmlFor="kit-name" hint="Required">
               <Input id="kit-name" placeholder="Charizard ex 199/165" />
@@ -501,7 +507,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Sheet and Dialog: paper panel, hairline edge, one soft shadow">
+        <KitDemo label="Sheet and Dialog" note="Paper panel, hairline edge, one soft shadow.">
           <div className="flex flex-wrap items-center gap-8">
             <Sheet>
               <SheetTrigger render={<Button variant="text">Open sheet</Button>} />
@@ -550,7 +556,7 @@ export function ControlsSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Skeleton: hairline blocks, no shimmer">
+        <KitDemo label="Skeleton" note="Hairline blocks, never a shimmer gradient.">
           <div className="flex max-w-md items-start gap-5">
             <Skeleton className="h-[56px] w-10" />
             <SkeletonText className="flex-1" lines={3} />
@@ -648,14 +654,14 @@ export function BrandSection() {
           </div>
         </KitDemo>
 
-        <KitDemo label="Done seal: success screens only">
+        <KitDemo label="Done seal" note="Success screens only, once.">
           <div className="flex flex-wrap items-center gap-10">
             <Seal />
             <Seal tick />
           </div>
         </KitDemo>
 
-        <KitDemo label="Stickers: empty states">
+        <KitDemo label="Stickers" note="Empty states and the customer card.">
           <div className="flex flex-wrap items-center gap-10">
             <StickerRing />
             <StickerOrbit />
@@ -717,7 +723,7 @@ export function ProductImageSection() {
       </ul>
 
       <div className="mt-14 grid gap-10 sm:grid-cols-2">
-        <KitDemo label="Shadow finish on a cut-out card">
+        <KitDemo label="Shadow finish" note="On a cut-out card with transparent corners.">
           <ProductImage
             height={220}
             platform="tcg_card"
@@ -726,7 +732,7 @@ export function ProductImageSection() {
             alt="Card with the shadow finish"
           />
         </KitDemo>
-        <KitDemo label="Edge finish on box art">
+        <KitDemo label="Edge finish" note="On printed box art.">
           <ProductImage
             height={220}
             platform="megadrive_box"
@@ -735,10 +741,10 @@ export function ProductImageSection() {
             alt="Box art with the edge finish"
           />
         </KitDemo>
-        <KitDemo label="Loading: the silhouette, at the right shape">
+        <KitDemo label="Loading" note="The silhouette, at the shape the image will be.">
           <ProductImage height={220} platform="ps2_case" alt="" />
         </KitDemo>
-        <KitDemo label="Both finishes on the same ratio">
+        <KitDemo label="Both finishes" note="The same ratio, side by side.">
           <div className="flex items-end gap-8">
             <ProductImage
               height={220}

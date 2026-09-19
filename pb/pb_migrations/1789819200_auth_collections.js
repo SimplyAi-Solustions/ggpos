@@ -71,6 +71,13 @@ migrate((app) => {
     otp: { enabled: true, duration: 300, length: 8 },
     mfa: { enabled: false },
     fields: [
+      // Overrides the auto-added system email field to make it optional:
+      // PLAN.md is explicit that "a customer with no email on file has no
+      // portal until one is added", so a walk-in customer can be created
+      // with just a name and/or phone. Declaring it here (still
+      // type: "email", still the recognised auth field) is confirmed to
+      // override PocketBase's own default of required: true for it.
+      { name: "email", type: "email", required: false },
       { name: "name", type: "text", required: true, max: 200 },
       { name: "phone", type: "text", max: 32 }, // E.164
       { name: "code", type: "text", max: 32 }, // unique GGC-xxxxx, see customers.pb.js

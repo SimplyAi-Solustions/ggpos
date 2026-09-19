@@ -1,3 +1,13 @@
+/**
+ * Traces the yellow G out of src/design/brand/logo-dark.png and prints it as an
+ * SVG path, so the mark in src/components/ui/wordmark.tsx has a provenance and
+ * can be regenerated if the logo changes.
+ *
+ *   node apps/web/scripts/trace-logo-g.mjs
+ *
+ * It decodes the PNG in a headless Chromium canvas, masks the volt pixels,
+ * chains the boundary edges into a loop and simplifies it with Douglas-Peucker.
+ */
 import { chromium } from "@playwright/test"
 import fs from "node:fs"
 
