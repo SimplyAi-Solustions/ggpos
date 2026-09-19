@@ -16,11 +16,14 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,css,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,css,md,yml,yaml}\"",
     "pb": "bash pb/scripts/dev.sh",
-    "typegen": "bash pb/scripts/typegen.sh"
+    "typegen": "bash pb/scripts/typegen.sh",
+    "e2e": "playwright test",
+    "e2e:build": "pnpm --filter web build && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "prettier": "^3.9.6",
-    "prettier-plugin-tailwindcss": "^0.8.1"
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "@types/node": "^22"
   }
 }
