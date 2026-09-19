@@ -66,11 +66,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const { theme, setTheme } = useTheme()
   const [query, setQuery] = React.useState("")
 
-  React.useEffect(() => {
-    if (!open) setQuery("")
-  }, [open])
+  // Reset on the way out rather than in an effect, so the query never lags a
+  // frame behind the panel it belongs to.
+  const setOpen = React.useCallback(
+    (next: boolean) => {
+      if (!next) setQuery("")
+      onOpenChange(next)
+    },
+    [onOpenChange]
+  )
 
-  const close = React.useCallback(() => onOpenChange(false), [onOpenChange])
+  const close = React.useCallback(() => setOpen(false), [setOpen])
 
   const go = React.useCallback(
     (to: string) => {
@@ -123,7 +129,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   })
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent
         showCloseButton={false}
         className="top-[12%] max-h-[76svh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
