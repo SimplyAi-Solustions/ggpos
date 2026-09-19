@@ -28,7 +28,10 @@ function Switch({
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
         className={cn(
-          "pointer-events-none block rounded-full bg-gg-paper",
+          "pointer-events-none block rounded-full",
+          // The thumb is always the opposite of the track it sits on.
+          "data-checked:bg-primary-foreground data-unchecked:bg-gg-paper",
+          "dark:data-unchecked:bg-muted-foreground",
           "shadow-[0_1px_2px_rgba(11,11,11,0.16)] transition-transform duration-150 ease-gg",
           "group-data-[size=default]/switch:size-5 group-data-[size=sm]/switch:size-4",
           "data-unchecked:translate-x-0",
