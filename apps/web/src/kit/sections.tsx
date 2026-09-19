@@ -642,7 +642,7 @@ export function BrandSection() {
             <Wordmark />
             <Wordmark mark />
             <GMark className="h-8" />
-            <span className="rounded-[var(--radius)] bg-gg-ink px-5 py-3">
+            <span className="rounded-[var(--radius)] border border-hairline bg-gg-ink px-5 py-3">
               <GMark className="h-6" />
             </span>
           </div>
@@ -696,9 +696,9 @@ export function ProductImageSection() {
           const src =
             spec.finish === "shadow" ? cardArt(spec.ratio) : boxArt(spec.ratio)
           return (
-            <li key={key} className="flex w-[132px] flex-col gap-3">
+            <li key={key} className="flex w-[180px] flex-col gap-3">
               <ProductImage
-                height={140}
+                height={120}
                 platform={key}
                 src={src}
                 alt={`${spec.label} placeholder`}

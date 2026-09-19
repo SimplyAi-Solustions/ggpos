@@ -21,8 +21,8 @@ function Seal({ className, label = "DONE", tick = false, ...props }: SealProps) 
       role="img"
       aria-label={tick ? "Done" : label}
       className={cn(
-        "flex size-21 items-center justify-center rounded-full border-2 border-gg-ink bg-volt",
-        "shadow-[4px_4px_0_var(--gg-ink)]",
+        "flex size-21 items-center justify-center rounded-full border-2 border-foreground bg-volt",
+        "shadow-[4px_4px_0_var(--foreground)]",
         className
       )}
       {...props}

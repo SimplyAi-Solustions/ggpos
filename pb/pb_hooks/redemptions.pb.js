@@ -15,38 +15,43 @@
  *
  * Both fields are required on the collection, so this always fills them
  * in when a caller has not supplied one directly (e.g. a fixture).
+ *
+ * Everything the handler needs is defined *inside* it (see items.pb.js's
+ * top comment for why: each handler runs in its own isolated context).
  */
 onRecordCreate((e) => {
   const counters = require(`${__hooks}/lib/counters.js`);
   const sku = require(`${__hooks}/lib/shared/sku.js`);
 
+  /**
+   * Same retry-by-precheck approach as items.pb.js's SKU assignment (see
+   * its comment for why this checks uniqueness itself instead of
+   * retrying a failed e.next()).
+   */
+  function generateUniqueVoucherCode() {
+    const randomByte = () =>
+      $security.randomStringWithAlphabet(1, sku.CROCKFORD_ALPHABET).charCodeAt(0);
+
+    const maxAttempts = 8;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const code = sku.generateCode("voucher", randomByte);
+      try {
+        e.app.findFirstRecordByFilter("reward_redemptions", "code = {:code}", {
+          code: code.encoded,
+        });
+      } catch (err) {
+        return code.encoded;
+      }
+    }
+    throw new Error(`Could not generate a unique voucher code after ${maxAttempts} attempts`);
+  }
+
   if (!e.record.getString("number")) {
     e.record.set("number", counters.nextNumber(e.app, "redemption"));
   }
   if (!e.record.getString("code")) {
-    e.record.set("code", generateUniqueVoucherCode(e.app, sku));
+    e.record.set("code", generateUniqueVoucherCode());
   }
 
   e.next();
 }, "reward_redemptions");
-
-/**
- * Same retry-by-precheck approach as items.pb.js's SKU assignment (see its
- * comment for why this checks uniqueness itself instead of retrying a
- * failed e.next()).
- */
-function generateUniqueVoucherCode(app, sku) {
-  const randomByte = () =>
-    $security.randomStringWithAlphabet(1, sku.CROCKFORD_ALPHABET).charCodeAt(0);
-
-  const maxAttempts = 8;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const code = sku.generateCode("voucher", randomByte);
-    try {
-      app.findFirstRecordByFilter("reward_redemptions", "code = {:code}", { code: code.encoded });
-    } catch (err) {
-      return code.encoded;
-    }
-  }
-  throw new Error(`Could not generate a unique voucher code after ${maxAttempts} attempts`);
-}

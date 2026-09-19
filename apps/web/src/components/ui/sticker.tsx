@@ -4,11 +4,13 @@ import { cn } from "cn"
 /**
  * The marketing site's doodles, redrawn as inline SVG at a 4px stroke.
  * They appear in empty states and on the customer card, and nowhere else.
+ * Volt and pop are fixed; the ink stroke follows the foreground so the doodles
+ * survive counter night mode instead of vanishing into the canvas.
  */
 
 const VOLT = "#fedf01"
 const POP = "#ff2e6b"
-const INK = "#0b0b0b"
+const INK = "var(--foreground)"
 
 type StickerProps = React.ComponentProps<"svg">
 

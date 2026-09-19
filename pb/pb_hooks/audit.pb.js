@@ -16,6 +16,11 @@
  * exactly once and the audit row is only written once it returns without
  * throwing, so a rejected update or delete is never logged as if it had
  * happened.
+ *
+ * The two collection-name lists are read at file-load time (registration
+ * is synchronous, in the same context as this top level), but each
+ * handler body still defines its own actor helper rather than sharing
+ * one - see items.pb.js's top comment for why.
  */
 
 // Collections whose *deletion* is always worth a permanent record: PII,
@@ -47,7 +52,7 @@ onRecordDeleteRequest((e) => {
 
   const audit = require(`${__hooks}/lib/audit.js`);
   audit.writeAuditLog(e.app, {
-    actor: actorId(e),
+    actor: e.auth ? e.auth.id : "system",
     action: "delete",
     collection: e.record.collection().name,
     record: e.record.id,
@@ -61,7 +66,7 @@ onRecordUpdateRequest((e) => {
 
   const audit = require(`${__hooks}/lib/audit.js`);
   audit.writeAuditLog(e.app, {
-    actor: actorId(e),
+    actor: e.auth ? e.auth.id : "system",
     action: "update",
     collection: e.record.collection().name,
     record: e.record.id,
@@ -69,8 +74,3 @@ onRecordUpdateRequest((e) => {
     ip: e.realIP(),
   });
 }, ...AUDITED_UPDATE_COLLECTIONS);
-
-/** The authenticated staff id, or "system" for a superuser/no-auth call. */
-function actorId(e) {
-  return e.auth ? e.auth.id : "system";
-}

@@ -13,8 +13,12 @@
  * - onRecordAfterCreateSuccess: create the paired customer_private row -
  *   the staff-only PII split described in PLAN.md's data model.
  *
- * Every require() happens inside the handler - see pb/README.md on
- * pb_hooks isolation.
+ * Each of the three is registered and fires separately, so each repeats
+ * its own require() and defines its own helpers rather than sharing them
+ * at file top level: every registered handler runs in its own isolated
+ * goja context, and a value only visible at file top level is not
+ * reliably visible once a handler actually fires (verified against
+ * v0.40.4 - see pb/README.md).
  */
 
 onRecordCreateRequest((e) => {
@@ -25,8 +29,29 @@ onRecordCreateRequest((e) => {
 onRecordCreate((e) => {
   const sku = require(`${__hooks}/lib/shared/sku.js`);
 
+  /**
+   * Same retry-by-precheck approach as items.pb.js's SKU assignment (see
+   * its comment for why this checks uniqueness itself instead of
+   * retrying a failed e.next()).
+   */
+  function generateUniqueCustomerCode() {
+    const randomByte = () =>
+      $security.randomStringWithAlphabet(1, sku.CROCKFORD_ALPHABET).charCodeAt(0);
+
+    const maxAttempts = 8;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const code = sku.generateCode("customer", randomByte);
+      try {
+        e.app.findFirstRecordByFilter("customers", "code = {:code}", { code: code.encoded });
+      } catch (err) {
+        return code.encoded;
+      }
+    }
+    throw new Error(`Could not generate a unique customer code after ${maxAttempts} attempts`);
+  }
+
   if (!e.record.getString("code")) {
-    e.record.set("code", generateUniqueCustomerCode(e.app, sku));
+    e.record.set("code", generateUniqueCustomerCode());
   }
   if (!e.record.getString("qr_token")) {
     e.record.set("qr_token", $security.randomString(32));
@@ -46,24 +71,3 @@ onRecordAfterCreateSuccess((e) => {
   e.app.save(record);
   e.next();
 }, "customers");
-
-/**
- * Same retry-by-precheck approach as items.pb.js's SKU assignment (see its
- * comment for why this checks uniqueness itself instead of retrying a
- * failed e.next()).
- */
-function generateUniqueCustomerCode(app, sku) {
-  const randomByte = () =>
-    $security.randomStringWithAlphabet(1, sku.CROCKFORD_ALPHABET).charCodeAt(0);
-
-  const maxAttempts = 8;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const code = sku.generateCode("customer", randomByte);
-    try {
-      app.findFirstRecordByFilter("customers", "code = {:code}", { code: code.encoded });
-    } catch (err) {
-      return code.encoded;
-    }
-  }
-  throw new Error(`Could not generate a unique customer code after ${maxAttempts} attempts`);
-}
