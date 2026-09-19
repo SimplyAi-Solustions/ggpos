@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright kit screenshots (apps/web/scripts/shots/)
+scripts/shots/

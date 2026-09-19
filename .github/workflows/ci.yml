@@ -1,0 +1,84 @@
+name: CI
+
+# Runs on every push (any branch) and every pull request: lint, typecheck,
+# unit tests and the build for the whole pnpm workspace, plus a separate
+# job that downloads the pinned PocketBase binary and runs the pb-side
+# checks, if they exist yet (pb/scripts/check.sh is written alongside the
+# hooks and migrations, which land in a later phase of this build).
+
+on:
+  push:
+  pull_request:
+
+# Cancel a still-running run for the same branch/PR when a new push
+# arrives, so pushes don't queue up behind CI runs nobody will look at.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # apps/web depends on @playwright/test; this stops its install step
+  # (now, or once e2e specs are added later) from downloading browser
+  # binaries in CI, which this workflow doesn't run.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  build:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        # No version input: this reads the "packageManager" field in the
+        # repo's package.json (pnpm@10.33.0) and installs that.
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  pocketbase:
+    name: PocketBase checks
+    runs-on: ubuntu-latest
+    env:
+      PB_VERSION: "0.40.4"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download PocketBase v${{ env.PB_VERSION }} (linux/amd64)
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/pocketbase.zip \
+            "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip"
+          unzip -o -q /tmp/pocketbase.zip pocketbase -d pb/
+          chmod +x pb/pocketbase
+          pb/pocketbase --version
+
+      - name: Run pb/scripts/check.sh
+        run: |
+          set -euo pipefail
+          if [ -f pb/scripts/check.sh ]; then
+            bash pb/scripts/check.sh
+          else
+            echo "pb/scripts/check.sh does not exist yet - nothing to run."
+          fi
