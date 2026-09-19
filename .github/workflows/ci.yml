@@ -66,6 +66,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        # check.sh validates generated codes with node --experimental-strip-types (Node 22.6+).
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Download PocketBase v${{ env.PB_VERSION }} (linux/amd64)
         run: |
           set -euo pipefail
