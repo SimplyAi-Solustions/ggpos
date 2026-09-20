@@ -10,8 +10,6 @@
  * The counter's own reads of the holds themselves are in their own section
  * at the foot of this file.
  */
-import { displayCode } from "@gg/shared"
-
 import { pb as pbStaff } from "@/lib/pb"
 import { pbCustomer } from "@/lib/pb-customer"
 import { isDemo } from "@/lib/api/mode"
@@ -23,9 +21,7 @@ import {
   demoListWants,
 } from "@/lib/api/demo/portal"
 import type {
-  HoldRow,
   NewWantInput,
-  StockItemRecord,
   WantHold,
   WantListRow,
   WantListStatus,
@@ -143,53 +139,44 @@ export async function closeWant(id: string): Promise<void> {
 // list made, and goes through `pb`, the counter's own client.
 // ---------------------------------------------------------------------------
 
-/** The end of today, local time: what "ending today" is measured against. */
-export function endOfToday(now: Date = new Date()): Date {
-  const end = new Date(now)
-  end.setHours(23, 59, 59, 999)
-  return end
+/**
+ * A moment as PocketBase writes its own timestamps.
+ *
+ * `items.reserved_until` is stored as "2026-09-20 17:00:00.000Z", with a
+ * space where an ISO string has its T. Comparing an ISO string against it
+ * only ever compares the date half, so a filter written that way silently
+ * ignores the time of day. `lib/api/sales.ts` has said this for a while;
+ * this is the same rule in the same words.
+ */
+function pbMoment(date: Date): string {
+  return date.toISOString().replace("T", " ").slice(0, 19)
 }
 
-type ReservedItem = StockItemRecord & {
-  expand?: { reserved_for?: { id: string; name?: string; code?: string } }
-}
-
-function toHoldRow(item: ReservedItem): HoldRow {
-  const customer = item.expand?.reserved_for
-  return {
-    itemId: item.id,
-    sku: item.sku,
-    title: item.title || "Item",
-    price: item.price ?? 0,
-    customerId: customer?.id ?? item.reserved_for ?? "",
-    customerName: customer?.name ?? "",
-    customerCode: customer?.code ? displayCode(customer.code) : "",
-    until: item.reserved_until ?? "",
-  }
-}
-
-function holdsFilter(now: Date): string {
-  const until = endOfToday(now).toISOString()
-  return `status = "reserved" && reserved_until != "" && reserved_until <= "${escapeFilter(until)}"`
+/** Midnight this morning and a minute to midnight tonight, local time. */
+export function dayBounds(now: Date = new Date()): { from: Date; to: Date } {
+  const from = new Date(now)
+  from.setHours(0, 0, 0, 0)
+  const to = new Date(now)
+  to.setHours(23, 59, 59, 999)
+  return { from, to }
 }
 
 /**
- * Every hold that runs out today, soonest first.
+ * The filter behind "holds ending today", exported so the string itself can
+ * be read in a test rather than only through a server.
  *
- * Anything already past its time is included: the release cron runs every
- * fifteen minutes, so a hold that has just lapsed is still on the shelf and
- * is still worth a phone call.
+ * Bounded at both ends: without the lower bound a hold that lapsed last
+ * week still counts as ending today, and the release cron only runs every
+ * fifteen minutes, so there are always a few of those about. `!= ""` is not
+ * needed beside them, since an empty value is below any timestamp.
  */
-export async function listHoldsEndingToday(
-  now: Date = new Date()
-): Promise<HoldRow[]> {
-  if (isDemo()) return demoHoldsEndingToday(now)
-  const page = await pbStaff.collection("items").getList<ReservedItem>(1, 50, {
-    filter: holdsFilter(now),
-    sort: "reserved_until",
-    expand: "reserved_for",
-  })
-  return page.items.map(toHoldRow)
+export function holdsFilter(now: Date = new Date()): string {
+  const { from, to } = dayBounds(now)
+  return [
+    'status = "reserved"',
+    `reserved_until >= "${escapeFilter(pbMoment(from))}"`,
+    `reserved_until <= "${escapeFilter(pbMoment(to))}"`,
+  ].join(" && ")
 }
 
 /** The count alone, for Home's waiting line. */
