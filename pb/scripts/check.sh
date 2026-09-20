@@ -2949,6 +2949,41 @@ CU_IMPORT_GET_JSON="$(curl -s "$BASE/api/vault/imports/$CU_IMPORT_ID" -H "Author
 echo "$CU_IMPORT_GET_JSON" | grep -qF "needs match" || fail "GET the import row does not carry the review entry: $CU_IMPORT_GET_JSON"
 ok "GET /api/vault/imports/:id returns the row with its review entries"
 
+IMPORT_VIEW_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22import_view%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${IMPORT_VIEW_AUDIT:-0}" -ge 1 ] || fail "GET /api/vault/imports/:id wrote no audit_log row"
+ok "GET /api/vault/imports/:id is audited"
+
+# --- 22e2. Card Uploader connects to an item already in stock for the same
+#     card, rather than duplicating it (docs/api-contract.md rule 2) -------
+CU_STOCK_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$CU_SET_ID\",\"number\":\"6\",\"name\":\"Fixture Pikachu\",\"tcgplayer_id\":\"TCG-FIX-STOCK\"}" | jval id)"
+[ -n "$CU_STOCK_CARD_ID" ] || fail "could not create the duplicate-stock check's card"
+CU_STOCK_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$CU_STOCK_CARD_ID\",\"condition\":\"NM\",\"qty\":1,\"cost\":300,\"status\":\"in_stock\",\"source\":\"trade_in\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}" | jval id)"
+[ -n "$CU_STOCK_ITEM_ID" ] || fail "could not create the duplicate-stock check's already-in-stock item"
+
+cat >"$TMP_DIR/card-uploader-dupe.csv" <<'EOF'
+Card Name,Set,Number,Condition,Price,Quantity,TCGplayer ID,Cardmarket ID,CS SKU
+,Scarlet & Violet 151,6,NM,8.00,1,TCG-FIX-STOCK,,CS-DUPE-001
+EOF
+CU_DUPE_STATUS="$(curl -s -o "$TMP_DIR/cu-dupe.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/card-uploader" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/card-uploader-dupe.csv;type=text/csv")"
+[ "$CU_DUPE_STATUS" = "200" ] || fail "the duplicate-stock Card Uploader import returned $CU_DUPE_STATUS: $(cat "$TMP_DIR/cu-dupe.json")"
+[ "$(jval matched <"$TMP_DIR/cu-dupe.json")" = "1" ] || fail "the duplicate-stock import's matched count is wrong: $(cat "$TMP_DIR/cu-dupe.json")"
+
+CU_STOCK_CARD_ITEMS="$(curl -s "$BASE/api/collections/items/records?filter=card%3D%22$CU_STOCK_CARD_ID%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$CU_STOCK_CARD_ITEMS" | jval totalItems)" = "1" ] || fail "the Card Uploader import created a duplicate item instead of connecting to the one already in stock: $CU_STOCK_CARD_ITEMS"
+CU_STOCK_ITEM_AFTER="$(curl -s "$BASE/api/collections/items/records/$CU_STOCK_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$CU_STOCK_ITEM_AFTER" | jval status)" = "listed_ebay" ] || fail "the already-in-stock item was not connected to the listing: $CU_STOCK_ITEM_AFTER"
+[ "$(echo "$CU_STOCK_ITEM_AFTER" | jval ebay_sku)" = "CS-DUPE-001" ] || fail "the already-in-stock item did not get the file's ebay_sku: $CU_STOCK_ITEM_AFTER"
+[ "$(echo "$CU_STOCK_ITEM_AFTER" | jval price)" = "800" ] || fail "the already-in-stock item did not get the file's price: $CU_STOCK_ITEM_AFTER"
+[ "$(echo "$CU_STOCK_ITEM_AFTER" | jval cost)" = "300" ] || fail "connecting to stock changed the item's cost, which must be left untouched: $CU_STOCK_ITEM_AFTER"
+[ "$(echo "$CU_STOCK_ITEM_AFTER" | jval source)" = "trade_in" ] || fail "connecting to stock changed the item's source, which must be left untouched: $CU_STOCK_ITEM_AFTER"
+ok "a Card Uploader row for a card already in stock connects to that item rather than duplicating it, leaving cost and source untouched"
+
 # --- 22f. A malformed file, and the wrong declared type -------------------
 cat >"$TMP_DIR/malformed.csv" <<'EOF'
 not,a,real,header,row
