@@ -567,4 +567,132 @@ describe("pricesync pipeline", () => {
       server.close();
     }
   });
+
+  test("a game with zero wanted ids never triggers a network request for its price file", async () => {
+    const db = buildDb();
+    // Every card's cardmarket_id/tcgplayer_id is blanked, so pokemon is
+    // enabled but has nothing wanted - the request-count map itself
+    // proves the price file paths were never hit at all, not merely that
+    // they returned nothing useful.
+    db.cards = db.cards.map((c) => ({ ...c, cardmarket_id: "", tcgplayer_id: "" }));
+    const { server, requestCounts } = createFakeServer({
+      db,
+      cachedFiles: {
+        "/priceguide/price_guide_6.json": { body: CARDMARKET_FIXTURE, etag: `"cm-6-v1"` },
+        "/tcgplayer/3/groups": { body: TCGCSV_GROUPS_FIXTURE, etag: `"tc-groups-v1"` },
+      },
+    });
+    const port = await listenOnFreePort(server);
+    try {
+      const result = await run(envFor(port, path.join(cacheDir, "zero-wanted")), { now: () => new Date("2026-09-20T04:00:00.000Z") });
+      assert.equal(result.exitCode, 0);
+      assert.equal(requestCounts.get("/priceguide/price_guide_6.json"), undefined, "the Cardmarket file must never have been requested");
+      assert.equal(requestCounts.get("/tcgplayer/3/groups"), undefined, "the TCGCSV groups file must never have been requested");
+      assert.equal(db.price_snapshots.length, 0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a game that exists but is explicitly disabled (enabled: false) is skipped exactly like one that does not exist", async () => {
+    const db = buildDb();
+    db.games = [{ id: "game_pokemon", key: "pokemon", enabled: false }];
+    const { server, requestCounts } = createFakeServer({
+      db,
+      cachedFiles: {
+        "/priceguide/price_guide_6.json": { body: CARDMARKET_FIXTURE, etag: `"cm-6-v1"` },
+      },
+    });
+    const port = await listenOnFreePort(server);
+    try {
+      const result = await run(envFor(port, path.join(cacheDir, "disabled-game")), { now: () => new Date("2026-09-20T04:00:00.000Z") });
+      assert.equal(result.exitCode, 0);
+      assert.equal(requestCounts.get("/priceguide/price_guide_6.json"), undefined, "a disabled game's price file must never be requested");
+      assert.equal(db.price_snapshots.length, 0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a numeric field on a pre-existing (untouched) cards.prices source survives the merge as a number, not re-stringified", async () => {
+    const db = buildDb();
+    // cardD's tcgplayer_id is real (5001), so it WILL be touched by this
+    // run's TCGCSV pass - the point is its pre-existing "cardmarket"
+    // entry (a source this run never writes for cardD - cardD has no
+    // cardmarket_id) must come back out with its numbers still numbers,
+    // not the decimal strings PocketBase's own JSON response parses them
+    // as (see json-stream.mjs and index.mjs's coercePriceEntryNumbers).
+    const cardD = db.cards.find((c) => c.id === "cardD");
+    cardD.prices = {
+      cardmarket: {
+        finish: "normal",
+        native_currency: "EUR",
+        native_market: 12345,
+        gbp_market: 10623,
+        fx_rate: 0.8606,
+        fetched_at: "2026-09-01 04:00:00.000Z",
+      },
+    };
+    const { server } = createFakeServer({
+      db,
+      cachedFiles: {
+        "/priceguide/price_guide_6.json": { body: CARDMARKET_FIXTURE, etag: `"cm-6-v1"` },
+        "/tcgplayer/3/groups": { body: TCGCSV_GROUPS_FIXTURE, etag: `"tc-groups-v1"` },
+        "/tcgplayer/3/555/products": { body: TCGCSV_PRODUCTS_FIXTURE, etag: `"tc-products-v1"` },
+        "/tcgplayer/3/555/prices": { body: TCGCSV_PRICES_FIXTURE, etag: `"tc-prices-v1"` },
+      },
+    });
+    const port = await listenOnFreePort(server);
+    try {
+      const result = await run(envFor(port, path.join(cacheDir, "numeric-merge")), { now: () => new Date("2026-09-20T04:00:00.000Z") });
+      assert.equal(result.exitCode, 0);
+      const merged = db.cards.find((c) => c.id === "cardD").prices;
+      assert.equal(typeof merged.cardmarket.native_market, "number");
+      assert.equal(merged.cardmarket.native_market, 12345);
+      assert.equal(typeof merged.cardmarket.gbp_market, "number");
+      assert.equal(typeof merged.cardmarket.fx_rate, "number");
+      assert.equal(merged.cardmarket.fetched_at, "2026-09-01 04:00:00.000Z", "an untouched source's own fetched_at must be left alone");
+      assert.ok(merged.tcgplayer, "the source this run did touch should also be present");
+      assert.equal(typeof merged.tcgplayer.native_market, "number");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("two run() calls on the same UTC day PATCH the same rows instead of creating duplicates", async () => {
+    const db = buildDb();
+    // Start from a clean slate for price_snapshots (buildDb's own
+    // yesterday/today seed rows are for the other test's dedupe check);
+    // this test wants to see PATCH-not-POST arise purely from calling
+    // run() twice, with nothing pre-seeded.
+    db.price_snapshots = [];
+    const { server } = createFakeServer({
+      db,
+      cachedFiles: {
+        "/priceguide/price_guide_6.json": { body: CARDMARKET_FIXTURE, etag: `"cm-6-v1"` },
+        "/tcgplayer/3/groups": { body: TCGCSV_GROUPS_FIXTURE, etag: `"tc-groups-v1"` },
+        "/tcgplayer/3/555/products": { body: TCGCSV_PRODUCTS_FIXTURE, etag: `"tc-products-v1"` },
+        "/tcgplayer/3/555/prices": { body: TCGCSV_PRICES_FIXTURE, etag: `"tc-prices-v1"` },
+      },
+    });
+    const port = await listenOnFreePort(server);
+    const runCacheDir = path.join(cacheDir, "two-runs-same-day");
+    try {
+      const now = () => new Date("2026-09-20T04:00:00.000Z");
+      const result1 = await run(envFor(port, runCacheDir), { now });
+      assert.equal(result1.exitCode, 0);
+      const countAfterFirst = db.price_snapshots.length;
+      assert.ok(countAfterFirst > 0, "the first run should have written some rows");
+      const idsAfterFirst = new Set(db.price_snapshots.map((r) => r.id));
+
+      const result2 = await run(envFor(port, runCacheDir), { now });
+      assert.equal(result2.exitCode, 0);
+
+      assert.equal(db.price_snapshots.length, countAfterFirst, "the second run must not have created any new rows");
+      const idsAfterSecond = new Set(db.price_snapshots.map((r) => r.id));
+      assert.deepEqual(idsAfterSecond, idsAfterFirst, "every row from the second run should be the same record the first run created");
+    } finally {
+      server.close();
+    }
+  });
 });

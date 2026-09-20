@@ -34,11 +34,20 @@ var PLATFORM_IGDB_IDS = {
 
 function fetchToken(clientId, clientSecret, transport) {
   var http = require(__hooks + "/adapters/http.js");
-  var url =
-    TOKEN_URL +
-    "?" +
-    http.qs({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
-  var res = http.request({ url: url, method: "POST" }, transport);
+  // The client secret travels in the request body, not the URL: a query
+  // string ends up in access logs, proxy logs and any error message that
+  // echoes the URL back (http.js's own errors strip it anyway, but the
+  // credential should never reach the URL in the first place).
+  var body = http.qs({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" });
+  var res = http.request(
+    {
+      url: TOKEN_URL,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body,
+    },
+    transport
+  );
   if (res.statusCode !== 200 || !res.json || !res.json.access_token) {
     throw new Error("IGDB/Twitch token request failed: " + res.statusCode);
   }
@@ -57,7 +66,13 @@ function getToken(store, clientId, clientSecret, transport) {
 /** IGDB cover image URL at the given named size (see IGDB's image docs). */
 function coverUrl(imageId, size) {
   if (!imageId) return "";
-  return "https://images.igdb.com/igdb/image/upload/t_" + (size || "cover_big") + "/" + imageId + ".jpg";
+  return (
+    "https://images.igdb.com/igdb/image/upload/t_" +
+    encodeURIComponent(size || "cover_big") +
+    "/" +
+    encodeURIComponent(imageId) +
+    ".jpg"
+  );
 }
 
 function normalize(raw) {

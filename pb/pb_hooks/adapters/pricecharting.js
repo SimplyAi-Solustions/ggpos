@@ -24,6 +24,10 @@
 
 var BASE_URL = "https://www.pricecharting.com/api";
 
+// Switch has no real PAL/NTSC split (its games are region-free), so it
+// carries no `pal` key here at all - categoriesFor() then returns null for
+// it and getPrices() answers with no candidate rather than a fabricated
+// PAL entry pointed at the same catalogue as NTSC.
 var CONSOLE_CATEGORIES = {
   gameboy_cart: { pal: "pal-gameboy", ntsc: "gameboy" },
   gameboy_box: { pal: "pal-gameboy", ntsc: "gameboy" },
@@ -33,7 +37,6 @@ var CONSOLE_CATEGORIES = {
   ps1_case: { pal: "pal-playstation", ntsc: "playstation" },
   ps2_case: { pal: "pal-playstation-2", ntsc: "playstation-2" },
   gamecube_case: { pal: "pal-gamecube", ntsc: "gamecube" },
-  switch_case: { pal: "nintendo-switch", ntsc: "nintendo-switch" },
 };
 
 function get(url, transport) {
@@ -45,18 +48,30 @@ function categoriesFor(platformKey) {
   return CONSOLE_CATEGORIES[platformKey] || null;
 }
 
-/** The best product match in `category` for `title`, or null. */
+/**
+ * The best product match in `category` ("pal-..." or the plain NTSC slug)
+ * for `title`, or null. PriceCharting's `console-name` is a human display
+ * string ("PAL Super Nintendo Entertainment System"), never the URL slug -
+ * comparing the two for equality never matched, which silently fell back
+ * to `products[0]` and could label an NTSC result PAL or the other way
+ * round. Matching on whether the display name *contains* "pal" is what
+ * actually distinguishes the two regions, and returning null rather than a
+ * fallback when nothing in the results carries the wanted region is what
+ * lets getPrices()'s PAL-then-NTSC order actually reach the NTSC branch.
+ */
 function searchInCategory(apiKey, title, category, transport) {
   var http = require(__hooks + "/adapters/http.js");
-  var url = BASE_URL + "/products?" + http.qs({ t: apiKey, q: title + " " + category });
+  var url = BASE_URL + "/products?" + http.qs({ t: apiKey, q: title });
   var res = get(url, transport);
   if (res.statusCode !== 200 || !res.json || !Array.isArray(res.json.products) || !res.json.products.length) {
     return null;
   }
-  var inCategory = res.json.products.filter(function (p) {
-    return (p["console-name"] || "").toLowerCase() === category;
+  var wantsPal = /pal/i.test(category);
+  var matches = res.json.products.filter(function (p) {
+    var isPal = /pal/i.test(p["console-name"] || "");
+    return wantsPal ? isPal : !isPal;
   });
-  return inCategory[0] || res.json.products[0];
+  return matches.length ? matches[0] : null;
 }
 
 function fetchProduct(apiKey, id, transport) {
