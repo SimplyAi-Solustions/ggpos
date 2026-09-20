@@ -50,8 +50,9 @@ function findCardSet(app, gameId, code) {
   }
 }
 
-/** Find or create the card_sets row for (gameId, code), refreshing its name. */
+/** Find or create the card_sets row for (gameId, code), refreshing its name. Null for a blank code - a blank card_sets.code fails required validation, and no card can be written through against a set that was never created. */
 function upsertCardSet(app, gameId, code, name) {
+  if (!code) return null;
   var existing = findCardSet(app, gameId, code);
   if (existing) {
     if (name && existing.getString("name") !== name) {
