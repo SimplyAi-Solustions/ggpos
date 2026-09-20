@@ -74,7 +74,7 @@ Marks an item sold, with the order reference, once it has sold on eBay. Every ro
 }
 ```
 
-Matching is primarily on `customLabel`, which is our `ebay_sku`, the Card Uploader `CS-XXXXXX` SKU. A row that matches an item already `listed_ebay` marks it `sold` and records the order reference; an unmatched row goes to a review queue.
+Matching is primarily on `customLabel`, which is our `ebay_sku`, the Card Uploader `CS-XXXXXX` SKU. A row that matches an item already `listed_ebay` (or anything short of sold, returned or written off) records the sale; a stock line with more than one unit only goes fully `sold` once none are left, otherwise it stays `listed_ebay` with its quantity reduced. An unmatched row goes to a review queue; a row for an item already disposed of, or one this exact order has already recorded, is reported rather than sold again.
 
 As with the Card Uploader mapping above, this skeleton is seeded into `settings.import_mappings.ebay_orders` by the same Phase 4 migration, and that settings field, not this file, is what `POST /api/vault/imports/ebay-orders` reads.
 
@@ -102,7 +102,7 @@ An id that does not exist, or is not `in_stock`, is left out of the file rather 
 
 ## End-listings export
 
-`GET /api/vault/exports/end-listings.csv`: every item with an `ebay_listing_id` whose `status` is `sold`, so the listings can be ended on eBay by hand (there is no eBay API write access in this build - Card Uploader's Managed Inventory or Seller Hub itself ends the listing). Columns: SKU, Title, eBay listing ID, eBay SKU, Sale date, Sale number. `POST /api/vault/items/end-listings` with `{ "ids": [...] }` then clears `ebay_listing_id` and `ebay_sku` on each once the listing is actually ended, so the same item does not appear on this list again.
+`GET /api/vault/exports/end-listings.csv`: every item with an `ebay_listing_id` or an `ebay_sku` whose `status` is `sold`, so the listings can be ended on eBay by hand (there is no eBay API write access in this build - Card Uploader's Managed Inventory or Seller Hub itself ends the listing). `ebay_sku` alone still counts: a Card-Uploader-listed item sold at the counter rather than through the eBay orders import carries no `ebay_listing_id` at all, only its `CS-XXXXXX` `ebay_sku`. Columns: SKU, Title, eBay listing ID, eBay SKU, Sale date, Sale number. `POST /api/vault/items/end-listings` with `{ "ids": [...] }` then clears `ebay_listing_id` and `ebay_sku` on each once the listing is actually ended, so the same item does not appear on this list again.
 
 ## Our exports
 
