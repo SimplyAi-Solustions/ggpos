@@ -393,7 +393,13 @@ export interface IdCheckResult {
   expires_at: string
 }
 
-/** What the A4 receipt page prints. See "Receipts" in docs/api-contract.md. */
+/**
+ * What the A4 receipt page prints.
+ *
+ * Matches `pb/pb_hooks/lib/receipts.js` exactly, display strings included:
+ * the server formats the money so the printed page and the emailed copy can
+ * never round differently.
+ */
 export interface ReceiptPayload {
   shop: {
     name: string
@@ -406,10 +412,16 @@ export interface ReceiptPayload {
   trade_in: {
     id: string
     number: string
+    status: string
     completed_at: string
-    payout_type: PayoutType | null
+    date_display: string
+    payout_type: PayoutType | ""
     payout_cash: number
     payout_credit: number
+    payout_total: number
+    payout_cash_display: string
+    payout_credit_display: string
+    payout_total_display: string
     total_market: number
     total_offer: number
   }
@@ -420,18 +432,29 @@ export interface ReceiptPayload {
     id_last4: string
     id_expiry: string
   }
+  staff: { id: string; name: string }
   lines: {
+    id: string
     title: string
-    detail: string
     condition: string
+    finish: string
     qty: number
     market_price: number
     offer_price: number
+    line_total: number
+    offer_price_display: string
+    line_total_display: string
   }[]
-  signature_url: string | null
-  staff: string
+  /** A short-lived PocketBase file token URL, never a data URL. */
+  signature: { file: string; url: string; token: string } | null
   terms: string
-  retention: string
+  retention_note: string
+}
+
+/** What the receipt email route answers; `test_mode` holds it back. */
+export interface ReceiptEmailResult {
+  sent: boolean
+  test_mode?: boolean
 }
 
 /** `settings` fields the buy-in wizard reads. */
@@ -598,6 +621,19 @@ export interface CashMovementRecord extends BaseRecord {
   staff?: string
   /** Joined for the table, never stored. */
   staffName?: string
+}
+
+/**
+ * POST /api/vault/cash-sessions/:id/close. The route answers with the closed
+ * session plus its own copy of the sums, and `variance_alert` is a flag
+ * saying the variance cleared `settings.cash_variance_alert`, not the
+ * threshold itself.
+ */
+export interface CashCloseResult {
+  session: CashSessionRecord
+  expected: number
+  variance: number
+  overAlert: boolean
 }
 
 /** GET /api/vault/cash-sessions/current. */

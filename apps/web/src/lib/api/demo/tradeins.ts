@@ -1,4 +1,4 @@
-import { buildCode } from "@gg/shared"
+import { buildCode, formatGBP } from "@gg/shared"
 // `packages/shared/src/index.ts` re-exports money, sku and pb-types only, so
 // the pricing and loyalty evaluators come in through their own subpaths.
 import { DEFAULT_OFFER_SETTINGS, type OfferSettings, type PricingRule } from "@gg/shared/pricing"
@@ -39,6 +39,19 @@ const DAY = 86_400_000
 
 function daysAgo(days: number): string {
   return new Date(Date.now() - days * DAY).toISOString()
+}
+
+/** 20 September 2026, the same shape the server's receipt builder writes. */
+function ukDate(value: string): string {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  })
 }
 
 function randomId(prefix: string): string {
@@ -268,9 +281,9 @@ export function demoCreateDraft(customerId: string): TradeInRecord {
   const entry: DemoTradeIn = {
     record: {
       id,
-      // The server assigns the real number at completion; a draft carries a
-      // placeholder because `trade_ins.number` is required by the migration.
-      number: `DRAFT-${id.slice(-8).toUpperCase()}`,
+      // A draft has no number: the server draws one from counters.trade_in
+      // inside the completion transaction, so an abandoned draft burns none.
+      number: "",
       customer: customerId,
       channel: "counter",
       status: "draft",
@@ -474,16 +487,25 @@ export function demoReceipt(id: string): ReceiptPayload {
   if (!entry) throw new Error("Trade-in not found in the demo shop.")
   const customer = findDemoCustomer(entry.record.customer)
   const priv = customer?.private
+  const cash = entry.record.payout_cash ?? 0
+  const credit = entry.record.payout_credit ?? 0
+  const when = entry.record.completed_at ?? entry.record.created ?? ""
 
   return {
     shop: { ...DEMO_SHOP },
     trade_in: {
       id: entry.record.id,
       number: entry.record.number,
-      completed_at: entry.record.completed_at ?? entry.record.created ?? "",
-      payout_type: entry.record.payout_type ?? null,
-      payout_cash: entry.record.payout_cash ?? 0,
-      payout_credit: entry.record.payout_credit ?? 0,
+      status: entry.record.status ?? "draft",
+      completed_at: entry.record.completed_at ?? "",
+      date_display: ukDate(when),
+      payout_type: entry.record.payout_type ?? "",
+      payout_cash: cash,
+      payout_credit: credit,
+      payout_total: cash + credit,
+      payout_cash_display: formatGBP(cash),
+      payout_credit_display: formatGBP(credit),
+      payout_total_display: formatGBP(cash + credit),
       total_market: entry.record.total_market ?? 0,
       total_offer: entry.record.total_offer ?? 0,
     },
@@ -494,20 +516,32 @@ export function demoReceipt(id: string): ReceiptPayload {
       id_last4: priv?.id_ref_last4 ?? "",
       id_expiry: priv?.id_expiry ?? "",
     },
+    staff: { id: "staff_demo", name: entry.staffName },
     lines: entry.lines
       .filter((line) => line.accepted)
-      .map((line) => ({
-        title: line.free_text_title || "Item",
-        detail: [line.finish, line.completeness].filter(Boolean).join(" "),
-        condition: line.condition || line.completeness || "",
-        qty: line.qty ?? 1,
-        market_price: line.market_price ?? 0,
-        offer_price: line.offer_price ?? 0,
-      })),
-    signature_url: entry.signature,
-    staff: entry.staffName,
+      .map((line) => {
+        const qty = line.qty ?? 1
+        const offer = line.offer_price ?? 0
+        return {
+          id: line.id,
+          title: line.free_text_title || "Item",
+          condition: line.condition || line.completeness || "",
+          finish: line.finish ?? "",
+          qty,
+          market_price: line.market_price ?? 0,
+          offer_price: offer,
+          line_total: offer * qty,
+          offer_price_display: formatGBP(offer),
+          line_total_display: formatGBP(offer * qty),
+        }
+      }),
+    // Demo mode has no file store, so the signature stays as the data URL the
+    // pad produced; the live route serves a short-lived file token URL.
+    signature: entry.signature
+      ? { file: "signature.png", url: entry.signature, token: "" }
+      : null,
     terms: DEMO_RECEIPT_TERMS,
-    retention: DEMO_RETENTION_NOTE,
+    retention_note: DEMO_RETENTION_NOTE,
   }
 }
 

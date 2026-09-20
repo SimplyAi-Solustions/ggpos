@@ -10,6 +10,7 @@ import {
   ensureSeeded,
 } from "@/lib/api/demo/store"
 import type {
+  CashCloseResult,
   CashMovementRecord,
   CashMovementType,
   CashSessionRecord,
@@ -91,19 +92,26 @@ export function close(
   id: string,
   counted: number,
   notes: string
-): CashSessionRecord {
+): CashCloseResult {
   ensureSeeded()
   const session = demoCashSessions.find((row) => row.id === id)
   if (!session) throw new Error("That cash session is not open.")
+  if (session.closed_at) throw new Error("That cash session is already closed.")
   const expected = expectedFor(id)
+  const variance = counted - expected
   session.expected = expected
   session.counted = counted
-  session.variance = counted - expected
+  session.variance = variance
   session.closed_by = DEMO_STAFF.id
   session.closedByName = DEMO_STAFF.name
   session.closed_at = new Date().toISOString()
   session.notes = notes
-  return session
+  return {
+    session,
+    expected,
+    variance,
+    overAlert: Math.abs(variance) > DEMO_VARIANCE_ALERT,
+  }
 }
 
 export function listSessions(): CashSessionRecord[] {

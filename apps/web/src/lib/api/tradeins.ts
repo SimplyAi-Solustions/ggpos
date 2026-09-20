@@ -33,6 +33,7 @@ import type {
   CustomerRecord,
   IdCheckResult,
   OfferLimits,
+  ReceiptEmailResult,
   ReceiptPayload,
   StaffRecord,
   TradeInLineInput,
@@ -156,19 +157,14 @@ export async function getOfferSettings(): Promise<OfferSettings & OfferLimits> {
 // ---------------------------------------------------------------------------
 
 /**
- * `trade_ins.number` is required by the migration and the real
- * `GG-BI-000123` is only assigned inside the completion transaction, so a
- * draft carries a placeholder until then.
+ * A draft carries no number: `trade_ins.number` is optional behind a partial
+ * unique index, and `GG-BI-000123` is drawn from `counters.trade_in` inside
+ * the completion transaction, so an abandoned draft never burns one.
  */
-function draftNumber(): string {
-  return `DRAFT-${Math.random().toString(36).slice(2, 10).toUpperCase()}`
-}
-
 export async function createDraftTradeIn(customerId: string): Promise<TradeInRecord> {
   if (isDemo()) return demoCreateDraft(customerId)
 
   return pb.collection("trade_ins").create<TradeInRecord>({
-    number: draftNumber(),
     customer: customerId,
     channel: "counter",
     status: "draft",
@@ -318,9 +314,11 @@ export async function getReceipt(tradeInId: string): Promise<ReceiptPayload> {
   })
 }
 
-export async function emailReceipt(tradeInId: string): Promise<{ sent: boolean }> {
+export async function emailReceipt(
+  tradeInId: string
+): Promise<ReceiptEmailResult> {
   if (isDemo()) return { sent: true }
-  return pb.send<{ sent: boolean }>(
+  return pb.send<ReceiptEmailResult>(
     `/api/vault/trade-ins/${tradeInId}/receipt/email`,
     { method: "POST" }
   )

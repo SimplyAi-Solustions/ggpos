@@ -40,7 +40,9 @@ export function QrCode({
 }) {
   const markup = React.useMemo(() => {
     try {
-      return toSVG({ bcid: "qrcode", text, scale: 3, eclevel: "M", padding: 0 })
+      // Scale 3 keeps the module grid sharp when the SVG is scaled to the
+      // millimetre box; error correction stays at BWIPP's default M.
+      return toSVG({ bcid: "qrcode", text, scale: 3, padding: 0 })
     } catch {
       return null
     }
