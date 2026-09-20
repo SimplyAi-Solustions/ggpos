@@ -45,6 +45,18 @@ var DEFAULT_TIMEOUT_SECONDS = 20;
  * @param {Function} [transport] - (req) => { statusCode, json, headers }
  * @returns {{statusCode:number, json:any, headers:object}}
  */
+/** The path only, never the query string - a key or token never belongs in a log line or an error message. */
+function stripQuery(url) {
+  var at = String(url).indexOf("?");
+  return at >= 0 ? url.slice(0, at) : url;
+}
+
+/** $os.getenv, or "" outside PocketBase (plain Node has no $os at all). */
+function transportMode() {
+  if (typeof $os === "undefined" || !$os || !$os.getenv) return "";
+  return $os.getenv("GG_ADAPTER_TRANSPORT_MODE") || "";
+}
+
 function request(req, transport) {
   var headers = { "User-Agent": USER_AGENT };
   var extra = req.headers || {};
@@ -59,48 +71,55 @@ function request(req, transport) {
     timeoutSeconds: req.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS,
   };
 
-  var send =
-    transport ||
-    (typeof globalThis !== "undefined" && globalThis.__adapterTransport
-      ? globalThis.__adapterTransport
-      : null);
+  if (transport) return transport(call);
 
-  if (!send) {
-    if (
-      typeof $os !== "undefined" &&
-      $os &&
-      $os.getenv &&
-      $os.getenv("GG_ADAPTER_TRANSPORT_MODE") === "offline_fail"
-    ) {
-      throw new Error(
-        "adapter transport disabled for tests (GG_ADAPTER_TRANSPORT_MODE=offline_fail): " +
-          "attempted " +
-          call.method +
-          " " +
-          call.url
-      );
-    }
-    if (typeof $http === "undefined") {
-      throw new Error(
-        "No transport available for " +
-          call.method +
-          " " +
-          call.url +
-          ": pass one explicitly, set globalThis.__adapterTransport, " +
-          "or run inside PocketBase where $http exists."
-      );
-    }
-    var res = $http.send({
-      url: call.url,
-      method: call.method,
-      headers: call.headers,
-      body: call.body,
-      timeout: call.timeoutSeconds,
-    });
-    return { statusCode: res.statusCode, json: res.json, headers: res.headers, body: res.body };
+  var mode = transportMode();
+  var noHttp = typeof $http === "undefined";
+
+  // globalThis.__adapterTransport is only ever honoured in a test-shaped
+  // environment - GG_ADAPTER_TRANSPORT_MODE set (pb/scripts/check.sh), or
+  // no $http binding at all (pb/scripts/check-adapters.mjs, plain Node) -
+  // never in an ordinary request, so a stray global could not silently
+  // hijack a real call even if goja's per-request isolation ever slipped.
+  if ((mode || noHttp) && typeof globalThis !== "undefined" && globalThis.__adapterTransport) {
+    return globalThis.__adapterTransport(call);
   }
 
-  return send(call);
+  if (mode === "fixture") {
+    var fixtures = require(__hooks + "/adapters/fixture_transport.js");
+    return fixtures.respond(call);
+  }
+
+  if (mode) {
+    throw new Error(
+      "adapter transport disabled for tests (GG_ADAPTER_TRANSPORT_MODE=" +
+        mode +
+        "): attempted " +
+        call.method +
+        " " +
+        stripQuery(call.url)
+    );
+  }
+
+  if (noHttp) {
+    throw new Error(
+      "No transport available for " +
+        call.method +
+        " " +
+        stripQuery(call.url) +
+        ": pass one explicitly, set globalThis.__adapterTransport, " +
+        "or run inside PocketBase where $http exists."
+    );
+  }
+
+  var res = $http.send({
+    url: call.url,
+    method: call.method,
+    headers: call.headers,
+    body: call.body,
+    timeout: call.timeoutSeconds,
+  });
+  return { statusCode: res.statusCode, json: res.json, headers: res.headers, body: res.body };
 }
 
 /** A small in-request pause, honouring a source's rate limit. No-op outside PocketBase. */
@@ -124,6 +143,7 @@ module.exports = {
   request: request,
   pause: pause,
   qs: qs,
+  stripQuery: stripQuery,
   USER_AGENT: USER_AGENT,
   DEFAULT_TIMEOUT_SECONDS: DEFAULT_TIMEOUT_SECONDS,
 };

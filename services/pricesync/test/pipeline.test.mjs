@@ -362,7 +362,7 @@ describe("pricesync pipeline", () => {
 
   test("writes correct source/currency/pence for both Cardmarket and TCGCSV, maps mid/market/trend, updates same-day rows instead of duplicating, and merges cards.prices", async () => {
     const db = buildDb();
-    const { server, capturedBatches } = createFakeServer({
+    const { server, capturedBatches, violations } = createFakeServer({
       db,
       cachedFiles: {
         "/priceguide/price_guide_6.json": { body: CARDMARKET_FIXTURE, etag: `"cm-6-v1"` },
@@ -479,7 +479,7 @@ describe("pricesync pipeline", () => {
       // Every request this run made: an identifiable User-Agent, an
       // Authorization header on every PocketBase call, and every money
       // field in every write staying an integer.
-      assert.deepEqual(server.violations ?? [], []);
+      assert.deepEqual(violations, []);
     } finally {
       server.close();
     }
