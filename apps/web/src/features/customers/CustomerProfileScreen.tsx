@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useStaff } from "@/lib/auth"
 import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
+import { GuildSection } from "@/features/customers/GuildSection"
 import { movedSentence } from "@/features/customers/merge-words"
 import { IdPhotoSheet } from "@/features/customers/IdPhotoSheet"
 import {
@@ -478,6 +479,14 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
           </ul>
         )}
       </div>
+
+      {/* ---- Guild ------------------------------------------------------ */}
+      <GuildSection
+        customerId={customerId}
+        customerName={customer.name}
+        customerCode={customer.code}
+        pointsBalance={priv?.points_balance ?? 0}
+      />
 
       {/* ---- Notes and flags -------------------------------------------- */}
       <div className="mt-24">
