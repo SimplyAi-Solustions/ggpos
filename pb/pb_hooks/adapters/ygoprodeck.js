@@ -63,31 +63,56 @@ function normalize(raw, printing) {
   };
 }
 
+/**
+ * One row per *printing* (a passcode can have dozens, each in its own
+ * set), not one row per card: a card has no set code of its own in
+ * YGOPRODeck's shape, only its printings do (`card_sets[]`), and writing a
+ * row through with a blank `setCode` fails `card_sets`'s required
+ * validation with a generic 400. `number` is deliberately the full
+ * printing code ("CT13-EN003"), not just the suffix, so each row a search
+ * returns stays distinct and directly recognisable; `setCode` is that same
+ * code's own prefix, up to its last hyphen. A printing whose own code has
+ * no hyphen to split on is skipped (nothing to key a set on), same as
+ * tcgdex.js's search() below.
+ */
 function search(query, transport) {
   var res = get(BASE_URL + "/cardinfo.php?fname=" + encodeURIComponent(query), transport);
   if (res.statusCode !== 200 || !res.json || !Array.isArray(res.json.data)) return [];
-  return res.json.data.map(function (raw) {
+  var rows = [];
+  for (var i = 0; i < res.json.data.length; i++) {
+    var raw = res.json.data[i];
     var images = raw.card_images && raw.card_images[0] ? raw.card_images[0] : {};
-    return {
-      number: String(raw.id),
-      name: raw.name,
-      rarity: "",
-      type: raw.type || "",
-      finishesAvailable: [],
-      setCode: "",
-      setName: "",
-      // Search is a lightweight discovery listing: a hotlink-banned image is
-      // never written to `cards`, so it is left out here rather than risking
-      // it reaching a screen before an exact lookup re-hosts it properly.
-      imageSmall: "",
-      imageLarge: "",
-      rehostImage: true,
-      imageUrlForRehost: images.image_url || "",
-      tcgplayerId: "",
-      cardmarketId: "",
-      externalIds: { ygoprodeck: String(raw.id) },
-    };
-  });
+    var sets = raw.card_sets || [];
+    for (var j = 0; j < sets.length; j++) {
+      var printingCode = sets[j].set_code || "";
+      var dash = printingCode.lastIndexOf("-");
+      if (dash < 0) {
+        console.log("[ygoprodeck] search: skipping a printing with no hyphen in its set code: " + printingCode);
+        continue;
+      }
+      rows.push({
+        number: printingCode,
+        name: raw.name,
+        rarity: sets[j].set_rarity || "",
+        type: raw.type || "",
+        finishesAvailable: [],
+        setCode: printingCode.slice(0, dash),
+        setName: sets[j].set_name || "",
+        // Search is a lightweight discovery listing: a hotlink-banned image
+        // is never written to `cards`, so it is left out here rather than
+        // risking it reaching a screen before an exact lookup re-hosts it
+        // properly.
+        imageSmall: "",
+        imageLarge: "",
+        rehostImage: true,
+        imageUrlForRehost: images.image_url || "",
+        tcgplayerId: "",
+        cardmarketId: "",
+        externalIds: { ygoprodeck: String(raw.id) },
+      });
+    }
+  }
+  return rows;
 }
 
 /** `set` + `number` are the two halves of a set code, e.g. "CT13" + "EN003". */

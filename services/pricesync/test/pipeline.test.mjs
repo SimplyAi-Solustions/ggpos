@@ -84,11 +84,50 @@ function sendJson(res, status, body) {
  * before calling run(). `cachedFiles` maps a served path to
  * `{ body, etag }`; a matching If-None-Match gets a 304, and every
  * request (full or 304) is counted in `requestCounts`. */
+// price_snapshots/cards.prices fields that must always be integer pence
+// or integer native-currency minor units - never a float. fx_rate is
+// deliberately excluded: it is a rate, not money (see the schema comment
+// in pb/pb_migrations/1789819260_catalogue_collections.js), and decimals
+// are expected there.
+const MONEY_INTEGER_FIELDS = ["native_low", "native_mid", "native_market", "native_trend", "gbp_market"];
+
+function checkMoneyFieldsAreIntegers(body, context, violations) {
+  if (!body || typeof body !== "object") return;
+  for (const key of MONEY_INTEGER_FIELDS) {
+    if (key in body && !Number.isInteger(body[key])) {
+      violations.push(`${context}: expected ${key} to be an integer, got ${JSON.stringify(body[key])}`);
+    }
+  }
+  if (body.prices && typeof body.prices === "object") {
+    for (const [source, entry] of Object.entries(body.prices)) {
+      if (entry && typeof entry === "object") {
+        for (const key of MONEY_INTEGER_FIELDS) {
+          if (key in entry && !Number.isInteger(entry[key])) {
+            violations.push(`${context}: cards.prices.${source}.${key} should be an integer, got ${JSON.stringify(entry[key])}`);
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * `violations` collects header/body-shape problems (User-Agent missing,
+ * Authorization missing on a write, a money field that is not an
+ * integer) as plain strings rather than throwing from inside the HTTP
+ * handler - an exception thrown from an async request listener does not
+ * reliably fail the right test or leave a clean error, whereas asserting
+ * `violations.length === 0` after run() completes does. Every one of
+ * this suite's tests can inspect this even if only the main happy-path
+ * test currently asserts on it.
+ */
 function createFakeServer({ db, cachedFiles }) {
   let nextId = 1;
   const genId = () => `rec${String(nextId++).padStart(6, "0")}`;
   const capturedBatches = [];
   const requestCounts = new Map(); // path -> { full, notModified }
+  const violations = [];
+  const AUTH_TOKEN = "test-superuser-token";
 
   function countRequest(pathname, kind) {
     const entry = requestCounts.get(pathname) || { full: 0, notModified: 0 };
@@ -97,6 +136,7 @@ function createFakeServer({ db, cachedFiles }) {
   }
 
   function handleOneBatchRequest(r) {
+    checkMoneyFieldsAreIntegers(r.body, `${r.method} ${r.url}`, violations);
     const m = r.url.match(/^\/api\/collections\/([\w]+)\/records(?:\/([\w-]+))?$/);
     if (!m) return { status: 404, body: { message: "not found" } };
     const [, collection, id] = m;
@@ -118,7 +158,12 @@ function createFakeServer({ db, cachedFiles }) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
 
+    if (!req.headers["user-agent"] || !req.headers["user-agent"].includes("GGVault-pricesync")) {
+      violations.push(`missing or unexpected User-Agent on ${req.method} ${url.pathname}: ${JSON.stringify(req.headers["user-agent"])}`);
+    }
+
     // --- cached file hosts (Cardmarket, TCGCSV) ---------------------------
+    // Not PocketBase - no Authorization expected here.
     if (cachedFiles[url.pathname]) {
       const { body, etag } = cachedFiles[url.pathname];
       if (req.headers["if-none-match"] === etag) {
@@ -132,9 +177,15 @@ function createFakeServer({ db, cachedFiles }) {
     }
 
     // --- PocketBase auth ---------------------------------------------------
+    // The one PocketBase call that has no token to send yet.
     if (req.method === "POST" && url.pathname === "/api/collections/_superusers/auth-with-password") {
       await readBody(req);
-      return sendJson(res, 200, { token: "test-superuser-token", record: { id: "su1" } });
+      return sendJson(res, 200, { token: AUTH_TOKEN, record: { id: "su1" } });
+    }
+
+    // Every other PocketBase call in this service is authenticated.
+    if (req.headers.authorization !== AUTH_TOKEN) {
+      violations.push(`missing or wrong Authorization on ${req.method} ${url.pathname}: ${JSON.stringify(req.headers.authorization)}`);
     }
 
     // --- PocketBase settings (batch API) ------------------------------------
@@ -148,6 +199,14 @@ function createFakeServer({ db, cachedFiles }) {
       capturedBatches.push(body.requests);
       const results = body.requests.map(handleOneBatchRequest);
       return sendJson(res, 200, results);
+    }
+
+    // --- PocketBase direct record write (the individual-write fallback path) -
+    const recordMatch = url.pathname.match(/^\/api\/collections\/([\w]+)\/records(?:\/([\w-]+))?$/);
+    if ((req.method === "POST" || req.method === "PATCH") && recordMatch) {
+      const body = await readBody(req);
+      const result = handleOneBatchRequest({ method: req.method, url: url.pathname, body });
+      return sendJson(res, result.status, result.body);
     }
 
     // --- PocketBase generic collection listing --------------------------------
@@ -169,7 +228,7 @@ function createFakeServer({ db, cachedFiles }) {
     res.end(JSON.stringify({ message: `fake server: no route for ${req.method} ${url.pathname}` }));
   });
 
-  return { server, capturedBatches, requestCounts, db };
+  return { server, capturedBatches, requestCounts, db, violations };
 }
 
 function listenOnFreePort(server) {

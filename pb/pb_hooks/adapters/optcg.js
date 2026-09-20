@@ -37,13 +37,21 @@ function pickVariant(rows, finish) {
 }
 
 function normalize(row) {
+  // The card's own code prefix ("OP01-001" gives "OP01"), not `set_id`
+  // ("OP-01" - a differently punctuated value from the /allSets/ endpoint):
+  // getBySetNumber() reconstructs "OP01-001" from set + number, so a
+  // card_sets row keyed on "OP-01" could never be found by a later lookup
+  // that resolves the set from the card's own code.
+  var code = row.card_set_id || "";
+  var dash = code.lastIndexOf("-");
+  var setCodeFromCard = dash >= 0 ? code.slice(0, dash) : row.set_id || "";
   return {
-    number: row.card_set_id,
+    number: code,
     name: (row.card_name || "").replace(/\s*\(Parallel\)\s*$/i, ""),
     rarity: row.rarity || "",
     type: row.card_type || "",
     finishesAvailable: isParallel(row) ? ["parallel"] : ["normal"],
-    setCode: row.set_id || "",
+    setCode: setCodeFromCard,
     setName: row.set_name || "",
     imageSmall: "",
     imageLarge: "",
@@ -63,15 +71,20 @@ function fetchByCode(code, transport) {
   return res.json;
 }
 
+/** lookup.pb.js recognises this exact message and turns it into a 422 rather than a generic empty 200. */
+var NEEDS_CODE_MESSAGE = "One Piece search needs a card code, for example OP01-001.";
+
 function search(query, transport) {
   // OPTCG API has no free-text search endpoint; a query already shaped
   // like a card code ("OP01-001") is looked up directly, exactly like
-  // getBySetNumber. Anything else returns no results here - registry.js
-  // routes a plain name query to a game whose adapter can actually search
-  // it, so this only ever sees a code-shaped query in practice.
+  // getBySetNumber. A name-shaped query has no code-search to run at all,
+  // so it is a 422, not a silent empty result staff would read as "no such
+  // card" - registry.js already routes a plain name query away from a game
+  // whose adapter cannot search it, so this is a defence for a query that
+  // reaches here anyway.
   var code = (query || "").trim().toUpperCase();
   var dash = code.lastIndexOf("-");
-  if (dash < 0) return [];
+  if (dash < 0) throw new Error(NEEDS_CODE_MESSAGE);
   var rows = fetchByCode(code, transport);
   return rows.map(normalize);
 }
@@ -145,4 +158,5 @@ module.exports = {
   getImage: getImage,
   getPrices: getPrices,
   listSets: listSets,
+  NEEDS_CODE_MESSAGE: NEEDS_CODE_MESSAGE,
 };
