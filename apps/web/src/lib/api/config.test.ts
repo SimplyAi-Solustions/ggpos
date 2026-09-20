@@ -33,10 +33,13 @@ describe("the counter's configuration", () => {
   it("carries the programme and the tiers the points preview needs", async () => {
     const config = await getCounterConfig()
     expect(config.loyalty.programme.earnPerPoundSales).toBe(10)
+    // The ladder, then the one paid plan: a membership pins "Guild Pass"
+    // rather than any number of points earning it.
     expect(config.loyalty.tiers.map((tier) => tier.name)).toEqual([
       "Member",
       "Regular",
       "Legend",
+      "Guild Pass",
     ])
   })
 

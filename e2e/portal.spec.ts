@@ -263,22 +263,27 @@ test.describe("the Guild", () => {
     await page.getByRole("link", { name: "Guild", exact: true }).click()
     await expect(page.getByRole("heading", { name: "GG Guild" })).toBeVisible()
 
-    await expect(page.getByTestId("guild-tier")).toHaveText("Regular")
+    // The paid plan pins the tier, so the badge is the plan's own and not
+    // the one the points earned.
+    await expect(page.getByTestId("guild-tier")).toHaveText("Guild Pass")
     await expect(page.getByTestId("guild-progress")).toHaveText(
       "5,920 points to Legend"
     )
     await expect(page.getByTestId("guild-membership")).toContainText(
-      "Regular membership. Renews on"
+      "Guild Pass membership. Renews on"
     )
     await expect(page.getByTestId("guild-balance")).toHaveText("2,180")
 
     // The wallet says each perk in words, and counts the monthly ones.
     const perks = page.getByTestId("perk-list")
-    await expect(perks).toContainText("5% off sealed product")
-    await expect(perks).toContainText("1.25x points")
+    await expect(perks).toContainText("10% off sealed product")
+    await expect(perks).toContainText("1.5x points")
     await expect(perks).toContainText("Free event entries")
     await expect(perks).toContainText("1 of 2 used this month")
+    await expect(perks).toContainText("Lounge hours")
     await expect(perks).toContainText("3 of 12 used this month")
+    await expect(perks).toContainText("Priority booking on new releases")
+    await expect(perks).toContainText("Member prices at events")
 
     await expect(page.getByTestId("referral-code")).toHaveText(DEMO_CUSTOMER_CODE)
     await expect(
@@ -386,6 +391,27 @@ test.describe("rewards", () => {
     await page.getByRole("link", { name: "Back to rewards" }).click()
     await expect(page.getByTestId("rewards-points")).toHaveText("1,680")
     await expect(page.getByTestId("voucher-row")).toHaveCount(4)
+  })
+
+  test("says so when the last one goes before the press lands", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page.getByTestId("reward-row").filter({ hasText: "Shop playmat" }).click()
+
+    // The catalogue offered it, so the button is there and says the cost.
+    await primary(page, "Redeem for 1,500 points").click()
+    const confirm = page.getByRole("dialog", { name: "Redeem this reward" })
+    await confirm.getByRole("button", { name: "Redeem", exact: true }).click()
+
+    // The server's refusal lands in the sheet, in its own words, and no
+    // voucher takes its place.
+    await expect(confirm).toContainText("That one has gone. Pick another reward.")
+    await expect(page.getByRole("dialog", { name: "Your voucher" })).toHaveCount(0)
+
+    // Nothing was spent: the balance is where it was.
+    await confirm.getByRole("button", { name: "Cancel" }).click()
+    await page.getByRole("link", { name: "Back to rewards" }).click()
+    await expect(page.getByTestId("rewards-points")).toHaveText("2,180")
   })
 
   test("puts store credit on the account instead of a code", async ({ page }) => {

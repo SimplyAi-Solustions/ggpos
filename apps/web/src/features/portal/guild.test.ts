@@ -330,6 +330,7 @@ function voucher(over: Partial<PortalVoucher> = {}): PortalVoucher {
     reward: { name: "Free booster pack", type: "free_item", value: 0 },
     status: "issued",
     expires_at: "2026-12-20T12:00:00Z",
+    created: "2026-09-11T12:00:00Z",
     ...over,
   }
 }

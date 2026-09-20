@@ -790,11 +790,23 @@ export const demoNotifications: DemoNotification[] = [
     id: "note_demo_5",
     customer: DEMO_PORTAL_CUSTOMER_ID,
     type: "tier_up",
+    // Earned on points, and before the plan below: a paid plan pins the
+    // tier, so a promotion notice while one runs would say nothing.
     title: "You are now a Regular",
     body: "Your points over the last twelve months moved you up a tier. Your perks are on the Guild page.",
     link: "/account/guild",
-    read_at: daysAgo(20),
-    created: daysAgo(21),
+    read_at: daysAgo(69),
+    created: daysAgo(70),
+  },
+  {
+    id: "note_demo_9",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "membership_started",
+    title: "Your Guild Pass has started",
+    body: "It runs for six months. The renewal date and what it is worth are on the Guild page.",
+    link: "/account/guild",
+    read_at: daysAgo(29),
+    created: daysAgo(30),
   },
   {
     id: "note_demo_6",
@@ -826,10 +838,10 @@ export const demoNotifications: DemoNotification[] = [
     read_at: daysAgo(209),
     created: daysAgo(210),
   },
-  // `points_expired`, `membership_started` and `membership_lapsed` are the
-  // three Guild types the demo card cannot carry without contradicting its
-  // own figures: nothing has expired off this ledger, and the plan on the
-  // Guild screen is live. The link normaliser treats all eight alike, and
+  // `points_expired` and `membership_lapsed` are the two Guild types the
+  // demo card cannot carry without contradicting its own figures: nothing
+  // has expired off this ledger, and the plan on the Guild screen is live.
+  // The link normaliser treats all eight alike, and
   // `notification-link.test.ts` covers the three destinations.
   {
     id: "note_demo_3",
