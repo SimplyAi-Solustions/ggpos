@@ -245,6 +245,11 @@ export interface CustomerProfile {
    * printing a record id at somebody.
    */
   verifiedByName: string | null
+  /**
+   * The tier's name, resolved from the `tier` relation, or null when the
+   * customer has none yet. Screens print this, never the relation id.
+   */
+  tierName: string | null
 }
 
 export interface NewCustomerInput {
@@ -1587,6 +1592,13 @@ export interface VaultMe {
    * reviewing, offered, accepted or received; `want_list` is open or matched.
    */
   counts: { trade_ins: number; open_quotes: number; want_list: number }
+  /**
+   * The public half of the shop's VAPID pair, or an empty key when push has
+   * not been set up. It rides on `/me` rather than on `GET /api/vault/config`,
+   * which is staff-only: a customer token asking for the config gets a 403,
+   * and push could never be turned on from the portal at all.
+   */
+  push?: PushConfig
 }
 
 /** The body of `PATCH /api/vault/me`. The email is the sign-in identity. */

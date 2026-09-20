@@ -267,7 +267,18 @@ export function demoGetCustomer(idOrCode: string): CustomerProfile | null {
     lastVisit: demoLastVisit.get(entry.customer.id) ?? null,
     duplicates: demoDuplicatesFor(entry),
     verifiedByName: entry.private.id_verified_by ? "Demo Counter" : null,
+    tierName: DEMO_TIER_NAMES[entry.private.tier ?? ""] ?? null,
   }
+}
+
+/**
+ * The names behind the demo tier ids, kept here rather than read from
+ * `store.ts`'s `DEMO_TIERS` because that module already imports this one.
+ */
+const DEMO_TIER_NAMES: Record<string, string> = {
+  tier_member: "Member",
+  tier_regular: "Regular",
+  tier_legend: "Legend",
 }
 
 export function demoCreateCustomer(input: NewCustomerInput): CustomerRecord {

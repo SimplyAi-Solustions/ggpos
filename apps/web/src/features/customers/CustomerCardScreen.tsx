@@ -61,7 +61,7 @@ export function CustomerCardScreen({ code }: { code: string }) {
   }
 
   const { customer } = profile
-  const tier = profile.private?.tier || "Member"
+  const tier = profile.tierName ?? "Member"
 
   return (
     <section className="pt-16 sm:pt-24">

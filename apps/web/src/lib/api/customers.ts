@@ -40,14 +40,18 @@ import { escapeFilter } from "@/lib/api/filter"
 /** At least this many characters before a phone or code is worth matching. */
 const MIN_PARTIAL = 3
 
-async function privateOne(
-  customerId: string
-): Promise<CustomerPrivateRecord | null> {
+/** `customer_private` with its tier expanded, the way the profile reads it. */
+type PrivateWithTier = CustomerPrivateRecord & {
+  expand?: { tier?: { id: string; name?: string } }
+}
+
+async function privateOne(customerId: string): Promise<PrivateWithTier | null> {
   try {
     return await pb
       .collection("customer_private")
-      .getFirstListItem<CustomerPrivateRecord>(
-        `customer = "${escapeFilter(customerId)}"`
+      .getFirstListItem<PrivateWithTier>(
+        `customer = "${escapeFilter(customerId)}"`,
+        { expand: "tier" }
       )
   } catch (error) {
     if (isNotFound(error)) return null
@@ -201,6 +205,7 @@ export async function getCustomer(idOrCode: string): Promise<CustomerProfile | n
     lastVisit,
     duplicates,
     verifiedByName: await staffName(priv?.id_verified_by),
+    tierName: priv?.expand?.tier?.name ?? null,
   }
 }
 

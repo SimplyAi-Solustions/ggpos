@@ -291,7 +291,7 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         <span className="tnum font-mono text-[13px] text-muted-foreground">
           {displayCode(customer.code)}
         </span>
-        <Badge variant="volt">{priv?.tier ? priv.tier : "Member"}</Badge>
+        <Badge variant="volt">{profile.tierName ?? "Member"}</Badge>
         {flags.map((flag) => (
           <Badge key={flag} variant="outline">
             {FLAG_LABEL[flag]}
