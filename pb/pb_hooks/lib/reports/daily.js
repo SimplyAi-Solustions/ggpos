@@ -33,11 +33,17 @@ function buildDayRow(app, dateStr) {
   // payment across methods). "none" is its own bucket so that revenue is
   // never dropped or folded into a bucket that would misstate how it was
   // actually paid; totals.revenue still sums every bucket, "none" included.
+  // sales.occurred_at (not created) is the sale's own date: created is
+  // when the database row was written, which for an eBay order import is
+  // whenever the import ran, not the day the order was actually placed.
+  // occurred_at is backfilled to created for rows from before it existed,
+  // set to now for an ordinary counter sale, and set to the order's own
+  // date by the eBay orders import - every sales figure below reads it.
   var sales = [];
   try {
     sales = app.findRecordsByFilter(
       "sales",
-      "created >= {:start} && created <= {:end}",
+      "occurred_at >= {:start} && occurred_at <= {:end}",
       "",
       0,
       0,
@@ -93,11 +99,13 @@ function buildDayRow(app, dateStr) {
   }
 
   // --- Items out: units sold that day, net of every refund since ----------
+  // A line "belongs" to the day its sale occurred (sales.occurred_at,
+  // reached here through the relation), not the day the row was written.
   var saleLines = [];
   try {
     saleLines = app.findRecordsByFilter(
       "sale_lines",
-      "created >= {:start} && created <= {:end}",
+      "sale.occurred_at >= {:start} && sale.occurred_at <= {:end}",
       "",
       0,
       0,

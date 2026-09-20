@@ -78,11 +78,17 @@ function build(app, util, params) {
   }
 
   // --- Items ended: were listed, are not any more, updated in range -------
+  //
+  // "Was on eBay" is (ebay_listing_id != '' || ebay_sku != ''), not
+  // ebay_listing_id alone: nothing in this backend ever writes
+  // ebay_listing_id (docs/PLAN.md's eBay round trip is only planned, not
+  // built), and a Card Uploader listing carries ebay_sku - the field
+  // items.pb.js and the exports package actually populate.
   var endedCount = 0;
   try {
     endedCount = app.findRecordsByFilter(
       "items",
-      "ebay_listing_id != '' && status != 'listed_ebay' && updated >= {:start} && updated <= {:end}",
+      "(ebay_listing_id != '' || ebay_sku != '') && status != 'listed_ebay' && updated >= {:start} && updated <= {:end}",
       "",
       0,
       0,
