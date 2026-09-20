@@ -172,7 +172,20 @@ async function duplicatesFor(customer: CustomerRecord): Promise<CustomerSummary[
 
 /** A customer by record id or by the GGC code printed on their card. */
 export async function getCustomer(idOrCode: string): Promise<CustomerProfile | null> {
-  if (isDemo()) return demoGetCustomer(idOrCode)
+  if (isDemo()) {
+    const profile = demoGetCustomer(idOrCode)
+    if (profile) {
+      // The server keeps `customer_private.tier` right after every points
+      // row and every membership change; the demo shop has no cron, so the
+      // tier is worked out as the profile is read and the header and the
+      // Guild block agree. Imported here rather than at the top of the file
+      // because that store reaches back into this barrel.
+      const guild = await import("@/lib/api/demo/loyalty")
+      guild.recomputeTier(profile.customer.id)
+      return demoGetCustomer(idOrCode)
+    }
+    return profile
+  }
 
   const needle = idOrCode.trim()
   let customer: CustomerRecord

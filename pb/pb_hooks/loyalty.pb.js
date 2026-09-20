@@ -9,10 +9,9 @@
  *   cron points_expire                    (03:40)
  *
  * Hooks registered here:
- *  - `customers` on create request: resolve a `referred_by` **code** into the
- *    customer it names, refusing one nobody holds or the customer's own.
- *  - `customers` after create: the welcome bonus, and the `pending`
- *    referrals row.
+ *  - `customers` on create: resolve a `referred_by` **code** into the
+ *    customer it names, refusing one nobody holds or the customer's own,
+ *    then write the welcome bonus and the `pending` referrals row.
  *  - `points_ledger` after create: re-evaluate the tier from the rolling
  *    window, and clear the points-expiry warning whenever points come in.
  *  - `memberships` after create and after update: re-evaluate the tier,
@@ -33,75 +32,63 @@
  */
 
 // ---------------------------------------------------------------------
-// customers on create request: referred_by is a customer CODE
+// customers, on create: the referral code, then the welcome bonus
 //
-// A *Request hook, not the plain onRecordCreate: a refusal thrown from the
-// model-level hook is reported to the caller as PocketBase's own generic
-// "Failed to create record." (confirmed against v0.40.4), and the whole
-// point of this one is to tell whoever typed the code that nobody holds
-// it. The same reason audit.pb.js gives for using the *Request variants.
+// One *Request hook doing both halves, either side of a single e.next():
 //
-// It therefore runs before customers.pb.js's own onRecordCreate has
-// assigned this record its `code`, so the "a customer cannot refer
-// themselves" check below compares the code only when the caller supplied
-// one themselves, and otherwise catches it by record id - which is the
-// only handle a caller has on a customer who does not exist yet.
+//  - Before it, `referred_by` is resolved. A GGC… code is what staff and
+//    the portal actually send, and the relation field itself only ever
+//    holds a record id, so it has to be turned into one before the record
+//    is validated and saved. It is a *Request hook and not the plain
+//    onRecordCreate because a refusal thrown from the model-level hook
+//    reaches the caller as PocketBase's own generic "Failed to create
+//    record." (confirmed against v0.40.4), and the whole point of this one
+//    is to tell whoever typed the code that nobody holds it.
+//  - After it, with the customer safely created, the welcome bonus and the
+//    pending referrals row go in. This is the same shape audit.pb.js uses
+//    for its own writes, and it is deliberately not an
+//    onRecordAfterCreateSuccess hook: a points_ledger row written from one
+//    of those does not reliably reach ledgers.pb.js's cached-balance hook
+//    or the tier re-evaluation below, and a customer would be left holding
+//    a welcome bonus their record showed no sign of (confirmed against
+//    v0.40.4, intermittently, which is worse than never). Written here the
+//    row is an ordinary ledger write and every hook that hangs off one
+//    fires exactly as it does for a correction typed in at the counter.
+//
+// The two writes are outside the customer's own transaction, so a
+// loyalty programme having a bad day can never stop a customer being
+// created: the failure is logged and the record stands. The nightly
+// tiers_recompute cron picks up anything that did not land.
 // ---------------------------------------------------------------------
 onRecordCreateRequest((e) => {
   const util = require(`${__hooks}/lib/vaultutil.js`);
   const referrals = require(`${__hooks}/lib/referrals.js`);
 
-  // The relation field itself only ever holds a record id, so a GGC… code
-  // has to be resolved before the record is validated and saved.
   const body = util.body(e);
   const raw = util.asStr(body.referred_by) || util.asStr(e.record.get("referred_by"));
-  if (!raw) {
-    e.next();
-    return;
+
+  if (raw) {
+    // Both handles a caller has on a record that is not saved yet: the id
+    // they chose for it, and a code they supplied with it. Neither can be
+    // looked up in the database at this point, so both are compared
+    // against the record in hand.
+    const ownCode = referrals.normalise(e.record.getString("code"));
+    const given = referrals.normalise(raw);
+    if (raw === e.record.id || (ownCode && given && ownCode === given)) {
+      throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
+    }
+
+    const referrer = referrals.resolve(e.app, raw);
+    if (!referrer) {
+      throw e.badRequestError(referrals.unknownCodeMessage(raw), null);
+    }
+    if (referrer.id === e.record.id) {
+      throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
+    }
+    e.record.set("referred_by", referrer.id);
   }
 
-  // Both handles a caller has on a record that is not saved yet: the id
-  // they chose for it, and a code they supplied with it. Neither can be
-  // looked up in the database at this point, so both are compared against
-  // the record in hand.
-  const ownCode = referrals.normalise(e.record.getString("code"));
-  const given = referrals.normalise(raw);
-  if (raw === e.record.id || (ownCode && given && ownCode === given)) {
-    throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
-  }
-
-  const referrer = referrals.resolve(e.app, raw);
-  if (!referrer) {
-    throw e.badRequestError(referrals.unknownCodeMessage(raw), null);
-  }
-  if (referrer.id === e.record.id) {
-    throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
-  }
-
-  e.record.set("referred_by", referrer.id);
   e.next();
-}, "customers");
-
-// ---------------------------------------------------------------------
-// customers after create: the welcome bonus and the pending referral
-//
-// Runs after customers.pb.js's own after-create hook, which is what
-// creates the paired customer_private row the ledger's cached balance is
-// written to. Both writes go through `e.app` rather than a transaction of
-// their own, the same way that hook writes customer_private and
-// ledgers.pb.js writes the cached balances: an after-create handler is
-// still inside the create's own transaction, and a runInTransaction opened
-// here is a separate one that cannot see any of it. Verified against
-// v0.40.4 - written that way the welcome row went in and customer_private
-// was not there to be found, leaving the customer with a cached balance of
-// 0 and no tier until their next points row repaired both.
-// ---------------------------------------------------------------------
-onRecordAfterCreateSuccess((e) => {
-  const util = require(`${__hooks}/lib/vaultutil.js`);
-  const referrals = require(`${__hooks}/lib/referrals.js`);
-  const balances = require(`${__hooks}/lib/balances.js`);
-  const tiers = require(`${__hooks}/lib/tiers.js`);
-  const notifyLib = require(`${__hooks}/lib/notify.js`);
 
   const customerId = e.record.id;
   const referrerId = e.record.getString("referred_by");
@@ -124,11 +111,8 @@ onRecordAfterCreateSuccess((e) => {
     alreadyWelcomed = false;
   }
 
-  const wantsBonus = programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed;
-  console.log(`[probe] welcome entry ${customerId}: enabled=${programme.enabled} bonus=${programme.welcomeBonus} already=${alreadyWelcomed}`);
-  let pending = [];
   try {
-    if (wantsBonus) {
+    if (programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed) {
       e.app.save(
         new Record(e.app.findCollectionByNameOrId("points_ledger"), {
           customer: customerId,
@@ -137,28 +121,11 @@ onRecordAfterCreateSuccess((e) => {
           ref: customerId,
         })
       );
-      // That row's own after-create hooks (ledgers.pb.js's cached
-      // balances, this file's tier re-evaluation below) do fire, but only
-      // once the whole create has completed - after the new customer has
-      // gone back to whoever asked for them. Doing both here as well means
-      // a customer created at the counter reads back with their bonus and
-      // their first tier already on them; both are recomputed from the
-      // ledger itself, so the later pass simply finds them right and
-      // changes nothing.
-      const seenRows = e.app.findRecordsByFilter("points_ledger", "customer = {:c}", "", 0, 0, { c: customerId }).length;
-      const b = balances.recompute(e.app, customerId);
-      const t = tiers.recompute(e.app, customerId);
-      console.log(`[probe] welcome ${customerId}: rows=${seenRows} points=${b.points} tier=${t.tier ? t.tier.name : "none"} changed=${t.changed}`);
-      pending = t.pending || [];
     }
     if (referrerId) referrals.createPending(e.app, referrerId, customerId);
   } catch (err) {
     console.log(`[loyalty] welcome bonus or referral failed for ${customerId}: ${err}`);
   }
-  // After the writes, never between them (lib/notify.js).
-  notifyLib.sendPending(e.app, pending);
-
-  e.next();
 }, "customers");
 
 // ---------------------------------------------------------------------
