@@ -4192,12 +4192,16 @@ P5_OFFER_EXPIRES="$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.offer_expir
 ok "a staff offer recomputes offer_total server-side from the lines (2800) and sets an expiry"
 
 # a non-integer or negative offer_price/market_price/qty is refused
-# outright, never rounded into shape (money is never a float once stored)
-P5_BAD_OFFER_STATUS="$(curl -s -o "$TMP_DIR/p5-bad-offer.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
+# outright, never rounded into shape (money is never a float once stored) -
+# a fresh, still-submitted quote, since P5_QUOTE_ID above already moved to
+# offered and a second offer on it would 409 before the lines are even
+# read.
+P5_BAD_OFFER_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+P5_BAD_OFFER_STATUS="$(curl -s -o "$TMP_DIR/p5-bad-offer.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_BAD_OFFER_QUOTE_ID/offer" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d '{"lines":[{"title":"Bad line","kind":"other","qty":1,"market_price":100,"offer_price":49.5}]}')"
 [ "$P5_BAD_OFFER_STATUS" = "400" ] || fail "an offer line with a non-integer offer_price returned $P5_BAD_OFFER_STATUS, expected 400: $(cat "$TMP_DIR/p5-bad-offer.json")"
-P5_BAD_OFFER_STATUS_2="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
+P5_BAD_OFFER_STATUS_2="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_BAD_OFFER_QUOTE_ID/offer" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d '{"lines":[{"title":"Bad line","kind":"other","qty":0,"market_price":100,"offer_price":50}]}')"
 [ "$P5_BAD_OFFER_STATUS_2" = "400" ] || fail "an offer line with qty 0 returned $P5_BAD_OFFER_STATUS_2, expected 400"
@@ -4240,10 +4244,19 @@ P5_RECEIVED_LINES="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPa
 [ "$(echo "$P5_RECEIVED_LINES" | jval "items.0.accepted")" = "true" ] || fail "a line copied from an accepted quote is not itself accepted"
 ok "quotes/:id/received creates a draft trade-in with the quote's lines"
 
-P5_QUOTE_LINE_WITH_CARD="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22%26%26card%3D%22$P5_CARD_A%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
-curl -s -o /dev/null -X PATCH "$BASE/api/collections/trade_in_lines/records/$P5_QUOTE_LINE_WITH_CARD" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"qty":1}'
-P5_OTHER_LINE_ID="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22%26%26card%3D%22%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
-curl -s -o /dev/null -X PATCH "$BASE/api/collections/trade_in_lines/records/$P5_OTHER_LINE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"kind":"other","game":"'"$GAME_ID"'"}'
+# Both lines already carry kind and game straight off /received - the
+# card line inferred (single, this card's own game), the free-text "Bulk
+# lot" line from what the offer itself set (fix round, finding 9: this
+# used to need a PATCH here to paper over both lines landing with neither
+# field set, which completion then refused with "no game set").
+P5_QUOTE_LINE_WITH_CARD_JSON="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22%26%26card%3D%22$P5_CARD_A%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_QUOTE_LINE_WITH_CARD_JSON" | jval "items.0.kind")" = "single" ] || fail "a card line from /received has kind '$(echo "$P5_QUOTE_LINE_WITH_CARD_JSON" | jval "items.0.kind")', expected single"
+[ -n "$(echo "$P5_QUOTE_LINE_WITH_CARD_JSON" | jval "items.0.game")" ] || fail "a card line from /received has no game set"
+P5_OTHER_LINE_JSON="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22%26%26card%3D%22%22" -H "Authorization: $STAFF_TOKEN")"
+P5_OTHER_LINE_ID="$(echo "$P5_OTHER_LINE_JSON" | jval "items.0.id")"
+[ "$(echo "$P5_OTHER_LINE_JSON" | jval "items.0.kind")" = "other" ] || fail "the free-text line from /received has kind '$(echo "$P5_OTHER_LINE_JSON" | jval "items.0.kind")', expected other"
+[ "$(echo "$P5_OTHER_LINE_JSON" | jval "items.0.game")" = "$GAME_ID" ] || fail "the free-text line from /received does not carry the game the offer itself set"
+ok "quotes/:id/received sets kind and game on every line, a card line inferred and a free-text line from the offer, with no manual fix-up"
 
 P5_COMPLETE_QUOTE_TRADE="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/trade-ins/$P5_RECEIVED_TRADE_ID/complete" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
