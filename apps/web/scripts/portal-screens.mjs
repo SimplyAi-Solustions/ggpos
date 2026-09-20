@@ -161,6 +161,25 @@ for (const mode of MODES) {
       await shoot(page, `portal-voucher-${mode}-${viewport.name}`)
       await context.close()
     }
+    // The refusal a redemption can still come back with: the catalogue
+    // offered the last playmat and it went before the press landed.
+    {
+      const { context, page } = await open(
+        mode,
+        viewport,
+        "/account/rewards/reward_playmat",
+        { signedIn: true }
+      )
+      await page
+        .getByRole("button", { name: "Redeem for 1,500 points" })
+        .filter({ visible: true })
+        .click()
+      const sheet = page.getByRole("dialog", { name: "Redeem this reward" })
+      await sheet.getByRole("button", { name: "Redeem", exact: true }).click()
+      await page.getByText("That one has gone").waitFor()
+      await shoot(page, `portal-redeem-refused-${mode}-${viewport.name}`)
+      await context.close()
+    }
     // The two sheets on the profile screen.
     for (const [name, button] of [
       ["privacy", "How we use your data"],
