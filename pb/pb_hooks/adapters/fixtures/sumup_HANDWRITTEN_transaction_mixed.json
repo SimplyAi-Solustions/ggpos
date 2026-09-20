@@ -1,0 +1,12 @@
+{
+  "id": "txn-mixed-0005",
+  "transaction_code": "TQABCDMIX5",
+  "amount": 12.88,
+  "currency": "GBP",
+  "status": "SUCCESSFUL",
+  "payment_type": "card",
+  "timestamp": "__NOW__",
+  "products": [
+    { "name": "Mixed payment sale", "quantity": 1, "unit_price": 12.88 }
+  ]
+}

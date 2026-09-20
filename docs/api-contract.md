@@ -432,11 +432,11 @@ One row per accepted `trade_in_lines` row (seller snapshot included) for every `
 
 `GET /api/vault/exports/end-listings.csv`
 
-Every `items` row with an `ebay_listing_id` whose `status` is `sold`, so those listings can be ended on eBay (there is no eBay write API in this build - Seller Hub or Card Uploader's own Managed Inventory ends the listing itself). Columns: docs/csv-formats.md, "End-listings export". Marks nothing; `POST /api/vault/items/end-listings` below is the one route that clears an item off this list.
+Every `items` row with an `ebay_listing_id` **or an `ebay_sku`** whose `status` is `sold`, so those listings can be ended on eBay (there is no eBay write API in this build - Seller Hub or Card Uploader's own Managed Inventory ends the listing itself). The `ebay_sku`-alone case matters in practice: nothing in this build writes `ebay_listing_id` at all yet, so a Card-Uploader-listed item (which only ever carries its `CS-XXXXXX` `ebay_sku`) that is then sold at the counter, rather than through the eBay orders import, would otherwise never appear here even though its listing still needs ending. Columns: docs/csv-formats.md, "End-listings export". Marks nothing; `POST /api/vault/items/end-listings` below is the one route that clears an item off this list.
 
 `POST /api/vault/items/end-listings`
 
-Request: `{ "ids": ["<item id>", ...] }`. In one transaction, clears `ebay_listing_id` and sets `ebay_sku` to `""` on each item that has an `ebay_listing_id` to clear; an id that does not exist, or has none, is silently skipped rather than failing the whole call. 400 with no `ids`.
+Request: `{ "ids": ["<item id>", ...] }`. In one transaction, clears `ebay_listing_id` and `ebay_sku` on each item that has either set; an id that does not exist, or has neither, is silently skipped rather than failing the whole call. 400 with no `ids`.
 
 Response 200: `{ "ended": ["<item id>", ...] }` - only the ids actually cleared.
 
