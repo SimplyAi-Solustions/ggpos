@@ -107,6 +107,38 @@ test.describe("the counter", () => {
     await expect(page.getByText("Label queued")).toBeVisible()
   })
 
+  test("resets quantity to one when kind changes away from a multi-quantity kind", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/counter/stock/new")
+
+    await page.getByRole("combobox", { name: "Kind" }).click()
+    await page.getByRole("option", { name: "Sealed product" }).click()
+    await page.getByLabel("Title").fill("Surging Sparks ETB")
+
+    await page.getByRole("button", { name: "One more" }).click()
+    await page.getByRole("button", { name: "One more" }).click()
+    await expect(page.getByLabel("Quantity")).toHaveValue("3")
+
+    await page.getByRole("combobox", { name: "Kind" }).click()
+    await page.getByRole("option", { name: "Card single" }).click()
+    await expect(page.getByLabel("Quantity")).toHaveValue("1")
+    await expect(page.getByLabel("Quantity")).toBeDisabled()
+
+    await page.getByLabel("Set and number").fill("sv151 199")
+    const option = page.getByRole("option", { name: /Charizard ex/ })
+    await expect(option).toBeVisible()
+    await option.click()
+
+    await page.getByRole("button", { name: "NM", exact: true }).click()
+    await page.getByLabel("Cost").fill("180")
+    await page.getByLabel("Price").fill("324.99")
+
+    await primary(page, "Save item").click()
+    await expect(page.getByRole("heading", { name: "Saved" })).toBeVisible()
+  })
+
   test("opens the palette and carries a card into Add stock", async ({ page }) => {
     await signIn(page)
 

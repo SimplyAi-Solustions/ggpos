@@ -38,7 +38,8 @@ import { useShortcuts } from "@/app/shortcuts"
 import { isScanField } from "@/app/focus-registry"
 import { createWedgeListener } from "@/lib/scanning/wedge"
 import { initials, logout, useStaff } from "@/lib/auth"
-import { isDemo } from "@/lib/api"
+import { isDemo, isServerUnreachable } from "@/lib/api"
+import { ServerUnreachable } from "@/app/server-unreachable"
 
 const NAV = [
   { to: "/counter/stock", label: "Stock" },
@@ -206,6 +207,12 @@ export function CounterShell() {
       root.style.removeProperty("--gg-dock-h")
     }
   }, [])
+
+  // A production build with no PocketBase behind it: nothing else on this
+  // shell can be trusted, so show only the paper state and nothing more.
+  if (isServerUnreachable()) {
+    return <ServerUnreachable />
+  }
 
   return (
     <CounterDockContext.Provider value={dockSlot}>

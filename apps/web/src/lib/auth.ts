@@ -31,15 +31,28 @@ function readDemoSession(): StaffRecord | null {
   }
 }
 
-function readLiveSession(): StaffRecord | null {
+/**
+ * Exported for its unit tests only; every other caller goes through
+ * `currentStaff` or `useStaff`.
+ */
+export function readLiveSession(): StaffRecord | null {
   const record = pb.authStore.record
   if (!record || !pb.authStore.isValid) return null
+  // The auth store is shared with the customer portal's token, which is a
+  // `customers` record; only `staff` may run the counter.
+  if (record.collectionName !== "staff") return null
+  if (record.active === false) {
+    // A deactivated member's cached token is worthless: drop it so the next
+    // read (and the `/counter` guard) treats them as signed out.
+    pb.authStore.clear()
+    return null
+  }
   return {
     id: record.id,
     email: String(record.email ?? ""),
     name: String(record.name ?? ""),
     role: record.role === "admin" ? "admin" : "staff",
-    active: record.active !== false,
+    active: true,
   }
 }
 

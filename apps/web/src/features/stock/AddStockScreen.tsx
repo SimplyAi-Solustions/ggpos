@@ -398,7 +398,17 @@ export function AddStockScreen({
                 render={({ field }) => (
                   <Select
                     value={field.value}
-                    onValueChange={(next) => next && field.onChange(next)}
+                    onValueChange={(next) => {
+                      if (!next) return
+                      field.onChange(next)
+                      // Singles, graded cards and retro are always one row:
+                      // land on one whenever the stepper is about to grey
+                      // out, so a quantity left over from sealed or an
+                      // accessory can never block the save.
+                      if (SINGLE_QTY_KINDS.has(next)) {
+                        setValue("qty", 1, { shouldValidate: formState.isSubmitted })
+                      }
+                    }}
                   >
                     <SelectTrigger id="stock-kind">
                       <SelectValue>

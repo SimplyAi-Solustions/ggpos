@@ -6,7 +6,7 @@ import type { CardHit } from "@/lib/api/types"
  * is a number within whatever set they last chose.
  */
 export interface CardQuery {
-  /** Set code, when a token looks like one ("sv151", "blb"). */
+  /** Set code, when a token looks like one and carries a digit ("sv151", "sv8"). */
   setCode?: string
   /** Collector number, when a token has digits ("199", "199/165", "0223"). */
   number?: string
@@ -34,8 +34,18 @@ export function parseCardQuery(raw: string): CardQuery {
     words.push(token)
   }
 
-  // A lone short word beside a number is a set code: "blb 223".
-  if (!query.setCode && query.number && words.length === 1 && SET_CODE.test(words[0]!)) {
+  // A lone word left beside a number still needs a digit to count as a set
+  // code, the same as the branch above requires. Without this, "pikachu 25"
+  // and "mew 151" resolved as a bogus set code ("pikachu", "mew") and
+  // returned nothing; now they fall through to a name search below, with the
+  // number kept as a collector-number filter.
+  if (
+    !query.setCode &&
+    query.number &&
+    words.length === 1 &&
+    SET_CODE.test(words[0]!) &&
+    /\d/.test(words[0]!)
+  ) {
     query.setCode = words[0]!.toLowerCase()
     words.length = 0
   }

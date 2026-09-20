@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Wordmark } from "@/components/ui/wordmark"
-import { DEMO_STAFF, isDemo, SignInError } from "@/lib/api"
+import { DEMO_STAFF, isDemo, isServerUnreachable, SignInError } from "@/lib/api"
 import { currentStaff, login } from "@/lib/auth"
+import { ServerUnreachable } from "@/app/server-unreachable"
 
 const searchSchema = z.object({
   /** Where the guard bounced them from, so sign-in puts them back. */
@@ -25,6 +26,12 @@ function SignIn() {
   const [password, setPassword] = React.useState(demo ? DEMO_STAFF.password : "")
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
+
+  // A production build with no PocketBase behind it: the sign-in form would
+  // only fail, so show the paper state instead of asking for a password.
+  if (isServerUnreachable()) {
+    return <ServerUnreachable />
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()

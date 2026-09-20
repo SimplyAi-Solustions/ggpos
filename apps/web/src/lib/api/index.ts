@@ -34,7 +34,7 @@ import type {
 } from "@/lib/api/types"
 
 export * from "@/lib/api/types"
-export { isDemo, resolveDataMode, setDataMode } from "@/lib/api/mode"
+export { isDemo, isServerUnreachable, resolveDataMode, setDataMode } from "@/lib/api/mode"
 export { parseCardQuery } from "@/lib/api/query"
 export { DEMO_STAFF, DEMO_SCAN_SKU } from "@/lib/api/fixtures"
 
@@ -268,8 +268,18 @@ export async function login(email: string, password: string): Promise<StaffRecor
       .authWithPassword<StaffRecord>(email.trim(), password)
     return result.record
   } catch (error) {
-    if (error instanceof ClientResponseError && error.status === 400) {
-      throw new SignInError("That email and password do not match a staff account.")
+    if (error instanceof ClientResponseError) {
+      const serverMessage = error.message?.trim()
+      // A plain wrong email or password is PocketBase's own generic 400,
+      // with nothing specific to say; anything else, including the 403 the
+      // server now sends for a deactivated account, is a deliberate refusal
+      // worth showing exactly as sent rather than guessing at it here.
+      const isGenericMismatch = error.status === 400 && !/inactive/i.test(serverMessage ?? "")
+      throw new SignInError(
+        isGenericMismatch || !serverMessage
+          ? "That email and password do not match a staff account."
+          : serverMessage
+      )
     }
     throw error
   }
