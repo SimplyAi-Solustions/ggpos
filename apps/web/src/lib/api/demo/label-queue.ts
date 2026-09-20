@@ -154,13 +154,16 @@ export function claim(
   return taken.map((job) => ({ ...job }))
 }
 
+/**
+ * The route leaves `items.label_printed_at` alone, as the print page does:
+ * nothing reads it, and a reprint is not news about the item.
+ */
 export function markPrinted(id: string): LabelJobStatus {
   const job = demoLabelJobs.find((row) => row.id === id)
   if (!job) return "printed"
   job.status = "printed"
   job.error = ""
-  const item = itemStore().find((row) => row.id === job.itemId)
-  if (item) item.label_printed_at = new Date().toISOString()
+  job.printer = ""
   emit()
   return job.status
 }
