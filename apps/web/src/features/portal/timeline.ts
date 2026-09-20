@@ -30,13 +30,30 @@ const PATH: { key: QuoteStatus; label: string }[] = [
 ]
 
 /** Statuses that stop the path instead of continuing it. */
-const STOPPED: Partial<Record<QuoteStatus, { after: QuoteStatus; label: string }>> = {
-  declined: { after: "offered", label: "Declined" },
-  expired: { after: "offered", label: "Expired" },
+const STOPPED: Partial<Record<QuoteStatus, { label: string }>> = {
+  declined: { label: "Closed" },
+  expired: { label: "Expired" },
 }
 
 function indexOf(status: QuoteStatus): number {
   return PATH.findIndex((step) => step.key === status)
+}
+
+/**
+ * How far the quote actually got before it stopped.
+ *
+ * A quote can be declined by the customer from an offer, or closed by the
+ * shop from `submitted` with a note and never priced at all. Assuming the
+ * offer step in both cases draws a history that did not happen, so the
+ * furthest point is read off the record: an `offer_total` (or an expiry) is
+ * the only proof an offer was ever made, and without one the path stops at
+ * "Being looked at".
+ */
+function reachedBefore(
+  quote: Pick<QuoteRecord, "offer_total" | "offer_expires_at">
+): number {
+  const offered = Boolean(quote.offer_total) || Boolean(quote.offer_expires_at)
+  return indexOf(offered ? "offered" : "reviewing")
 }
 
 export interface TimelineOptions {
@@ -54,7 +71,7 @@ export function quoteTimeline(
 ): TimelineStep[] {
   const formatDate = options.formatDate ?? ((iso: string) => iso.slice(0, 10))
   const stopped = STOPPED[quote.status]
-  const reached = stopped ? indexOf(stopped.after) : indexOf(quote.status)
+  const reached = stopped ? reachedBefore(quote) : indexOf(quote.status)
 
   const steps: TimelineStep[] = PATH.map((step, index) => {
     if (stopped) {
@@ -127,7 +144,7 @@ function currentDetail(
 }
 
 function stoppedDetail(
-  quote: Pick<QuoteRecord, "status" | "offer_expires_at">,
+  quote: Pick<QuoteRecord, "status" | "offer_total" | "offer_expires_at">,
   formatDate: (iso: string) => string
 ): string {
   if (quote.status === "expired") {
@@ -135,7 +152,11 @@ function stoppedDetail(
       ? `This offer expired on ${formatDate(quote.offer_expires_at)}. Ask for a new one.`
       : "This offer has run out. Ask for a new one."
   }
-  return "You turned this offer down. Send new photos any time."
+  // `declined` is written by the customer's own decline and by the shop's
+  // cancel route alike, and a customer reading "You turned this down" about
+  // a quote the shop closed has been told something that is not true. So it
+  // is worded for either: what happened, and what they can do next.
+  return "This quote was closed. Send new photos any time."
 }
 
 /** True when the customer still has to answer an offer. */

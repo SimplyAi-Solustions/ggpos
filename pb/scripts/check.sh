@@ -4301,7 +4301,7 @@ P5_WANT_LIST_BODY="$(echo "$P5_WANT_LIST_JSON" | head -n -1)"
 [ -z "$(echo "$P5_WANT_LIST_BODY" | jval "rows.0.hold")" ] || fail "an open want-list row's hold is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.0.hold")', expected null"
 [ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.id")" = "$P5_WANT_ID" ] || fail "GET /api/vault/want-list did not return the matched row second"
 [ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.price")" = "2500" ] || fail "a matched want-list row's hold.price is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.price")', expected 2500"
-[ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.title")" = "Phase 5 Card B" ] || fail "a matched want-list row's hold.title is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.title")', expected Phase 5 Card B"
+[ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.title")" = "Phase 5 Card B #7" ] || fail "a matched want-list row's hold.title is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.title")', expected Phase 5 Card B #7"
 [ -n "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.until")" ] || fail "a matched want-list row's hold has no until"
 ok "GET /api/vault/want-list returns the customer's own rows newest first, with hold set only on the matched row"
 

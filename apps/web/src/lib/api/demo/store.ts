@@ -220,6 +220,21 @@ function todayAt(hour: number, minute: number): string {
   return when.toISOString()
 }
 
+/**
+ * A few hours from now, but never past tonight.
+ *
+ * The demo hold has to be one that runs out *today* whatever time the demo
+ * is opened, so the counter shows a live hold at nine in the morning and at
+ * nine at night. A fixed hour would have already gone by for half the day.
+ */
+function laterToday(hoursFromNow: number): string {
+  const when = new Date()
+  when.setHours(when.getHours() + hoursFromNow, 0, 0, 0)
+  const tonight = new Date()
+  tonight.setHours(23, 55, 0, 0)
+  return (when > tonight ? tonight : when).toISOString()
+}
+
 function yesterdayAt(hour: number, minute: number): string {
   const when = new Date()
   when.setDate(when.getDate() - 1)
@@ -299,7 +314,7 @@ export function ensureSeeded() {
     price: 2299,
     status: "reserved",
     reserved_for: "cust_demo_2",
-    reserved_until: todayAt(17, 0),
+    reserved_until: laterToday(3),
     location: "loc_binder_b",
     source: "trade_in",
     created: yesterdayAt(16, 20),

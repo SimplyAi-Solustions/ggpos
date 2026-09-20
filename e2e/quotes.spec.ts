@@ -93,7 +93,7 @@ test.describe("one quote", () => {
 
     await expect(page.getByRole("heading", { name: "Quote" })).toBeVisible()
     await expect(page.getByTestId("quote-status")).toHaveText("New")
-    await expect(page.getByText("Tom Bradbury")).toBeVisible()
+    await expect(page.getByRole("link", { name: "Tom Bradbury" })).toBeVisible()
 
     // The photos, one at a time, with the counter under them.
     const photos = page.getByTestId("quote-photos")
@@ -212,16 +212,16 @@ test.describe("notification settings", () => {
     // A fresh shop is in test mode with no provider and no push key.
     await expect(page.getByText("Test mode", { exact: true })).toBeVisible()
     await expect(page.getByTestId("vapid-key")).toHaveText("Set at deploy")
-    await expect(page.getByLabel("Hold")).toHaveValue("48")
+    await expect(page.getByLabel("Hold", { exact: true })).toHaveValue("48")
     await expect(page.getByLabel("Quote expiry")).toHaveValue("7")
 
-    await page.getByLabel("Hold").fill("72")
+    await page.getByLabel("Hold", { exact: true }).fill("72")
     await expect(page.getByTestId("dirty-hint")).toBeVisible()
     await primary(page, "Save settings").click()
     await expect(page.getByTestId("settings-saved")).toBeVisible()
-    await expect(page.getByLabel("Hold")).toHaveValue("72")
+    await expect(page.getByLabel("Hold", { exact: true })).toHaveValue("72")
 
-    await page.getByLabel("Hold").fill("nought")
+    await page.getByLabel("Hold", { exact: true }).fill("nought")
     await primary(page, "Save settings").click()
     await expect(
       page.getByText("Enter the number of hours a hold lasts, for example 48.")

@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { Link } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { formatGBP } from "@gg/shared"
@@ -18,13 +19,18 @@ import {
 } from "@/components/ui/sheet"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { Chip, ChipGroup } from "@/components/ui/chip"
 import { answerQuote, getQuote, sendQuoteMessage } from "@/lib/api/quotes"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { usePortalDock } from "@/features/portal/dock"
+import { DROP_OFF_LABEL } from "@/features/portal/format"
+import { LoadFailed } from "@/features/portal/LoadFailed"
 import { formatDate, formatDateTime } from "@/features/portal/format"
 import { needsAnswer, quoteTimeline } from "@/features/portal/timeline"
 import { Note } from "@/features/portal/Note"
 import { SHEET_COLUMN } from "@/features/portal/sheet"
 import { Timeline } from "@/features/portal/Timeline"
+import type { QuoteDropOff } from "@/lib/api/types"
 
 const MAX_REPLY = 2000
 
@@ -36,27 +42,53 @@ const MAX_REPLY = 2000
  * shop then acts on and neither should happen on a mis-tap in a pocket.
  */
 export function QuoteDetailScreen({ id }: { id: string }) {
+  const dock = usePortalDock()
   const queryClient = useQueryClient()
   const [answering, setAnswering] = React.useState<"accept" | "decline" | null>(null)
   const [reply, setReply] = React.useState("")
+  const [dropOff, setDropOff] = React.useState<QuoteDropOff>("in_store")
   const [note, setNote] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
+  /** The sheet's own refusal, shown inside it rather than behind it. */
+  const [sheetError, setSheetError] = React.useState<string | null>(null)
 
-  const { data, isPending } = useQuery({
+  const { data, isPending, isError, error: readError, refetch } = useQuery({
     queryKey: ["portal", "quote", id],
     queryFn: () => getQuote(id),
   })
 
+  function closeAnswer() {
+    setAnswering(null)
+    setSheetError(null)
+    setReply("")
+  }
+
+  /** One way in, so the reply, the drop-off and the refusal all start clean. */
+  function openAnswer(choice: "accept" | "decline") {
+    setReply("")
+    setSheetError(null)
+    setDropOff(data?.quote.drop_off ?? "in_store")
+    setAnswering(choice)
+  }
+
   const answer = useMutation({
     mutationFn: (choice: "accept" | "decline") =>
-      answerQuote(id, choice, { reply: reply.trim() || undefined }),
+      answerQuote(id, choice, {
+        reply: reply.trim() || undefined,
+        // Only on an accept: declining a quote says nothing about how the
+        // items would have reached us.
+        dropOff: choice === "accept" ? dropOff : undefined,
+      }),
     onSuccess: async () => {
       setAnswering(null)
       setReply("")
+      setSheetError(null)
       await queryClient.invalidateQueries({ queryKey: ["portal"] })
     },
     onError: (cause) =>
-      setError(
+      // Inside the sheet, which still owns the screen: an expired offer's
+      // refusal is exactly what the person pressing the button needs to read.
+      setSheetError(
         refusalOrFallback(cause, "That did not go through. Try again in a moment.")
       ),
   })
@@ -72,6 +104,17 @@ export function QuoteDetailScreen({ id }: { id: string }) {
         refusalOrFallback(cause, "That message did not send. Try again in a moment.")
       ),
   })
+
+  if (isError) {
+    return (
+      <LoadFailed
+        title="Quote"
+        error={readError}
+        fallback="We could not read that quote just now. Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
+    )
+  }
 
   if (isPending) {
     return (
@@ -101,6 +144,12 @@ export function QuoteDetailScreen({ id }: { id: string }) {
   const { quote, messages, photos } = data
   const steps = quoteTimeline(quote, { formatDate })
   const open = needsAnswer(quote)
+
+  const accept = (
+    <Button type="button" trailingArrow onClick={() => openAnswer("accept")}>
+      Accept the offer
+    </Button>
+  )
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -163,13 +212,11 @@ export function QuoteDetailScreen({ id }: { id: string }) {
 
           {open ? (
             <div className="mt-10 flex flex-wrap items-center gap-8">
-              <Button type="button" trailingArrow onClick={() => setAnswering("accept")}>
-                Accept the offer
-              </Button>
+              <div className="hidden min-[900px]:block">{accept}</div>
               <Button
                 type="button"
                 variant="text-destructive"
-                onClick={() => setAnswering("decline")}
+                onClick={() => openAnswer("decline")}
               >
                 Decline
               </Button>
@@ -251,10 +298,19 @@ export function QuoteDetailScreen({ id }: { id: string }) {
         </Button>
       </div>
 
+      {open && dock
+        ? createPortal(
+            <div className="border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
+              {accept}
+            </div>,
+            dock
+          )
+        : null}
+
       <Sheet
         open={answering !== null}
         onOpenChange={(next) => {
-          if (!next) setAnswering(null)
+          if (!next) closeAnswer()
         }}
       >
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
@@ -265,10 +321,31 @@ export function QuoteDetailScreen({ id }: { id: string }) {
             <SheetDescription>
               {answering === "decline"
                 ? "We will close the quote. You can send new photos any time."
-                : `We will hold ${quote.offer_total ? formatGBP(quote.offer_total) : "the offer"} for you. Bring the items in and we will check them over.`}
+                : dropOff === "post"
+                  ? `We will hold ${quote.offer_total ? formatGBP(quote.offer_total) : "the offer"} for you and send you the address to post to. Send it tracked, at your own risk.`
+                  : `We will hold ${quote.offer_total ? formatGBP(quote.offer_total) : "the offer"} for you. Bring the items to the shop in Bolsover and we will check them over.`}
             </SheetDescription>
           </SheetHeader>
           <SheetBody className={SHEET_COLUMN}>
+            {answering === "accept" ? (
+              <div className="mb-10">
+                <MicroLabel className="mb-3">Drop off</MicroLabel>
+                <ChipGroup
+                  aria-label="How the items will reach us"
+                  value={[dropOff]}
+                  onValueChange={(next) => {
+                    if (next[0]) setDropOff(next[0] as QuoteDropOff)
+                  }}
+                >
+                  {(Object.keys(DROP_OFF_LABEL) as QuoteDropOff[]).map((option) => (
+                    <Chip key={option} value={option}>
+                      {DROP_OFF_LABEL[option]}
+                    </Chip>
+                  ))}
+                </ChipGroup>
+              </div>
+            ) : null}
+
             <Field layout="stacked" label="Anything to add" htmlFor="quote-reply">
               <Textarea
                 id="quote-reply"
@@ -279,6 +356,8 @@ export function QuoteDetailScreen({ id }: { id: string }) {
                 onChange={(event) => setReply(event.target.value)}
               />
             </Field>
+
+            {sheetError ? <FieldError className="mt-8">{sheetError}</FieldError> : null}
           </SheetBody>
           <SheetFooter className={SHEET_COLUMN}>
             <Button
@@ -289,7 +368,9 @@ export function QuoteDetailScreen({ id }: { id: string }) {
             >
               {answering === "decline" ? "Decline" : "Accept"}
             </Button>
-            <Button type="button" variant="text" onClick={() => setAnswering(null)}>
+            {/* Through the sheet's own close, so the reply and any refusal
+                reset with it rather than surviving into the next answer. */}
+            <Button type="button" variant="text" onClick={() => closeAnswer()}>
               Cancel
             </Button>
           </SheetFooter>
