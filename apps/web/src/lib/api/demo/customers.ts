@@ -1,4 +1,4 @@
-import { buildCode, formatGBP } from "@gg/shared"
+import { buildCode, formatGBP, normaliseCode } from "@gg/shared"
 
 import type {
   CreditLedgerRecord,
@@ -192,7 +192,9 @@ export const demoLastVisit = new Map<string, string>([
 ])
 
 export function findDemoCustomer(idOrCode: string): DemoCustomer | null {
-  const needle = idOrCode.trim().toUpperCase()
+  // `normaliseCode` applies Crockford's decode rules, so a code typed or
+  // scanned with an I, an L or an O finds the card it was printed from.
+  const needle = normaliseCode(idOrCode)
   return (
     demoCustomers.find(
       (entry) => entry.customer.id === idOrCode || entry.customer.code === needle
@@ -242,7 +244,7 @@ export function demoSearchCustomers(query: string): CustomerSummary[] {
 
   const needle = raw.toLowerCase()
   const digits = normalisePhone(raw)
-  const code = raw.toUpperCase().replace(/[-\s]/g, "")
+  const code = normaliseCode(raw)
 
   return demoCustomers
     .filter((entry) => {
