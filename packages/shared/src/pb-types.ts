@@ -373,6 +373,7 @@ export type DailyStatsRecord<Tbuy_in_total_by_payout = unknown, Tsales_total_by_
 export type FxRatesRecord<Tquotes = unknown> = {
 	base: string
 	created: IsoAutoDateString
+	date?: string
 	fetched_at: IsoDateString
 	id: string
 	quotes?: null | Tquotes
