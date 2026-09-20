@@ -108,7 +108,7 @@ Response 200: `{ "sale": { "id": "...", "status": "part_refunded" }, "refunded":
 ## Cash sessions
 
 - `POST /api/vault/cash-sessions/open` with `{ "float": 10000 }`: 409 when a session is already open. Returns the session.
-- `GET /api/vault/cash-sessions/current`: `{ "session": {...} | null, "expected": 0, "movements": [...] }` where `expected = float + cash sales + float_in - payouts - refunds - bank drops`.
+- `GET /api/vault/cash-sessions/current`: `{ "session": {...} | null, "expected": 0, "movements": [...] }`. `cash_movements.amount` is signed (cash sales and float_in positive; payouts, refunds and bank drops negative; adjustments carry their own sign), so `expected = float + sum(amount)`. `open` returns the same `{ session, expected, movements }` shape.
 - `POST /api/vault/cash-sessions/:id/close` with `{ "counted": 12345, "notes": "" }`: sets `expected`, `counted`, `variance = counted - expected`, `closed_by`, `closed_at`; a variance over `settings.cash_variance_alert` (pence) is audited. Returns the closed session.
 
 ## Labels
@@ -127,3 +127,16 @@ Label jobs are ordinary `label_jobs` rows (staff create rule). The print page is
 ## Demo mode
 
 The web app's `src/lib/api/` layer exposes the same functions for demo mode (in-memory fixtures) and live mode (these routes), so screens never branch on the mode.
+
+## Implementation notes (as built in Phase 2)
+
+Where the routes differ from the text above, the built behaviour is the truth and this list records it.
+
+- `POST /api/vault/step-up` returns 400 for a wrong password (403 is only for a missing or expired token on a protected route). The signing key is derived from the app settings and peppered with `GG_ID_PHOTO_KEY`.
+- `trade_ins.number` is optional with a partial unique index, so drafts can be created through the collection API; the number is assigned at completion.
+- `trade_in_lines` carry `kind`, `game` and `completeness` (items need a kind and a game, and sealed or accessory lines have no card to derive them from). The completion route still falls back to the linked card or retro title when they are empty.
+- Receipt JSON takes its terms from `settings.receipt_terms`; the signature is served through a short-lived PocketBase file token, never as a data URL. Email goes through PocketBase's own SMTP settings (`$app.newMailClient()`), so the admin UI's mail settings must be filled in; `settings.email` holds only the from name, from address, reply-to and `test_mode`.
+- Response supersets: `cash-sessions/close` adds `expected`, `variance` and `variance_alert`; `sales/:id/refund` adds `points_reversed`, `credit_balance` and `points_balance`.
+- A partial refund reduces `sale_lines.qty` (there is no refunded quantity column); a full-line refund sets `sale_lines.status = "refunded"`.
+- The retention cron purges expired `id_documents` (file included, audited by id) and notifications older than 12 months; quote photos are not purged yet because `quotes` has no closed-at timestamp (lands with the portal phase).
+- `GG_ID_PHOTO_KEY` (exactly 32 characters) is required in production; without it the ID check route refuses with 500 and photos cannot be stored.
