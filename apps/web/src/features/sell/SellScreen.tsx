@@ -56,6 +56,7 @@ import { useDisplayPublish } from "@/features/display/publish"
 import { getVoucherByCode } from "@/lib/api/loyalty"
 import {
   cancelCheckout,
+  checkoutFromRefusal,
   createCheckout,
   getCheckout,
   listReaders,
@@ -563,9 +564,15 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
     mutationFn: (id: string) => cancelCheckout(id),
     onSuccess: (checkout) => dispatchCardPayment({ type: "status", checkout }),
     onError: (error, id) => {
-      // SumUp refuses a cancel the customer beat by a second. The row is
-      // read again rather than trusted either way: money that has moved is
-      // never lost to a race.
+      // SumUp refuses a cancel the customer beat by a second, and the
+      // refusal carries the now-paid checkout with it, so the till carries
+      // straight on. Anything else is read again rather than assumed:
+      // money that has moved is never lost to a race.
+      const paid = checkoutFromRefusal(error)
+      if (paid) {
+        dispatchCardPayment({ type: "status", checkout: paid })
+        return
+      }
       void getCheckout(id)
         .then((checkout) => dispatchCardPayment({ type: "status", checkout }))
         .catch(() =>

@@ -9,6 +9,8 @@
  * the entry chunk, and this belongs to the Sell screen and the Settings
  * screen alone.
  */
+import { ClientResponseError } from "pocketbase"
+
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { noteNetworkSuccess } from "@/lib/offline/net"
@@ -124,6 +126,21 @@ export async function getCheckout(id: string): Promise<SumUpCheckout> {
   )
   noteNetworkSuccess()
   return toCheckout(result.checkout)
+}
+
+/**
+ * The checkout a refusal carries.
+ *
+ * `POST .../cancel` answers 409 with `{ message, checkout }` when the
+ * customer paid in the same second the cancel was pressed, and that
+ * checkout is the now-paid row, so the till carries straight on to
+ * completing the sale rather than asking again (docs/api-contract.md,
+ * "Phase 7").
+ */
+export function checkoutFromRefusal(error: unknown): SumUpCheckout | null {
+  if (!(error instanceof ClientResponseError)) return null
+  const body = error.response as { checkout?: Partial<SumUpCheckout> } | undefined
+  return body?.checkout ? toCheckout(body.checkout) : null
 }
 
 /**

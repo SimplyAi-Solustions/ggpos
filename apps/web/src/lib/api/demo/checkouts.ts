@@ -11,6 +11,8 @@
  * Nothing here is a record. It lives for the tab, like every other demo
  * store, and no money moves anywhere.
  */
+import { ClientResponseError } from "pocketbase"
+
 import { demoSaveSettings, demoSettings } from "@/lib/api/demo/settings"
 import type {
   CreateCheckoutInput,
@@ -188,7 +190,17 @@ export function cancelCheckout(id: string): SumUpCheckout {
   const row = checkouts.get(id)
   if (!row) throw new Error("That payment is no longer on the reader. Take it again.")
   if (row.status === "paid") {
-    throw new Error("The customer already paid. Complete the sale.")
+    // The shape the route answers with: the refusal carries the checkout
+    // that has just turned out to be paid.
+    throw new ClientResponseError({
+      status: 409,
+      response: {
+        code: 409,
+        message: "The customer already paid. Complete the sale.",
+        data: {},
+        checkout: { ...row },
+      },
+    })
   }
   const timer = timers.get(id)
   if (timer) {

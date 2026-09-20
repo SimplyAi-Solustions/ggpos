@@ -91,7 +91,7 @@ export function queueBatch(selector: LabelQueueSelector): LabelQueueResult {
     Boolean(selector.acquired_to)
   if (!anySelector) {
     throw new Error(
-      "Nothing was chosen to print. Give a buy-in number, a date range or some codes."
+      "Pick what to print: the items, a buy-in, a date range, a location, a kind or a game."
     )
   }
 
