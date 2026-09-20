@@ -29,35 +29,23 @@ export interface CustomerSearchSheetProps {
   description?: string
 }
 
-export function CustomerSearchSheet({
-  open,
-  onOpenChange,
-  onChoose,
-  title = "Attach customer",
-  description = "Search a name, a phone number or a card code.",
-}: CustomerSearchSheetProps) {
+/**
+ * The search itself. It lives inside `SheetContent`, which Base UI mounts
+ * only while the sheet is open, so the box is empty again every time it is
+ * opened without an effect reaching in to clear it.
+ */
+function CustomerSearch({ onChoose }: { onChoose: (customer: SaleCustomer) => void }) {
   const [query, setQuery] = React.useState("")
   const deferred = React.useDeferredValue(query)
 
   const { data = [], isFetching } = useQuery({
     queryKey: ["sale-customers", deferred],
     queryFn: () => findCustomersForSale(deferred),
-    enabled: open,
     staleTime: 10_000,
   })
 
-  React.useEffect(() => {
-    if (!open) setQuery("")
-  }, [open])
-
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
-        <SheetHeader>
-          <SheetTitle>{title}</SheetTitle>
-          <SheetDescription>{description}</SheetDescription>
-        </SheetHeader>
-        <SheetBody>
+    <SheetBody>
           <Input
             autoFocus
             value={query}
@@ -74,16 +62,16 @@ export function CustomerSearchSheet({
                 : "No customer matches that. Check the spelling, or sell without one."}
             </p>
           ) : (
-            <ul className="mt-8 border-t border-hairline-soft">
+            <ul className="mt-8">
               {data.map((customer) => (
-                <li key={customer.id} className="border-b border-hairline-soft">
+                <li
+                  key={customer.id}
+                  className="border-b border-hairline-soft first:border-t"
+                >
                   <button
                     type="button"
-                    onClick={() => {
-                      onChoose(customer)
-                      onOpenChange(false)
-                    }}
-                    className="flex min-h-14 w-full items-center gap-4 text-left transition-colors duration-150 ease-gg hover:bg-row-hover"
+                    onClick={() => onChoose(customer)}
+                    className="flex min-h-14 w-full items-center gap-4 py-3 text-left transition-colors duration-150 ease-gg hover:bg-row-hover"
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[15px] text-foreground">
@@ -104,7 +92,30 @@ export function CustomerSearchSheet({
               ))}
             </ul>
           )}
-        </SheetBody>
+    </SheetBody>
+  )
+}
+
+export function CustomerSearchSheet({
+  open,
+  onOpenChange,
+  onChoose,
+  title = "Attach customer",
+  description = "Search a name, a phone number or a card code.",
+}: CustomerSearchSheetProps) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
+        <SheetHeader>
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
+        </SheetHeader>
+        <CustomerSearch
+          onChoose={(customer) => {
+            onChoose(customer)
+            onOpenChange(false)
+          }}
+        />
       </SheetContent>
     </Sheet>
   )

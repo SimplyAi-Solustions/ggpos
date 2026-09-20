@@ -103,7 +103,13 @@ function Row({
 }
 
 function idBadge(status: IdStatus) {
-  return <Badge variant="outline">{ID_STATUS_LABEL[status]}</Badge>
+  // The testid sits on the wrapper: Badge renders through Base UI's
+  // useRender, which does not carry stray attributes onto the element.
+  return (
+    <span data-testid="id-status">
+      <Badge variant="outline">{ID_STATUS_LABEL[status]}</Badge>
+    </span>
+  )
 }
 
 export interface CustomerProfileScreenProps {

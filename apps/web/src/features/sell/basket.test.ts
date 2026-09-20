@@ -1,0 +1,367 @@
+import { describe, expect, it } from "vitest"
+
+import {
+  basketReducer,
+  checkPayment,
+  emptyBasket,
+  emptySplit,
+  perkFor,
+  pointsPreview,
+  summarise,
+  type BasketLine,
+  type BasketState,
+} from "@/features/sell/basket"
+import type { LoyaltySetup, RewardVoucher, SaleCustomer } from "@/lib/api/types"
+
+const PROGRAMME: LoyaltySetup["programme"] = {
+  enabled: true,
+  earnPerPoundSales: 10,
+  earnPerPoundTradeInCredit: 5,
+  pointsPerPoundRedemption: 100,
+  minRedeemPoints: 500,
+  maxPointsShareOfSale: 50,
+  expiryMonthsInactive: 18,
+  tierWindowMonths: 12,
+  welcomeBonus: 100,
+  referralBonusReferrer: 250,
+  referralBonusReferee: 250,
+}
+
+const SETUP: LoyaltySetup = {
+  programme: PROGRAMME,
+  rules: [],
+  tiers: [
+    {
+      id: "tier_legend",
+      name: "Legend",
+      thresholdPoints: 10000,
+      sort: 30,
+      perks: [
+        { type: "percent_off", value: 10, scope: ["single", "sealed"] },
+        { type: "points_multiplier", value: 1.5 },
+      ],
+      paidPlan: false,
+    },
+  ],
+}
+
+const LEGEND: SaleCustomer = {
+  id: "cust_1",
+  name: "Brock Harrison",
+  code: "GGC2X5N8W",
+  tierId: "tier_legend",
+  tierName: "Legend",
+  perks: SETUP.tiers[0]!.perks,
+  creditBalance: 4500,
+  pointsBalance: 11400,
+}
+
+function line(over: Partial<BasketLine> = {}): BasketLine {
+  return {
+    itemId: "item_1",
+    sku: "GGS7F3K2Q",
+    title: "Charizard ex",
+    detail: "SV151 199/165",
+    kind: "single",
+    condition: "NM",
+    platform: "tcg_card",
+    unitPrice: 32499,
+    listPrice: 32499,
+    qty: 1,
+    maxQty: 1,
+    game: "game_pokemon",
+    ...over,
+  }
+}
+
+const SEALED = line({
+  itemId: "item_2",
+  sku: "GGP5N2W8H",
+  title: "Surging Sparks ETB",
+  kind: "sealed",
+  unitPrice: 4995,
+  listPrice: 4995,
+  maxQty: 6,
+})
+
+function withLines(...lines: BasketLine[]): BasketState {
+  return lines.reduce(
+    (state, one) => basketReducer(state, { type: "add", line: one }),
+    emptyBasket()
+  )
+}
+
+describe("the basket reducer", () => {
+  it("adds a line", () => {
+    const state = withLines(line())
+    expect(state.lines).toHaveLength(1)
+    expect(state.lines[0]?.qty).toBe(1)
+  })
+
+  it("increments a multi-quantity line instead of repeating it", () => {
+    const state = basketReducer(withLines(SEALED), { type: "add", line: SEALED })
+    expect(state.lines).toHaveLength(1)
+    expect(state.lines[0]?.qty).toBe(2)
+  })
+
+  it("never takes a single past one, because a single is one row per unit", () => {
+    const once = withLines(line())
+    const twice = basketReducer(once, { type: "add", line: line() })
+    expect(twice.lines[0]?.qty).toBe(1)
+  })
+
+  it("stops at the quantity in stock", () => {
+    const state = basketReducer(withLines(SEALED), {
+      type: "setQty",
+      itemId: SEALED.itemId,
+      qty: 99,
+    })
+    expect(state.lines[0]?.qty).toBe(6)
+  })
+
+  it("removes a line, and a quantity of zero removes it too", () => {
+    const state = basketReducer(withLines(line(), SEALED), {
+      type: "remove",
+      itemId: "item_1",
+    })
+    expect(state.lines.map((row) => row.itemId)).toEqual(["item_2"])
+
+    const zeroed = basketReducer(state, {
+      type: "setQty",
+      itemId: "item_2",
+      qty: 0,
+    })
+    expect(zeroed.lines).toHaveLength(0)
+  })
+
+  it("overrides a unit price and keeps the ticket price beside it", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setUnitPrice",
+      itemId: "item_1",
+      unitPrice: 30000,
+    })
+    expect(state.lines[0]?.unitPrice).toBe(30000)
+    expect(state.lines[0]?.listPrice).toBe(32499)
+  })
+
+  it("drops a voucher when the customer it belonged to is swapped out", () => {
+    const voucher: RewardVoucher = {
+      id: "r1",
+      code: "GGV3H7K9T",
+      customer: LEGEND.id,
+      rewardName: "Five pounds off",
+      type: "money_off",
+      value: 500,
+      expiresAt: null,
+    }
+    const attached = basketReducer(withLines(line()), {
+      type: "attachCustomer",
+      customer: LEGEND,
+    })
+    const withVoucher = basketReducer(attached, { type: "applyVoucher", voucher })
+    expect(withVoucher.voucher).not.toBeNull()
+
+    const detached = basketReducer(withVoucher, {
+      type: "attachCustomer",
+      customer: null,
+    })
+    expect(detached.voucher).toBeNull()
+  })
+
+  it("clears the split when the payment method changes", () => {
+    const split = basketReducer(withLines(line()), {
+      type: "setSplit",
+      method: "cash",
+      amount: 1000,
+    })
+    expect(split.split.cash).toBe(1000)
+    const changed = basketReducer(split, { type: "setPayment", payment: "mixed" })
+    expect(changed.split).toEqual(emptySplit())
+  })
+})
+
+describe("the totals", () => {
+  it("adds the lines up in pence", () => {
+    const totals = summarise(withLines(line(), SEALED))
+    expect(totals.subtotal).toBe(32499 + 4995)
+    expect(totals.discount).toBe(0)
+    expect(totals.total).toBe(37494)
+  })
+
+  it("takes a manual amount off", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setDiscount",
+      discount: { kind: "amount", value: 2499 },
+    })
+    const totals = summarise(state)
+    expect(totals.manualDiscount).toBe(2499)
+    expect(totals.total).toBe(30000)
+    expect(totals.discountSource).toBe("manual")
+  })
+
+  it("takes a manual percentage off, rounded half-up to the penny", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setDiscount",
+      discount: { kind: "percent", value: 10 },
+    })
+    const totals = summarise(state)
+    expect(totals.manualDiscount).toBe(3250)
+    expect(totals.total).toBe(29249)
+  })
+
+  it("never discounts past zero", () => {
+    const state = basketReducer(withLines(line({ unitPrice: 500 })), {
+      type: "setDiscount",
+      discount: { kind: "amount", value: 900 },
+    })
+    expect(summarise(state).total).toBe(0)
+  })
+
+  it("applies the tier perk only to the kinds it covers", () => {
+    const retro = line({ itemId: "item_3", kind: "retro", unitPrice: 2000, sku: "GGRAAAA1" })
+    const state = basketReducer(withLines(line(), SEALED, retro), {
+      type: "attachCustomer",
+      customer: LEGEND,
+    })
+    const perk = perkFor(state.lines, LEGEND)
+    // 10 percent off the single and the sealed box, nothing off the retro.
+    expect(perk.amount).toBe(3250 + 500)
+    expect(perk.percent).toBe(10)
+
+    const totals = summarise(state)
+    expect(totals.perkDiscount).toBe(3750)
+    expect(totals.discountSource).toBe("tier_perk")
+  })
+
+  it("puts a reward ahead of a manual discount as the recorded source", () => {
+    const voucher: RewardVoucher = {
+      id: "r1",
+      code: "GGV3H7K9T",
+      customer: LEGEND.id,
+      rewardName: "Five pounds off",
+      type: "money_off",
+      value: 500,
+      expiresAt: null,
+    }
+    const state = basketReducer(
+      basketReducer(withLines(line()), {
+        type: "setDiscount",
+        discount: { kind: "amount", value: 100 },
+      }),
+      { type: "applyVoucher", voucher }
+    )
+    const totals = summarise(state)
+    expect(totals.voucherDiscount).toBe(500)
+    expect(totals.discount).toBe(600)
+    expect(totals.discountSource).toBe("reward")
+  })
+
+  it("spreads the discount across the lines for the points preview", () => {
+    const state = basketReducer(withLines(line(), SEALED), {
+      type: "setDiscount",
+      discount: { kind: "amount", value: 1000 },
+    })
+    const totals = summarise(state)
+    const spread = totals.lineTotals.reduce((sum, row) => sum + row.total, 0)
+    expect(spread).toBe(totals.total)
+  })
+
+  it("earns nothing without a customer and the tier multiplier with one", () => {
+    const plain = withLines(line({ unitPrice: 1000 }))
+    expect(pointsPreview(plain, summarise(plain), SETUP, 0)).toBe(0)
+
+    const attached = basketReducer(plain, {
+      type: "attachCustomer",
+      customer: LEGEND,
+    })
+    const totals = summarise(attached)
+    // £9 after the 10 percent Legend perk, 10 points a pound, then 1.5x.
+    expect(totals.total).toBe(900)
+    expect(pointsPreview(attached, totals, SETUP, 0)).toBe(135)
+  })
+})
+
+describe("the payment check", () => {
+  const ctx = { programme: PROGRAMME, cashSessionOpen: true }
+
+  it("puts the whole total on a single method", () => {
+    const state = withLines(line())
+    const check = checkPayment(state, summarise(state), ctx)
+    expect(check.split.sumup_card).toBe(32499)
+    expect(check.sumupAmount).toBe(32499)
+    expect(check.ok).toBe(true)
+  })
+
+  it("refuses a mixed payment that does not reach the total", () => {
+    let state = basketReducer(withLines(line()), {
+      type: "setPayment",
+      payment: "mixed",
+    })
+    state = basketReducer(state, { type: "setSplit", method: "cash", amount: 20000 })
+    const check = checkPayment(state, summarise(state), ctx)
+    expect(check.ok).toBe(false)
+    expect(check.problems[0]).toContain("£124.99")
+  })
+
+  it("accepts a mixed payment that sums exactly", () => {
+    let state = basketReducer(withLines(line()), {
+      type: "setPayment",
+      payment: "mixed",
+    })
+    state = basketReducer(state, { type: "setSplit", method: "cash", amount: 20000 })
+    state = basketReducer(state, {
+      type: "setSplit",
+      method: "sumup_card",
+      amount: 12499,
+    })
+    const check = checkPayment(state, summarise(state), ctx)
+    expect(check.ok).toBe(true)
+    expect(check.sumupAmount).toBe(12499)
+  })
+
+  it("refuses cash with no session open", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setPayment",
+      payment: "cash",
+    })
+    const check = checkPayment(state, summarise(state), {
+      ...ctx,
+      cashSessionOpen: false,
+    })
+    expect(check.ok).toBe(false)
+    expect(check.problems).toContain("Open a cash session before taking cash.")
+  })
+
+  it("says how short the store credit is", () => {
+    const poor: SaleCustomer = { ...LEGEND, creditBalance: 1000 }
+    let state = basketReducer(withLines(line({ unitPrice: 5000 })), {
+      type: "attachCustomer",
+      customer: poor,
+    })
+    state = basketReducer(state, { type: "setPayment", payment: "store_credit" })
+    const check = checkPayment(state, summarise(state), ctx)
+    expect(check.ok).toBe(false)
+    expect(check.problems[0]).toContain("Short by")
+  })
+
+  it("holds points to the programme's share of a sale", () => {
+    let state = basketReducer(withLines(line({ unitPrice: 5000 })), {
+      type: "attachCustomer",
+      customer: LEGEND,
+    })
+    state = basketReducer(state, { type: "setPayment", payment: "points" })
+    const totals = summarise(state)
+    const check = checkPayment(state, totals, ctx)
+    // The Legend perk leaves £45, and points may cover half of it at most.
+    expect(totals.total).toBe(4500)
+    expect(check.ok).toBe(false)
+    expect(check.problems[0]).toContain("Points cover at most")
+  })
+
+  it("refuses an empty basket", () => {
+    const state = emptyBasket()
+    const check = checkPayment(state, summarise(state), ctx)
+    expect(check.ok).toBe(false)
+    expect(check.problems).toContain("Scan an item to start a sale.")
+  })
+})

@@ -23,12 +23,62 @@ const VIEWPORTS = [
   { name: "390x844", width: 390, height: 844 },
 ]
 const MODES = ["light", "dark"]
+/**
+ * The demo Charizard's code. Built here rather than imported, so this script
+ * stays a plain Node module with no TypeScript loader: the check character is
+ * the weighted mod-32 in packages/shared/src/sku.ts.
+ */
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+function ggCode(letter, body) {
+  let sum = 0
+  const chars = letter + body
+  for (let i = 0; i < chars.length; i++) sum += CROCKFORD.indexOf(chars[i]) * (i + 1)
+  return `GG${letter}${body}${CROCKFORD[sum % 32]}`
+}
+const DEMO_SKU = ggCode("S", "7F3K2")
+
 const SCREENS = [
   { name: "scan", path: "/counter/scan" },
   { name: "add-stock", path: "/counter/stock/new" },
   { name: "home", path: "/counter" },
   { name: "stock", path: "/counter/stock" },
   { name: "login", path: "/login", signedIn: false },
+
+  // Selling, cash and labels. `prepare` drives the screen into the state a
+  // static URL cannot reach, because the demo stores live in memory for the
+  // tab: a basket has to be scanned and a drawer has to be opened.
+  { name: "sell-empty", path: "/counter/sell" },
+  {
+    name: "sell-basket",
+    path: "/counter/sell",
+    async prepare(page) {
+      const field = page.getByTestId("sell-scan-field")
+      await field.fill(DEMO_SKU)
+      await field.press("Enter")
+      await page.getByTestId("basket").waitFor()
+      await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    },
+  },
+  { name: "cash-closed", path: "/counter/cash" },
+  {
+    name: "cash-open",
+    path: "/counter/cash",
+    async prepare(page) {
+      await page.getByLabel("Float").fill("100.00")
+      await page
+        .getByRole("button", { name: "Open session", exact: true })
+        .filter({ visible: true })
+        .click()
+      await page.getByTestId("cash-expected").waitFor()
+    },
+  },
+  { name: "item", path: `/counter/stock/${DEMO_SKU}` },
+  { name: "labels", path: "/counter/labels" },
+  {
+    name: "label-print",
+    path: "/labels/print?jobs=label_demo_1,label_demo_2&print=0",
+    signedIn: false,
+  },
 ]
 
 /** The same shape lib/auth.ts persists, so the guard lets us straight in. */
@@ -68,10 +118,12 @@ for (const mode of MODES) {
       )
 
       const page = await context.newPage()
-      await page.goto(`${baseUrl}${screen.path}?demo=1`, {
+      const q = screen.path.includes("?") ? "&" : "?"
+      await page.goto(`${baseUrl}${screen.path}${q}demo=1`, {
         waitUntil: "networkidle",
       })
       await page.evaluate(() => document.fonts.ready)
+      if (screen.prepare) await screen.prepare(page)
       await page.waitForTimeout(400)
       await page.screenshot({
         path: join(outDir, `counter-${screen.name}-${mode}-${viewport.name}.png`),

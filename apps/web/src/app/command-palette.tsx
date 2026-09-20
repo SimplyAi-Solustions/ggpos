@@ -91,6 +91,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       { id: "scan", label: "Scan", hint: "S", run: () => go("/counter/scan") },
       { id: "add", label: "Add stock", hint: "N", run: () => go("/counter/stock/new") },
       { id: "buyin", label: "New buy-in", hint: "B", run: () => go("/counter/trade") },
+      // --- Selling and cash ---
+      { id: "sell", label: "Sell", run: () => go("/counter/sell") },
+      { id: "cash", label: "Cash session", run: () => go("/counter/cash") },
+      { id: "labels", label: "Label queue", run: () => go("/counter/labels") },
+      // --- end Selling and cash ---
       { id: "stock", label: "Stock", run: () => go("/counter/stock") },
       { id: "customers", label: "Customers", run: () => go("/counter/customers") },
       { id: "reports", label: "Reports", run: () => go("/counter/reports") },
@@ -115,10 +120,25 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     [close, go, navigate, setTheme, theme]
   )
 
+  // --- Customers and trade ---
+  const customerActions = React.useMemo<PaletteAction[]>(
+    () => [
+      { id: "new-buyin", label: "New buy-in", run: () => go("/counter/trade/new") },
+      { id: "recent-buyins", label: "Recent buy-ins", run: () => go("/counter/trade") },
+      { id: "find-customer", label: "Find a customer", run: () => go("/counter/customers") },
+      { id: "new-customer", label: "New customer", run: () => go("/counter/customers/new") },
+    ],
+    [go]
+  )
+  // --- end Customers and trade ---
+
   const needle = query.trim().toLowerCase()
   const visibleActions = needle
     ? actions.filter((action) => action.label.toLowerCase().includes(needle))
     : actions
+  const visibleCustomerActions = needle
+    ? customerActions.filter((action) => action.label.toLowerCase().includes(needle))
+    : customerActions
 
   const deferred = React.useDeferredValue(query)
   const { data: cards = [], isFetching } = useQuery({
@@ -181,6 +201,27 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 ))}
               </Command.Group>
             ) : null}
+
+            {/* --- Customers and trade --- */}
+            {visibleCustomerActions.length > 0 ? (
+              <Command.Group
+                heading="Customers and trade"
+                className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pt-4 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:tracking-[0.16em] [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:uppercase"
+              >
+                {visibleCustomerActions.map((action) => (
+                  <Command.Item
+                    key={action.id}
+                    value={action.id}
+                    onSelect={action.run}
+                    className="flex cursor-default items-center justify-between gap-4 rounded-[var(--radius)] px-3 py-2.5 text-[15px] text-foreground select-none data-[selected=true]:bg-secondary"
+                  >
+                    <span>{action.label}</span>
+                    {action.hint ? <Kbd>{action.hint}</Kbd> : null}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ) : null}
+            {/* --- end Customers and trade --- */}
 
             {cards.length > 0 ? (
               <Command.Group

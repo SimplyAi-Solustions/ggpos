@@ -54,7 +54,8 @@ import {
   useBasket,
 } from "@/features/sell/basket-store"
 import { CustomerSearchSheet } from "@/features/sell/CustomerSearchSheet"
-import { MoneyInput, penceToField } from "@/features/sell/money-input"
+import { MoneyInput } from "@/features/sell/money-input"
+import { penceToField } from "@/features/sell/money"
 import { DiscountSheet, PriceSheet, RefundSheet } from "@/features/sell/sheets"
 import type {
   PaymentMethod,
@@ -77,6 +78,15 @@ const PAYMENT_ORDER: PaymentMethod[] = [
 
 const UNDO_MS = 8000
 
+/**
+ * A blocked primary action stays legible. The shared button dims a disabled
+ * control to 50 percent, which on the paper canvas lands at 1.1:1; DESIGN.md
+ * asks 4.5:1 of every label, so the block goes flat grey with ink-tinted text
+ * instead and the reason is spelled out above it either way.
+ */
+const BLOCKED =
+  "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
+
 interface DoneSale {
   id: string
   number: string
@@ -96,7 +106,7 @@ function TotalRow({
   tone?: "default" | "muted"
 }) {
   return (
-    <div className="flex min-h-10 items-baseline justify-between gap-6 border-b border-hairline-soft py-2">
+    <div className="flex min-h-10 items-baseline justify-between gap-6 border-b border-hairline-soft py-3">
       <span className="flex items-baseline gap-4">
         <MicroLabel tone={tone === "muted" ? "default" : "ink"}>{label}</MicroLabel>
         {action}
@@ -117,15 +127,11 @@ function TotalRow({
 /**
  * One method's share of a mixed payment. It keeps its own text while it is
  * being typed and only ever hands the basket whole pence, so no float ever
- * touches the split.
+ * touches the split. Switching away from Mixed unmounts it, which is what
+ * clears the field when the split is reset.
  */
 function SplitField({ method, amount }: { method: SplitMethod; amount: number }) {
-  const [text, setText] = React.useState(amount ? penceToField(amount) : "")
-
-  // A method cleared by switching away from Mixed clears its field too.
-  React.useEffect(() => {
-    if (amount === 0) setText((current) => (parseDecimalToMinor(current) ? "" : current))
-  }, [amount])
+  const [text, setText] = React.useState(() => (amount ? penceToField(amount) : ""))
 
   return (
     <Field label={PAYMENT_LABELS[method]} htmlFor={`split-${method}`}>
@@ -404,7 +410,7 @@ export function SellScreen() {
 
   const markSold = (
     <Button
-      className="w-full min-[900px]:w-auto"
+      className={`w-full min-[900px]:w-auto ${BLOCKED}`}
       trailingArrow
       loading={sell.isPending}
       disabled={!payment.ok}
@@ -490,11 +496,11 @@ export function SellScreen() {
             </p>
           </div>
         ) : (
-          <ul className="border-t border-hairline-soft" data-testid="basket">
+          <ul data-testid="basket">
             {basket.lines.map((line) => (
               <li
                 key={line.itemId}
-                className="flex items-center gap-4 border-b border-hairline-soft py-2"
+                className="flex items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
               >
                 <ProductImage
                   src={line.image}
@@ -585,7 +591,7 @@ export function SellScreen() {
           Customer
         </MicroLabel>
         {basket.customer ? (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-4">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-6">
             <span className="flex min-w-0 flex-col gap-1">
               <span className="truncate text-[15px] text-foreground">
                 {basket.customer.name}
@@ -753,16 +759,19 @@ export function SellScreen() {
             Nothing sold yet today.
           </p>
         ) : (
-          <ul className="border-t border-hairline-soft">
+          <ul>
             {todaysSales.map((sale) => (
-              <li key={sale.id} className="border-b border-hairline-soft">
+              <li
+                key={sale.id}
+                className="border-b border-hairline-soft first:border-t"
+              >
                 <button
                   type="button"
                   onClick={() => {
                     setRefundError(null)
                     setRefundSaleId(sale.id)
                   }}
-                  className="flex min-h-12 w-full items-center gap-4 text-left transition-colors duration-150 ease-gg hover:bg-row-hover"
+                  className="flex min-h-12 w-full items-center gap-4 py-3 text-left transition-colors duration-150 ease-gg hover:bg-row-hover"
                 >
                   <span className="tnum shrink-0 font-mono text-[13px] text-foreground">
                     {sale.number}

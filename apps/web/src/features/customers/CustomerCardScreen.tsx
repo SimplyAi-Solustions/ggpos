@@ -8,7 +8,8 @@ import { Chip, ChipGroup } from "@/components/ui/chip"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { PrintControls, PrintSheet, printPage } from "@/components/print/print-sheet"
+import { PrintControls, PrintSheet } from "@/components/print/print-sheet"
+import { printPage } from "@/components/print/print"
 import {
   GuildCardBack,
   GuildCardFront,

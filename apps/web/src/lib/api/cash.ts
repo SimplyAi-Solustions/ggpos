@@ -131,6 +131,15 @@ export async function addCashMovement(
   })
 }
 
+/**
+ * The open session's id, or null. The buy-in wizard needs it for a cash
+ * payout, which the completion route refuses without one.
+ */
+export async function currentCashSessionId(): Promise<string | null> {
+  const state = await getCurrentCashSession()
+  return state.session?.id ?? null
+}
+
 /** Today's session and the ones before it, for the history table. */
 export async function listCashSessions(limit = 10): Promise<CashSessionRecord[]> {
   if (isDemo()) return demo.listSessions().slice(0, limit)

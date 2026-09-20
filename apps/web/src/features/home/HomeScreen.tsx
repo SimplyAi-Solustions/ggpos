@@ -107,7 +107,7 @@ export function HomeScreen() {
         ))}
       </dl>
 
-      <div className="mt-16 flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-4">
+      <div className="mt-16 flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-6">
         {session ? (
           <>
             <span className="text-[15px] text-foreground">
@@ -163,11 +163,11 @@ export function HomeScreen() {
             Nothing has gone through the counter yet today.
           </p>
         ) : (
-          <ul className="border-t border-hairline-soft" data-testid="recent-list">
+          <ul data-testid="recent-list">
             {stats.recent.map((entry) => (
               <li
                 key={`${entry.kind}-${entry.id}`}
-                className="flex min-h-12 items-center gap-4 border-b border-hairline-soft"
+                className="flex min-h-12 items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
               >
                 <span className="tnum shrink-0 font-mono text-[13px] text-foreground">
                   {entry.number}

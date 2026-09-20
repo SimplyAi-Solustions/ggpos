@@ -8,6 +8,7 @@
  */
 import { ClientResponseError } from "pocketbase"
 import { DEFAULT_OFFER_SETTINGS, type OfferSettings, type PricingRule } from "@gg/shared/pricing"
+import type { LoyaltyProgramme } from "@gg/shared/loyalty"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -17,6 +18,7 @@ import {
   DEMO_OFFER_LIMITS,
   DEMO_OFFER_SETTINGS,
   DEMO_PRICING_RULES,
+  DEMO_PROGRAMME as SEED_PROGRAMME,
   demoCompleteTradeIn,
   demoCreateDraft,
   demoGetLines,
@@ -149,6 +151,78 @@ export async function getOfferSettings(): Promise<OfferSettings & OfferLimits> {
       return fallback
     }
     throw error
+  }
+}
+
+interface ProgrammeRecord {
+  id: string
+  enabled?: boolean
+  earn_per_pound_sales?: number
+  earn_on_trade_in_credit?: number
+  points_per_pound_redemption?: number
+  min_redeem_points?: number
+  max_points_share_of_sale?: number
+  expiry_months_inactive?: number
+  tier_window_months?: number
+  welcome_bonus?: number
+  referral_bonus_referrer?: number
+  referral_bonus_referee?: number
+}
+
+/**
+ * The GG Guild programme in the shared evaluator's shape, so the counter's
+ * points preview and the server's `points_ledger` row are computed from the
+ * same numbers. `loyalty_programme` is readable by any signed-in account; a
+ * server that refuses it falls back to the seed's figures, which is what a
+ * fresh shop has anyway (the demo book holds the same seed figures).
+ */
+export async function getLoyaltyProgramme(): Promise<LoyaltyProgramme> {
+  if (isDemo()) return SEED_PROGRAMME
+
+  try {
+    const row = await pb
+      .collection("loyalty_programme")
+      .getFirstListItem<ProgrammeRecord>("id != ''")
+    return {
+      enabled: row.enabled !== false,
+      earnPerPoundSales: row.earn_per_pound_sales ?? SEED_PROGRAMME.earnPerPoundSales,
+      earnPerPoundTradeInCredit:
+        row.earn_on_trade_in_credit ?? SEED_PROGRAMME.earnPerPoundTradeInCredit,
+      pointsPerPoundRedemption:
+        row.points_per_pound_redemption ?? SEED_PROGRAMME.pointsPerPoundRedemption,
+      minRedeemPoints: row.min_redeem_points ?? SEED_PROGRAMME.minRedeemPoints,
+      maxPointsShareOfSale:
+        row.max_points_share_of_sale ?? SEED_PROGRAMME.maxPointsShareOfSale,
+      expiryMonthsInactive:
+        row.expiry_months_inactive ?? SEED_PROGRAMME.expiryMonthsInactive,
+      tierWindowMonths: row.tier_window_months ?? SEED_PROGRAMME.tierWindowMonths,
+      welcomeBonus: row.welcome_bonus ?? SEED_PROGRAMME.welcomeBonus,
+      referralBonusReferrer:
+        row.referral_bonus_referrer ?? SEED_PROGRAMME.referralBonusReferrer,
+      referralBonusReferee:
+        row.referral_bonus_referee ?? SEED_PROGRAMME.referralBonusReferee,
+    }
+  } catch {
+    return SEED_PROGRAMME
+  }
+}
+
+/**
+ * The open cash session, which a cash payout cannot happen without.
+ *
+ * Read through the Phase 2 route rather than the collection so the wizard
+ * sees exactly what the completion route will check against.
+ */
+export async function currentCashSessionId(): Promise<string | null> {
+  if (isDemo()) return "cash_demo_session"
+  try {
+    const result = await pb.send<{ session: { id: string } | null }>(
+      "/api/vault/cash-sessions/current",
+      { method: "GET" }
+    )
+    return result.session?.id ?? null
+  } catch {
+    return null
   }
 }
 

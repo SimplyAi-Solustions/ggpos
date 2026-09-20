@@ -11,6 +11,8 @@ import type {
   ItemKind,
   PayoutType,
   TradeInLineInput,
+  TradeInLineRecord,
+  TradeInRecord,
 } from "@/lib/api"
 
 /**
@@ -204,13 +206,16 @@ export function totals(
 export interface CustomerGateFacts {
   flags: CustomerFlag[]
   idStatus: IdStatus
+  /** "Passport", "Driving licence": what the counter wrote down last time. */
+  idType?: string
   idExpiry?: string
   dob?: string
   address?: string
 }
 
 export type CashBlock =
-  | { kind: "none" }
+  /** `message` is null here so a caller can read it without narrowing first. */
+  | { kind: "none"; message: null }
   | { kind: "flag"; message: string }
   | { kind: "under_18"; message: string }
   | { kind: "cap"; message: string }
@@ -257,7 +262,7 @@ export function cashBlock(
       message: `Cash is capped at ${formatGBP(cashCap)} per buy-in. Pay the rest as store credit.`,
     }
   }
-  return { kind: "none" }
+  return { kind: "none", message: null }
 }
 
 /** True when a cash payout still needs an ID captured before it can happen. */
@@ -573,4 +578,40 @@ export function toLineInputs(
       accepted: line.accepted,
     }
   })
+}
+
+/**
+ * A saved draft back in the wizard's own shape.
+ *
+ * Rebuilt rather than kept: a line's card art and set name are not on
+ * `trade_in_lines`, so a reopened draft shows the title it was saved with and
+ * the silhouette frame until the card is searched again. Everything that
+ * decides money, the market value, the condition and the quantity, survives.
+ */
+export function hydrate(
+  record: TradeInRecord,
+  lines: TradeInLineRecord[],
+  customer: WizardCustomer | null
+): WizardState {
+  return {
+    ...initialState,
+    step: customer ? "items" : "customer",
+    customer,
+    tradeInId: record.id,
+    payoutType: record.payout_type ?? "credit",
+    lines: lines.map((line, index) => ({
+      key: line.id || `line_${index}`,
+      id: line.id,
+      kind: (line.kind ?? "single") as LineKind,
+      title: line.free_text_title || "Item",
+      cardId: line.card || undefined,
+      gameId: line.game || undefined,
+      finish: line.finish || undefined,
+      condition: line.completeness || line.condition || undefined,
+      qty: line.qty ?? 1,
+      marketPence: line.market_price ?? 0,
+      marketSource: line.market_source || "Manual",
+      accepted: line.accepted !== false,
+    })),
+  }
 }

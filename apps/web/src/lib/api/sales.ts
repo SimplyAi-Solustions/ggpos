@@ -6,7 +6,13 @@
  * Live mode uses the transactional routes in docs/api-contract.md ("Sales",
  * "Step-up"); demo mode answers the same shapes from memory.
  */
-import { parseTierPerk, type LoyaltyRule, type LoyaltyTier, type TierPerk } from "@gg/shared"
+import {
+  parseTierPerk,
+  type LoyaltyProgramme,
+  type LoyaltyRule,
+  type LoyaltyTier,
+  type TierPerk,
+} from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -165,6 +171,12 @@ export async function getLoyaltySetup(): Promise<LoyaltySetup> {
     })),
     tiers: tiers.map(toTier),
   }
+}
+
+/** The programme on its own, for the buy-in wizard's credit bonus preview. */
+export async function getLoyaltyProgramme(): Promise<LoyaltyProgramme> {
+  const setup = await getLoyaltySetup()
+  return setup.programme
 }
 
 type PrivateWithCustomer = CustomerPrivateRecord & {

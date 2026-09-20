@@ -4,8 +4,9 @@
  *
  * `cash_movements.amount` is signed, so the expected total is the float plus
  * every movement and the table can print each one as it stands. A variance
- * inside `settings.cash_variance_alert` reads in volt; over it, in pop, and
- * the server audits it (docs/api-contract.md, "Cash sessions").
+ * inside `settings.cash_variance_alert` carries a volt badge; over it, the
+ * figure turns destructive and the server audits the close
+ * (docs/api-contract.md, "Cash sessions").
  */
 import * as React from "react"
 import { createPortal } from "react-dom"
@@ -16,7 +17,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Hint, MicroLabel } from "@/components/ui/micro-label"
+import { MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Seal } from "@/components/ui/seal"
 import { StickerOrbit } from "@/components/ui/sticker"
@@ -49,6 +50,10 @@ import {
   openCashSession,
 } from "@/lib/api"
 import type { CashCloseResult, CashMovementType } from "@/lib/api/types"
+
+/** See the same constant on the Sell screen: a blocked block stays legible. */
+const BLOCKED =
+  "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
 
 const MOVEMENT_LABELS: Record<CashMovementType, string> = {
   float_in: "Float in",
@@ -117,31 +122,26 @@ function Variance({
   )
 }
 
-/** One sheet, two jobs: a bank drop leaves the drawer, an adjustment corrects it. */
-function MovementSheet({
-  open,
-  onOpenChange,
+/**
+ * The form inside the movement sheet. It is a child of `SheetContent`, which
+ * Base UI mounts only while the sheet is open, so the fields are empty every
+ * time it opens without an effect reaching in to clear them.
+ */
+function MovementForm({
   type,
   pending,
   onSave,
+  onCancel,
 }: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
   type: "bank_drop" | "adjustment"
   pending: boolean
   onSave: (amount: number, ref: string) => void
+  onCancel: () => void
 }) {
   const [value, setValue] = React.useState("")
   const [ref, setRef] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
   const drop = type === "bank_drop"
-
-  React.useEffect(() => {
-    if (!open) return
-    setValue("")
-    setRef("")
-    setError(null)
-  }, [open])
 
   function save() {
     const pence = parseDecimalToMinor(value)
@@ -157,6 +157,63 @@ function MovementSheet({
   }
 
   return (
+    <>
+      <SheetBody>
+        <Field layout="stacked" label="Amount" htmlFor="movement-amount">
+          <MoneyInput
+            id="movement-amount"
+            autoFocus
+            value={value}
+            onChange={(next) => {
+              setValue(next)
+              setError(null)
+            }}
+            invalid={Boolean(error)}
+          />
+        </Field>
+        <FieldError>{error}</FieldError>
+        <Field
+          layout="stacked"
+          label="Reference"
+          htmlFor="movement-ref"
+          className="mt-8"
+        >
+          <Input
+            id="movement-ref"
+            value={ref}
+            maxLength={100}
+            placeholder={drop ? "Bag number" : "Why the drawer changed"}
+            onChange={(event) => setRef(event.target.value)}
+          />
+        </Field>
+      </SheetBody>
+      <SheetFooter>
+        <Button onClick={save} loading={pending} trailingArrow>
+          {drop ? "Record drop" : "Record adjustment"}
+        </Button>
+        <Button variant="text" onClick={onCancel}>
+          Cancel
+        </Button>
+      </SheetFooter>
+    </>
+  )
+}
+
+function MovementSheet({
+  open,
+  onOpenChange,
+  type,
+  pending,
+  onSave,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  type: "bank_drop" | "adjustment"
+  pending: boolean
+  onSave: (amount: number, ref: string) => void
+}) {
+  const drop = type === "bank_drop"
+  return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
         <SheetHeader>
@@ -167,43 +224,12 @@ function MovementSheet({
               : "A correction, up or down. Say why in the reference."}
           </SheetDescription>
         </SheetHeader>
-        <SheetBody>
-          <Field layout="stacked" label="Amount" htmlFor="movement-amount">
-            <MoneyInput
-              id="movement-amount"
-              autoFocus
-              value={value}
-              onChange={(next) => {
-                setValue(next)
-                setError(null)
-              }}
-              invalid={Boolean(error)}
-            />
-          </Field>
-          <FieldError>{error}</FieldError>
-          <Field
-            layout="stacked"
-            label="Reference"
-            htmlFor="movement-ref"
-            className="mt-8"
-          >
-            <Input
-              id="movement-ref"
-              value={ref}
-              maxLength={100}
-              placeholder={drop ? "Bag number" : "Why the drawer changed"}
-              onChange={(event) => setRef(event.target.value)}
-            />
-          </Field>
-        </SheetBody>
-        <SheetFooter>
-          <Button onClick={save} loading={pending} trailingArrow>
-            {drop ? "Record drop" : "Record adjustment"}
-          </Button>
-          <Button variant="text" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-        </SheetFooter>
+        <MovementForm
+          type={type}
+          pending={pending}
+          onSave={onSave}
+          onCancel={() => onOpenChange(false)}
+        />
       </SheetContent>
     </Sheet>
   )
@@ -288,7 +314,7 @@ export function CashScreen() {
 
   const primary = session ? (
     <Button
-      className="w-full min-[900px]:w-auto"
+      className={`w-full min-[900px]:w-auto ${BLOCKED}`}
       trailingArrow
       loading={close.isPending}
       disabled={countedPence === null}
@@ -298,7 +324,7 @@ export function CashScreen() {
     </Button>
   ) : (
     <Button
-      className="w-full min-[900px]:w-auto"
+      className={`w-full min-[900px]:w-auto ${BLOCKED}`}
       trailingArrow
       loading={open.isPending}
       disabled={parseDecimalToMinor(floatValue) === null}
@@ -342,14 +368,16 @@ export function CashScreen() {
             <MicroLabel tone="ink" className="mb-5">
               Open drawer
             </MicroLabel>
-            <div className="flex flex-wrap items-baseline justify-between gap-x-10 gap-y-4 border-b border-hairline-soft pb-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-10 gap-y-4 border-b border-hairline-soft pb-6">
               <span className="flex flex-col gap-1">
-                <Hint>
+                <span className="text-[15px] text-foreground">
                   Opened {time(session.opened_at)}, float{" "}
-                  {formatGBP(session.float ?? 0)}
-                </Hint>
-                <span className="text-[15px] text-muted-foreground">
-                  {movements.length} movement{movements.length === 1 ? "" : "s"} so far
+                  <span className="tnum">{formatGBP(session.float ?? 0)}</span>
+                </span>
+                <span className="text-[13px] text-muted-foreground-2">
+                  {movements.length === 0
+                    ? "Nothing in or out yet"
+                    : `${movements.length} movement${movements.length === 1 ? "" : "s"} so far`}
                 </span>
               </span>
               <span className="flex flex-col items-end gap-1">

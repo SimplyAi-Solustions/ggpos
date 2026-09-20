@@ -41,6 +41,7 @@ function toWizardCustomer(profile: CustomerProfile): WizardCustomer {
     facts: {
       flags: profile.private?.flags ?? [],
       idStatus: (profile.private?.id_status ?? "none") as IdStatus,
+      idType: profile.private?.id_type,
       idExpiry: profile.private?.id_expiry,
       dob: profile.private?.dob,
       address: profile.private?.address,

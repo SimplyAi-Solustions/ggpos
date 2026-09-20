@@ -16,7 +16,7 @@ import { cn } from "cn"
  * the screen unmounts and no other screen ever inherits them.
  */
 
-export type PrintSize = "a4" | "card80x50" | "wallet"
+import type { PrintSize } from "@/components/print/print"
 
 const PAGE_RULE: Record<PrintSize, string> = {
   a4: "@page { size: A4; margin: 18mm }",
@@ -68,9 +68,4 @@ export function PrintControls({ className, ...props }: React.ComponentProps<"div
       {...props}
     />
   )
-}
-
-/** Sends the page to the printer. Kiosk printing skips the dialog. */
-export function printPage() {
-  window.print()
 }

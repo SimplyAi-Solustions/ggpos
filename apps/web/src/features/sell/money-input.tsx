@@ -4,9 +4,10 @@
  * left, so a column of amounts lines up without anybody retyping.
  */
 import * as React from "react"
-import { formatGBP, parseDecimalToMinor } from "@gg/shared"
+import { parseDecimalToMinor } from "@gg/shared"
 
 import { Input } from "@/components/ui/input"
+import { penceToField } from "@/features/sell/money"
 
 export interface MoneyInputProps {
   id?: string
@@ -51,14 +52,9 @@ export function MoneyInput({
       onChange={(event) => onChange(event.target.value)}
       onBlur={() => {
         const pence = parseDecimalToMinor(value)
-        if (pence !== null) onChange(formatGBP(pence).replace("£", "").replace(/,/g, ""))
+        if (pence !== null) onChange(penceToField(pence))
         onBlur?.()
       }}
     />
   )
-}
-
-/** "12.50" from 1250, for seeding a field from a stored amount. */
-export function penceToField(pence: number): string {
-  return formatGBP(pence).replace("£", "").replace(/,/g, "")
 }

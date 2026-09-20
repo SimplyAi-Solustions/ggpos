@@ -41,10 +41,9 @@ export function MoneyField({
   // during render rather than in an effect, so the box never paints once
   // with the old number first.
   const [seen, setSeen] = React.useState(value)
-  const reported = React.useRef(value)
   if (value !== seen) {
     setSeen(value)
-    if (value !== reported.current) setDraft(pounds(value))
+    setDraft(pounds(value))
   }
 
   return (
@@ -66,12 +65,13 @@ export function MoneyField({
         const next = event.target.value
         setDraft(next)
         const pence = parseDecimalToMinor(next)
+        // Record what this field is about to report, so the value coming
+        // back down does not look like an outside change and overwrite the
+        // half-typed "12." still in the box.
         if (pence !== null) {
-          reported.current = pence
           setSeen(pence)
           onChange(pence)
         } else if (next.trim() === "") {
-          reported.current = 0
           setSeen(0)
           onChange(0)
         }
