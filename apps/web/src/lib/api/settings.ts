@@ -61,6 +61,9 @@ export const SETTINGS_FIELDS = [
   "email_provider",
   "push",
   "holds",
+  // Phase 6's customer-facing display: whether it is on, the ticker it
+  // scrolls and where its sign-up QR points. Not a key and not a secret.
+  "display",
   "vat_registered",
   "shop_name",
   "shop_address",
@@ -92,6 +95,7 @@ function pick(row: SettingsRecord): SettingsRecord {
     email_provider: row.email_provider,
     push: row.push,
     holds: row.holds,
+    display: row.display,
     vat_registered: row.vat_registered,
     shop_name: row.shop_name,
     shop_address: row.shop_address,

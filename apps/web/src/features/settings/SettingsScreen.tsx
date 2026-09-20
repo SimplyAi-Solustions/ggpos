@@ -500,6 +500,50 @@ function Editor({
         </div>
       </Section>
 
+      {/* ---- Customer display ---- */}
+      <Section title="Customer display">
+        <p className="mb-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+          The tablet facing the customer. With it on, the till mirrors the
+          basket to it and the buy-in wizard can send an offer over for the
+          customer to accept.
+        </p>
+        <div className="flex flex-col gap-10">
+          <Field label="Display" layout="auto">
+            <div className="flex items-center gap-4">
+              <Switch
+                checked={form.displayEnabled}
+                onCheckedChange={(checked: boolean) => set({ displayEnabled: checked })}
+                aria-label="Use the customer display"
+              />
+              <span className="text-[15px] text-foreground">
+                {form.displayEnabled ? "On the counter" : "Not in use"}
+              </span>
+            </div>
+            <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+              Open /display on the tablet, signed in as staff, and leave it there.
+            </p>
+          </Field>
+          <TextField
+            id="display-ticker"
+            label="Ticker"
+            maxLength={120}
+            value={form.displayTicker}
+            onChange={(next) => set({ displayTicker: next })}
+            error={shown.displayTicker}
+            note="The line that scrolls across the idle screen."
+          />
+          <TextField
+            id="display-signup"
+            label="Sign-up link"
+            maxLength={300}
+            value={form.displaySignupUrl}
+            onChange={(next) => set({ displaySignupUrl: next })}
+            error={shown.displaySignupUrl}
+            note="Where the QR on the idle screen sends a phone."
+          />
+        </div>
+      </Section>
+
       {/* ---- Shop ---- */}
       <Section title="Shop">
         <div className="flex flex-col gap-10">

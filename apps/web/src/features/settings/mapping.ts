@@ -315,6 +315,10 @@ export interface SettingsForm {
    * shows. The mail API key is a column of its own and is never read.
    */
   email: EmailSettingsForm
+  // The customer-facing display
+  displayEnabled: boolean
+  displayTicker: string
+  displaySignupUrl: string
   // Shop
   shopName: string
   shopAddress: string
@@ -388,6 +392,9 @@ export function recordToForm(record: SettingsRecord): SettingsForm {
     shopTown: record.shop_town ?? "",
     shopPostcode: record.shop_postcode ?? "",
     shopPhone: record.shop_phone ?? "",
+    displayEnabled: record.display?.enabled === true,
+    displayTicker: record.display?.ticker ?? "Game · Trade · Play",
+    displaySignupUrl: record.display?.signup_url ?? "/estimate",
     shopEmail: record.shop_email ?? "",
     vatRegistered: record.vat_registered === true,
     receiptTerms: record.receipt_terms ?? "",
@@ -433,6 +440,11 @@ export function formToPatch(form: SettingsForm): Partial<SettingsRecord> {
     // survives a save of the switch that it does.
     email: { ...form.email },
     holds: { hours: parseCount(form.holdHours) ?? 48 },
+    display: {
+      enabled: form.displayEnabled,
+      ticker: form.displayTicker.trim(),
+      signup_url: form.displaySignupUrl.trim(),
+    },
     shop_name: form.shopName.trim(),
     shop_address: form.shopAddress.trim(),
     shop_town: form.shopTown.trim(),
@@ -525,6 +537,13 @@ export function validateSettings(form: SettingsForm): FormErrors {
   const holdHours = parseCount(form.holdHours)
   if (holdHours === null || holdHours < 1) {
     errors.holdHours = "Enter the number of hours a hold lasts, for example 48."
+  }
+  if (form.displayEnabled && !form.displayTicker.trim()) {
+    errors.displayTicker = "The display scrolls this line. Write one, or switch the display off."
+  }
+  if (form.displayEnabled && !form.displaySignupUrl.trim()) {
+    errors.displaySignupUrl =
+      "The sign-up QR needs somewhere to point, for example /estimate."
   }
   if (!form.shopName.trim()) {
     errors.shopName = "The shop needs a name: it prints on every receipt."
