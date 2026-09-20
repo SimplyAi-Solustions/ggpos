@@ -41,6 +41,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useCounterDock } from "@/app/counter-dock"
 import { MoneyInput } from "@/features/sell/money-input"
+import { useCounterConfig } from "@/lib/api/config"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   addCashMovement,
@@ -254,11 +255,15 @@ export function CashScreen() {
     queryFn: () => listCashSessions(10),
     staleTime: 30_000,
   })
+  const config = useCounterConfig()
 
   const session = current.data?.session ?? null
   const expected = current.data?.expected ?? 0
   const movements = current.data?.movements ?? []
-  const alertAt = current.data?.varianceAlert ?? 1000
+  // `settings` is admin-only, so the threshold comes from the config route,
+  // shared with the Sell screen. Zero, including before it has loaded, means
+  // no alert: the close route reads it the same way.
+  const alertAt = config.data?.cashVarianceAlert ?? 0
 
   function refresh() {
     void current.refetch()
@@ -310,7 +315,8 @@ export function CashScreen() {
 
   const countedPence = parseDecimalToMinor(counted)
   const liveVariance = countedPence === null ? null : countedPence - expected
-  const overAlert = liveVariance !== null && Math.abs(liveVariance) > alertAt
+  const overAlert =
+    liveVariance !== null && alertAt > 0 && Math.abs(liveVariance) > alertAt
 
   const primary = session ? (
     <Button

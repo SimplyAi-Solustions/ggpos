@@ -97,6 +97,22 @@ export async function getCounterConfig(): Promise<CounterConfig> {
   }
 }
 
+/**
+ * The same read, unmapped, for the buy-in wizard: it wants the offer bands
+ * and the settings rather than the tiers, and mapping them twice on one
+ * screen would be work for nothing. Its own key, so the two screens each
+ * hold one answer for the session rather than sharing a half-used one.
+ */
+export const vaultConfigQuery = {
+  queryKey: ["vault-config"] as const,
+  queryFn: wireConfig,
+  staleTime: CONFIG_STALE_MS,
+}
+
+export function useVaultConfig() {
+  return useQuery(vaultConfigQuery)
+}
+
 export const counterConfigQuery = {
   queryKey: ["counter-config"] as const,
   queryFn: getCounterConfig,

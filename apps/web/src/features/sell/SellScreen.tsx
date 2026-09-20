@@ -24,6 +24,7 @@ import { ProductImage } from "@/components/product-image"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerScanField } from "@/app/focus-registry"
 import { setScanHandler } from "@/app/scan-bus"
+import { useCounterConfig } from "@/lib/api/config"
 import { routeScannedCode } from "@/lib/scanning/route-code"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { stepUp, StepUpCancelled } from "@/lib/auth-stepup"
@@ -32,7 +33,6 @@ import {
   getCurrentCashSession,
   getCustomerForSale,
   getItem,
-  getLoyaltySetup,
   getSale,
   getVoucher,
   listItems,
@@ -165,11 +165,9 @@ export function SellScreen() {
   const [refundError, setRefundError] = React.useState<string | null>(null)
   const [saleError, setSaleError] = React.useState<string | null>(null)
 
-  const { data: setup } = useQuery({
-    queryKey: ["loyalty-setup"],
-    queryFn: getLoyaltySetup,
-    staleTime: 5 * 60_000,
-  })
+  // One read of the shop's configuration for the session, shared with Cash.
+  const { data: config } = useCounterConfig()
+  const setup = config?.loyalty
   const { data: cash, refetch: refetchCash } = useQuery({
     queryKey: ["cash-current"],
     queryFn: getCurrentCashSession,

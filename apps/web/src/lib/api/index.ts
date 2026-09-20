@@ -352,6 +352,7 @@ export { isNotFound, refusalMessage, refusalOrFallback } from "@/lib/api/refusal
 // `lib/api/demo/` should touch it.
 // ---------------------------------------------------------------------------
 export { demoItems as demoItemStore }
+export * from "@/lib/api/config"
 export * from "@/lib/api/item-shape"
 export * from "@/lib/api/items"
 export * from "@/lib/api/sales"

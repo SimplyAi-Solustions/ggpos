@@ -650,8 +650,6 @@ export interface CashSessionState {
   /** float + cash sales + float_in - payouts - refunds - bank drops. */
   expected: number
   movements: CashMovementRecord[]
-  /** settings.cash_variance_alert, in pence. */
-  varianceAlert: number
 }
 
 // ---- Step-up --------------------------------------------------------------

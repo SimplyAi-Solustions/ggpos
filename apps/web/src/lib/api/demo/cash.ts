@@ -4,6 +4,7 @@
  */
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import {
+  DEMO_SETTINGS,
   demoCashMovements,
   demoCashSessions,
   demoId,
@@ -16,9 +17,6 @@ import type {
   CashSessionRecord,
   CashSessionState,
 } from "@/lib/api/types"
-
-/** settings.cash_variance_alert from pb_migrations/1789819680_phase2_fields.js. */
-export const DEMO_VARIANCE_ALERT = 1000
 
 export function openSession(): CashSessionRecord | null {
   ensureSeeded()
@@ -46,7 +44,6 @@ export function getCurrent(): CashSessionState {
     session,
     expected: session ? expectedFor(session.id) : 0,
     movements: session ? movementsFor(session.id) : [],
-    varianceAlert: DEMO_VARIANCE_ALERT,
   }
 }
 
@@ -110,7 +107,11 @@ export function close(
     session,
     expected,
     variance,
-    overAlert: Math.abs(variance) > DEMO_VARIANCE_ALERT,
+    // The server decides this, so the demo does too, from the same figure
+    // the config route serves. Zero would mean no alert is configured.
+    overAlert:
+      DEMO_SETTINGS.cash_variance_alert > 0 &&
+      Math.abs(variance) > DEMO_SETTINGS.cash_variance_alert,
   }
 }
 

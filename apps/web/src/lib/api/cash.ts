@@ -7,6 +7,9 @@
  * `cash_movements.amount` is signed: cash sales and float in are positive,
  * payouts, refunds and bank drops negative, so the expected drawer total is
  * the float plus every movement and nothing has to know the sign rules twice.
+ *
+ * The variance alert is not here: `settings` is admin-only, so the threshold
+ * comes from `GET /api/vault/config` through `useCounterConfig`.
  */
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -19,37 +22,12 @@ import type {
   CashSessionState,
 } from "@/lib/api/types"
 
-export { DEMO_VARIANCE_ALERT } from "@/lib/api/demo/cash"
-
-/** The fallback when `settings` is out of reach: £10, as the seed sets it. */
-const DEFAULT_VARIANCE_ALERT = 1000
-
 interface SessionEnvelope {
   session: CashSessionRecord | null
   expected?: number
   movements?: CashMovementRecord[]
   variance?: number
   variance_alert?: boolean
-}
-
-let varianceAlert: number | null = null
-
-/**
- * `settings` is admin-only and the cash routes do not carry the threshold, so
- * an admin reads it once and ordinary staff fall back to the seeded £10. The
- * close route decides the real alert either way; this only tints the figure.
- */
-async function readVarianceAlert(): Promise<number> {
-  if (varianceAlert !== null) return varianceAlert
-  try {
-    const row = await pb
-      .collection("settings")
-      .getFirstListItem<{ cash_variance_alert?: number }>("")
-    varianceAlert = row.cash_variance_alert ?? DEFAULT_VARIANCE_ALERT
-  } catch {
-    varianceAlert = DEFAULT_VARIANCE_ALERT
-  }
-  return varianceAlert
 }
 
 /** Opens the drawer with a counted float. 409 when one is already open. */
@@ -66,15 +44,14 @@ export async function openCashSession(float: number): Promise<CashSessionRecord>
 /** The open session, what the drawer should hold, and every movement on it. */
 export async function getCurrentCashSession(): Promise<CashSessionState> {
   if (isDemo()) return demo.getCurrent()
-  const [result, alert] = await Promise.all([
-    pb.send<SessionEnvelope>("/api/vault/cash-sessions/current", { method: "GET" }),
-    readVarianceAlert(),
-  ])
+  const result = await pb.send<SessionEnvelope>(
+    "/api/vault/cash-sessions/current",
+    { method: "GET" }
+  )
   return {
     session: result.session,
     expected: result.expected ?? 0,
     movements: result.movements ?? [],
-    varianceAlert: alert,
   }
 }
 
