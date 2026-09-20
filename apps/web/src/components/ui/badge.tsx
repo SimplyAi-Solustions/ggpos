@@ -12,6 +12,15 @@ const badgeVariants = cva(
         volt: "bg-volt text-gg-ink",
         /** Everything else: a hairline pill. */
         outline: "border border-hairline text-foreground",
+        /**
+         * A count in the corner of an icon: the ink disc My Vault's nav puts
+         * on the notification bell. Volt is reserved for points and tiers,
+         * and a count is neither, so this is the primary block colour. It
+         * drops the pill's height and tracking, because two digits at .16em
+         * inside a 16px disc do not fit.
+         */
+        count:
+          "h-4 min-w-4 bg-primary px-1 text-[11px] leading-none tracking-normal text-primary-foreground tnum",
       },
     },
     defaultVariants: { variant: "outline" },

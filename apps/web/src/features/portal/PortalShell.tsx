@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { cn } from "cn"
 
+import { Badge } from "@/components/ui/badge"
 import { Wordmark } from "@/components/ui/wordmark"
 import { Hint } from "@/components/ui/micro-label"
 import { isDemo } from "@/lib/api/mode"
@@ -44,7 +45,7 @@ function NotificationsLink() {
     enabled: Boolean(signedIn),
     staleTime: 30_000,
   })
-  const unread = (data ?? []).filter((row) => !row.read_at).length
+  const unread = data?.unread ?? 0
 
   if (!signedIn) return null
 
@@ -58,12 +59,13 @@ function NotificationsLink() {
     >
       <BellIcon aria-hidden="true" className="size-5 stroke-[1.25]" />
       {unread > 0 ? (
-        <span
+        <Badge
           aria-hidden="true"
-          className="tnum absolute top-1.5 right-1.5 flex min-w-4 items-center justify-center rounded-full bg-primary px-1 font-mono text-[11px] leading-4 font-bold text-primary-foreground sm:top-0.5 sm:right-0.5"
+          variant="count"
+          className="absolute top-1.5 right-1.5 sm:top-0.5 sm:right-0.5"
         >
           {unread > 9 ? "9+" : unread}
-        </span>
+        </Badge>
       ) : null}
     </Link>
   )
