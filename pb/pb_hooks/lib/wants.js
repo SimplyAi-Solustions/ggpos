@@ -35,6 +35,47 @@ function ukDateTime(iso) {
 }
 
 /**
+ * One want_list row as the portal reads it: the bare relation id is
+ * expanded into `{ id, name, set, number }` (or null for a free-text row)
+ * so the screen has a title without a follow-up request - the same
+ * name/set/number shape the public estimate route already returns a card
+ * as, for the same reason.
+ */
+function wantRowShape(app, row) {
+  var cardId = row.getString("card");
+  var card = null;
+  if (cardId) {
+    try {
+      var cardRow = app.findRecordById("cards", cardId);
+      var setName = "";
+      try {
+        setName = app.findRecordById("card_sets", cardRow.getString("set")).getString("name");
+      } catch (err) {
+        setName = "";
+      }
+      card = {
+        id: cardRow.id,
+        name: cardRow.getString("name"),
+        set: setName,
+        number: cardRow.getString("number"),
+      };
+    } catch (err) {
+      card = null;
+    }
+  }
+  return {
+    id: row.id,
+    card: card,
+    free_text: row.getString("free_text"),
+    max_price: row.getInt("max_price"),
+    status: row.getString("status"),
+    matched_item: row.getString("matched_item"),
+    notified_at: row.getString("notified_at"),
+    created: row.getString("created"),
+  };
+}
+
+/**
  * The oldest open want_list row for `item`'s card whose max_price is empty
  * (0, PocketBase's plain-number zero value - see PricingRule.bandMax in
  * packages/shared/src/pricing.ts for the same "0 means no real bound"
@@ -217,6 +258,7 @@ function releaseExpiredHolds(app) {
 module.exports = {
   holdHours: holdHours,
   ukDateTime: ukDateTime,
+  wantRowShape: wantRowShape,
   findOpenWant: findOpenWant,
   matchOnStock: matchOnStock,
   fulfilOnSale: fulfilOnSale,

@@ -25,6 +25,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
+    const wantsLib = require(`${__hooks}/lib/wants.js`);
 
     const customer = e.auth;
     const body = util.body(e);
@@ -66,7 +67,7 @@ routerAdd(
         ip: e.realIP(),
       });
 
-      result = { want: row };
+      result = { row: wantsLib.wantRowShape(txApp, row) };
     });
 
     return e.json(200, result);
@@ -82,6 +83,7 @@ routerAdd(
   "/api/vault/want-list/{id}/close",
   (e) => {
     const auditLib = require(`${__hooks}/lib/audit.js`);
+    const wantsLib = require(`${__hooks}/lib/wants.js`);
 
     const customer = e.auth;
     const wantId = e.request.pathValue("id");
@@ -118,7 +120,7 @@ routerAdd(
           ip: e.realIP(),
         });
 
-        result = { want: live };
+        result = { row: wantsLib.wantRowShape(txApp, live) };
       });
     } catch (err) {
       if (halt) throw e.notFoundError(halt.message, null);

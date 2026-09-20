@@ -128,7 +128,7 @@ routerAdd(
         type: "quote_submitted",
         title: "New quote submitted",
         body: `A customer has submitted a quote with ${files.length} photo${files.length === 1 ? "" : "s"}.`,
-        link: "",
+        link: `/counter/quotes/${quote.id}`,
         email: true,
       });
 
