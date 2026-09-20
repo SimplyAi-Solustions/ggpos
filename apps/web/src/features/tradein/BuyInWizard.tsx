@@ -1,7 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "@tanstack/react-router"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { DEFAULT_OFFER_SETTINGS } from "@gg/shared/pricing"
 import { evaluateTradeInPoints } from "@gg/shared/loyalty"
 
@@ -38,12 +38,14 @@ import {
   createDraftTradeIn,
   currentCashSessionId,
   emailReceipt,
-  getLoyaltyProgramme,
-  getOfferSettings,
-  getPricingRules,
+  loyaltyRulesFrom,
+  offerSettingsFrom,
+  programmeFrom,
   refusalOrFallback,
+  rulesFrom,
   saveTradeInLines,
   submitIdCheck,
+  useVaultConfig,
   type IdCheckPayload,
 } from "@/lib/api"
 
@@ -74,34 +76,32 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   const [emailNote, setEmailNote] = React.useState<string | null>(null)
   const [labelNote, setLabelNote] = React.useState<string | null>(null)
 
-  const { data: rules = [], isSuccess: rulesLoaded } = useQuery({
-    queryKey: ["pricing-rules"],
-    queryFn: getPricingRules,
-    staleTime: 5 * 60_000,
-  })
-  const { data: offerSettings } = useQuery({
-    queryKey: ["offer-settings"],
-    queryFn: getOfferSettings,
-    staleTime: 5 * 60_000,
-  })
-  const { data: programme } = useQuery({
-    queryKey: ["loyalty-programme"],
-    queryFn: getLoyaltyProgramme,
-    staleTime: 5 * 60_000,
-  })
+  // One read of `/api/vault/config` for the session, shared with the Sell
+  // and Cash screens' own slice of it. The offer bands, the cash cap and the
+  // loyalty programme all come out of this one answer.
+  const { data: config, isSuccess: configLoaded } = useVaultConfig()
 
+  const rules = React.useMemo(() => (config ? rulesFrom(config) : []), [config])
   // Memoised because the line inputs are derived from it: a fresh object on
   // every render would re-save every line on every keystroke.
   const settings = React.useMemo(
-    () => offerSettings ?? { ...DEFAULT_OFFER_SETTINGS, cashCap: 800_000 },
-    [offerSettings]
+    () =>
+      config
+        ? offerSettingsFrom(config)
+        : { ...DEFAULT_OFFER_SETTINGS, cashCap: 800_000 },
+    [config]
   )
   const sums = totals(state.lines, rules, settings)
   const payout = payoutFor(state.payoutType, sums, state.mixedCash)
   const cashRequired = payout.cash > 0
   const steps = visibleSteps({ cashRequired })
-  const creditPoints = programme
-    ? evaluateTradeInPoints(programme, [], sums.credit, new Date())
+  const creditPoints = config
+    ? evaluateTradeInPoints(
+        programmeFrom(config),
+        loyaltyRulesFrom(config),
+        sums.credit,
+        new Date()
+      )
     : 0
 
   // ---- The draft ---------------------------------------------------------
@@ -360,7 +360,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
                 rules={rules}
                 settings={settings}
                 sums={sums}
-                rulesMissing={rulesLoaded && rules.length === 0}
+                rulesMissing={configLoaded && rules.length === 0}
                 onAdd={(line) => dispatch({ type: "add-line", line })}
                 onUpdate={(key, patch) =>
                   dispatch({ type: "update-line", key, patch })

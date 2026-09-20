@@ -6,8 +6,6 @@
  * on `customer_private` (PocketBase rules are per record, not per field), so
  * a profile is two reads and a patch is up to two writes.
  */
-import { ClientResponseError } from "pocketbase"
-
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
@@ -16,6 +14,7 @@ import {
   demoCreditLedgerFor,
   demoEraseCustomer,
   demoGetCustomer,
+  demoMergeCounts,
   demoMergeCustomers,
   demoSearchCustomers,
   demoUpdateCustomer,
@@ -29,6 +28,7 @@ import type {
   CustomerRecord,
   CustomerSummary,
   IdStatus,
+  MergeResult,
   NewCustomerInput,
   TradeInRecord,
 } from "@/lib/api/types"
@@ -260,89 +260,39 @@ export async function updateCustomer(
   return profile
 }
 
-/** Collections that carry a `customer` relation and follow a merge. */
-const MERGE_COLLECTIONS = [
-  "trade_ins",
-  "quotes",
-  "credit_ledger",
-  "points_ledger",
-  "want_list",
-] as const
-
 /**
  * Fold one customer into another.
  *
- * Phase 2 has no server route for this, so it is done here: every row in the
- * collections above is re-pointed at the kept customer through the batch API,
- * then the merged record is deleted. The batch is one request and one
- * transaction on the server, so a half-merged customer is not possible; a
- * PocketBase that has the batch API switched off falls back to a row at a
- * time, which is not atomic, and the caller is told so.
+ * `POST /api/vault/customers/:duplicate/merge` moves the duplicate's
+ * trade-ins, sales, quotes, credit, points and want list onto the kept
+ * customer inside one transaction and deletes the duplicate, so a half
+ * merged pair is not possible. It needs a step-up, because it moves money.
  */
 export async function mergeCustomers(
   keepId: string,
-  mergeId: string
-): Promise<CustomerProfile> {
-  if (isDemo()) return demoMergeCustomers(keepId, mergeId)
+  mergeId: string,
+  stepUpToken: string
+): Promise<MergeResult> {
   if (keepId === mergeId) {
     throw new Error("Pick a different customer to merge in.")
   }
-
-  const moves: { collection: string; id: string }[] = []
-  for (const collection of MERGE_COLLECTIONS) {
-    try {
-      const rows = await pb
-        .collection(collection)
-        .getFullList<{ id: string }>({
-          filter: `customer = "${escapeFilter(mergeId)}"`,
-          fields: "id",
-        })
-      for (const row of rows) moves.push({ collection, id: row.id })
-    } catch (error) {
-      // A collection this install does not have yet is not a reason to
-      // refuse the merge; anything else is.
-      if (!isNotFound(error)) throw error
-    }
+  if (isDemo()) {
+    const moved = demoMergeCounts(mergeId)
+    return { profile: demoMergeCustomers(keepId, mergeId), moved }
   }
 
-  const priv = await privateFor(mergeId)
-  const keepPriv = await privateFor(keepId)
+  const result = await pb.send<{
+    customer: CustomerRecord
+    moved: Record<string, number>
+  }>(`/api/vault/customers/${mergeId}/merge`, {
+    method: "POST",
+    body: { into: keepId },
+    headers: { "X-Step-Up": stepUpToken },
+  })
 
-  try {
-    const batch = pb.createBatch()
-    for (const move of moves) {
-      batch.collection(move.collection).update(move.id, { customer: keepId })
-    }
-    if (keepPriv && priv) {
-      batch.collection("customer_private").update(keepPriv.id, {
-        credit_balance: (keepPriv.credit_balance ?? 0) + (priv.credit_balance ?? 0),
-        points_balance: (keepPriv.points_balance ?? 0) + (priv.points_balance ?? 0),
-      })
-    }
-    batch.collection("customers").delete(mergeId)
-    await batch.send()
-  } catch (error) {
-    if (error instanceof ClientResponseError && error.status === 400) {
-      // Batch is off on this server. Fall back, and say so, because this
-      // path can stop half way.
-      for (const move of moves) {
-        await pb.collection(move.collection).update(move.id, { customer: keepId })
-      }
-      if (keepPriv && priv) {
-        await pb.collection("customer_private").update(keepPriv.id, {
-          credit_balance: (keepPriv.credit_balance ?? 0) + (priv.credit_balance ?? 0),
-          points_balance: (keepPriv.points_balance ?? 0) + (priv.points_balance ?? 0),
-        })
-      }
-      await pb.collection("customers").delete(mergeId)
-    } else {
-      throw error
-    }
-  }
-
-  const profile = await getCustomer(keepId)
+  const profile = await getCustomer(result.customer.id)
   if (!profile) throw new Error("That customer could not be read back.")
-  return profile
+  return { profile, moved: result.moved ?? {} }
 }
 
 export async function getCreditLedger(
@@ -356,28 +306,25 @@ export async function getCreditLedger(
 }
 
 /**
- * Erasure as far as this phase reaches: the name, email and phone are
- * anonymised, the staff-only row is emptied and the customer is flagged.
+ * Erasure, through `POST /api/vault/customers/:id/erase`.
  *
- * The rest of UK GDPR Article 17 (deleting the ID photo, voiding open
- * rewards, keeping the numbered trade-in records with their seller snapshot)
- * lands with the backend's erasure route; until then this is a front-of-house
- * anonymisation and the screen says so before it runs.
+ * The server anonymises the customer, deletes the ID photo, cancels open
+ * rewards and removes the want list, notifications and quotes, and keeps
+ * every numbered trade-in and sale with its seller snapshot, which UK GDPR
+ * Article 17(3)(b) requires it to. Admin plus a step-up, and it refuses with
+ * 422 while the customer still holds store credit.
  */
-export async function eraseCustomer(customerId: string): Promise<CustomerProfile> {
+export async function eraseCustomer(
+  customerId: string,
+  stepUpToken: string
+): Promise<CustomerProfile> {
   if (isDemo()) return demoEraseCustomer(customerId)
 
-  const profile = await getCustomer(customerId)
-  const flags = new Set(profile?.private?.flags ?? [])
-  flags.add("watchlist")
-
-  return updateCustomer(customerId, {
-    name: "Erased customer",
-    email: "",
-    phone: "",
-    marketingConsent: false,
-    address: "",
-    notes: "",
-    flags: [...flags],
-  })
+  const result = await pb.send<{ erased: boolean; customer: CustomerRecord }>(
+    `/api/vault/customers/${customerId}/erase`,
+    { method: "POST", headers: { "X-Step-Up": stepUpToken } }
+  )
+  const profile = await getCustomer(result.customer.id)
+  if (!profile) throw new Error("That customer could not be read back.")
+  return profile
 }

@@ -316,6 +316,19 @@ export function demoUpdateCustomer(
   return demoGetCustomer(entry.customer.id) as CustomerProfile
 }
 
+/**
+ * What a merge would move, counted the way the server counts it, so the
+ * done line reads the same in both modes. The demo book holds credit rows
+ * and trade-ins; everything else it does not model reads as zero and is
+ * left out of the sentence rather than shown as "0 sales".
+ */
+export function demoMergeCounts(mergeId: string): Record<string, number> {
+  const credit = demoCreditLedger.filter((row) => row.customer === mergeId).length
+  const counts: Record<string, number> = {}
+  if (credit > 0) counts.credit_ledger = credit
+  return counts
+}
+
 export function demoMergeCustomers(keepId: string, mergeId: string): CustomerProfile {
   const keep = findDemoCustomer(keepId)
   const merge = findDemoCustomer(mergeId)
