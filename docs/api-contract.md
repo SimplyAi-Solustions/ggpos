@@ -442,9 +442,9 @@ Response 200: `{ "ended": ["<item id>", ...] }` - only the ids actually cleared.
 
 ### Imports
 
-`POST /api/vault/imports/card-uploader` and `POST /api/vault/imports/ebay-orders` are both multipart: a `file` field (the CSV) and an optional `type` field (`"card_uploader"` or `"ebay_orders"`) that, when given, must match the route's own type - posting the wrong one is refused with 400 ("This is the Card Uploader import..." / "This is the eBay orders import...") rather than silently importing through the wrong mapping. Both refuse a file over 10 MB, and both refuse cleanly with **"That file is not a CSV we recognise. Check the first line has the column headings."** (400) when the header row resolves none of the mapping's own columns at all, or the file has no rows.
+`POST /api/vault/imports/card-uploader` and `POST /api/vault/imports/ebay-orders` are both multipart: a `file` field (the CSV) and an optional `type` field (`"card_uploader"` or `"ebay_orders"`) that, when given, must match the route's own type - posting the wrong one is refused with 400 ("This is the Card Uploader import..." / "This is the eBay orders import...") rather than silently importing through the wrong mapping. Both carry `$apis.bodyLimit(10 MB)`, so an oversized request is refused before anything is even read off it, and both also refuse a file over 10 MB with a plain sentence once the body has been read (the in-handler check a multipart request's own framing overhead can still reach ahead of). Both refuse cleanly with **"That file is not a CSV we recognise. Check the first line has the column headings."** (400) when the header row resolves none of the mapping's own columns at all, or the file has no rows.
 
-Both run the whole import - the `csv_imports` bookkeeping row and every `items`/`sales` write it makes - inside one `$app.runInTransaction`, so a file that fails partway through a **system** error leaves nothing behind. A single bad *row* never aborts that transaction: name-only rows, unreadable prices, unknown custom labels and already-sold items are collected into the `csv_imports` row's own `errors` list instead, so the rest of the file still goes through.
+Both run the whole import - the `csv_imports` bookkeeping row and every `items`/`sales` write it makes - inside one `$app.runInTransaction`, so a file that fails partway through a **system** error leaves nothing behind: if even the bookkeeping row itself cannot be saved (the rare case), the whole call is refused with a plain 400 rather than a bare 500. A single bad *row* never aborts that transaction: name-only rows, unreadable prices, unknown custom labels and already-sold items are collected into the `csv_imports` row's own `errors` list instead, so the rest of the file still goes through.
 
 **Mapping configs.** Neither importer has hard-coded headers: each reads `settings.import_mappings.card_uploader` / `.ebay_orders`, the same `{ headerRow, columns: { field: [header, header, ...] } }` shape docs/csv-formats.md already sketches, the first alias present in the header row winning per field. A Phase 4 migration seeds both with exactly that skeleton (`packages/shared` is not involved - this is plain settings data). **Richard confirms the real header names once a genuine Card Uploader and eBay orders export are in hand**, by editing `settings.import_mappings` directly (there is no dedicated route for it in this phase - it is an ordinary field on the already-admin-only `settings` collection); this file and docs/csv-formats.md record what the seeded default is and where to change it. A settings row with no `import_mappings` entry for a given importer (an install that predates the migration) falls back to the same skeleton hard-coded in `pb_hooks/lib/imports.js`, so an importer never simply refuses to run for want of a mapping.
 
@@ -477,9 +477,13 @@ Response 200: `{ "import": <csv_imports row>, "sold": <n>, "already_sold": <n> }
 
 `GET /api/vault/imports/:id`
 
-The `csv_imports` row as stored, `errors` included - the review screen reads this directly rather than a separate endpoint. 404 when the id does not exist.
+The `csv_imports` row as stored, `errors` included - the review screen reads this directly rather than a separate endpoint. 404 when the id does not exist. Audited (`action: "import_view"`, identifiers only), the same as every other route in this contract.
 
-**`sales.channel` and `sales.external_ref`** (new fields, this phase's migration): `channel` is `"counter"` or `"ebay"`, `external_ref` is free text (the eBay order reference). An ordinary counter sale (`sales.pb.js`, a different package's file this round) never sets `channel` itself, so `pb_hooks/imports.pb.js` carries its own small `onRecordCreate` hook on `sales` that defaults an empty `channel` to `"counter"` - the same pattern `items.pb.js` and `customers.pb.js` already use for a field a different route's create call leaves blank. This is deliberately **not** a change to `sales.pb.js`, which stays untouched this round.
+**`sales.channel` and `sales.external_ref`** (new fields, this phase's migration): `channel` is `"counter"` or `"ebay"`, `external_ref` is free text (the eBay order reference, truncated to 100 characters if the file's own is longer). An ordinary counter sale (`sales.pb.js`, a different package's file this round) never sets `channel` itself, so `pb_hooks/imports.pb.js` carries its own small `onRecordCreate` hook on `sales` that defaults an empty `channel` to `"counter"` - the same pattern `items.pb.js` and `customers.pb.js` already use for a field a different route's create call leaves blank. This is deliberately **not** a change to `sales.pb.js`, which stays untouched this round.
+
+**Every sale carries `occurred_at`** (a `sales.date` field added by a separate migration this phase, backfilled to `created` for every row that predates it): the date the sale actually happened, as distinct from `created`, which is only when the database row was written. For a counter sale the two are the same instant, filled in by the same `onRecordCreate` hook above when a create leaves it blank; for an eBay-orders-imported sale they can genuinely differ - a file imported on a Friday covering a week of orders books each sale on its own order date, not on the Friday the import ran. Every report and every `daily_stats` row groups, filters and ranges sales on `occurred_at`, never `created`.
+
+**`items.created_by` and `sales.staff`** are set from the importing staff member on a row this phase actually creates (a brand-new Card Uploader item with nothing already in stock behind it; a new eBay-orders sale) - never on a row it only updates, since that would misattribute who actually brought a piece of stock in or rang up a sale that in truth happened on eBay, not at the counter.
 
 ### SumUp
 
@@ -487,35 +491,42 @@ The `csv_imports` row as stored, `errors` included - the review screen reads thi
 
 `POST /api/vault/sumup/pull` (**admin**)
 
-Fetches every transaction changed since the last pull (or the last 24 hours, on a first run with nothing stored yet), upserts `sumup_transactions` by `sumup_id`, and matches each newly-seen one to a sale. With no API key or merchant code configured, returns `{ "fetched": 0, "matched": 0, "unmatched": 0 }` rather than an error - the hourly cron below runs on every install, configured or not.
+Fetches every transaction changed since the last pull (or the last 24 hours, on a first run with nothing stored yet), upserts `sumup_transactions` by `sumup_id`, and matches each newly-seen, `SUCCESSFUL`, non-refund one to a sale. With no API key or merchant code configured, returns `{ "fetched": 0, "matched": 0, "unmatched": 0, "refunded": 0 }` rather than an error - the hourly cron below runs on every install, configured or not.
 
-**Matching, in order:**
-1. A `products[]` entry whose `name` starts with one of our own SKUs (exactly the form `GET /api/vault/exports/sumup.csv` writes into `Item name` - the display form, hyphen included, or the encoded form, either parses) - the item it names is looked up directly (`items.sku`), then its most recent `sale_lines` row's `sale`.
-2. Failing that, a `sales` row with `payment` `sumup_card` or `mixed`, the same `total`, `created` within **three minutes** of the transaction's own `timestamp`, that no other transaction has matched already (so two transactions of the same amount in the same few minutes cannot both claim one sale).
+**Every transaction is stored, whatever its status.** Only a `status: "SUCCESSFUL"` transaction that is not a refund is ever matched or counted in `matched`/`unmatched`:
+- A **refund** (a negative `amount`, or SumUp's own refund type on the transaction) is stored and counted separately, in `refunded` - it is money going back to a customer, not a sale we made, so it is never attempted against either matching rule below.
+- Anything else that is not `SUCCESSFUL` (`FAILED`, `PENDING`, ...) is stored but contributes to none of `matched`, `unmatched` or `refunded`.
+- An **amount that cannot be parsed at all** is stored with `status` overwritten to `AMOUNT_UNREADABLE` (never left as whatever SumUp sent, and never silently treated as zero, which would risk a false match against a genuine zero-value transaction) and is likewise never matched, counted or included in `reconcile`'s totals; the transaction's own id is logged.
 
-A transaction that already carries a `matched_sale` from an earlier pull is left alone - only its other fields (`amount`, `status`, `products`, `fetched_at`, ...) refresh - which is what keeps a repeat pull from ever re-matching, and hence from ever duplicating, a sale a previous pull already resolved. `sumup_transactions.amount` is parsed from SumUp's decimal amount through the shared money helpers (`pb_hooks/lib/shared/money.js`), never a float.
+**Matching (a `SUCCESSFUL`, non-refund transaction only), in order:**
+1. A `products[]` entry whose `name` starts with one of our own SKUs (exactly the form `GET /api/vault/exports/sumup.csv` writes into `Item name` - the display form, hyphen included, or the encoded form, either parses) - the item it names is looked up directly (`items.sku`), then the sale (not already claimed by another transaction) whose line for that item lands closest to the transaction's own `timestamp` - not simply the most recent one, so an item sold more than once still resolves to the sale a given transaction actually belongs to.
+2. Failing that, a `sales` row with `payment` `sumup_card` or `mixed`, created within **three minutes** of the transaction's own `timestamp`, whose **card share** equals the transaction's amount, not already matched to another transaction. The card share is `total` for a plain `sumup_card` sale, but `payment_split.sumup_card` for a `mixed` one (`sales.pb.js`'s own `payment_split` shape) - a mixed sale's `total` also includes whatever was paid by cash, store credit or points, none of which ever reached SumUp, so comparing against `total` there would never match a genuine mixed-payment sale.
 
-Response 200: `{ "fetched": <n>, "matched": <n>, "unmatched": <n> }` - counts for this pull alone (an already-matched transaction seen again still counts as `matched`).
+A transaction that already carries a `matched_sale` from an earlier pull is left alone for matching - only its other fields (`amount`, `status`, `fetched_at`, ...) refresh, `products` included whenever detail is actually re-fetched. Detail (`products[]`, the only source of it - absent from the history list) is fetched only for a transaction not already matched, and at most 100 times per pull; a pull with more new/unmatched transactions than that leaves the rest for the next one rather than making an unbounded number of calls. `sumup_transactions.amount` is parsed from SumUp's own decimal amount through the shared money helpers (`pb_hooks/lib/shared/money.js`) - taken as a string when SumUp already sends one, and only stringified from a number as the fallback, so a value that arrived as a proper decimal string is never round-tripped through a float first.
+
+Response 200: `{ "fetched": <n>, "matched": <n>, "unmatched": <n>, "refunded": <n> }` - counts for this pull alone (an already-matched transaction seen again still counts as `matched`; `matched + unmatched + refunded` can be less than `fetched` when this pull also saw a `FAILED`/`PENDING` or amount-unreadable transaction, which contributes to none of the three).
+
+`changes_since` is sent as a genuine ISO 8601 instant, kept in `adapter_state` (`adapters/statestore.js`) as its own marker rather than read back off `sumup_transactions.fetched_at` - that field is a PocketBase "date" field whose own stored text uses a space where ISO 8601 wants a "T", which SumUp's API cannot parse; every pull after the first was previously sending it a value SumUp would silently reject.
 
 Also runs hourly, `:15` past the hour from 08:00 to 22:00 UTC (`pb_hooks/crons_sumup.pb.js`, `cronAdd("sumup_pull", "15 8-22 * * *", ...)` - a few minutes after the hour so a sale rung through moments ago has settled on SumUp's side, and only during trading hours). Kept out of `pb_hooks/crons.pb.js` (another package's file this round) as its own small file, the same shape as every existing `cronAdd` there.
 
 `GET /api/vault/sumup/reconcile?date=YYYY-MM-DD` (staff)
 
-The day's `sumup_transactions` (by `timestamp`) beside the day's card sales (`sales` with `payment` `sumup_card` or `mixed`, by `created`), for the Cash screen.
+The day's `sumup_transactions` (by `timestamp`) beside the day's card sales (`sales` with `payment` `sumup_card` or `mixed`, by `created`), for the Cash screen. Only `status: "SUCCESSFUL"` transactions are ever included here - a stored `FAILED`, refund-bucketed or amount-unreadable row (see the pull route above) is left out of every list and every total, the same reasoning that keeps it out of `matched`/`unmatched` on the pull itself.
 
 Response 200
 ```json
 {
   "date": "2026-09-20",
   "matched": [
-    { "transaction": { "id": "...", "sumup_id": "...", "transaction_code": "...", "amount": 1999, "timestamp": "...", "status": "SUCCESSFUL" }, "sale": { "id": "...", "number": "GG-S-000123", "total": 1999 } }
+    { "transaction": { "id": "...", "sumup_id": "...", "transaction_code": "...", "amount": 1999, "timestamp": "...", "status": "SUCCESSFUL" }, "sale": { "id": "...", "number": "GG-S-000123", "total": 1999, "card_share": 1999 } }
   ],
   "unmatched_transactions": [ { "id": "...", "sumup_id": "...", "transaction_code": "...", "amount": 500, "timestamp": "...", "status": "SUCCESSFUL" } ],
-  "unmatched_sales": [ { "id": "...", "number": "GG-S-000124", "total": 500, "payment": "sumup_card", "created": "..." } ],
+  "unmatched_sales": [ { "id": "...", "number": "GG-S-000124", "total": 2000, "card_share": 500, "payment": "mixed", "created": "..." } ],
   "totals": { "sumup": 2499, "sales": 2499, "difference": 0 }
 }
 ```
-`totals.sumup` and `totals.sales` are the day's own transaction and sale totals (every row in range, matched or not); `difference` is `sumup - sales`. 400 with no `date`, or one not shaped `YYYY-MM-DD`.
+`card_share` (on every `matched[].sale` and `unmatched_sales[]` row) and `totals.sales` are the same figure the pull's own matching rule 2 compares against - `total` for a plain `sumup_card` sale, `payment_split.sumup_card` for a `mixed` one - not `sales.total` itself, which the second `unmatched_sales` example above deliberately shows diverging from (a £20 mixed sale with £5 on card still contributes only 500 to `totals.sales`, never 2000). `totals.sumup` is the day's own `SUCCESSFUL` transaction amounts, matched or not; `difference` is `sumup - sales`. 400 with no `date`, or one that is not shaped `YYYY-MM-DD` **or is not a real calendar date** (`lib/csv.js`'s own `isValidDateStr` - "2026-13-45" is shaped right and still refused, rather than reaching an Invalid Date downstream and answering with a bare 500).
 
 ### Implementation notes (as built in Phase 4)
 
