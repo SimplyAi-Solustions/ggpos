@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { formatGBP } from "@gg/shared"
@@ -31,6 +32,7 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/push"
 import { ID_STATUS_SENTENCE, MONTHS } from "@/features/portal/format"
 import { signOut } from "@/features/portal/session"
+import { usePortalDock } from "@/features/portal/dock"
 import { Note } from "@/features/portal/Note"
 import { SHEET_COLUMN } from "@/features/portal/sheet"
 
@@ -56,6 +58,7 @@ const PUSH_NOTE: Record<PushState, string> = {
  * than a softer one written for the button.
  */
 export function ProfileScreen() {
+  const dock = usePortalDock()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -261,6 +264,17 @@ export function ProfileScreen() {
     )
   }
 
+  const primary = (
+    <Button
+      type="button"
+      trailingArrow
+      loading={save.isPending}
+      onClick={() => save.mutate()}
+    >
+      Save changes
+    </Button>
+  )
+
   return (
     <section className="pt-12 sm:pt-20">
       <PageTitle>Profile</PageTitle>
@@ -390,15 +404,22 @@ export function ProfileScreen() {
       {error ? <FieldError className="mt-10">{error}</FieldError> : null}
 
       <div className="mt-14">
-        <Button type="button" trailingArrow loading={save.isPending} onClick={() => save.mutate()}>
-          Save changes
-        </Button>
+        <div className="hidden min-[900px]:block">{primary}</div>
         {saved ? (
           <p role="status" className="mt-4 text-[15px] text-muted-foreground">
             Saved.
           </p>
         ) : null}
       </div>
+
+      {dock
+        ? createPortal(
+            <div className="border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
+              {primary}
+            </div>,
+            dock
+          )
+        : null}
 
       <SectionHeading className="mt-16">Your data</SectionHeading>
       <div className="flex flex-col items-start gap-8">

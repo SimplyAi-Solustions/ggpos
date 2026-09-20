@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { Link } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { formatGBP } from "@gg/shared"
@@ -20,6 +21,7 @@ import {
   formatBand,
   type EstimateCondition,
 } from "@/features/estimate/bands"
+import { usePortalDock } from "@/features/portal/dock"
 import { formatDate } from "@/features/portal/format"
 import { Note } from "@/features/portal/Note"
 import type { EstimateCardHit } from "@/lib/api/types"
@@ -38,6 +40,7 @@ export interface EstimateScreenProps {
  * one thing it is for, which is getting somebody a card.
  */
 export function EstimateScreen({ signedIn }: EstimateScreenProps) {
+  const dock = usePortalDock()
   const [card, setCard] = React.useState<EstimateCardHit | null>(null)
   const [condition, setCondition] = React.useState<EstimateCondition>("NM")
   // The chosen finish is held with the card it was chosen for, so picking a
@@ -60,7 +63,19 @@ export function EstimateScreen({ signedIn }: EstimateScreenProps) {
   })
 
   const result = estimate.data
-  const nothing = result && result.market === null
+  // No cached price at all: the route says so with a null market and two
+  // null bands rather than a fabricated zero, and so does the screen.
+  const nothing = result ? result.market === null : false
+
+  const primary = signedIn ? (
+    <Button render={<Link to="/account/quotes/new" />} trailingArrow>
+      Send photos for a quote
+    </Button>
+  ) : (
+    <Button render={<Link to="/account" />} trailingArrow>
+      Sign in to My Vault
+    </Button>
+  )
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -168,9 +183,7 @@ export function EstimateScreen({ signedIn }: EstimateScreenProps) {
 
       {signedIn ? (
         <div className="mt-16 flex flex-col items-start gap-8">
-          <Button render={<Link to="/account/quotes/new" />} trailingArrow>
-            Send photos for a quote
-          </Button>
+          <div className="hidden min-[900px]:block">{primary}</div>
           <Button variant="text" render={<Link to="/account/wants" />}>
             Add it to my want list
           </Button>
@@ -184,12 +197,19 @@ export function EstimateScreen({ signedIn }: EstimateScreenProps) {
               your phone, a want list with holds, and points on everything you
               buy.
             </p>
-            <Button render={<Link to="/account" />} trailingArrow>
-              Sign in to My Vault
-            </Button>
+            <div className="hidden min-[900px]:block">{primary}</div>
           </div>
         </div>
       )}
+
+      {dock
+        ? createPortal(
+            <div className="border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
+              {primary}
+            </div>,
+            dock
+          )
+        : null}
     </section>
   )
 }

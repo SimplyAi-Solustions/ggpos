@@ -48,13 +48,22 @@ export function urlBase64ToUint8Array(base64: string): Uint8Array {
   return bytes
 }
 
-function keyToBase64(subscription: PushSubscription, name: "p256dh" | "auth"): string {
-  const key = subscription.getKey(name)
-  if (!key) return ""
-  const bytes = new Uint8Array(key)
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
+/**
+ * The keys as the server wants them: base64url, no padding.
+ *
+ * `PushSubscription.toJSON()` already produces exactly that for `p256dh` and
+ * `auth`, which is also the Web Push standard's own JSON form, so the
+ * browser's own encoding is taken rather than a hand-rolled `btoa` of the
+ * raw bytes: plain base64 carries `+` and `/`, which do not survive a URL
+ * and are not what a push library expects to be handed.
+ */
+export function subscriptionKeys(subscription: PushSubscription): {
+  p256dh: string
+  auth: string
+} {
+  const json = subscription.toJSON() as { keys?: Record<string, string> }
+  const keys = json.keys ?? {}
+  return { p256dh: keys.p256dh ?? "", auth: keys.auth ?? "" }
 }
 
 async function registration(): Promise<ServiceWorkerRegistration | null> {
@@ -108,20 +117,35 @@ export async function enablePush(vapidKey: string): Promise<void> {
 
   await subscribeToPush({
     endpoint: subscription.endpoint,
-    keys: {
-      p256dh: keyToBase64(subscription, "p256dh"),
-      auth: keyToBase64(subscription, "auth"),
-    },
+    keys: subscriptionKeys(subscription),
   })
 }
 
-/** Drops the subscription here and at the shop. */
+/**
+ * Drops the subscription at the shop first, then here.
+ *
+ * The other order loses: once `unsubscribe()` has run the endpoint is gone
+ * from the browser, so a failed DELETE would leave the shop pushing at a
+ * dead endpoint with nothing left to tell it to stop. Telling the server
+ * first means a failure is reported and nothing has changed yet.
+ */
 export async function disablePush(): Promise<void> {
   const registered = await registration()
   if (!registered) return
   const subscription = await registered.pushManager.getSubscription()
   if (!subscription) return
-  const { endpoint } = subscription
-  await subscription.unsubscribe()
-  await unsubscribeFromPush(endpoint)
+
+  try {
+    await unsubscribeFromPush(subscription.endpoint)
+  } catch {
+    throw new PushError(
+      "We could not tell the shop to stop. Check your connection and try again."
+    )
+  }
+  const dropped = await subscription.unsubscribe()
+  if (!dropped) {
+    throw new PushError(
+      "This browser would not drop the subscription. Turn notifications off in your browser settings."
+    )
+  }
 }
