@@ -1,0 +1,7 @@
+# Keeps the build context small and the image reproducible: node_modules
+# is a pnpm workspace symlink on the host (would not resolve the same way
+# inside the build, and npm ci rebuilds it from package-lock.json anyway),
+# and test/ has no reason to ship in the runtime image.
+node_modules
+test
+npm-debug.log

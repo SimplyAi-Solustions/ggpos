@@ -34,9 +34,12 @@ function ScaledCard({ children }: { children: React.ReactNode }) {
     const node = ref.current
     if (!node) return undefined
     const measure = () => {
-      // Never below 1:1 on a phone, and never so large on a desk that the
-      // card stops reading as a card.
-      setScale(Math.min(1.45, node.clientWidth / CARD_WIDTH_PX))
+      // Never below 1:1, which is what the millimetre sizes assume: the
+      // card's own 6pt labels are 8px at full size, and shrinking them
+      // further would put functional text under the 11px floor DESIGN.md
+      // sets. It overflows the gutter on a very narrow phone instead, which
+      // is visible and fixable, rather than going quietly unreadable.
+      setScale(Math.min(1.45, Math.max(1, node.clientWidth / CARD_WIDTH_PX)))
     }
     measure()
     const observer = new ResizeObserver(measure)

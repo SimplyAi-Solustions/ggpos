@@ -157,8 +157,13 @@ export function NewQuoteScreen() {
 
       {rejected.length > 0 ? (
         <ul className="mt-6 flex flex-col gap-2" role="alert">
-          {rejected.map((sentence) => (
-            <li key={sentence} className="text-[13px] leading-[1.45] text-destructive">
+          {/* Two files with the same name are refused for the same reason,
+              so the sentence is not unique and the index is the key. */}
+          {rejected.map((sentence, index) => (
+            <li
+              key={`${index}-${sentence}`}
+              className="text-[13px] leading-[1.45] text-destructive"
+            >
               {sentence}
             </li>
           ))}

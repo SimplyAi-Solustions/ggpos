@@ -367,6 +367,16 @@ export function QuotePage({ id }: { id: string }) {
           {QUOTE_STATUS_NOTE[status]}
         </span>
         {quote.drop_off ? <Hint>{DROP_OFF_LABEL[quote.drop_off]}</Hint> : null}
+        {status === "submitted" ? (
+          <Button
+            variant="text"
+            type="button"
+            loading={reviewing.isPending}
+            onClick={() => reviewing.mutate()}
+          >
+            Mark as reviewing
+          </Button>
+        ) : null}
       </div>
 
       {/* ---- The photos ------------------------------------------------- */}
@@ -393,19 +403,6 @@ export function QuotePage({ id }: { id: string }) {
             cash figure; store credit is worked out again when the items are on
             the counter, and is never lower.
           </p>
-
-          {status === "submitted" ? (
-            <div className="mb-10">
-              <Button
-                variant="text"
-                type="button"
-                loading={reviewing.isPending}
-                onClick={() => reviewing.mutate()}
-              >
-                Mark as reviewing
-              </Button>
-            </div>
-          ) : null}
 
           <ItemsStep
             lines={lines}
@@ -443,6 +440,12 @@ export function QuotePage({ id }: { id: string }) {
                 </span>
               </p>
             ) : null}
+            {error ? (
+              <p role="alert" className="mt-8 max-w-[56ch] text-[13px] text-destructive">
+                {error}
+              </p>
+            ) : null}
+            <div className="mt-10 hidden min-[900px]:block">{primary(false)}</div>
           </div>
         </section>
       ) : null}
@@ -457,7 +460,7 @@ export function QuotePage({ id }: { id: string }) {
           >
             {formatGBP(quote.offer_total ?? quoteOfferTotal(offerLines))}
           </p>
-          {quote.offer_expires_at ? (
+          {quote.offer_expires_at && (status === "offered" || status === "expired") ? (
             <p className="mt-3 text-[13px] leading-[1.45] text-muted-foreground">
               {expired
                 ? `Ran out on ${formatDate(quote.offer_expires_at)}`
@@ -546,7 +549,7 @@ export function QuotePage({ id }: { id: string }) {
         </div>
       </section>
 
-      {error ? (
+      {error && !offering ? (
         <p role="alert" className="mt-10 max-w-[56ch] text-[13px] text-destructive">
           {error}
         </p>
@@ -554,7 +557,7 @@ export function QuotePage({ id }: { id: string }) {
 
       {/* ---- The one action, and the two links ---------------------------- */}
       <div className="mt-14 hidden flex-wrap items-center gap-8 min-[900px]:flex">
-        {primary(false)}
+        {offering ? null : primary(false)}
         <Button variant="text" render={<Link to="/counter/quotes" />}>
           Back to quotes
         </Button>

@@ -43,6 +43,8 @@ export function SignInScreen({ next }: { next?: string }) {
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [waitLeft, setWaitLeft] = React.useState(0)
+  /** Said once, when the wait is armed, rather than ticked out loud. */
+  const [announcement, setAnnouncement] = React.useState("")
   const codeRef = React.useRef<HTMLInputElement>(null)
 
   // "Send another" wakes up after a minute, so a slow mail server does not
@@ -62,6 +64,9 @@ export function SignInScreen({ next }: { next?: string }) {
       setOtpId(id)
       setStep("code")
       setWaitLeft(RESEND_SECONDS)
+      setAnnouncement(
+        `Code sent. You can ask for another in ${RESEND_SECONDS} seconds.`
+      )
       // The code field is not on screen until now, so focus waits a tick.
       window.setTimeout(() => codeRef.current?.focus(), 0)
     } catch (cause) {
@@ -180,6 +185,10 @@ export function SignInScreen({ next }: { next?: string }) {
             We sent it to {email}. It is good for ten minutes.
           </p>
 
+          <p aria-live="polite" className="sr-only">
+            {announcement}
+          </p>
+
           <div className="mt-12 flex flex-col items-start gap-8">
             <Button
               type="submit"
@@ -199,7 +208,10 @@ export function SignInScreen({ next }: { next?: string }) {
                 Send another
               </Button>
               {waitLeft > 0 ? (
-                <Hint aria-live="polite">
+                // Silent: a live region that reads a new number every second
+                // would talk over the whole screen. The one announcement
+                // that matters is made below, when the wait starts.
+                <Hint aria-live="off">
                   {`Ready in ${waitLeft} ${waitLeft === 1 ? "second" : "seconds"}`}
                 </Hint>
               ) : null}
