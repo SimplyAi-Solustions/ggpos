@@ -56,6 +56,21 @@ interface LineRecord {
 const COUNT_EXPAND = "location,started_by"
 const LINE_EXPAND = "item,item.location"
 
+/**
+ * The statuses that mean "this is on that shelf right now".
+ *
+ * A reserved item and one listed on eBay are both still physically there
+ * and both have to be found by a count; only sold, returned and written off
+ * are gone. Anything else that turns up is a real stray, and the line says
+ * where it is recorded instead.
+ */
+export const COUNTED_STATUSES = ["in_stock", "reserved", "listed_ebay"] as const
+
+const COUNTED_FILTER = COUNTED_STATUSES.map((status) => `status = "${status}"`).join(" || ")
+
+/** PocketBase's batch API takes 200 requests at a time by default. */
+const BATCH_SIZE = 200
+
 function toLine(record: LineRecord): StockCountLine {
   const item = record.expand?.item
   return {
@@ -129,9 +144,40 @@ export async function listStockCounts(limit = 10): Promise<StockCountSummary[]> 
   })
 }
 
-/** A new count, with one line per item the location is recorded as holding. */
+/**
+ * The count already open for a location, or null.
+ *
+ * Two counts of one shelf at once would both be wrong, so the screen offers
+ * to carry on with this one rather than starting a second.
+ */
+export async function getOpenStockCount(
+  locationId: string
+): Promise<StockCountDetail | null> {
+  if (isDemo()) return demo.openFor(locationId)
+  const page = await pb.collection("stock_counts").getList<CountRecord>(1, 1, {
+    filter: `location = "${quote(locationId)}" && status = "open"`,
+    expand: COUNT_EXPAND,
+    sort: "-created",
+  })
+  const count = page.items[0]
+  if (!count) return null
+  return toDetail(count, await linesFor(count.id))
+}
+
+/**
+ * A new count, with one line per unit the location is recorded as holding.
+ *
+ * The lines go in through the batch API rather than one create each: a
+ * binder of three hundred singles is three hundred round trips otherwise,
+ * and a count nobody waits for is a count nobody does.
+ */
 export async function startStockCount(locationId: string): Promise<StockCountDetail> {
   if (isDemo()) return demo.start(locationId)
+
+  // Belt and braces with the screen's own offer to resume: whoever asks
+  // second gets the count that is already open, not a second one.
+  const open = await getOpenStockCount(locationId)
+  if (open) return open
 
   const count = await pb.collection("stock_counts").create<CountRecord>(
     {
@@ -143,18 +189,27 @@ export async function startStockCount(locationId: string): Promise<StockCountDet
   )
 
   const expected = await pb.collection("items").getFullList<StockItemRecord>({
-    filter: `status = "in_stock" && location = "${quote(locationId)}"`,
+    filter: `(${COUNTED_FILTER}) && location = "${quote(locationId)}"`,
     sort: "title",
   })
 
-  for (const item of expected) {
-    await pb.collection("stock_count_lines").create({
-      stock_count: count.id,
-      item: item.id,
-      expected_qty: Math.max(1, item.qty ?? 1),
-      scanned_qty: 0,
-      variance: 0,
-    })
+  // A stock line already down to zero is not on the shelf to be found.
+  const lines = expected
+    .map((item) => ({ item, qty: item.qty ?? 1 }))
+    .filter((row) => row.qty > 0)
+
+  for (let at = 0; at < lines.length; at += BATCH_SIZE) {
+    const batch = pb.createBatch()
+    for (const row of lines.slice(at, at + BATCH_SIZE)) {
+      batch.collection("stock_count_lines").create({
+        stock_count: count.id,
+        item: row.item.id,
+        expected_qty: row.qty,
+        scanned_qty: 0,
+        variance: 0,
+      })
+    }
+    await batch.send()
   }
 
   return toDetail(count, await linesFor(count.id))
@@ -244,8 +299,15 @@ export async function saveCountLine(
 }
 
 /**
- * Close the count. Admin only by the shop's own rule, which the screen
- * enforces: the variance is the number the stock book carries.
+ * Close the count.
+ *
+ * `POST /api/vault/stock-counts/:id/close` (admin) does it in one
+ * transaction: the variance on every line, the count's own status, and the
+ * move of anything that turned up here when `move_unexpected` is set, all
+ * audited. The client then reads the count back rather than mapping the
+ * route's body, so the screen always has the same joined shape it draws
+ * everywhere else and neither package can break the other by moving a
+ * field.
  */
 export async function closeStockCount(
   countId: string,
@@ -257,28 +319,15 @@ export async function closeStockCount(
     return closed
   }
 
-  const count = await pb
-    .collection("stock_counts")
-    .getOne<CountRecord>(countId, { expand: COUNT_EXPAND })
-  const lines = await linesFor(countId)
+  await pb.send(`/api/vault/stock-counts/${countId}/close`, {
+    method: "POST",
+    body: { move_unexpected: moveUnexpected },
+  })
+  noteNetworkSuccess()
 
-  if (moveUnexpected && count.location) {
-    for (const line of lines) {
-      const expected = line.expected_qty ?? 0
-      const scanned = line.scanned_qty ?? 0
-      if (expected > 0 || scanned === 0) continue
-      await pb.collection("items").update(line.item, { location: count.location })
-    }
+  const closed = await getStockCount(countId)
+  if (!closed) {
+    throw new Error("That count closed but could not be read back. Open it again.")
   }
-
-  const closed = await pb.collection("stock_counts").update<CountRecord>(
-    countId,
-    {
-      status: "closed",
-      closed_at: new Date().toISOString(),
-      closed_by: pb.authStore.record?.id,
-    },
-    { expand: COUNT_EXPAND }
-  )
-  return toDetail(closed, await linesFor(countId))
+  return closed
 }

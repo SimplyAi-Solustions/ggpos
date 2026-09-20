@@ -15,6 +15,19 @@
 // way would hand a float to code that must never see one (CLAUDE.md,
 // "Money"), so every parse in this service goes through here, which keeps
 // each number as the exact source string for src/lib/money.mjs to parse.
+//
+// Both functions below build their pipeline with node:stream/promises'
+// pipeline() rather than manual .pipe() chaining. This matters for more
+// than tidiness: .pipe() does not forward 'error' events between the
+// streams it connects, so a syntax error from parser() or pick() - a 502
+// HTML body, a truncated file, a proxy hiccup mid-response - would be an
+// unhandled 'error' event on a stream nothing is listening to, which is
+// fatal to the whole process. pipeline() attaches an error listener to
+// every stage, forwards the first failure as a single rejection, and
+// destroys every stream in the chain either way.
+import { Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
 import streamJsonPkg from "stream-json";
 import PickPkg from "stream-json/filters/Pick.js";
 import StreamArrayPkg from "stream-json/streamers/StreamArray.js";
@@ -31,28 +44,21 @@ const { streamValues } = StreamValuesPkg;
  * response in this service (PocketBase records, TCGCSV groups/products/
  * prices) - never a plain `await response.json()`, so a stray float can
  * never reach money code.
+ *
+ * Rejects (rather than crashing the process) on malformed or non-JSON
+ * bytes at any stage - see the module doc above.
  */
-export function parseJsonStream(nodeReadable) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let value;
-    const fail = (err) => {
-      if (settled) return;
-      settled = true;
-      reject(err);
-    };
-    const pipeline = nodeReadable.pipe(parser()).pipe(streamValues({ numberAsString: true }));
-    nodeReadable.on("error", fail);
-    pipeline.on("error", fail);
-    pipeline.on("data", (chunk) => {
+export async function parseJsonStream(nodeReadable) {
+  let value;
+  const sink = new Writable({
+    objectMode: true,
+    write(chunk, _encoding, callback) {
       value = chunk.value;
-    });
-    pipeline.on("end", () => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    });
+      callback();
+    },
   });
+  await pipeline(nodeReadable, parser(), streamValues({ numberAsString: true }), sink);
+  return value;
 }
 
 /**
@@ -61,35 +67,24 @@ export function parseJsonStream(nodeReadable) {
  * Calls onEntry(value) once per array element, in order, keeping every
  * number as a decimal string exactly as parseJsonStream does.
  *
- * Returns a promise that resolves with the number of entries streamed.
+ * Returns a promise that resolves with the number of entries streamed, or
+ * rejects (never crashes the process - see the module doc above) on
+ * malformed or non-JSON bytes at any stage.
  */
-export function streamPickedArray(nodeReadable, fieldName, onEntry) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let count = 0;
-    const fail = (err) => {
-      if (settled) return;
-      settled = true;
-      reject(err);
-    };
-    const pipeline = nodeReadable
-      .pipe(parser())
-      .pipe(pick({ filter: fieldName }))
-      .pipe(streamArray({ numberAsString: true }));
-    nodeReadable.on("error", fail);
-    pipeline.on("error", fail);
-    pipeline.on("data", ({ value }) => {
+export async function streamPickedArray(nodeReadable, fieldName, onEntry) {
+  let count = 0;
+  const sink = new Writable({
+    objectMode: true,
+    write(chunk, _encoding, callback) {
       count += 1;
       try {
-        onEntry(value);
+        onEntry(chunk.value);
+        callback();
       } catch (err) {
-        fail(err);
+        callback(err);
       }
-    });
-    pipeline.on("end", () => {
-      if (settled) return;
-      settled = true;
-      resolve(count);
-    });
+    },
   });
+  await pipeline(nodeReadable, parser(), pick({ filter: fieldName }), streamArray({ numberAsString: true }), sink);
+  return count;
 }
