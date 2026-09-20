@@ -64,7 +64,11 @@ export function QuotesScreen() {
                     {QUOTE_STATUS_LABEL[quote.status]}
                   </MicroLabel>
                   <span className="text-[15px] leading-[1.4] text-muted-foreground">
-                    {quote.number ? `${quote.number}, ` : ""}
+                    {quote.number ? (
+                      <>
+                        <span className="tnum font-mono text-[13px] text-foreground">{quote.number}</span>,{" "}
+                      </>
+                    ) : null}
                     sent {formatDate(quote.created)}
                   </span>
                   {needsAnswer(quote) ? (

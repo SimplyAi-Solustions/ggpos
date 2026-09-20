@@ -3874,5 +3874,461 @@ SUMUP_AMOUNT_PATCH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$B
 [ "$SUMUP_AMOUNT_PATCH_STATUS" = "404" ] || fail "a staff PATCH of sumup_transactions.amount returned $SUMUP_AMOUNT_PATCH_STATUS, expected 404"
 ok "a staff member cannot rewrite sumup_transactions.amount, or any field but matched_sale, directly"
 
+# -----------------------------------------------------------------------
+# 23. Phase 5: portal, quotes, want lists, estimate, notifications and push.
+#     Still under GG_ADAPTER_TRANSPORT_MODE=fixture (see section 19's own
+#     note), so the estimate checks below prove no adapter call by using
+#     cards this section creates by hand, never through the lookup route -
+#     the fixture transport has no mapping for them, so any accidental
+#     outbound call would throw and fail this section loudly rather than
+#     passing quietly.
+# -----------------------------------------------------------------------
+
+p5_impersonate() {
+  # $1 customer id -> prints a customer token
+  curl -s -X POST "$BASE/api/collections/customers/impersonate/$1" \
+    -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d '{}' | jval token
+}
+
+p5_make_customer() {
+  # $1 name, $2 email -> prints the customer id
+  curl -s -X POST "$BASE/api/collections/customers/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\"}" | jval id
+}
+
+p5_make_card() {
+  # $1 name, $2 number -> prints the card id (a fresh set per call, so
+  # nothing here is a set/number the fixture transport, or an earlier
+  # section, has ever heard of)
+  local set_id
+  set_id="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"game\":\"$GAME_ID\",\"code\":\"p5set$RANDOM$RANDOM\",\"name\":\"P5 Test Set\"}" | jval id)"
+  curl -s -X POST "$BASE/api/collections/cards/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"game\":\"$GAME_ID\",\"set\":\"$set_id\",\"number\":\"$2\",\"name\":\"$1\"}" | jval id
+}
+
+# --- 23a. OTP request for a counter-created customer (the claim), then an
+#     impersonation token stands in for "auth" for the rest of this section
+#     the same way section 7's own CUSTOMER_TOKEN does: PocketBase's OTP
+#     password is a one-way hashed value even to a superuser (the same
+#     reasoning a staff password hash is never returned), so there is no
+#     plaintext code here to complete auth-with-otp against without either
+#     a real mailbox or a test-only backdoor in production hook code, which
+#     this build does not add. -----------------------------------------
+P5_CUSTOMER_ID="$(p5_make_customer "Phase 5 Customer" "p5-customer@local.test")"
+[ -n "$P5_CUSTOMER_ID" ] || fail "could not create the Phase 5 check customer"
+
+P5_OTP_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/customers/request-otp" \
+  -H "Content-Type: application/json" -d '{"email":"p5-customer@local.test"}')"
+P5_OTP_STATUS="$(echo "$P5_OTP_JSON" | tail -n1)"
+P5_OTP_ID="$(echo "$P5_OTP_JSON" | head -n -1 | jval otpId)"
+[ "$P5_OTP_STATUS" = "200" ] || fail "request-otp for a counter-created customer returned $P5_OTP_STATUS, expected 200"
+[ -n "$P5_OTP_ID" ] || fail "request-otp did not return an otpId: $(echo "$P5_OTP_JSON" | head -n -1)"
+ok "a counter-created customer can request an OTP (the claim)"
+
+P5_CUSTOMER_TOKEN="$(p5_impersonate "$P5_CUSTOMER_ID")"
+[ -n "$P5_CUSTOMER_TOKEN" ] || fail "could not impersonate the Phase 5 check customer"
+
+# --- 23b. GET /api/vault/me: balances are the live ledger sums, never a
+#     cached field --------------------------------------------------------
+curl -s -o /dev/null -X POST "$BASE/api/collections/credit_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"amount\":1200,\"reason\":\"adjustment\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/credit_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"amount\":-200,\"reason\":\"adjustment\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/points_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"delta\":300,\"reason\":\"adjust\"}"
+# Deliberately drive customer_private.credit_balance out of step with the
+# ledger, so this check actually distinguishes "summed live" from "read the
+# cache" rather than passing by coincidence.
+P5_PRIVATE_ID="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/customer_private/records/$P5_PRIVATE_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"credit_balance":999999,"points_balance":999999}'
+
+P5_ME_JSON="$(curl -s "$BASE/api/vault/me" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_ME_JSON" | jval "balances.credit")" = "1000" ] || fail "GET /me balances.credit is '$(echo "$P5_ME_JSON" | jval "balances.credit")', expected 1000 (summed from credit_ledger, not the stale cache)"
+[ "$(echo "$P5_ME_JSON" | jval "balances.points")" = "300" ] || fail "GET /me balances.points is '$(echo "$P5_ME_JSON" | jval "balances.points")', expected 300"
+[ "$(echo "$P5_ME_JSON" | jval "customer.code")" != "" ] || fail "GET /me did not return the customer's own code"
+[ "$(echo "$P5_ME_JSON" | jval "id_status")" = "none" ] || fail "GET /me id_status is '$(echo "$P5_ME_JSON" | jval id_status)', expected none"
+ok "GET /api/vault/me sums both balances live from the ledgers, never the cached fields"
+
+# --- 23c. PATCH /api/vault/me: email refused, everything else applied ----
+P5_PATCH_EMAIL_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/vault/me" \
+  -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"email":"someone-else@local.test"}')"
+[ "$P5_PATCH_EMAIL_STATUS" = "400" ] || fail "PATCH /me with an email returned $P5_PATCH_EMAIL_STATUS, expected 400"
+ok "PATCH /api/vault/me refuses an email change (400)"
+
+P5_PATCH_JSON="$(curl -s -w '\n%{http_code}' -X PATCH "$BASE/api/vault/me" \
+  -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Renamed Customer","phone":"+447700900123","marketing_consent":true,"birthday_month":9,"notifications":{"email":false,"push":true}}')"
+P5_PATCH_STATUS="$(echo "$P5_PATCH_JSON" | tail -n1)"
+P5_PATCH_BODY="$(echo "$P5_PATCH_JSON" | head -n -1)"
+[ "$P5_PATCH_STATUS" = "200" ] || fail "PATCH /me returned $P5_PATCH_STATUS: $P5_PATCH_BODY"
+[ "$(echo "$P5_PATCH_BODY" | jval "customer.name")" = "Renamed Customer" ] || fail "PATCH /me did not update name: $P5_PATCH_BODY"
+[ "$(echo "$P5_PATCH_BODY" | jval "customer.notifications.email")" = "false" ] || fail "PATCH /me did not turn off email notifications: $P5_PATCH_BODY"
+[ "$(echo "$P5_PATCH_BODY" | jval "customer.notifications.push")" = "true" ] || fail "PATCH /me left push notifications wrong: $P5_PATCH_BODY"
+ok "PATCH /api/vault/me updates name, phone, consent, birthday month and notification preferences, and returns the /me shape"
+
+# --- 23g. GET /api/vault/c/:token in its three shapes --------------------
+P5_QR_TOKEN="$(echo "$P5_ME_JSON" | jval "customer.qr_token")"
+[ -n "$P5_QR_TOKEN" ] || fail "the Phase 5 customer has no qr_token to test /c/:token with"
+
+P5_C_ANON="$(curl -s -w '\n%{http_code}' "$BASE/api/vault/c/$P5_QR_TOKEN")"
+[ "$(echo "$P5_C_ANON" | tail -n1)" = "200" ] || fail "GET /api/vault/c/:token with no auth returned $(echo "$P5_C_ANON" | tail -n1), expected 200"
+[ "$(echo "$P5_C_ANON" | head -n -1 | jval known)" = "true" ] || fail "GET /api/vault/c/:token with no auth did not report known:true: $(echo "$P5_C_ANON" | head -n -1)"
+echo "$P5_C_ANON" | head -n -1 | grep -qi "Renamed Customer" && fail "GET /api/vault/c/:token with no auth leaked the customer's name"
+ok "GET /api/vault/c/:token with no auth returns known:true and never a name"
+
+P5_C_BOGUS_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/c/not-a-real-token-at-all")"
+[ "$P5_C_BOGUS_STATUS" = "404" ] || fail "GET /api/vault/c/:token for an unknown token returned $P5_C_BOGUS_STATUS, expected 404"
+ok "GET /api/vault/c/:token for an unknown token is a plain 404"
+
+P5_C_STAFF="$(curl -s "$BASE/api/vault/c/$P5_QR_TOKEN" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_C_STAFF" | jval customer_id)" = "$P5_CUSTOMER_ID" ] || fail "GET /api/vault/c/:token as staff did not return customer_id: $P5_C_STAFF"
+[ "$(echo "$P5_C_STAFF" | jval name)" = "Renamed Customer" ] || fail "GET /api/vault/c/:token as staff did not return the name: $P5_C_STAFF"
+ok "GET /api/vault/c/:token as staff returns customer_id, code and name"
+
+P5_C_OWN="$(curl -s "$BASE/api/vault/c/$P5_QR_TOKEN" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_C_OWN" | jval "customer.customer.id")" = "$P5_CUSTOMER_ID" ] || fail "GET /api/vault/c/:token as the owning customer did not return the /me shape: $P5_C_OWN"
+ok "GET /api/vault/c/:token as the owning customer returns the /me shape"
+
+# --- 23e. GET /api/vault/me/export: the trade-in, and never an ID field --
+P5_EXPORT_TRADE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"channel\":\"counter\",\"status\":\"draft\"}")"
+P5_EXPORT_TRADE_ID="$(echo "$P5_EXPORT_TRADE_JSON" | head -n -1 | jval id)"
+[ -n "$P5_EXPORT_TRADE_ID" ] || fail "could not create a draft trade-in for the export check: $P5_EXPORT_TRADE_JSON"
+curl -s -o /dev/null -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$P5_EXPORT_TRADE_ID\",\"free_text_title\":\"Export Check Card\",\"kind\":\"other\",\"game\":\"$GAME_ID\",\"qty\":1,\"market_price\":400,\"offer_price\":400,\"accepted\":true}"
+P5_EXPORT_COMPLETE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/trade-ins/$P5_EXPORT_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":400,"terms_accepted":true}')"
+[ "$(echo "$P5_EXPORT_COMPLETE_JSON" | tail -n1)" = "200" ] || fail "completing the export check's trade-in (credit only, no ID gate) returned $(echo "$P5_EXPORT_COMPLETE_JSON" | tail -n1): $(echo "$P5_EXPORT_COMPLETE_JSON" | head -n -1)"
+P5_EXPORT_TRADE_NUMBER="$(echo "$P5_EXPORT_COMPLETE_JSON" | head -n -1 | jval "trade_in.number")"
+[ -n "$P5_EXPORT_TRADE_NUMBER" ] || fail "the export check's trade-in has no number after completion"
+
+P5_EXPORT_JSON="$(curl -s -D "$TMP_DIR/export-headers.txt" "$BASE/api/vault/me/export" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+grep -qi 'Content-Disposition: attachment' "$TMP_DIR/export-headers.txt" || fail "the export is not served as an attachment: $(cat "$TMP_DIR/export-headers.txt")"
+echo "$P5_EXPORT_JSON" | grep -qF "$P5_EXPORT_TRADE_NUMBER" || fail "the export does not contain the customer's own trade-in number: $P5_EXPORT_JSON"
+for field in id_type id_expiry id_ref_last4 dob address; do
+  echo "$P5_EXPORT_JSON" | grep -q "\"$field\"" && fail "the export leaks the ID field '$field': $P5_EXPORT_JSON"
+done
+ok "GET /api/vault/me/export downloads as an attachment, contains the trade-in and never an ID field"
+
+P5_EXPORT_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22customer_self_export%22%26%26record%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${P5_EXPORT_AUDIT:-0}" -ge 1 ] || fail "the self-export was not audited"
+ok "the self-export is audited"
+
+# --- 23f. POST /api/vault/me/delete: refused with credit, then succeeds -
+P5_DELETE_CUSTOMER_ID="$(p5_make_customer "Delete Me" "p5-delete@local.test")"
+P5_DELETE_CUSTOMER_TOKEN="$(p5_impersonate "$P5_DELETE_CUSTOMER_ID")"
+curl -s -o /dev/null -X POST "$BASE/api/collections/credit_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_DELETE_CUSTOMER_ID\",\"amount\":1500,\"reason\":\"adjustment\"}"
+
+P5_DELETE_BLOCKED_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/me/delete" -H "Authorization: $P5_DELETE_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_DELETE_BLOCKED_JSON" | tail -n1)" = "422" ] || fail "self-delete with credit outstanding returned $(echo "$P5_DELETE_BLOCKED_JSON" | tail -n1), expected 422"
+echo "$P5_DELETE_BLOCKED_JSON" | head -n -1 | grep -qF "£15.00" || fail "the self-delete credit refusal does not name the balance: $(echo "$P5_DELETE_BLOCKED_JSON" | head -n -1)"
+ok "POST /api/vault/me/delete is refused with 422 while store credit remains"
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/credit_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_DELETE_CUSTOMER_ID\",\"amount\":-1500,\"reason\":\"adjustment\"}"
+P5_DELETE_OK_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/me/delete" -H "Authorization: $P5_DELETE_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_DELETE_OK_JSON" | tail -n1)" = "200" ] || fail "self-delete with no credit returned $(echo "$P5_DELETE_OK_JSON" | tail -n1): $(echo "$P5_DELETE_OK_JSON" | head -n -1)"
+[ "$(echo "$P5_DELETE_OK_JSON" | head -n -1 | jval erased)" = "true" ] || fail "self-delete did not report erased:true"
+P5_DELETE_TOKEN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/me" -H "Authorization: $P5_DELETE_CUSTOMER_TOKEN")"
+[ "$P5_DELETE_TOKEN_STATUS" = "401" ] || fail "the token still works after self-delete (got $P5_DELETE_TOKEN_STATUS), expected 401"
+ok "POST /api/vault/me/delete succeeds once credit is clear, and the token stops working"
+
+P5_DELETE_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22customer_self_delete%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${P5_DELETE_AUDIT:-0}" -ge 1 ] || fail "the self-delete was not audited"
+ok "the self-delete is audited"
+
+# --- 23h/23i/23j/23k/23l/23m. Quotes: submit with photos, message both
+#     ways, offer with the total recomputed, accept/decline and expiry,
+#     received, and the trade-in completion marking the quote completed --
+node -e '
+  require("fs").writeFileSync(
+    process.argv[1],
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64"
+    )
+  );
+' "$TMP_DIR/p5-photo1.png"
+cp "$TMP_DIR/p5-photo1.png" "$TMP_DIR/p5-photo2.png"
+echo "not a photo" >"$TMP_DIR/p5-notaphoto.txt"
+
+P5_QUOTE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN" \
+  -F "photos=@$TMP_DIR/p5-photo1.png;type=image/png" \
+  -F "photos=@$TMP_DIR/p5-photo2.png;type=image/png" \
+  -F "message=Loft box of Pokemon cards" \
+  -F "drop_off=in_store")"
+[ "$(echo "$P5_QUOTE_JSON" | tail -n1)" = "200" ] || fail "submitting a quote with two photos returned $(echo "$P5_QUOTE_JSON" | tail -n1): $(echo "$P5_QUOTE_JSON" | head -n -1)"
+P5_QUOTE_ID="$(echo "$P5_QUOTE_JSON" | head -n -1 | jval "quote.id")"
+[ -n "$P5_QUOTE_ID" ] || fail "quote submission did not return a quote id"
+[ "$(echo "$P5_QUOTE_JSON" | head -n -1 | jlen "quote.photos")" = "2" ] || fail "the submitted quote does not carry both photos"
+[ "$(echo "$P5_QUOTE_JSON" | head -n -1 | jval "quote.status")" = "submitted" ] || fail "a submitted quote is not status submitted"
+ok "a quote submits with two photos as multipart and reads back submitted"
+
+P5_BAD_PHOTO_STATUS="$(curl -s -o "$TMP_DIR/p5-bad-photo.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN" \
+  -F "photos=@$TMP_DIR/p5-notaphoto.txt;type=text/plain" \
+  -F "message=bad upload")"
+[ "$P5_BAD_PHOTO_STATUS" = "400" ] || fail "submitting a non-image photo returned $P5_BAD_PHOTO_STATUS, expected 400: $(cat "$TMP_DIR/p5-bad-photo.json")"
+ok "a non-image upload on a quote is refused with 400"
+
+P5_SUBMIT_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22quote_submit%22%26%26record%3D%22$P5_QUOTE_ID%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${P5_SUBMIT_AUDIT:-0}" -ge 1 ] || fail "quote submission was not audited"
+P5_QUOTE_SUBMIT_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_submitted%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_QUOTE_SUBMIT_NOTIF:-0}" -ge 1 ] || fail "submitting a quote did not notify staff"
+ok "submitting a quote is audited and notifies staff"
+
+# messages both directions
+P5_MSG_CUST_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/messages" \
+  -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d '{"body":"Any idea on timing?"}')"
+[ "$(echo "$P5_MSG_CUST_JSON" | tail -n1)" = "200" ] || fail "a customer message on their own quote returned $(echo "$P5_MSG_CUST_JSON" | tail -n1)"
+[ "$(echo "$P5_MSG_CUST_JSON" | head -n -1 | jval "message.author")" = "customer" ] || fail "the customer message's author is not 'customer'"
+
+P5_MSG_STAFF_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/messages" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"body":"We will look at it today."}')"
+[ "$(echo "$P5_MSG_STAFF_JSON" | tail -n1)" = "200" ] || fail "a staff message on a quote returned $(echo "$P5_MSG_STAFF_JSON" | tail -n1)"
+[ "$(echo "$P5_MSG_STAFF_JSON" | head -n -1 | jval "message.author")" = "staff" ] || fail "the staff message's author is not 'staff'"
+
+P5_QUOTE_DETAIL="$(curl -s "$BASE/api/vault/quotes/$P5_QUOTE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_QUOTE_DETAIL" | jlen messages)" = "2" ] || fail "the quote detail does not show both messages: $P5_QUOTE_DETAIL"
+[ "$(echo "$P5_QUOTE_DETAIL" | jlen photos)" = "2" ] || fail "the quote detail does not carry both photo tokens"
+echo "$P5_QUOTE_DETAIL" | jval "photos.0.url" | grep -q "token=" || fail "a quote photo URL carries no file token"
+ok "messages in both directions land on the quote's thread, with photo URLs carrying a file token"
+
+P5_CUSTOMER_MSG_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_message%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_CUSTOMER_MSG_NOTIF:-0}" -ge 1 ] || fail "the staff message did not notify the customer"
+P5_STAFF_ANY_MSG_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_message%22" -H "Authorization: $SUPER_TOKEN")"
+[ "$(echo "$P5_STAFF_ANY_MSG_NOTIF" | jval totalItems)" -ge 2 ] || fail "expected a notification row for both the customer's and staff's message: $P5_STAFF_ANY_MSG_NOTIF"
+ok "a quote message notifies the other side"
+
+# offer, with the total recomputed server-side from two lines
+P5_CARD_A="$(p5_make_card "Phase 5 Card A" "6")"
+P5_OFFER_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"card\":\"$P5_CARD_A\",\"title\":\"Phase 5 Card A\",\"condition\":\"NM\",\"qty\":1,\"market_price\":3000,\"market_source\":\"Cardmarket\",\"offer_price\":1800},{\"title\":\"Bulk lot\",\"qty\":2,\"market_price\":0,\"market_source\":\"Bulk lot\",\"offer_price\":500}],\"message\":\"Here is what we can offer\"}")"
+[ "$(echo "$P5_OFFER_JSON" | tail -n1)" = "200" ] || fail "the quote offer returned $(echo "$P5_OFFER_JSON" | tail -n1): $(echo "$P5_OFFER_JSON" | head -n -1)"
+P5_OFFER_TOTAL="$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.offer_total")"
+[ "$P5_OFFER_TOTAL" = "2800" ] || fail "the offer total is '$P5_OFFER_TOTAL', expected 2800 (1800 + 2*500), recomputed server-side"
+[ "$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.status")" = "offered" ] || fail "the quote is not status offered after an offer"
+P5_OFFER_EXPIRES="$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.offer_expires_at")"
+[ -n "$P5_OFFER_EXPIRES" ] || fail "the offer did not set offer_expires_at"
+ok "a staff offer recomputes offer_total server-side from the lines (2800) and sets an expiry"
+
+P5_OFFER_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22quote_offer%22%26%26record%3D%22$P5_QUOTE_ID%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${P5_OFFER_AUDIT:-0}" -ge 1 ] || fail "the offer was not audited"
+P5_OFFER_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_offered%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_OFFER_NOTIF:-0}" -ge 1 ] || fail "the offer did not notify the customer"
+ok "the offer is audited and notifies the customer"
+
+# accept before expiry works; a second, expired quote is refused after
+P5_ACCEPT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/accept" \
+  -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d '{"reply":"Sounds good","drop_off":"in_store"}')"
+[ "$(echo "$P5_ACCEPT_JSON" | tail -n1)" = "200" ] || fail "accepting a quote before expiry returned $(echo "$P5_ACCEPT_JSON" | tail -n1): $(echo "$P5_ACCEPT_JSON" | head -n -1)"
+[ "$(echo "$P5_ACCEPT_JSON" | head -n -1 | jval "quote.status")" = "accepted" ] || fail "an accepted quote is not status accepted"
+ok "accepting a quote before its offer expires succeeds"
+
+P5_EXPIRE_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+curl -s -o /dev/null -X POST "$BASE/api/vault/quotes/$P5_EXPIRE_QUOTE_ID/offer" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"lines":[{"title":"Old offer","qty":1,"market_price":100,"offer_price":50}]}'
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/quotes/records/$P5_EXPIRE_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"offer_expires_at":"2020-01-01 00:00:00.000Z"}'
+P5_EXPIRED_ACCEPT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_EXPIRE_QUOTE_ID/accept" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d '{}')"
+[ "$(echo "$P5_EXPIRED_ACCEPT_JSON" | tail -n1)" = "409" ] || fail "accepting an expired offer returned $(echo "$P5_EXPIRED_ACCEPT_JSON" | tail -n1), expected 409"
+echo "$P5_EXPIRED_ACCEPT_JSON" | head -n -1 | grep -qF "1 Jan 2020" || fail "the expired-offer message does not name the expiry date: $(echo "$P5_EXPIRED_ACCEPT_JSON" | head -n -1)"
+ok "accepting a quote after its offer has expired is refused with 409 naming the expiry date"
+
+# received creates the draft trade-in with the lines, and completing it
+# marks the quote completed
+P5_RECEIVED_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/received" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_RECEIVED_JSON" | tail -n1)" = "200" ] || fail "marking a quote received returned $(echo "$P5_RECEIVED_JSON" | tail -n1): $(echo "$P5_RECEIVED_JSON" | head -n -1)"
+P5_RECEIVED_TRADE_ID="$(echo "$P5_RECEIVED_JSON" | head -n -1 | jval trade_in_id)"
+[ -n "$P5_RECEIVED_TRADE_ID" ] || fail "received did not return a trade_in_id"
+P5_RECEIVED_TRADE="$(curl -s "$BASE/api/collections/trade_ins/records/$P5_RECEIVED_TRADE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_RECEIVED_TRADE" | jval channel)" = "remote" ] || fail "the draft trade-in from a quote is not channel remote"
+[ "$(echo "$P5_RECEIVED_TRADE" | jval quote)" = "$P5_QUOTE_ID" ] || fail "the draft trade-in is not linked back to the quote"
+P5_RECEIVED_LINES="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_RECEIVED_LINES" | jval totalItems)" = "2" ] || fail "the draft trade-in does not carry both quote lines: $P5_RECEIVED_LINES"
+[ "$(echo "$P5_RECEIVED_LINES" | jval "items.0.accepted")" = "true" ] || fail "a line copied from an accepted quote is not itself accepted"
+ok "quotes/:id/received creates a draft trade-in with the quote's lines"
+
+P5_QUOTE_LINE_WITH_CARD="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22%26%26card%3D%22$P5_CARD_A%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/trade_in_lines/records/$P5_QUOTE_LINE_WITH_CARD" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"qty":1}'
+P5_OTHER_LINE_ID="$(curl -s "$BASE/api/collections/trade_in_lines/records?perPage=50&filter=trade_in%3D%22$P5_RECEIVED_TRADE_ID%22%26%26card%3D%22%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/trade_in_lines/records/$P5_OTHER_LINE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"kind":"other","game":"'"$GAME_ID"'"}'
+
+P5_COMPLETE_QUOTE_TRADE="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/trade-ins/$P5_RECEIVED_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":2800,"terms_accepted":true}')"
+[ "$(echo "$P5_COMPLETE_QUOTE_TRADE" | tail -n1)" = "200" ] || fail "completing the quote's draft trade-in returned $(echo "$P5_COMPLETE_QUOTE_TRADE" | tail -n1): $(echo "$P5_COMPLETE_QUOTE_TRADE" | head -n -1)"
+
+P5_QUOTE_AFTER_COMPLETE="$(curl -s "$BASE/api/collections/quotes/records/$P5_QUOTE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_QUOTE_AFTER_COMPLETE" | jval status)" = "completed" ] || fail "the quote is '$(echo "$P5_QUOTE_AFTER_COMPLETE" | jval status)' after its trade-in completed, expected completed"
+[ -n "$(echo "$P5_QUOTE_AFTER_COMPLETE" | jval closed_at)" ] || fail "a completed quote has no closed_at"
+ok "completing the trade-in a quote became marks that quote completed"
+
+# the expiry cron itself, and the day-before warning
+P5_CRON_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+curl -s -o /dev/null -X POST "$BASE/api/vault/quotes/$P5_CRON_QUOTE_ID/offer" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"lines":[{"title":"Cron test","qty":1,"market_price":100,"offer_price":50}]}'
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/quotes/records/$P5_CRON_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"offer_expires_at":"2020-06-15 00:00:00.000Z"}'
+P5_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/quotes_expire" -H "Authorization: $SUPER_TOKEN")"
+[ "$P5_CRON_STATUS" = "204" ] || fail "POST /api/crons/quotes_expire returned $P5_CRON_STATUS, expected 204"
+sleep 1
+P5_CRON_QUOTE_AFTER="$(curl -s "$BASE/api/collections/quotes/records/$P5_CRON_QUOTE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_CRON_QUOTE_AFTER" | jval status)" = "expired" ] || fail "the quotes_expire cron left status '$(echo "$P5_CRON_QUOTE_AFTER" | jval status)', expected expired"
+P5_EXPIRE_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_expired%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_EXPIRE_NOTIF:-0}" -ge 1 ] || fail "the quotes_expire cron did not notify the customer"
+ok "the quotes_expire cron expires a past-due offer and notifies the customer"
+
+# --- 23n/23o. Want lists: match on creation with the hold and the
+#     notification, then selling the held item to its customer fulfils
+#     the row ------------------------------------------------------------
+P5_WANT_CUSTOMER_ID="$(p5_make_customer "Want List Customer" "p5-want@local.test")"
+P5_WANT_CUSTOMER_TOKEN="$(p5_impersonate "$P5_WANT_CUSTOMER_ID")"
+P5_CARD_B="$(p5_make_card "Phase 5 Card B" "7")"
+
+P5_WANT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/want-list" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_B\",\"max_price\":3000}")"
+[ "$(echo "$P5_WANT_JSON" | tail -n1)" = "200" ] || fail "creating a want-list row returned $(echo "$P5_WANT_JSON" | tail -n1)"
+P5_WANT_ID="$(echo "$P5_WANT_JSON" | head -n -1 | jval "want.id")"
+[ -n "$P5_WANT_ID" ] || fail "want-list creation did not return an id"
+[ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "want.status")" = "open" ] || fail "a new want-list row is not status open"
+
+P5_WANT_ITEM_JSON="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_B\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":2500}")"
+P5_WANT_ITEM_ID="$(echo "$P5_WANT_ITEM_JSON" | jval id)"
+[ -n "$P5_WANT_ITEM_ID" ] || fail "could not create the want-list match item: $P5_WANT_ITEM_JSON"
+[ "$(echo "$P5_WANT_ITEM_JSON" | jval status)" = "reserved" ] || fail "an item matching an open want row was not reserved on creation: $P5_WANT_ITEM_JSON"
+[ "$(echo "$P5_WANT_ITEM_JSON" | jval reserved_for)" = "$P5_WANT_CUSTOMER_ID" ] || fail "the reserved item is not held for the want-list customer"
+[ -n "$(echo "$P5_WANT_ITEM_JSON" | jval reserved_until)" ] || fail "the reserved item has no reserved_until"
+
+P5_WANT_AFTER_MATCH="$(curl -s "$BASE/api/collections/want_list/records/$P5_WANT_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_WANT_AFTER_MATCH" | jval status)" = "matched" ] || fail "the want-list row did not become matched"
+[ "$(echo "$P5_WANT_AFTER_MATCH" | jval matched_item)" = "$P5_WANT_ITEM_ID" ] || fail "the want-list row's matched_item is wrong"
+[ -n "$(echo "$P5_WANT_AFTER_MATCH" | jval notified_at)" ] || fail "the want-list row has no notified_at"
+
+P5_MATCH_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22want_match%22%26%26customer%3D%22$P5_WANT_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_MATCH_NOTIF" | jval totalItems)" -ge 1 ] || fail "the want-list match did not notify the customer"
+echo "$P5_MATCH_NOTIF" | grep -qF "Phase 5 Card B" || fail "the want-match notification does not name the item: $P5_MATCH_NOTIF"
+echo "$P5_MATCH_NOTIF" | grep -qF "Held for you until" || fail "the want-match notification does not say when the hold ends: $P5_MATCH_NOTIF"
+ok "creating an item matches the oldest open want-list row, holds it, and notifies the customer"
+
+P5_WANT_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/complete" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$P5_WANT_ITEM_ID\",\"qty\":1,\"unit_price\":2500,\"discount\":0}],\"customer\":\"$P5_WANT_CUSTOMER_ID\",\"payment\":\"sumup_card\"}")"
+[ "$(echo "$P5_WANT_SALE_JSON" | tail -n1)" = "200" ] || fail "selling the reserved item to its own customer returned $(echo "$P5_WANT_SALE_JSON" | tail -n1)"
+P5_WANT_AFTER_SALE="$(curl -s "$BASE/api/collections/want_list/records/$P5_WANT_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_WANT_AFTER_SALE" | jval status)" = "fulfilled" ] || fail "the want-list row is '$(echo "$P5_WANT_AFTER_SALE" | jval status)' after the sale, expected fulfilled"
+ok "selling a reserved item to its own customer marks the want-list row fulfilled"
+
+# --- 23p. holds_release: an expired hold goes back to in_stock, its row
+#     closes, and the customer is told -----------------------------------
+P5_CARD_C="$(p5_make_card "Phase 5 Card C" "8")"
+P5_HOLD_CUSTOMER_ID="$(p5_make_customer "Hold Release Customer" "p5-hold@local.test")"
+curl -s -o /dev/null -X POST "$BASE/api/vault/want-list" -H "Authorization: $(p5_impersonate "$P5_HOLD_CUSTOMER_ID")" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_C\",\"max_price\":0}"
+P5_HOLD_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_C\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":1000}" | jval id)"
+[ "$(curl -s "$BASE/api/collections/items/records/$P5_HOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval status)" = "reserved" ] || fail "the hold-release item was not reserved by its want match"
+P5_HOLD_WANT_ID="$(curl -s "$BASE/api/collections/want_list/records?filter=card%3D%22$P5_CARD_C%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/items/records/$P5_HOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"reserved_until":"2020-01-01 00:00:00.000Z"}'
+P5_RELEASE_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/holds_release" -H "Authorization: $SUPER_TOKEN")"
+[ "$P5_RELEASE_CRON_STATUS" = "204" ] || fail "POST /api/crons/holds_release returned $P5_RELEASE_CRON_STATUS, expected 204"
+sleep 1
+
+P5_HOLD_ITEM_AFTER="$(curl -s "$BASE/api/collections/items/records/$P5_HOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_HOLD_ITEM_AFTER" | jval status)" = "in_stock" ] || fail "an item past its hold is '$(echo "$P5_HOLD_ITEM_AFTER" | jval status)' after holds_release, expected in_stock"
+[ "$(echo "$P5_HOLD_ITEM_AFTER" | jval reserved_for)" = "" ] || fail "a released item still carries reserved_for"
+P5_HOLD_WANT_AFTER="$(curl -s "$BASE/api/collections/want_list/records/$P5_HOLD_WANT_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_HOLD_WANT_AFTER" | jval status)" = "closed" ] || fail "the released want-list row is '$(echo "$P5_HOLD_WANT_AFTER" | jval status)', expected closed"
+P5_RELEASE_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22hold_released%22%26%26customer%3D%22$P5_HOLD_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_RELEASE_NOTIF:-0}" -ge 1 ] || fail "the holds_release cron did not notify the customer"
+ok "the holds_release cron puts an expired hold back in stock, closes its want-list row and notifies the customer"
+
+# --- 23q. Public estimate: no token, real bands, never an adapter call --
+curl -s -o /dev/null -X POST "$BASE/api/vault/cards/$P5_CARD_A/uk-comp" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"finish\":\"\",\"condition\":\"NM\",\"price\":3000,\"url\":\"https://www.ebay.co.uk/itm/999999\",\"sold_at\":\"$TODAY\"}"
+
+P5_ESTIMATE_SEARCH_STATUS="$(curl -s -o "$TMP_DIR/p5-estimate-search.json" -w '%{http_code}' "$BASE/api/vault/estimate/search?q=Phase%205%20Card%20A")"
+[ "$P5_ESTIMATE_SEARCH_STATUS" = "200" ] || fail "the public estimate search returned $P5_ESTIMATE_SEARCH_STATUS, expected 200: $(cat "$TMP_DIR/p5-estimate-search.json")"
+grep -qF "Phase 5 Card A" "$TMP_DIR/p5-estimate-search.json" || fail "the estimate search did not find the card: $(cat "$TMP_DIR/p5-estimate-search.json")"
+ok "GET /api/vault/estimate/search finds a card by name with no auth"
+
+P5_ESTIMATE_JSON="$(curl -s -w '\n%{http_code}' "$BASE/api/vault/estimate?card=$P5_CARD_A&condition=NM")"
+[ "$(echo "$P5_ESTIMATE_JSON" | tail -n1)" = "200" ] || fail "the public estimate returned $(echo "$P5_ESTIMATE_JSON" | tail -n1): $(echo "$P5_ESTIMATE_JSON" | head -n -1)"
+P5_ESTIMATE_BODY="$(echo "$P5_ESTIMATE_JSON" | head -n -1)"
+[ "$(echo "$P5_ESTIMATE_BODY" | jval market)" = "3000" ] || fail "the estimate's market figure is '$(echo "$P5_ESTIMATE_BODY" | jval market)', expected 3000"
+[ "$(echo "$P5_ESTIMATE_BODY" | jval "cash.high")" -gt "$(echo "$P5_ESTIMATE_BODY" | jval "cash.low")" ] || fail "the estimate's cash band is not high > low: $P5_ESTIMATE_BODY"
+[ "$(echo "$P5_ESTIMATE_BODY" | jval note)" = "Subject to inspection in the shop." ] || fail "the estimate is missing its inspection note"
+ok "GET /api/vault/estimate returns cash and credit bands from a cached price, with no auth"
+
+# GG_ADAPTER_TRANSPORT_MODE=fixture makes any call this build did not
+# intend to make throw and fail the request outright (see section 19's own
+# note) - both estimate calls above used only a card this section created
+# by hand and a manually-entered UK comp, never the lookup/adapter route,
+# so their clean 200s are themselves proof no adapter was ever reached.
+ok "the public estimate routes never call an adapter (both requests above succeeded using only hand-created, uncached-by-any-adapter rows)"
+
+P5_ESTIMATE_UNKNOWN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/estimate?card=not-a-real-card-id&condition=NM")"
+[ "$P5_ESTIMATE_UNKNOWN_STATUS" = "404" ] || fail "the public estimate for an unknown card returned $P5_ESTIMATE_UNKNOWN_STATUS, expected 404"
+ok "the public estimate 404s cleanly for an unknown card"
+
+# --- 23r. Push subscribe and unsubscribe ---------------------------------
+P5_PUSH_SUB_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"endpoint":"https://push.example.com/p5-endpoint","keys":{"p256dh":"p256dh-value","auth":"auth-value"}}')"
+[ "$P5_PUSH_SUB_STATUS" = "200" ] || fail "push subscribe returned $P5_PUSH_SUB_STATUS, expected 200"
+P5_PUSH_SUB_COUNT="$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$P5_PUSH_SUB_COUNT" = "1" ] || fail "expected exactly one push_subscriptions row for the endpoint, got $P5_PUSH_SUB_COUNT"
+# Subscribing again with the same endpoint upserts rather than duplicating.
+curl -s -o /dev/null -X POST "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"endpoint":"https://push.example.com/p5-endpoint","keys":{"p256dh":"changed","auth":"changed"}}'
+P5_PUSH_SUB_COUNT_2="$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$P5_PUSH_SUB_COUNT_2" = "1" ] || fail "subscribing again with the same endpoint duplicated the row (count $P5_PUSH_SUB_COUNT_2)"
+ok "push subscribe upserts by endpoint rather than duplicating"
+
+P5_PUSH_UNSUB_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"endpoint":"https://push.example.com/p5-endpoint"}')"
+[ "$P5_PUSH_UNSUB_STATUS" = "200" ] || fail "push unsubscribe returned $P5_PUSH_UNSUB_STATUS, expected 200"
+P5_PUSH_SUB_COUNT_3="$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$P5_PUSH_SUB_COUNT_3" = "0" ] || fail "the push subscription still exists after unsubscribe"
+ok "push unsubscribe removes the subscription"
+
+P5_PUSH_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22push_subscribe%22%7C%7Caction%3D%22push_unsubscribe%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${P5_PUSH_AUDIT:-0}" -ge 2 ] || fail "push subscribe/unsubscribe were not both audited"
+echo "$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22push_subscribe%22" -H "Authorization: $SUPER_TOKEN")" | grep -qi "push.example.com" && fail "a push endpoint reached audit_log"
+ok "push subscribe and unsubscribe are audited, and never log the endpoint"
+
+# --- 23s. A customer token cannot read another customer's quote, want row
+#     or notification ----------------------------------------------------
+P5_CROSS_QUOTE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/quotes/$P5_QUOTE_ID" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN")"
+[ "$P5_CROSS_QUOTE_STATUS" = "404" ] || fail "a customer reading another customer's quote returned $P5_CROSS_QUOTE_STATUS, expected 404"
+ok "a customer token cannot read another customer's quote (404)"
+
+P5_CROSS_WANT_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/want-list/$P5_WANT_ID/close" -H "Authorization: $(p5_impersonate "$P5_HOLD_CUSTOMER_ID")")"
+[ "$P5_CROSS_WANT_STATUS" = "404" ] || fail "a customer closing another customer's want-list row returned $P5_CROSS_WANT_STATUS, expected 404"
+ok "a customer token cannot close another customer's want-list row (404)"
+
+P5_SOME_NOTIF_ID="$(curl -s "$BASE/api/collections/notifications/records?perPage=1&filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$P5_SOME_NOTIF_ID" ] || fail "the Phase 5 customer has no notification to test cross-customer access with"
+P5_CROSS_NOTIF_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/me/notifications/$P5_SOME_NOTIF_ID/read" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN")"
+[ "$P5_CROSS_NOTIF_STATUS" = "404" ] || fail "a customer marking another customer's notification read returned $P5_CROSS_NOTIF_STATUS, expected 404"
+ok "a customer token cannot mark another customer's notification read (404)"
+
+# --- 23t. GET /api/vault/me/notifications and marking one read ----------
+P5_NOTIF_LIST="$(curl -s "$BASE/api/vault/me/notifications" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_NOTIF_LIST" | jlen notifications)" -ge 1 ] || fail "GET /api/vault/me/notifications returned none for a customer with several"
+P5_READ_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/me/notifications/$P5_SOME_NOTIF_ID/read" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_READ_JSON" | tail -n1)" = "200" ] || fail "marking a customer's own notification read returned $(echo "$P5_READ_JSON" | tail -n1)"
+[ -n "$(echo "$P5_READ_JSON" | head -n -1 | jval "notification.read_at")" ] || fail "marking a notification read did not set read_at"
+ok "a customer can list their own notifications, newest first, and mark one read"
+
 echo
 echo "All checks passed ($PASS_COUNT)."

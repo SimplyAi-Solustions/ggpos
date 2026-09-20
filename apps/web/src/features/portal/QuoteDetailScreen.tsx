@@ -23,6 +23,7 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 import { formatDate, formatDateTime } from "@/features/portal/format"
 import { needsAnswer, quoteTimeline } from "@/features/portal/timeline"
 import { Note } from "@/features/portal/Note"
+import { SHEET_COLUMN } from "@/features/portal/sheet"
 import { Timeline } from "@/features/portal/Timeline"
 
 const MAX_REPLY = 2000
@@ -105,7 +106,12 @@ export function QuoteDetailScreen({ id }: { id: string }) {
     <section className="pt-12 sm:pt-20">
       <PageTitle>Quote</PageTitle>
       <p className="mt-3 text-base leading-[1.5] text-muted-foreground">
-        {quote.number ? `${quote.number}, ` : ""}
+        {/* A code is never set in Jost, so the number keeps its mono. */}
+        {quote.number ? (
+          <>
+            <span className="tnum font-mono text-[13px] text-foreground">{quote.number}</span>,{" "}
+          </>
+        ) : null}
         sent {formatDate(quote.created)}
       </p>
 
@@ -252,7 +258,7 @@ export function QuoteDetailScreen({ id }: { id: string }) {
         }}
       >
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
-          <SheetHeader>
+          <SheetHeader className={SHEET_COLUMN}>
             <SheetTitle>
               {answering === "decline" ? "Decline this offer" : "Accept this offer"}
             </SheetTitle>
@@ -262,7 +268,7 @@ export function QuoteDetailScreen({ id }: { id: string }) {
                 : `We will hold ${quote.offer_total ? formatGBP(quote.offer_total) : "the offer"} for you. Bring the items in and we will check them over.`}
             </SheetDescription>
           </SheetHeader>
-          <SheetBody>
+          <SheetBody className={SHEET_COLUMN}>
             <Field layout="stacked" label="Anything to add" htmlFor="quote-reply">
               <Textarea
                 id="quote-reply"
@@ -274,7 +280,7 @@ export function QuoteDetailScreen({ id }: { id: string }) {
               />
             </Field>
           </SheetBody>
-          <SheetFooter>
+          <SheetFooter className={SHEET_COLUMN}>
             <Button
               type="button"
               trailingArrow

@@ -14,6 +14,7 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 import { DEMO_PORTAL_CODE, DEMO_PORTAL_EMAIL } from "@/lib/api/demo/portal-seed"
 import {
   CODE_LENGTH,
+  formatCodeForDisplay,
   isCompleteCode,
   normaliseCodeInput,
   RESEND_SECONDS,
@@ -224,8 +225,9 @@ export function SignInScreen({ next }: { next?: string }) {
           <div className="flex flex-col gap-2">
             <MicroLabel>Demo card</MicroLabel>
             <p className="text-[15px] leading-[1.5] text-muted-foreground">
-              {DEMO_PORTAL_EMAIL} with the code {DEMO_PORTAL_CODE}. Nothing is
-              saved: the data resets on reload.
+              {DEMO_PORTAL_EMAIL} with the code{" "}
+              {formatCodeForDisplay(DEMO_PORTAL_CODE)}. Nothing is saved: the
+              data resets on reload.
             </p>
           </div>
         </div>

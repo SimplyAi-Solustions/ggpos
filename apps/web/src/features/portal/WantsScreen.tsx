@@ -23,6 +23,7 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 import { usePortalDock } from "@/features/portal/dock"
 import { formatDateTime } from "@/features/portal/format"
 import { Note } from "@/features/portal/Note"
+import { SHEET_COLUMN } from "@/features/portal/sheet"
 import { CardSearch } from "@/features/estimate/CardSearch"
 import type { EstimateCardHit } from "@/lib/api/types"
 
@@ -172,10 +173,10 @@ export function WantsScreen() {
         }}
       >
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
-          <SheetHeader>
+          <SheetHeader className={SHEET_COLUMN}>
             <SheetTitle>Add a card</SheetTitle>
           </SheetHeader>
-          <SheetBody>
+          <SheetBody className={SHEET_COLUMN}>
             <CardSearch
               id="want-card"
               label="Card"
@@ -225,7 +226,7 @@ export function WantsScreen() {
 
             {error ? <FieldError className="mt-6">{error}</FieldError> : null}
           </SheetBody>
-          <SheetFooter>
+          <SheetFooter className={SHEET_COLUMN}>
             <Button
               type="button"
               trailingArrow

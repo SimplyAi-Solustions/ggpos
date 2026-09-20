@@ -469,101 +469,199 @@ routerAdd(
 
 // ---------------------------------------------------------------------
 // POST /api/vault/quotes/{id}/accept and /decline   (customer own)
+//
+// Two independent registrations rather than one shared by a small factory
+// function: a value a wrapping function closes over is not guaranteed to
+// survive into the isolated context a handler actually runs in at request
+// time, the same reasoning a bare top-level const does not (pb/README.md).
+// Every value either handler needs is therefore a literal inside its own
+// handler body, at the cost of the two being near-identical.
 // ---------------------------------------------------------------------
-function registerQuoteDecision(targetStatus, actionName) {
-  routerAdd(
-    "POST",
-    `/api/vault/quotes/{id}/${targetStatus === "accepted" ? "accept" : "decline"}`,
-    (e) => {
-      const util = require(`${__hooks}/lib/vaultutil.js`);
-      const auditLib = require(`${__hooks}/lib/audit.js`);
-      const notifyLib = require(`${__hooks}/lib/notify.js`);
-      const quotesLib = require(`${__hooks}/lib/quotes.js`);
+routerAdd(
+  "POST",
+  "/api/vault/quotes/{id}/accept",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const notifyLib = require(`${__hooks}/lib/notify.js`);
+    const quotesLib = require(`${__hooks}/lib/quotes.js`);
+    const targetStatus = "accepted";
+    const actionName = "quote_accept";
 
-      const customer = e.auth;
-      const quoteId = e.request.pathValue("id");
-      let quote = null;
-      try {
-        quote = e.app.findRecordById("quotes", quoteId);
-      } catch (err) {
-        throw e.notFoundError("Quote not found.", null);
-      }
-      if (quote.getString("customer") !== customer.id) {
-        throw e.notFoundError("Quote not found.", null);
-      }
-      if (quote.getString("status") !== "offered") {
-        throw e.error(409, `This quote is ${quote.getString("status")}, not open for a reply.`, null);
-      }
-      const now = new Date();
-      if (util.isPast(quote.getString("offer_expires_at"), now)) {
-        throw e.error(
-          409,
-          `This offer expired on ${quotesLib.ukDateShort(quote.getString("offer_expires_at"))}. Ask for a new one.`,
-          null
-        );
-      }
+    const customer = e.auth;
+    const quoteId = e.request.pathValue("id");
+    let quote = null;
+    try {
+      quote = e.app.findRecordById("quotes", quoteId);
+    } catch (err) {
+      throw e.notFoundError("Quote not found.", null);
+    }
+    if (quote.getString("customer") !== customer.id) {
+      throw e.notFoundError("Quote not found.", null);
+    }
+    if (quote.getString("status") !== "offered") {
+      throw e.error(409, `This quote is ${quote.getString("status")}, not open for a reply.`, null);
+    }
+    const now = new Date();
+    if (util.isPast(quote.getString("offer_expires_at"), now)) {
+      throw e.error(
+        409,
+        `This offer expired on ${quotesLib.ukDateShort(quote.getString("offer_expires_at"))}. Ask for a new one.`,
+        null
+      );
+    }
 
-      const body = util.body(e);
-      const reply = util.asStr(body.reply);
-      let dropOff = util.asStr(body.drop_off);
-      if (dropOff && dropOff !== "in_store" && dropOff !== "post") {
-        throw e.badRequestError("Pick a drop-off of in_store or post.", null);
-      }
+    const body = util.body(e);
+    const reply = util.asStr(body.reply);
+    const dropOff = util.asStr(body.drop_off);
+    if (dropOff && dropOff !== "in_store" && dropOff !== "post") {
+      throw e.badRequestError("Pick a drop-off of in_store or post.", null);
+    }
 
-      let halt = null;
-      let result = null;
-      try {
-        e.app.runInTransaction((txApp) => {
-          const live = txApp.findRecordById("quotes", quoteId);
-          if (live.getString("status") !== "offered") {
-            halt = { status: 409, message: `This quote is ${live.getString("status")}, not open for a reply.` };
-            throw new Error(halt.message);
-          }
-          if (util.isPast(live.getString("offer_expires_at"), now)) {
-            halt = {
-              status: 409,
-              message: `This offer expired on ${quotesLib.ukDateShort(live.getString("offer_expires_at"))}. Ask for a new one.`,
-            };
-            throw new Error(halt.message);
-          }
+    let halt = null;
+    let result = null;
+    try {
+      e.app.runInTransaction((txApp) => {
+        const live = txApp.findRecordById("quotes", quoteId);
+        if (live.getString("status") !== "offered") {
+          halt = { status: 409, message: `This quote is ${live.getString("status")}, not open for a reply.` };
+          throw new Error(halt.message);
+        }
+        if (util.isPast(live.getString("offer_expires_at"), now)) {
+          halt = {
+            status: 409,
+            message: `This offer expired on ${quotesLib.ukDateShort(live.getString("offer_expires_at"))}. Ask for a new one.`,
+          };
+          throw new Error(halt.message);
+        }
 
-          live.set("status", targetStatus);
-          if (reply) live.set("customer_reply", reply);
-          if (dropOff) live.set("drop_off", dropOff);
-          txApp.save(live);
+        live.set("status", targetStatus);
+        if (reply) live.set("customer_reply", reply);
+        if (dropOff) live.set("drop_off", dropOff);
+        txApp.save(live);
 
-          notifyLib.notify(txApp, {
-            staffAll: true,
-            type: actionName,
-            title: targetStatus === "accepted" ? "A quote was accepted" : "A quote was declined",
-            body: `Quote ${quoteId} was ${targetStatus} by the customer.`,
-            link: "",
-            email: false,
-          });
-
-          auditLib.writeAuditLog(txApp, {
-            actor: customer.id,
-            action: actionName,
-            collection: "quotes",
-            record: quoteId,
-            meta: {},
-            ip: e.realIP(),
-          });
-
-          result = { quote: live };
+        notifyLib.notify(txApp, {
+          staffAll: true,
+          type: actionName,
+          title: "A quote was accepted",
+          body: `Quote ${quoteId} was accepted by the customer.`,
+          link: "",
+          email: false,
         });
-      } catch (err) {
-        if (halt) throw e.error(halt.status, halt.message, null);
-        throw err;
-      }
 
-      return e.json(200, result);
-    },
-    $apis.requireAuth("customers")
-  );
-}
-registerQuoteDecision("accepted", "quote_accept");
-registerQuoteDecision("declined", "quote_decline");
+        auditLib.writeAuditLog(txApp, {
+          actor: customer.id,
+          action: actionName,
+          collection: "quotes",
+          record: quoteId,
+          meta: {},
+          ip: e.realIP(),
+        });
+
+        result = { quote: live };
+      });
+    } catch (err) {
+      if (halt) throw e.error(halt.status, halt.message, null);
+      throw err;
+    }
+
+    return e.json(200, result);
+  },
+  $apis.requireAuth("customers")
+);
+
+routerAdd(
+  "POST",
+  "/api/vault/quotes/{id}/decline",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const notifyLib = require(`${__hooks}/lib/notify.js`);
+    const quotesLib = require(`${__hooks}/lib/quotes.js`);
+    const targetStatus = "declined";
+    const actionName = "quote_decline";
+
+    const customer = e.auth;
+    const quoteId = e.request.pathValue("id");
+    let quote = null;
+    try {
+      quote = e.app.findRecordById("quotes", quoteId);
+    } catch (err) {
+      throw e.notFoundError("Quote not found.", null);
+    }
+    if (quote.getString("customer") !== customer.id) {
+      throw e.notFoundError("Quote not found.", null);
+    }
+    if (quote.getString("status") !== "offered") {
+      throw e.error(409, `This quote is ${quote.getString("status")}, not open for a reply.`, null);
+    }
+    const now = new Date();
+    if (util.isPast(quote.getString("offer_expires_at"), now)) {
+      throw e.error(
+        409,
+        `This offer expired on ${quotesLib.ukDateShort(quote.getString("offer_expires_at"))}. Ask for a new one.`,
+        null
+      );
+    }
+
+    const body = util.body(e);
+    const reply = util.asStr(body.reply);
+    const dropOff = util.asStr(body.drop_off);
+    if (dropOff && dropOff !== "in_store" && dropOff !== "post") {
+      throw e.badRequestError("Pick a drop-off of in_store or post.", null);
+    }
+
+    let halt = null;
+    let result = null;
+    try {
+      e.app.runInTransaction((txApp) => {
+        const live = txApp.findRecordById("quotes", quoteId);
+        if (live.getString("status") !== "offered") {
+          halt = { status: 409, message: `This quote is ${live.getString("status")}, not open for a reply.` };
+          throw new Error(halt.message);
+        }
+        if (util.isPast(live.getString("offer_expires_at"), now)) {
+          halt = {
+            status: 409,
+            message: `This offer expired on ${quotesLib.ukDateShort(live.getString("offer_expires_at"))}. Ask for a new one.`,
+          };
+          throw new Error(halt.message);
+        }
+
+        live.set("status", targetStatus);
+        if (reply) live.set("customer_reply", reply);
+        if (dropOff) live.set("drop_off", dropOff);
+        txApp.save(live);
+
+        notifyLib.notify(txApp, {
+          staffAll: true,
+          type: actionName,
+          title: "A quote was declined",
+          body: `Quote ${quoteId} was declined by the customer.`,
+          link: "",
+          email: false,
+        });
+
+        auditLib.writeAuditLog(txApp, {
+          actor: customer.id,
+          action: actionName,
+          collection: "quotes",
+          record: quoteId,
+          meta: {},
+          ip: e.realIP(),
+        });
+
+        result = { quote: live };
+      });
+    } catch (err) {
+      if (halt) throw e.error(halt.status, halt.message, null);
+      throw err;
+    }
+
+    return e.json(200, result);
+  },
+  $apis.requireAuth("customers")
+);
 
 // ---------------------------------------------------------------------
 // POST /api/vault/quotes/{id}/received   (staff)
@@ -741,10 +839,14 @@ routerAdd(
 // quote_photos_retention cron below tell "closed 90 days ago" apart from
 // "merely not touched in 90 days" (updated moves on a later reply too).
 // ---------------------------------------------------------------------
-const QUOTE_CLOSED_STATUSES = ["completed", "declined", "expired"];
 onRecordUpdate((e) => {
-  const wasClosed = QUOTE_CLOSED_STATUSES.indexOf(e.record.original().getString("status")) >= 0;
-  const isClosed = QUOTE_CLOSED_STATUSES.indexOf(e.record.getString("status")) >= 0;
+  // Declared inside the handler, not at file top level: every registered
+  // handler runs in its own isolated goja context, so a top-level const
+  // referenced from in here is undefined at request time even though the
+  // file loads and registers without complaint - see pb/README.md.
+  const closedStatuses = ["completed", "declined", "expired"];
+  const wasClosed = closedStatuses.indexOf(e.record.original().getString("status")) >= 0;
+  const isClosed = closedStatuses.indexOf(e.record.getString("status")) >= 0;
   if (isClosed && !wasClosed) {
     e.record.set("closed_at", new Date().toISOString());
   }

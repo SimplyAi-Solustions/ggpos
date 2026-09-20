@@ -16,7 +16,7 @@ GG Entertainment ("we", "us") trades from [shop address], Bolsover, Chesterfield
 
 **Marketing.** We only send you marketing, such as offers or news, if you have said yes. You can withdraw that at any time in My Vault or by asking a member of staff, and we will stop.
 
-**Quotes and portal photos.** If you send us photos to get a quote before visiting, we use them to identify and value your items. We delete these once your quote is no longer live (see below).
+**Quotes and portal photos.** If you send us photos to get a quote before visiting, we use them to identify and value your items. We delete these 90 days after your quote is accepted into a purchase, or is declined or expires (see below).
 
 ## How long we keep it
 
@@ -38,10 +38,10 @@ You can ask us to:
 
 - see the data we hold about you;
 - correct anything that is wrong;
-- delete your customer profile, "erasure", which we will do except where the law requires us to keep a record, such as a numbered trade-in or sale, for its full retention period;
+- delete your customer profile, "erasure", which we will do except where the law requires us to keep a record, such as a numbered trade-in or sale, for its full retention period; we cannot do this while you still have store credit on your account, so use it or ask us to pay it out first;
 - stop using your data for marketing, at any time.
 
-To ask, use "Download my data" or "Delete my account" in My Vault, or ask a member of staff.
+Use "Download my data" or "Delete my account" in My Vault for the first two, any time, without asking a member of staff. Downloading gives you a file with your trade-ins, sales, credit and points history, quotes and want list; it never includes an ID number, expiry date, date of birth, address or photo, which stay on our own records only.
 
 ## How to complain
 

@@ -18,26 +18,11 @@
  * one happens to be sent, but nothing here reads it.
  *
  * Each registered handler runs in its own isolated goja context, so every
- * require() lives inside the handler body - see pb/README.md.
+ * require() and helper - including the small queryParam reader
+ * prices.pb.js's own handlers each define separately for the same reason -
+ * lives inside the handler body, repeated per handler rather than shared
+ * from a file-level function. See pb/README.md.
  */
-
-function queryParam(e, util, name) {
-  let value = "";
-  try {
-    const info = e.requestInfo();
-    value = util.asStr(info && info.query ? info.query[name] : "");
-  } catch (err) {
-    value = "";
-  }
-  if (!value) {
-    try {
-      value = util.asStr(e.request.url.query().get(name));
-    } catch (err) {
-      // Leave it blank.
-    }
-  }
-  return value;
-}
 
 // ---------------------------------------------------------------------
 // GET /api/vault/estimate/search?q=
@@ -46,7 +31,25 @@ routerAdd("GET", "/api/vault/estimate/search", (e) => {
   const util = require(`${__hooks}/lib/vaultutil.js`);
   const estimateLib = require(`${__hooks}/lib/estimate.js`);
 
-  const q = queryParam(e, util, "q");
+  function queryParam(name) {
+    let value = "";
+    try {
+      const info = e.requestInfo();
+      value = util.asStr(info && info.query ? info.query[name] : "");
+    } catch (err) {
+      value = "";
+    }
+    if (!value) {
+      try {
+        value = util.asStr(e.request.url.query().get(name));
+      } catch (err) {
+        // Leave it blank.
+      }
+    }
+    return value;
+  }
+
+  const q = queryParam("q");
   const rows = estimateLib.searchCatalogue(e.app, q);
 
   const cards = [];
@@ -79,15 +82,33 @@ routerAdd("GET", "/api/vault/estimate", (e) => {
   const policy = require(`${__hooks}/adapters/pricing_policy.js`);
   const estimateLib = require(`${__hooks}/lib/estimate.js`);
 
-  const cardId = queryParam(e, util, "card");
+  function queryParam(name) {
+    let value = "";
+    try {
+      const info = e.requestInfo();
+      value = util.asStr(info && info.query ? info.query[name] : "");
+    } catch (err) {
+      value = "";
+    }
+    if (!value) {
+      try {
+        value = util.asStr(e.request.url.query().get(name));
+      } catch (err) {
+        // Leave it blank.
+      }
+    }
+    return value;
+  }
+
+  const cardId = queryParam("card");
   if (!cardId) {
     throw e.badRequestError("Pick a card first.", null);
   }
-  const condition = policy.normalizeCondition(queryParam(e, util, "condition"));
+  const condition = policy.normalizeCondition(queryParam("condition"));
   if (condition === null) {
     throw e.badRequestError("Pick a condition: NM, LP, MP, HP or DMG.", null);
   }
-  const finish = queryParam(e, util, "finish");
+  const finish = queryParam("finish");
 
   const result = estimateLib.estimateForCard(e.app, cardId, condition, finish);
   if (!result) {

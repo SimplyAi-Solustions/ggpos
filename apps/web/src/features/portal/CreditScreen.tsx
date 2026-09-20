@@ -74,7 +74,13 @@ export function CreditScreen() {
                   {REASON_LABEL[row.reason] ?? "Adjustment"}
                 </span>
                 <Note>
-                  {[formatDate(row.created), row.ref].filter(Boolean).join(" · ")}
+                  {formatDate(row.created)}
+                  {row.ref ? (
+                    <>
+                      {" · "}
+                      <span className="tnum font-mono">{row.ref}</span>
+                    </>
+                  ) : null}
                 </Note>
               </span>
               <span className="tnum shrink-0 text-[15px] font-medium">

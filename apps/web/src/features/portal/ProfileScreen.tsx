@@ -32,6 +32,7 @@ import { disablePush, enablePush, pushState, type PushState } from "@/lib/push"
 import { ID_STATUS_SENTENCE, MONTHS } from "@/features/portal/format"
 import { signOut } from "@/features/portal/session"
 import { Note } from "@/features/portal/Note"
+import { SHEET_COLUMN } from "@/features/portal/sheet"
 
 /** The typed words that arm the delete button. */
 const DELETE_PHRASE = "DELETE"
@@ -355,13 +356,13 @@ export function ProfileScreen() {
 
       <Sheet open={privacyOpen} onOpenChange={setPrivacyOpen}>
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
-          <SheetHeader>
+          <SheetHeader className={SHEET_COLUMN}>
             <SheetTitle>How we use your data</SheetTitle>
             <SheetDescription>
               The short version of our privacy notice.
             </SheetDescription>
           </SheetHeader>
-          <SheetBody>
+          <SheetBody className={SHEET_COLUMN}>
             <ul className="flex flex-col gap-6">
               {[
                 {
@@ -382,7 +383,7 @@ export function ProfileScreen() {
                 },
                 {
                   heading: "Quote photos",
-                  body: "Used to identify and value your items, and deleted 90 days after the quote closes.",
+                  body: "Used to identify and value your items, and deleted 90 days after the quote is completed, declined or expires.",
                 },
                 {
                   heading: "Who sees it",
@@ -402,7 +403,7 @@ export function ProfileScreen() {
               ))}
             </ul>
           </SheetBody>
-          <SheetFooter>
+          <SheetFooter className={SHEET_COLUMN}>
             <Button type="button" variant="text" onClick={() => setPrivacyOpen(false)}>
               Close
             </Button>
@@ -412,13 +413,13 @@ export function ProfileScreen() {
 
       <Sheet open={deleteOpen} onOpenChange={setDeleteOpen}>
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
-          <SheetHeader>
+          <SheetHeader className={SHEET_COLUMN}>
             <SheetTitle>Delete my account</SheetTitle>
             <SheetDescription>
               This cannot be undone. Read what stays before you confirm.
             </SheetDescription>
           </SheetHeader>
-          <SheetBody>
+          <SheetBody className={SHEET_COLUMN}>
             <div className="flex flex-col gap-6">
               <div className="flex flex-col gap-1.5">
                 <MicroLabel tone="ink">What goes</MicroLabel>
@@ -457,7 +458,7 @@ export function ProfileScreen() {
               {error ? <FieldError>{error}</FieldError> : null}
             </div>
           </SheetBody>
-          <SheetFooter>
+          <SheetFooter className={SHEET_COLUMN}>
             <Button
               type="button"
               variant="text-destructive"

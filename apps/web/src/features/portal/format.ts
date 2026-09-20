@@ -54,13 +54,6 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}, ${time}`
 }
 
-/** Whole days from now until an ISO timestamp; negative once it has passed. */
-export function daysUntil(iso: string, now: Date = new Date()): number {
-  const then = new Date(iso)
-  if (Number.isNaN(then.getTime())) return 0
-  return Math.ceil((then.getTime() - now.getTime()) / 86_400_000)
-}
-
 export const QUOTE_STATUS_LABEL: Record<QuoteStatus, string> = {
   submitted: "Sent",
   reviewing: "Being looked at",
@@ -86,17 +79,6 @@ export const ID_STATUS_SENTENCE: Record<IdStatus, string> = {
     "The ID we hold has run out. Bring a current one if you want to be paid in cash.",
   rejected:
     "The ID we hold was not accepted. Ask at the counter and we will sort it out.",
-}
-
-/** Whether a quote is still something the customer can act on. */
-export function quoteIsOpen(status: QuoteStatus): boolean {
-  return (
-    status === "submitted" ||
-    status === "reviewing" ||
-    status === "offered" ||
-    status === "accepted" ||
-    status === "received"
-  )
 }
 
 /** The twelve months, for the birthday select. */

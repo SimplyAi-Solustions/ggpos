@@ -108,7 +108,7 @@ export function TradeInDetailScreen({ id }: { id: string }) {
     <section className="pt-12 sm:pt-20">
       <PageTitle>Trade-in</PageTitle>
       <p className="mt-3 text-base leading-[1.5] text-muted-foreground">
-        {data.number}, {formatDate(data.at)}
+        <span className="tnum font-mono text-[13px] text-foreground">{data.number}</span>, {formatDate(data.at)}
       </p>
 
       <SectionHeading className="mt-14">What you sold</SectionHeading>
