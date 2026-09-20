@@ -66,7 +66,8 @@ import {
   saveTiers,
   type LoyaltyAdmin,
 } from "@/lib/api/loyalty"
-import type { GameRecord, LoyaltyProgramme } from "@/lib/api/types"
+import type { LoyaltyProgramme } from "@gg/shared"
+import type { GameRecord } from "@/lib/api/types"
 
 /** The same treatment the Sell and Settings screens give a blocked block button. */
 const BLOCKED = "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"

@@ -19,8 +19,10 @@ import { Route as LoginRouteImport } from "./routes/login"
 import { Route as AccountIndexRouteImport } from "./routes/account.index"
 import { Route as AccountCreditRouteImport } from "./routes/account.credit"
 import { Route as AccountEstimateRouteImport } from "./routes/account.estimate"
+import { Route as AccountGuildRouteImport } from "./routes/account.guild"
 import { Route as AccountMeRouteImport } from "./routes/account.me"
 import { Route as AccountNotificationsRouteImport } from "./routes/account.notifications"
+import { Route as AccountPointsRouteImport } from "./routes/account.points"
 import { Route as AccountWantListRouteImport } from "./routes/account.want-list"
 import { Route as AccountWantsRouteImport } from "./routes/account.wants"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
@@ -28,6 +30,7 @@ import { Route as CounterIndexRouteImport } from "./routes/counter.index"
 import { Route as CounterCashRouteImport } from "./routes/counter.cash"
 import { Route as CounterExportsRouteImport } from "./routes/counter.exports"
 import { Route as CounterLabelsRouteImport } from "./routes/counter.labels"
+import { Route as CounterLoyaltyRouteImport } from "./routes/counter.loyalty"
 import { Route as CounterScanRouteImport } from "./routes/counter.scan"
 import { Route as CounterSellRouteImport } from "./routes/counter.sell"
 import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
@@ -35,6 +38,8 @@ import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
 import { Route as AccountQuotesIndexRouteImport } from "./routes/account.quotes.index"
 import { Route as AccountQuotesIdRouteImport } from "./routes/account.quotes.$id"
 import { Route as AccountQuotesNewRouteImport } from "./routes/account.quotes.new"
+import { Route as AccountRewardsIndexRouteImport } from "./routes/account.rewards.index"
+import { Route as AccountRewardsIdRouteImport } from "./routes/account.rewards.$id"
 import { Route as AccountTradeInsIndexRouteImport } from "./routes/account.trade-ins.index"
 import { Route as AccountTradeInsIdRouteImport } from "./routes/account.trade-ins.$id"
 import { Route as CounterCustomersIndexRouteImport } from "./routes/counter.customers.index"
@@ -105,6 +110,11 @@ const AccountEstimateRoute = AccountEstimateRouteImport.update({
   path: "/estimate",
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountGuildRoute = AccountGuildRouteImport.update({
+  id: "/guild",
+  path: "/guild",
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountMeRoute = AccountMeRouteImport.update({
   id: "/me",
   path: "/me",
@@ -113,6 +123,11 @@ const AccountMeRoute = AccountMeRouteImport.update({
 const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
   id: "/notifications",
   path: "/notifications",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountPointsRoute = AccountPointsRouteImport.update({
+  id: "/points",
+  path: "/points",
   getParentRoute: () => AccountRoute,
 } as any)
 const AccountWantListRoute = AccountWantListRouteImport.update({
@@ -150,6 +165,11 @@ const CounterLabelsRoute = CounterLabelsRouteImport.update({
   path: "/labels",
   getParentRoute: () => CounterRoute,
 } as any)
+const CounterLoyaltyRoute = CounterLoyaltyRouteImport.update({
+  id: "/loyalty",
+  path: "/loyalty",
+  getParentRoute: () => CounterRoute,
+} as any)
 const CounterScanRoute = CounterScanRouteImport.update({
   id: "/scan",
   path: "/scan",
@@ -183,6 +203,16 @@ const AccountQuotesIdRoute = AccountQuotesIdRouteImport.update({
 const AccountQuotesNewRoute = AccountQuotesNewRouteImport.update({
   id: "/quotes/new",
   path: "/quotes/new",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountRewardsIndexRoute = AccountRewardsIndexRouteImport.update({
+  id: "/rewards/",
+  path: "/rewards/",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountRewardsIdRoute = AccountRewardsIdRouteImport.update({
+  id: "/rewards/$id",
+  path: "/rewards/$id",
   getParentRoute: () => AccountRoute,
 } as any)
 const AccountTradeInsIndexRoute = AccountTradeInsIndexRouteImport.update({
@@ -293,14 +323,17 @@ export interface FileRoutesByFullPath {
   "/login": typeof LoginRoute
   "/account/credit": typeof AccountCreditRoute
   "/account/estimate": typeof AccountEstimateRoute
+  "/account/guild": typeof AccountGuildRoute
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
+  "/account/points": typeof AccountPointsRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
+  "/counter/loyalty": typeof CounterLoyaltyRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
@@ -309,6 +342,7 @@ export interface FileRoutesByFullPath {
   "/counter/": typeof CounterIndexRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
+  "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
@@ -317,6 +351,7 @@ export interface FileRoutesByFullPath {
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/account/quotes/": typeof AccountQuotesIndexRoute
+  "/account/rewards/": typeof AccountRewardsIndexRoute
   "/account/trade-ins/": typeof AccountTradeInsIndexRoute
   "/counter/customers/": typeof CounterCustomersIndexRoute
   "/counter/quotes/": typeof CounterQuotesIndexRoute
@@ -338,14 +373,17 @@ export interface FileRoutesByTo {
   "/login": typeof LoginRoute
   "/account/credit": typeof AccountCreditRoute
   "/account/estimate": typeof AccountEstimateRoute
+  "/account/guild": typeof AccountGuildRoute
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
+  "/account/points": typeof AccountPointsRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
+  "/counter/loyalty": typeof CounterLoyaltyRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
@@ -354,6 +392,7 @@ export interface FileRoutesByTo {
   "/counter": typeof CounterIndexRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
+  "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
@@ -362,6 +401,7 @@ export interface FileRoutesByTo {
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/account/quotes": typeof AccountQuotesIndexRoute
+  "/account/rewards": typeof AccountRewardsIndexRoute
   "/account/trade-ins": typeof AccountTradeInsIndexRoute
   "/counter/customers": typeof CounterCustomersIndexRoute
   "/counter/quotes": typeof CounterQuotesIndexRoute
@@ -386,14 +426,17 @@ export interface FileRoutesById {
   "/login": typeof LoginRoute
   "/account/credit": typeof AccountCreditRoute
   "/account/estimate": typeof AccountEstimateRoute
+  "/account/guild": typeof AccountGuildRoute
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
+  "/account/points": typeof AccountPointsRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
+  "/counter/loyalty": typeof CounterLoyaltyRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
@@ -402,6 +445,7 @@ export interface FileRoutesById {
   "/counter/": typeof CounterIndexRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
+  "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
@@ -410,6 +454,7 @@ export interface FileRoutesById {
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/account/quotes/": typeof AccountQuotesIndexRoute
+  "/account/rewards/": typeof AccountRewardsIndexRoute
   "/account/trade-ins/": typeof AccountTradeInsIndexRoute
   "/counter/customers/": typeof CounterCustomersIndexRoute
   "/counter/quotes/": typeof CounterQuotesIndexRoute
@@ -435,14 +480,17 @@ export interface FileRouteTypes {
     | "/login"
     | "/account/credit"
     | "/account/estimate"
+    | "/account/guild"
     | "/account/me"
     | "/account/notifications"
+    | "/account/points"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
     | "/counter/cash"
     | "/counter/exports"
     | "/counter/labels"
+    | "/counter/loyalty"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
@@ -451,6 +499,7 @@ export interface FileRouteTypes {
     | "/counter/"
     | "/account/quotes/$id"
     | "/account/quotes/new"
+    | "/account/rewards/$id"
     | "/account/trade-ins/$id"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
@@ -459,6 +508,7 @@ export interface FileRouteTypes {
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/account/quotes/"
+    | "/account/rewards/"
     | "/account/trade-ins/"
     | "/counter/customers/"
     | "/counter/quotes/"
@@ -480,14 +530,17 @@ export interface FileRouteTypes {
     | "/login"
     | "/account/credit"
     | "/account/estimate"
+    | "/account/guild"
     | "/account/me"
     | "/account/notifications"
+    | "/account/points"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
     | "/counter/cash"
     | "/counter/exports"
     | "/counter/labels"
+    | "/counter/loyalty"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
@@ -496,6 +549,7 @@ export interface FileRouteTypes {
     | "/counter"
     | "/account/quotes/$id"
     | "/account/quotes/new"
+    | "/account/rewards/$id"
     | "/account/trade-ins/$id"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
@@ -504,6 +558,7 @@ export interface FileRouteTypes {
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/account/quotes"
+    | "/account/rewards"
     | "/account/trade-ins"
     | "/counter/customers"
     | "/counter/quotes"
@@ -527,14 +582,17 @@ export interface FileRouteTypes {
     | "/login"
     | "/account/credit"
     | "/account/estimate"
+    | "/account/guild"
     | "/account/me"
     | "/account/notifications"
+    | "/account/points"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
     | "/counter/cash"
     | "/counter/exports"
     | "/counter/labels"
+    | "/counter/loyalty"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
@@ -543,6 +601,7 @@ export interface FileRouteTypes {
     | "/counter/"
     | "/account/quotes/$id"
     | "/account/quotes/new"
+    | "/account/rewards/$id"
     | "/account/trade-ins/$id"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
@@ -551,6 +610,7 @@ export interface FileRouteTypes {
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/account/quotes/"
+    | "/account/rewards/"
     | "/account/trade-ins/"
     | "/counter/customers/"
     | "/counter/quotes/"
@@ -649,6 +709,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AccountEstimateRouteImport
       parentRoute: typeof AccountRoute
     }
+    "/account/guild": {
+      id: "/account/guild"
+      path: "/guild"
+      fullPath: "/account/guild"
+      preLoaderRoute: typeof AccountGuildRouteImport
+      parentRoute: typeof AccountRoute
+    }
     "/account/me": {
       id: "/account/me"
       path: "/me"
@@ -661,6 +728,13 @@ declare module "@tanstack/react-router" {
       path: "/notifications"
       fullPath: "/account/notifications"
       preLoaderRoute: typeof AccountNotificationsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/points": {
+      id: "/account/points"
+      path: "/points"
+      fullPath: "/account/points"
+      preLoaderRoute: typeof AccountPointsRouteImport
       parentRoute: typeof AccountRoute
     }
     "/account/want-list": {
@@ -712,6 +786,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterLabelsRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/counter/loyalty": {
+      id: "/counter/loyalty"
+      path: "/loyalty"
+      fullPath: "/counter/loyalty"
+      preLoaderRoute: typeof CounterLoyaltyRouteImport
+      parentRoute: typeof CounterRoute
+    }
     "/counter/scan": {
       id: "/counter/scan"
       path: "/scan"
@@ -759,6 +840,20 @@ declare module "@tanstack/react-router" {
       path: "/quotes/new"
       fullPath: "/account/quotes/new"
       preLoaderRoute: typeof AccountQuotesNewRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/rewards/": {
+      id: "/account/rewards/"
+      path: "/rewards"
+      fullPath: "/account/rewards/"
+      preLoaderRoute: typeof AccountRewardsIndexRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/rewards/$id": {
+      id: "/account/rewards/$id"
+      path: "/rewards/$id"
+      fullPath: "/account/rewards/$id"
+      preLoaderRoute: typeof AccountRewardsIdRouteImport
       parentRoute: typeof AccountRoute
     }
     "/account/trade-ins/": {
@@ -900,30 +995,38 @@ declare module "@tanstack/react-router" {
 interface AccountRouteChildren {
   AccountCreditRoute: typeof AccountCreditRoute
   AccountEstimateRoute: typeof AccountEstimateRoute
+  AccountGuildRoute: typeof AccountGuildRoute
   AccountMeRoute: typeof AccountMeRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
+  AccountPointsRoute: typeof AccountPointsRoute
   AccountWantListRoute: typeof AccountWantListRoute
   AccountWantsRoute: typeof AccountWantsRoute
   AccountIndexRoute: typeof AccountIndexRoute
   AccountQuotesIdRoute: typeof AccountQuotesIdRoute
   AccountQuotesNewRoute: typeof AccountQuotesNewRoute
+  AccountRewardsIdRoute: typeof AccountRewardsIdRoute
   AccountTradeInsIdRoute: typeof AccountTradeInsIdRoute
   AccountQuotesIndexRoute: typeof AccountQuotesIndexRoute
+  AccountRewardsIndexRoute: typeof AccountRewardsIndexRoute
   AccountTradeInsIndexRoute: typeof AccountTradeInsIndexRoute
 }
 
 const AccountRouteChildren: AccountRouteChildren = {
   AccountCreditRoute: AccountCreditRoute,
   AccountEstimateRoute: AccountEstimateRoute,
+  AccountGuildRoute: AccountGuildRoute,
   AccountMeRoute: AccountMeRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
+  AccountPointsRoute: AccountPointsRoute,
   AccountWantListRoute: AccountWantListRoute,
   AccountWantsRoute: AccountWantsRoute,
   AccountIndexRoute: AccountIndexRoute,
   AccountQuotesIdRoute: AccountQuotesIdRoute,
   AccountQuotesNewRoute: AccountQuotesNewRoute,
+  AccountRewardsIdRoute: AccountRewardsIdRoute,
   AccountTradeInsIdRoute: AccountTradeInsIdRoute,
   AccountQuotesIndexRoute: AccountQuotesIndexRoute,
+  AccountRewardsIndexRoute: AccountRewardsIndexRoute,
   AccountTradeInsIndexRoute: AccountTradeInsIndexRoute,
 }
 
@@ -934,6 +1037,7 @@ interface CounterRouteChildren {
   CounterCashRoute: typeof CounterCashRoute
   CounterExportsRoute: typeof CounterExportsRoute
   CounterLabelsRoute: typeof CounterLabelsRoute
+  CounterLoyaltyRoute: typeof CounterLoyaltyRoute
   CounterScanRoute: typeof CounterScanRoute
   CounterSellRoute: typeof CounterSellRoute
   CounterSettingsRoute: typeof CounterSettingsRoute
@@ -961,6 +1065,7 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterCashRoute: CounterCashRoute,
   CounterExportsRoute: CounterExportsRoute,
   CounterLabelsRoute: CounterLabelsRoute,
+  CounterLoyaltyRoute: CounterLoyaltyRoute,
   CounterScanRoute: CounterScanRoute,
   CounterSellRoute: CounterSellRoute,
   CounterSettingsRoute: CounterSettingsRoute,

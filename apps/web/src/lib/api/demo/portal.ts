@@ -16,7 +16,7 @@ import {
   demoTradeIns,
   demoTradeInsFor,
 } from "@/lib/api/demo/tradeins"
-import { ensureSeeded, itemStore } from "@/lib/api/demo/store"
+import { DEMO_TIERS, ensureSeeded, itemStore } from "@/lib/api/demo/store"
 import {
   DEMO_PORTAL_CODE,
   DEMO_PORTAL_CUSTOMER_ID,
@@ -27,6 +27,7 @@ import {
   demoPortalCustomerId,
   setDemoPortalCustomer,
 } from "@/lib/api/demo/portal-seed"
+import type { GuildNotificationType } from "@/lib/api/guild"
 import type {
   CardLanding,
   HoldRow,
@@ -148,6 +149,18 @@ function preferencesFor(id: string) {
   return preferences[id]
 }
 
+/**
+ * The tier the counter's own demo book holds for this card.
+ *
+ * `store.ts`'s `DEMO_TIERS` is the demo shop's single tier table, so the
+ * badge on My Vault's card and the tier the Sell screen prices against are
+ * the same row rather than two spellings of one.
+ */
+function demoTier(tierId: string | undefined): { id: string; name: string } | null {
+  const tier = DEMO_TIERS.find((row) => row.id === tierId)
+  return tier ? { id: tier.id, name: tier.name } : null
+}
+
 export function demoMe(): VaultMe {
   const entry = seedCustomer()
   if (!entry) throw new Error("The demo shop has no customers.")
@@ -169,9 +182,7 @@ export function demoMe(): VaultMe {
       notifications: { ...preferencesFor(entry.customer.id) },
     },
     balances: { credit, points: entry.private.points_balance ?? 0 },
-    // Tiers land in Phase 6. Until then the card reads "Member", which is
-    // what the counter's own card prints when a customer has no tier row.
-    tier: null,
+    tier: demoTier(entry.private.tier),
     id_status: entry.private.id_status ?? "none",
     counts: {
       trade_ins: demoMyTradeIns().length,
@@ -732,8 +743,14 @@ export function demoCloseWant(id: string) {
 // Notifications
 // ---------------------------------------------------------------------------
 
-interface DemoNotification extends NotificationRow {
+/**
+ * `type` is widened past `NotificationType`, which is the Phase 5 set: the
+ * Guild's own eight are named in `lib/api/guild.ts` and land on these rows
+ * exactly as the server writes them.
+ */
+interface DemoNotification extends Omit<NotificationRow, "type"> {
   customer: string
+  type: NotificationRow["type"] | GuildNotificationType
 }
 
 export const demoNotifications: DemoNotification[] = [
@@ -756,6 +773,36 @@ export const demoNotifications: DemoNotification[] = [
     created: daysAgo(1),
   },
   {
+    id: "note_demo_4",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "reward_issued",
+    title: "Voucher GG-V-000007 issued",
+    body: "Free booster pack, 500 points. Show the code at the counter before it runs out.",
+    link: "/account/rewards",
+    read_at: daysAgo(8),
+    created: daysAgo(9),
+  },
+  {
+    id: "note_demo_5",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "tier_up",
+    title: "You are now a Regular",
+    body: "Your points over the last twelve months moved you up a tier. Your perks are on the Guild page.",
+    link: "/account/guild",
+    read_at: daysAgo(20),
+    created: daysAgo(21),
+  },
+  {
+    id: "note_demo_6",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "points_expiring",
+    title: `Your 1,590 points expire on ${formatDate(daysAgo(180))}`,
+    body: "Any purchase or trade-in keeps them. There is nothing to do beyond coming in.",
+    link: "/account/points",
+    read_at: daysAgo(209),
+    created: daysAgo(210),
+  },
+  {
     id: "note_demo_3",
     customer: DEMO_PORTAL_CUSTOMER_ID,
     type: "trade_in",
@@ -773,7 +820,9 @@ function demoMyNotifications(): NotificationRow[] {
     .filter((row) => row.customer === demoPortalCustomerId())
     .map(({ customer, ...row }) => {
       void customer
-      return { ...row }
+      // The Guild's own types are not in the Phase 5 `NotificationType`
+      // union yet; the screen never branches on the value, only on the link.
+      return { ...row } as NotificationRow
     })
     .sort((a, b) => b.created.localeCompare(a.created))
 }
