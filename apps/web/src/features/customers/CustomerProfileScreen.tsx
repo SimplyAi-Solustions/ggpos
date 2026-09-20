@@ -13,7 +13,7 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useStaff } from "@/lib/auth"
-import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
+import { StepUpDialog } from "@/features/customers/StepUpDialog"
 import { IdPhotoSheet } from "@/features/customers/IdPhotoSheet"
 import {
   ALL_FLAGS,
@@ -102,6 +102,29 @@ function Row({
   )
 }
 
+const MOVED_LABEL: Record<string, string> = {
+  trade_ins: "trade-in",
+  sales: "sale",
+  quotes: "quote",
+  credit_ledger: "credit entry",
+  points_ledger: "points entry",
+  want_list: "want list row",
+}
+
+/** "Moved 3 trade-ins and 1 credit entry." Nothing at zero is listed. */
+export function movedSentence(moved: Record<string, number>): string {
+  const parts = Object.entries(moved)
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => {
+      const word = MOVED_LABEL[key] ?? key.replace(/_/g, " ")
+      return `${count} ${word}${count === 1 ? "" : "s"}`
+    })
+  if (parts.length === 0) return "The two cards are now one. There was nothing to move."
+  if (parts.length === 1) return `Moved ${parts[0]}.`
+  const last = parts[parts.length - 1]
+  return `Moved ${parts.slice(0, -1).join(", ")} and ${last}.`
+}
+
 function idBadge(status: IdStatus) {
   // The testid sits on the wrapper: Badge renders through Base UI's
   // useRender, which does not carry stray attributes onto the element.
@@ -173,22 +196,6 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
       setSaveError(
         refusalOrFallback(error, "That change did not save. Try it again.")
       ),
-  })
-
-  const merge = useMutation({
-    mutationFn: (mergeId: string) => mergeCustomers(customerId, mergeId),
-    onSuccess: (next) => {
-      setMergeTarget(null)
-      apply(next)
-    },
-  })
-
-  const erase = useMutation({
-    mutationFn: () => eraseCustomer(customerId),
-    onSuccess: (next) => {
-      setEraseOpen(false)
-      apply(next)
-    },
   })
 
   if (profileQuery.isPending) {
@@ -519,9 +526,19 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
             Email card
           </Button>
         ) : null}
-        <Button variant="text-destructive" type="button" onClick={() => setEraseOpen(true)}>
-          Erase
-        </Button>
+        {isAdmin ? (
+          <Button
+            variant="text-destructive"
+            type="button"
+            onClick={() => setEraseOpen(true)}
+          >
+            Erase
+          </Button>
+        ) : (
+          <p className="text-[13px] leading-[1.45] text-muted-foreground-2">
+            Erasing a customer is an admin job. Ask Richard.
+          </p>
+        )}
         {cardNote ? (
           <p
             aria-live="polite"
@@ -539,38 +556,34 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         customerName={customer.name}
       />
 
-      <ConfirmDialog
+      <StepUpDialog
         open={mergeTarget !== null}
         onOpenChange={(open) => {
           if (!open) setMergeTarget(null)
         }}
         title="Merge customers"
-        description={`Everything on the other card moves to ${customer.name}, and the other card is removed. This cannot be undone.`}
+        description={`Everything on the other card moves to ${customer.name}, and the other card is removed. This cannot be undone, so confirm your password.`}
         confirmLabel="Merge"
-        busy={merge.isPending}
-        error={
-          merge.isError
-            ? refusalOrFallback(merge.error, "That merge did not go through.")
-            : null
-        }
-        onConfirm={() => {
-          if (mergeTarget) merge.mutate(mergeTarget)
+        onConfirm={async (token) => {
+          if (!mergeTarget) return null
+          const result = await mergeCustomers(customerId, mergeTarget, token)
+          apply(result.profile)
+          void queryClient.invalidateQueries({ queryKey: ["customer-credit"] })
+          void queryClient.invalidateQueries({ queryKey: ["customer-trade-ins"] })
+          return movedSentence(result.moved)
         }}
       />
 
-      <ConfirmDialog
+      <StepUpDialog
         open={eraseOpen}
         onOpenChange={setEraseOpen}
         title="Erase this customer"
-        description="The name, phone, email, address and notes are replaced with nothing, and the card is flagged. Numbered trade-ins and their seller details are kept for six years, as tax law requires. Removing the ID photo itself is still done by hand until the server's erasure route lands."
+        description="The name, phone, email, address and notes are replaced with nothing, the ID photo is deleted, open rewards are cancelled and the want list, quotes and notifications go. Numbered trade-ins and sales keep their seller details, because tax law requires the shop to hold them for six years. Confirm your password to go ahead."
         confirmLabel="Erase"
-        busy={erase.isPending}
-        error={
-          erase.isError
-            ? refusalOrFallback(erase.error, "That erasure did not go through.")
-            : null
-        }
-        onConfirm={() => erase.mutate()}
+        onConfirm={async (token) => {
+          apply(await eraseCustomer(customerId, token))
+          return "That customer has been erased. The numbered records are kept."
+        }}
       />
     </section>
   )
