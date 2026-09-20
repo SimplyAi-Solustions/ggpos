@@ -4,11 +4,9 @@
  * the queue, price it into lines, offer, and turn an accepted quote into a
  * draft buy-in. The counter's own calls are in their own section below.
  *
- * The Phase 5 route list has no "list my quotes" route, so the list is a
- * collection-API read of the customer's own rows, sorted newest first; every
- * other call is one of the custom routes. Photos are downscaled and stripped
- * before they are put in the form (see `features/portal/quote-photos.ts`),
- * never here.
+ * Every call is one of the Phase 5 routes. Photos are downscaled and
+ * stripped before they are put in the form (see
+ * `features/portal/quote-photos.ts`), never here.
  */
 import { displayCode } from "@gg/shared"
 
@@ -46,13 +44,14 @@ import { escapeFilter } from "@/lib/api/filter"
 
 export async function listMyQuotes(): Promise<QuoteRecord[]> {
   if (isDemo()) return demoListQuotes()
-  const id = customerAuthId()
-  if (!id) return []
-  const page = await pbCustomer.collection("quotes").getList<QuoteRecord>(1, 50, {
-    filter: `customer = "${escapeFilter(id)}"`,
-    sort: "-created",
-  })
-  return page.items
+  // `{ quotes }` is the shipped wrapper; a bare array is accepted too so the
+  // screen does not break on a server that answers the older shape.
+  const result = await pbCustomer.send<{ quotes?: QuoteRecord[] } | QuoteRecord[]>(
+    "/api/vault/quotes",
+    { method: "GET" }
+  )
+  if (Array.isArray(result)) return result
+  return result.quotes ?? []
 }
 
 export async function getQuote(id: string): Promise<QuoteDetail> {

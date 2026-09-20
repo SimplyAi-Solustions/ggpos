@@ -34,6 +34,11 @@ import {
   savePricingRules,
   saveSettings,
 } from "@/lib/api"
+import { useVaultConfig } from "@/lib/api/config"
+import {
+  EMAIL_PROVIDER_LABEL,
+  pushPublicKeyFrom,
+} from "@/lib/api/notifications"
 import { RulesMatrix } from "@/features/settings/RulesMatrix"
 import { SourceOrder } from "@/features/settings/SourceOrder"
 import { OfferPreview, SellPreview } from "@/features/settings/previews"
@@ -109,6 +114,14 @@ function Editor({
     setSaved(false)
     setForm((current) => ({ ...current, ...patch }))
   }, [])
+
+  // Read only, and read from the config route rather than the form: the
+  // key is the deploy's, not an admin's, and the provider is a column this
+  // screen never writes.
+  const { data: config } = useVaultConfig()
+  const pushKey = pushPublicKeyFrom(config) || settings.push?.vapid_public_key || ""
+  const provider = settings.email_provider || "none"
+  const providerLabel = EMAIL_PROVIDER_LABEL[provider] ?? provider
 
   const changedRules = rules.filter((rule) =>
     ruleChanged(
@@ -419,6 +432,62 @@ function Editor({
               details stay on the customer record either way.
             </p>
           </Field>
+        </div>
+      </Section>
+
+      {/* ---- Notifications ---- */}
+      <Section title="Notifications">
+        <p className="mb-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+          How a quote offer, a want-list match and a receipt reach a customer.
+          The mail key and the private push key are held on the server and are
+          never sent to this browser.
+        </p>
+        <div className="flex flex-col gap-10">
+          <Field label="Send email" layout="auto">
+            <div className="flex items-center gap-4">
+              <Switch
+                checked={!form.email.test_mode}
+                onCheckedChange={(checked: boolean) =>
+                  set({ email: { ...form.email, test_mode: !checked } })
+                }
+                aria-label="Send email"
+              />
+              <span className="text-[15px] text-foreground">
+                {form.email.test_mode ? "Test mode" : "Sending"}
+              </span>
+            </div>
+            <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+              {form.email.test_mode
+                ? `In test mode nothing is sent: every email is written to the server log instead. Provider: ${providerLabel}.`
+                : `Email goes out through ${providerLabel}.`}
+              {provider === "none"
+                ? " Set a provider and its key on the server before turning this on."
+                : ""}
+            </p>
+          </Field>
+
+          <Field label="Push key" layout="auto">
+            <p
+              data-testid="vapid-key"
+              className="tnum font-mono text-[13px] leading-[1.5] break-all text-foreground"
+            >
+              {pushKey || "Set at deploy"}
+            </p>
+            <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+              The public half of the push keypair, read only. The private half
+              lives with the notify service and never reaches a browser.
+            </p>
+          </Field>
+
+          <CountField
+            id="hold-hours"
+            label="Hold"
+            hint="Hours"
+            value={form.holdHours}
+            onChange={(next) => set({ holdHours: next })}
+            error={shown.holdHours}
+            note="How long an item is held for a customer after a want-list match."
+          />
           <CountField
             id="quote-expiry"
             label="Quote expiry"

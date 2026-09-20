@@ -274,6 +274,14 @@ export const HAIRCUT_KEY = "ebayHaircutPct"
 
 export const DEFAULT_HAIRCUT_PCT = 15
 
+/** `settings.email`, minus anything secret. */
+export interface EmailSettingsForm {
+  from_name?: string
+  from_address?: string
+  reply_to?: string
+  test_mode: boolean
+}
+
 export interface MarkupBandForm {
   key: string
   /** Pounds, the bottom of the band. */
@@ -297,7 +305,16 @@ export interface SettingsForm {
   cashCap: string
   cashVarianceAlert: string
   retentionMonths: number
+  // Notifications
   quoteExpiryDays: string
+  holdHours: string
+  /**
+   * The addressing block as it stands on the record, with the test-mode
+   * switch folded into it. Carried whole so a save cannot drop the from
+   * name, the from address or the reply-to, none of which this screen
+   * shows. The mail API key is a column of its own and is never read.
+   */
+  email: EmailSettingsForm
   // Shop
   shopName: string
   shopAddress: string
@@ -358,6 +375,14 @@ export function recordToForm(record: SettingsRecord): SettingsForm {
     cashVarianceAlert: penceToPounds(record.cash_variance_alert ?? 0),
     retentionMonths: record.id_photo_retention_months ?? 12,
     quoteExpiryDays: String(record.quote_expiry_days ?? 0),
+    // The server's own default: 48 hours when the shop has not set one.
+    holdHours: String(record.holds?.hours ?? 48),
+    email: {
+      ...(record.email ?? {}),
+      // Anything but an explicit false keeps test mode on, which is how the
+      // server reads it: a half-filled settings row never starts emailing.
+      test_mode: record.email?.test_mode === false ? false : true,
+    },
     shopName: record.shop_name ?? "",
     shopAddress: record.shop_address ?? "",
     shopTown: record.shop_town ?? "",
@@ -404,6 +429,10 @@ export function formToPatch(form: SettingsForm): Partial<SettingsRecord> {
     cash_variance_alert: poundsToPence(form.cashVarianceAlert) ?? 0,
     id_photo_retention_months: form.retentionMonths,
     quote_expiry_days: parseCount(form.quoteExpiryDays) ?? 0,
+    // Written back whole, so the addressing this screen does not show
+    // survives a save of the switch that it does.
+    email: { ...form.email },
+    holds: { hours: parseCount(form.holdHours) ?? 48 },
     shop_name: form.shopName.trim(),
     shop_address: form.shopAddress.trim(),
     shop_town: form.shopTown.trim(),
@@ -489,6 +518,10 @@ export function validateSettings(form: SettingsForm): FormErrors {
   requirePounds(errors, "cashVarianceAlert", form.cashVarianceAlert)
   if (parseCount(form.quoteExpiryDays) === null) {
     errors.quoteExpiryDays = "Enter the number of days a quote stands for, for example 7."
+  }
+  const holdHours = parseCount(form.holdHours)
+  if (holdHours === null || holdHours < 1) {
+    errors.holdHours = "Enter the number of hours a hold lasts, for example 48."
   }
   if (!form.shopName.trim()) {
     errors.shopName = "The shop needs a name: it prints on every receipt."
