@@ -74,7 +74,7 @@ function Section({
   className?: string
 }) {
   return (
-    <section className={className ?? "mt-24"}>
+    <section className={className ?? "mt-16"}>
       <SectionHeading>{title}</SectionHeading>
       {children}
     </section>
@@ -239,7 +239,7 @@ function Editor({
       <Lede>The numbers the counter prices, pays and prints with.</Lede>
 
       {/* ---- Buy-in defaults ---- */}
-      <Section title="Buy-in defaults" className="mt-16">
+      <Section title="Buy-in defaults" className="mt-8">
         <div className="flex flex-col gap-10">
           <PoundsField
             id="minimum-offer"

@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Field } from "@/components/ui/field"
-import { MicroLabel } from "@/components/ui/micro-label"
+import { SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { StickerOrbit } from "@/components/ui/sticker"
 import {
@@ -89,10 +89,8 @@ export function StockCountStartScreen() {
         against what should have been.
       </Lede>
 
-      <div className="mt-16">
-        <MicroLabel tone="ink" className="mb-5 block">
-          Where
-        </MicroLabel>
+      <div className="mt-8">
+        <SectionHeading>Where</SectionHeading>
         {/* The heading above says where; the chips do not need saying twice,
             and the group keeps its own accessible name. */}
         <Field layout="stacked">
@@ -116,10 +114,8 @@ export function StockCountStartScreen() {
         <div className="mt-12 hidden min-[900px]:block">{primary}</div>
       </div>
 
-      <div className="mt-24">
-        <MicroLabel tone="ink" className="mb-5 block">
-          Past counts
-        </MicroLabel>
+      <div className="mt-16">
+        <SectionHeading>Past counts</SectionHeading>
         {rows.length === 0 ? (
           <div className="flex flex-col items-start gap-6">
             <StickerOrbit />

@@ -11,6 +11,7 @@
  * edit sheet behind them: twelve controls in a row is not a phone screen.
  */
 import * as React from "react"
+import { XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Field } from "@/components/ui/field"
@@ -61,6 +62,8 @@ export interface RulesMatrixProps {
   errors: FormErrors
   onChange: (key: string, patch: Partial<RuleForm>) => void
   onAdd: () => void
+  /** Only a row that has never been saved can be taken off again. */
+  onRemove: (key: string) => void
 }
 
 const STEP_LABELS: Record<number, string> = { 25: "25p", 50: "50p", 100: "£1" }
@@ -280,12 +283,14 @@ function RuleSheet({
   errors,
   onChange,
   onClose,
+  onRemove,
 }: {
   rule: RuleForm
   games: GameRecord[]
   errors: FormErrors
   onChange: (patch: Partial<RuleForm>) => void
   onClose: () => void
+  onRemove: () => void
 }) {
   const error = (field: string) => errors[`rules.${rule.key}.${field}`]
 
@@ -426,12 +431,24 @@ function RuleSheet({
       </SheetBody>
       <SheetFooter>
         <Button onClick={onClose}>Done</Button>
+        {rule.id === "" ? (
+          <Button variant="text-destructive" onClick={onRemove}>
+            Remove this rule
+          </Button>
+        ) : null}
       </SheetFooter>
     </>
   )
 }
 
-export function RulesMatrix({ rules, games, errors, onChange, onAdd }: RulesMatrixProps) {
+export function RulesMatrix({
+  rules,
+  games,
+  errors,
+  onChange,
+  onAdd,
+  onRemove,
+}: RulesMatrixProps) {
   const [editing, setEditing] = React.useState<string | null>(null)
   const openRule = rules.find((rule) => rule.key === editing) ?? null
   const error = (rule: RuleForm, field: string) => errors[`rules.${rule.key}.${field}`]
@@ -458,6 +475,9 @@ export function RulesMatrix({ rules, games, errors, onChange, onAdd }: RulesMatr
               <TableHead>Step</TableHead>
               <TableHead numeric>Priority</TableHead>
               <TableHead>Active</TableHead>
+              <TableHead>
+                <span className="sr-only">Remove</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -563,6 +583,17 @@ export function RulesMatrix({ rules, games, errors, onChange, onAdd }: RulesMatr
                     aria-label={`Active: the ${ruleName(rule, games)} rule`}
                   />
                 </TableCell>
+                <TableCell>
+                  {rule.id === "" ? (
+                    <Button
+                      variant="ghost-icon"
+                      aria-label={`Remove the new ${kindLabel(rule.kind)} rule`}
+                      onClick={() => onRemove(rule.key)}
+                    >
+                      <XIcon />
+                    </Button>
+                  ) : null}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -618,6 +649,10 @@ export function RulesMatrix({ rules, games, errors, onChange, onAdd }: RulesMatr
               errors={errors}
               onChange={patch(openRule)}
               onClose={() => setEditing(null)}
+              onRemove={() => {
+                onRemove(openRule.key)
+                setEditing(null)
+              }}
             />
           ) : null}
         </SheetContent>

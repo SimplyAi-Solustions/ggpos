@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { FieldError } from "@/components/ui/field"
 import { BarcodeGlyph, Input } from "@/components/ui/input"
-import { MicroLabel } from "@/components/ui/micro-label"
+import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Seal } from "@/components/ui/seal"
 import { Switch } from "@/components/ui/switch"
@@ -455,10 +455,8 @@ export function StockCountScreen({ id }: { id: string }) {
         </p>
       ) : null}
 
-      <div className="mt-16">
-        <MicroLabel tone="ink" className="mb-5 block">
-          Still missing
-        </MicroLabel>
+      <div className="mt-8">
+        <SectionHeading>Still missing</SectionHeading>
         <LineTable
           lines={missing}
           testId="missing-lines"
@@ -470,10 +468,8 @@ export function StockCountScreen({ id }: { id: string }) {
         />
       </div>
 
-      <div className="mt-16">
-        <MicroLabel tone="ink" className="mb-5 block">
-          Not expected here
-        </MicroLabel>
+      <div className="mt-8">
+        <SectionHeading>Not expected here</SectionHeading>
         <LineTable
           lines={extras}
           testId="extra-lines"

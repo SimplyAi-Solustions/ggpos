@@ -70,6 +70,8 @@ function RecentRow({ scan }: { scan: RecentScan }) {
   )
 }
 
+type ScanMode = "scan" | "price"
+
 export interface ScanScreenProps {
   /** A code handed over by another screen, shown as though it were scanned. */
   incoming?: string
@@ -85,12 +87,31 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [cameraOpen, setCameraOpen] = React.useState(false)
+  const [mode, setMode] = React.useState<ScanMode>("scan")
+  const [lookup, setLookup] = React.useState("")
+  const [card, setCard] = React.useState<CardHit | null>(null)
   const recent = useRecentScans()
+
+  // Price check asks the catalogue instead of routing a code: nothing is
+  // created, nothing is written, and the screen stays where it is.
+  const hits = useQuery({
+    queryKey: ["lookup", "cards", "", lookup],
+    queryFn: () => searchCards("", lookup),
+    enabled: mode === "price" && lookup.trim().length >= 2 && !card,
+    staleTime: LOOKUP_STALE_MS,
+  })
 
   const commit = React.useCallback(
     (raw: string) => {
       const trimmed = raw.trim()
       if (!trimmed) return
+      if (mode === "price") {
+        setError(null)
+        setCard(null)
+        setLookup(trimmed)
+        if (inputRef.current) inputRef.current.value = ""
+        return
+      }
       const outcome = routeScannedCode(trimmed)
 
       if (inputRef.current) inputRef.current.value = ""
@@ -130,7 +151,7 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
 
       applyScanOutcome(outcome, navigate, trimmed)
     },
-    [navigate]
+    [navigate, mode]
   )
 
   // Claim the global wedge listener while this screen is up, so a scan lands
@@ -170,12 +191,38 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
     }
   }, [])
 
+  const priceMode = mode === "price"
+
   return (
     <section className="pt-16 sm:pt-24">
       <PageTitle>Scan</PageTitle>
-      <Lede>Item codes, customer cards and barcodes all land here.</Lede>
+      <Lede>
+        {priceMode
+          ? "What a card is worth, what we would offer, and what we hold."
+          : "Item codes, customer cards and barcodes all land here."}
+      </Lede>
 
-      <div className="mt-14">
+      <ChipGroup
+        aria-label="What the field does"
+        className="mt-8"
+        value={[mode]}
+        onValueChange={(next) => {
+          const chosen = (next[0] as ScanMode) ?? "scan"
+          setMode(chosen)
+          setError(null)
+          setLookup("")
+          setCard(null)
+          if (inputRef.current) {
+            inputRef.current.value = ""
+            inputRef.current.focus()
+          }
+        }}
+      >
+        <Chip value="scan">Scan</Chip>
+        <Chip value="price">Price check</Chip>
+      </ChipGroup>
+
+      <div className="mt-10">
         <Input
           ref={inputRef}
           size="scan"
@@ -187,8 +234,14 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
               <EnterArrow />
             </span>
           }
-          placeholder="Scan barcode or type here"
-          aria-label="Scan a barcode or type an item code"
+          placeholder={
+            priceMode ? "sv151 199, or a card name" : "Scan barcode or type here"
+          }
+          aria-label={
+            priceMode
+              ? "Scan a card code or type a set and number"
+              : "Scan a barcode or type an item code"
+          }
           aria-describedby="scan-help"
           aria-invalid={error ? true : undefined}
           autoComplete="off"
@@ -203,7 +256,9 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
             id="scan-help"
             className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground"
           >
-            Scan a barcode or enter an item code to continue.
+            {priceMode
+              ? "Scan a card code or type a set and number. Nothing is saved."
+              : "Scan a barcode or enter an item code to continue."}
           </p>
           {/* At least a 48px target in the thumb zone on a phone. */}
           <Button
@@ -216,22 +271,91 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
         </div>
       </div>
 
-      <div className="mt-24">
-        <MicroLabel tone="ink" className="mb-5">
-          Recent scans
-        </MicroLabel>
-        {recent.length === 0 ? (
-          <p className="text-[15px] leading-[1.5] text-muted-foreground-2">
-            Nothing scanned yet at this till.
-          </p>
-        ) : (
-          <ul className="border-t border-hairline-soft">
-            {recent.map((scan) => (
-              <RecentRow key={`${scan.at}-${scan.raw}`} scan={scan} />
-            ))}
-          </ul>
-        )}
-      </div>
+      {priceMode ? (
+        <div className="mt-24">
+          {card ? (
+            <>
+              <PriceCheck card={card} />
+              <div className="mt-14">
+                <Button
+                  variant="text"
+                  onClick={() => {
+                    setCard(null)
+                    setLookup("")
+                    inputRef.current?.focus()
+                  }}
+                >
+                  Check another
+                </Button>
+              </div>
+            </>
+          ) : hits.isFetching ? (
+            <div className="flex flex-col gap-3" aria-hidden="true">
+              <Skeleton className="h-4 w-2/5" />
+              <Skeleton className="h-4 w-1/3" />
+            </div>
+          ) : lookup && (hits.data?.length ?? 0) === 0 ? (
+            <p className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground">
+              Nothing found for {lookup}. Check the number, or try the card
+              name.
+            </p>
+          ) : hits.data && hits.data.length > 0 ? (
+            <>
+              <MicroLabel tone="ink" className="mb-5">
+                Matches
+              </MicroLabel>
+              <ul className="border-t border-hairline-soft">
+                {hits.data.map((hit) => (
+                  <li key={hit.id} className="border-b border-hairline-soft">
+                    <button
+                      type="button"
+                      data-testid="price-check-hit"
+                      onClick={() => setCard(hit)}
+                      className="flex min-h-14 w-full items-center gap-4 text-left transition-colors duration-150 ease-gg hover:bg-row-hover"
+                    >
+                      <ProductImage
+                        src={hit.image}
+                        alt=""
+                        platform="tcg_card"
+                        height={40}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[15px] text-foreground">
+                          {hit.name}
+                        </span>
+                        <span className="block truncate text-[13px] text-muted-foreground-2">
+                          {hit.setName} &middot; {hit.number}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground-2">
+              Nothing checked yet. Scan a card or type its set and number.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="mt-24">
+          <MicroLabel tone="ink" className="mb-5">
+            Recent scans
+          </MicroLabel>
+          {recent.length === 0 ? (
+            <p className="text-[15px] leading-[1.5] text-muted-foreground-2">
+              Nothing scanned yet at this till.
+            </p>
+          ) : (
+            <ul className="border-t border-hairline-soft">
+              {recent.map((scan) => (
+                <RecentRow key={`${scan.at}-${scan.raw}`} scan={scan} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <CameraSheet
         open={cameraOpen}
