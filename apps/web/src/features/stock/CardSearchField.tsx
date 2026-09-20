@@ -28,6 +28,7 @@ import {
   searchCards,
 } from "@/lib/api/lookup"
 import { refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
+import { useDebounced } from "@/features/pricing/use-debounced"
 
 /** When the lookup comes back with nothing and no words of its own. */
 const FALLBACK_MESSAGE =
@@ -74,17 +75,20 @@ export function CardSearchField({
   const [manualOpen, setManualOpen] = React.useState(false)
   const listId = `${id}-listbox`
 
-  const deferred = React.useDeferredValue(query)
-  const enabled = deferred.trim().length >= 2 && !value
+  const debounced = useDebounced(query)
+  const settled = debounced === query
+  const enabled = debounced.trim().length >= 2 && !value
   const game = isLookupGame(gameKey) ? gameKey : ""
-  const parsed = React.useMemo(() => parseCardQuery(deferred), [deferred])
+  const parsed = React.useMemo(() => parseCardQuery(debounced), [debounced])
   // A set and a number together is an exact lookup, which is the one call
   // that can say "not in this set" rather than just coming back empty.
   const exact = Boolean(game && parsed.setCode && parsed.number)
 
   const search = useQuery({
-    queryKey: ["lookup", "cards", game, deferred],
-    queryFn: () => searchCards(game, deferred),
+    queryKey: ["lookup", "cards", game, debounced],
+    // The signal is TanStack's: a keystroke that overtakes this one aborts
+    // it, and the fan-out over five games passes it down to each request.
+    queryFn: ({ signal }) => searchCards(game, debounced, 8, signal),
     enabled: enabled && !exact,
     staleTime: LOOKUP_STALE_MS,
     // A refusal is an answer: "One Piece search needs a card code, for
@@ -95,7 +99,8 @@ export function CardSearchField({
 
   const one = useQuery({
     queryKey: ["lookup", "card", game, parsed.setCode ?? "", parsed.number ?? ""],
-    queryFn: () => getCard(game as "pokemon", parsed.setCode!, parsed.number!),
+    queryFn: ({ signal }) =>
+      getCard(game as "pokemon", parsed.setCode!, parsed.number!, signal),
     enabled: enabled && exact,
     staleTime: LOOKUP_STALE_MS,
     retry: false,
@@ -114,10 +119,12 @@ export function CardSearchField({
   // OP01-001." for a game whose adapter cannot search by name.
   const failure = exact ? one.error : search.error
   const refused =
-    (exact ? one.isError : search.isError) && failure
+    (exact ? one.isError : search.isError) && failure && settled
       ? refusalOrFallback(failure, FALLBACK_MESSAGE)
       : null
-  const empty = enabled && !pending && !refused && results.length === 0
+  // Nothing is said about a query that has been typed past: "Card not found
+  // in Scarlet & Violet 151" for "sv151 19" is wrong by the time it is read.
+  const empty = settled && enabled && !pending && !refused && results.length === 0
 
   const showList = open && enabled && results.length > 0
   const clampedActive = Math.min(active, Math.max(results.length - 1, 0))

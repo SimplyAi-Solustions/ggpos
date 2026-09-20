@@ -9,6 +9,7 @@ import { ProductImage } from "@/components/product-image"
 import { RETRO_PLATFORMS, searchRetro } from "@/lib/api/lookup"
 import { LOOKUP_STALE_MS } from "@/lib/api/prices"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { useDebounced } from "@/features/pricing/use-debounced"
 import type { RetroHit } from "@/lib/api/types"
 
 export interface RetroSearchFieldProps {
@@ -46,12 +47,15 @@ export function RetroSearchField({
   const [active, setActive] = React.useState(0)
   const listId = `${id}-listbox`
 
-  const deferred = React.useDeferredValue(value)
+  // Debounced, not deferred: an IGDB search is a paid outbound call, so it
+  // waits for the typing to stop rather than following every keystroke.
+  const deferred = useDebounced(value)
   const enabled = deferred.trim().length >= 2
 
   const { data: results = [], isError, error } = useQuery({
     queryKey: ["lookup", "retro", platformKey, deferred],
-    queryFn: () => searchRetro(deferred, platformKey || undefined),
+    queryFn: ({ signal }) =>
+      searchRetro(deferred, platformKey || undefined, signal),
     enabled,
     staleTime: LOOKUP_STALE_MS,
     // "IGDB did not answer. Try again, or add the title manually." is worth

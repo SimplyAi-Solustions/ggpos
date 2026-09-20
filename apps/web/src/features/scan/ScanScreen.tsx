@@ -96,9 +96,12 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
   // created, nothing is written, and the screen stays where it is.
   const hits = useQuery({
     queryKey: ["lookup", "cards", "", lookup],
-    queryFn: () => searchCards("", lookup),
+    queryFn: ({ signal }) => searchCards("", lookup, 8, signal),
     enabled: mode === "price" && lookup.trim().length >= 2 && !card,
     staleTime: LOOKUP_STALE_MS,
+    // A price check runs on Enter, so a refusal is read straight away
+    // rather than after three quiet retries.
+    retry: false,
   })
 
   const commit = React.useCallback(
