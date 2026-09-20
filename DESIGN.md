@@ -95,9 +95,11 @@ and neither does Inter or any system sans.
 | KPI figure, offer total | Anton 400 | 28px, .01em, `tnum` | `--font-display` |
 | Micro-label | Space Mono 700 | 11px, .16em, uppercase | `--font-mono` |
 | Code, SKU, timestamp | Space Mono 400 | 13px, `tnum` | `--font-mono` |
+| Outcome code (a buy-in or sale number shown once as the result of a step) | Space Mono 400 | 20px, `tnum` | `--font-mono` |
 | Scan field | Jost 300 | 24px on phones, 28px from 640px | `--font-sans` |
 | Body, inputs, table cells | Jost 400 | 16px (15px in dense rows), 1.5 | `--font-sans` |
 | Emphasis, chips | Jost 500 | 13px to 15px | `--font-sans` |
+| Secondary money figure (a line offer, a balance beside a name) | Jost 500 | 20px, `tnum` | `--font-sans` |
 
 Rules:
 
@@ -107,6 +109,8 @@ Rules:
   24 characters: uppercase at length is hard to read, and the Impeccable
   detector will say so.
 - Money and counts carry the `.tnum` utility so columns line up.
+- Money is never set in Space Mono, and a code is never set in Jost. Mono is for
+  labels and codes; the big figure is Anton; every other amount is Jost.
 - Body measure is capped: `Lede` is 56ch, kit notes are 64ch.
 
 ---
