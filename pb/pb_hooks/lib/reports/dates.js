@@ -200,6 +200,9 @@ module.exports = {
   eachDay: eachDay,
   previousPeriod: previousPeriod,
   isoWeekday: isoWeekday,
+  lastSundayUtc: lastSundayUtc,
+  isBst: isBst,
+  toLondon: toLondon,
   lastWeekRange: lastWeekRange,
   lastMonthRange: lastMonthRange,
 };
