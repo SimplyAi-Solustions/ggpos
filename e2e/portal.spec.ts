@@ -15,6 +15,8 @@ import { expect, test, type Page } from "@playwright/test"
 const DEMO_EMAIL = "jasmine.okafor@example.co.uk"
 const DEMO_CODE = "48213976"
 const DEMO_QR_TOKEN = "demo-4k7m2-token"
+/** The second demo card: an email, and no store credit to block an erasure. */
+const DEMO_NO_CREDIT_EMAIL = "tom.bradbury@example.co.uk"
 
 // Playwright compiles the suite to CommonJS, so `__dirname`.
 const PHOTO = join(__dirname, "fixtures", "id-sample.png")
@@ -24,10 +26,10 @@ function primary(page: Page, name: string) {
   return page.getByRole("button", { name, exact: true }).filter({ visible: true })
 }
 
-async function signIn(page: Page) {
+async function signIn(page: Page, email = DEMO_EMAIL) {
   await page.goto("/account?demo=1")
   await expect(page.getByRole("heading", { name: "My Vault" })).toBeVisible()
-  await page.getByLabel("Email").fill(DEMO_EMAIL)
+  await page.getByLabel("Email").fill(email)
   await page.getByRole("button", { name: "Send me a code" }).click()
   await page.getByLabel("Code", { exact: true }).fill(DEMO_CODE)
   await page.getByRole("button", { name: "Sign in" }).click()
@@ -46,12 +48,41 @@ test.describe("signing in", () => {
     await expect(page.getByTestId("portal-points")).toHaveText("2,180")
   })
 
-  test("takes a code pasted with a space in the middle", async ({ page }) => {
+  test("takes a code pasted out of a mail app, spaces and all", async ({ page }) => {
     await page.goto("/account?demo=1")
     await page.getByRole("button", { name: "Send me a code" }).click()
     const field = page.getByLabel("Code", { exact: true })
-    await field.fill("4821 3976")
+    await field.click()
+
+    // A real paste, through the clipboard event the field handles, rather
+    // than a fill: the handler is what strips the words and the spaces.
+    await field.evaluate((input) => {
+      const data = new DataTransfer()
+      data.setData("text/plain", "Your GG Vault code is 4821 3976")
+      input.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: data,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    })
+
     await expect(field).toHaveValue(DEMO_CODE)
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled()
+  })
+
+  test("announces the wait once rather than counting out loud", async ({ page }) => {
+    await page.goto("/account?demo=1")
+    await page.getByRole("button", { name: "Send me a code" }).click()
+    await expect(
+      page.getByText("Code sent. You can ask for another in 60 seconds.")
+    ).toBeAttached()
+    // The ticking number is not a live region: it would read every second.
+    await expect(page.getByText(/Ready in \d+ seconds?/)).toHaveAttribute(
+      "aria-live",
+      "off"
+    )
   })
 
   test("says what to do when the code does not match", async ({ page }) => {
@@ -104,6 +135,11 @@ test.describe("quotes", () => {
     await primary(page, "Accept the offer").click()
     const sheet = page.getByRole("dialog", { name: "Accept this offer" })
     await expect(sheet).toContainText("£42.00")
+    // The sentence follows the drop-off choice, which is in the sheet.
+    await expect(sheet).toContainText("Bring the items to the shop in Bolsover")
+    await sheet.getByRole("button", { name: "Post it" }).click()
+    await expect(sheet).toContainText("send you the address to post to")
+    await sheet.getByRole("button", { name: "Bring it in" }).click()
     await sheet.getByRole("button", { name: "Accept", exact: true }).click()
 
     await expect(page.getByRole("dialog")).toBeHidden()
@@ -150,6 +186,7 @@ test.describe("want list", () => {
     const held = page.getByTestId("want-row").first()
     await expect(held).toContainText("Charizard ex")
     await expect(held).toContainText(/Held for you until \d+ \w+, \d\d:\d\d/)
+    await expect(held).toContainText("£230.00")
     await expect(held).toContainText("Up to £250.00")
   })
 
@@ -219,6 +256,45 @@ test.describe("notifications", () => {
       page.getByRole("link", { name: "Notifications, none unread" })
     ).toBeVisible()
   })
+
+  test("opens the screen a notification points at, in the app", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/notifications")
+
+    // The server writes `/account/want-list`; the portal calls the screen
+    // Wants, so the path redirects rather than the link being rewritten.
+    await page.getByRole("link", { name: /Charizard ex 199\/165 is in/ }).click()
+    await expect(page.getByRole("heading", { name: "Want list" })).toBeVisible()
+    await expect(page).toHaveURL(/\/account\/wants$/)
+  })
+
+  test("opens the quote a notification points at", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/notifications")
+
+    await page.getByRole("link", { name: /Your quote offer/ }).click()
+    await expect(page.getByTestId("quote-offer-total")).toHaveText("£42.00")
+  })
+})
+
+test.describe("the bottom bar", () => {
+  test("moves between the five sections", async ({ page }) => {
+    await signIn(page)
+
+    // Only one nav is ever in the accessibility tree: the thumb bar below
+    // 900px, the text links above it. So the same five names work at both
+    // of the widths this suite runs at.
+    for (const [label, heading] of [
+      ["Quotes", "Quotes"],
+      ["Wants", "Want list"],
+      ["Credit", "Store credit"],
+      ["Me", "Profile"],
+      ["Card", "My card"],
+    ] as const) {
+      await page.getByRole("link", { name: label, exact: true }).click()
+      await expect(page.getByRole("heading", { name: heading })).toBeVisible()
+    }
+  })
 })
 
 test.describe("profile and privacy", () => {
@@ -249,6 +325,38 @@ test.describe("profile and privacy", () => {
     await expect(
       sheet.getByRole("button", { name: "Delete my account" })
     ).toBeDisabled()
+  })
+
+  test("deletes an account that holds no store credit", async ({ page }) => {
+    await signIn(page, DEMO_NO_CREDIT_EMAIL)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "Delete my account" }).click()
+    const sheet = page.getByRole("dialog", { name: "Delete my account" })
+    await expect(sheet).toContainText("six years")
+    await expect(sheet).not.toContainText("store credit. Use it")
+
+    const confirm = sheet.getByRole("button", { name: "Delete my account" })
+    await expect(confirm).toBeDisabled()
+    await sheet.getByLabel("Type DELETE to confirm").fill("DELETE")
+    await expect(confirm).toBeEnabled()
+    await confirm.click()
+
+    // Signed out, and back at the front door.
+    await expect(page.getByRole("heading", { name: "My Vault" })).toBeVisible()
+    await expect(page.getByLabel("Email")).toBeVisible()
+  })
+
+  test("says what the download does and does not carry", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "How we use your data" }).click()
+    const sheet = page.getByRole("dialog", { name: "How we use your data" })
+    await expect(sheet).toContainText("email and text message provider")
+    await expect(sheet).toContainText(
+      "It never includes an ID number, an expiry date, a date of birth, an address or a photo of your ID."
+    )
   })
 
   test("says where the ID stands, and that the email is the sign-in", async ({

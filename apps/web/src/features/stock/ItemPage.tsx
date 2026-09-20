@@ -579,12 +579,9 @@ export function ItemPage({ sku }: { sku: string }) {
             </Select>
           </div>
         </div>
-        {item.reservedForName ? (
-          <Row label="Reserved for">
-            {item.reservedForName}
-            {item.reservedUntil ? ` until ${when(item.reservedUntil)}` : ""}
-          </Row>
-        ) : null}
+        {/* The hold is said once, in the line under the status, where it
+            can carry a link to the customer. A second row here said the
+            same thing again, further down. */}
       </div>
 
       {item.card || item.retro_title ? (

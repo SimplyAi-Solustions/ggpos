@@ -32,7 +32,20 @@ test.describe("the public estimate", () => {
       "£204.00 to £240.00"
     )
     await expect(page.getByText("Subject to inspection in the shop.")).toBeVisible()
-    await expect(page.getByText(/Market £320\.00/)).toBeVisible()
+    // The demo price cache is pinned to a literal day, so this reads the
+    // same whenever the suite runs.
+    await expect(page.getByText("Market £320.00, 18 Sep 2026")).toBeVisible()
+  })
+
+  test("says so plainly when there is no price to go on", async ({ page }) => {
+    await page.goto("/estimate?demo=1")
+    await page.getByLabel("Card").fill("Mabel")
+    await page.getByRole("option", { name: /Mabel/ }).click()
+
+    await expect(
+      page.getByText(/We have no recent price for that card/)
+    ).toBeVisible()
+    await expect(page.getByTestId("estimate-cash")).toHaveCount(0)
   })
 
   test("moves the band when the condition changes", async ({ page }) => {

@@ -32,8 +32,29 @@ let read = false
 const listeners = new Set<() => void>()
 
 function readDemoSession(): string | null {
+  const asked = demoSessionFromUrl()
+  if (asked) return asked
   try {
     return localStorage.getItem(DEMO_SESSION_KEY)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * `?demo_as=<demo customer id>`: a signed-in demo session from a URL alone.
+ *
+ * Demo mode only, and demo mode itself is now a dev server or a build made
+ * with `VITE_DEMO_SWITCH=1` (`lib/api/mode.ts`), so this cannot exist in a
+ * shop's own build. It is what lets the screenshot script and the Impeccable
+ * detector open a signed-in portal route by address, without a script
+ * reaching into localStorage first, and it never invents a customer: the id
+ * has to be one the demo shop already holds or its screens read as empty.
+ */
+function demoSessionFromUrl(): string | null {
+  try {
+    const asked = new URLSearchParams(window.location.search).get("demo_as")
+    return asked && /^[a-z0-9_]{1,40}$/i.test(asked) ? asked : null
   } catch {
     return null
   }

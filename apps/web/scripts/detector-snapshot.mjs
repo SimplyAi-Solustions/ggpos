@@ -2,7 +2,7 @@
  * Saves each signed-in counter route as a self-contained HTML file, so the
  * Impeccable detector can scan pages that live behind the demo sign-in.
  *
- *   pnpm --filter web build
+ *   VITE_DEMO_SWITCH=1 pnpm --filter web build   # the switch honours ?demo=1
  *   pnpm --filter web exec vite preview --port 4173      # in one terminal
  *   node apps/web/scripts/detector-snapshot.mjs <outDir> [baseUrl] [w] [h]
  *   IMPECCABLE_BROWSER=/path/to/chromium \
@@ -52,6 +52,11 @@ const ROUTES = [
   // Phase 3: settings, stock counts and the offline strip.
   ["settings", "/counter/settings"],
   ["stock-count", "/counter/stock/count"],
+  // Phase 5: the quote queue and a quote in each state it has a screen for.
+  ["quotes", "/counter/quotes"],
+  ["quote-new", "/counter/quotes/quote_demo_3"],
+  ["quote-offered", "/counter/quotes/quote_demo_1"],
+  ["quote-accepted", "/counter/quotes/quote_demo_4"],
 ]
 
 mkdirSync(outDir, { recursive: true })

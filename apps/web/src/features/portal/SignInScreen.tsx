@@ -86,8 +86,10 @@ export function SignInScreen({ next }: { next?: string }) {
     setBusy(true)
     setError(null)
     try {
-      await signInWithCode(otpId, code)
-      if (demo) rememberDemoSession()
+      const me = await signInWithCode(otpId, code)
+      // The id the server answered with, not a constant: the demo shop has
+      // more than one card, and the session has to remember which one.
+      if (demo) rememberDemoSession(me.customer.id)
       await queryClient.invalidateQueries({ queryKey: ["portal"] })
       await navigate({ to: next ?? "/account" })
     } catch (cause) {
