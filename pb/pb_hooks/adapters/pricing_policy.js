@@ -134,16 +134,32 @@ function fromAdapterCandidate(raw, fxRates, now) {
   var money = require(__hooks + "/lib/shared/money.js");
   var isCents = raw.source === "pricecharting_pal" || raw.source === "pricecharting_ntsc";
 
-  function toMinor(v) {
+  // A "Minor" sibling field (eBay's marketMinor/midMinor/lowMinor/trendMinor
+  // - see adapters/ebay.js) carries an integer already in minor units and
+  // is taken as-is: turning an already-integer GBP figure into a decimal
+  // string and back only risks a float round-trip for nothing.
+  function toMinor(field, minorField) {
+    var direct = raw[minorField];
+    if (direct !== undefined && direct !== null) return Math.round(Number(direct));
+    var v = raw[field];
     if (v === null || v === undefined) return null;
     return isCents ? Math.round(Number(v)) : money.parseDecimalToMinor(String(v));
   }
 
-  var nativeLow = toMinor(raw.low);
-  var nativeMid = toMinor(raw.mid);
-  var nativeMarket = toMinor(raw.market);
-  var nativeTrend = toMinor(raw.trend);
-  if (nativeMarket === null) return null;
+  var nativeLow = toMinor("low", "lowMinor");
+  var nativeMid = toMinor("mid", "midMinor");
+  var nativeMarket = toMinor("market", "marketMinor");
+  var nativeTrend = toMinor("trend", "trendMinor");
+  if (nativeMarket === null) {
+    console.log(
+      `[pricing_policy] dropped a ${raw.source || "unknown"} candidate: unparseable market value "${raw.market}"`
+    );
+    return null;
+  }
+  if (nativeMarket < 0) {
+    console.log(`[pricing_policy] dropped a ${raw.source || "unknown"} candidate: negative market value ${nativeMarket}`);
+    return null;
+  }
 
   var gbpMarket, fxRate, fxDate;
   if (raw.currency === "GBP") {
@@ -152,13 +168,18 @@ function fromAdapterCandidate(raw, fxRates, now) {
     fxDate = now.toISOString().slice(0, 10);
   } else {
     var rate = fxRates && fxRates[raw.currency];
-    if (!rate) return null; // cannot convert safely without a rate
+    if (!rate) return null; // cannot convert safely without a rate - stays silent, per the contract
     fxRate = rate;
     fxDate = (fxRates && fxRates.date) || now.toISOString().slice(0, 10);
     gbpMarket = isCents
       ? money.usdCentsToGbpPence(nativeMarket, rate)
       : money.convertMinorToGbpPence(nativeMarket, raw.currency, rate);
   }
+
+  // A non-http(s) evidence URL is dropped, not the whole candidate - the
+  // price itself is still usable without a link to show for it.
+  var evidenceUrl = raw.evidenceUrl || "";
+  if (evidenceUrl && !/^https?:\/\//i.test(evidenceUrl)) evidenceUrl = "";
 
   return {
     source: raw.source,
@@ -171,7 +192,7 @@ function fromAdapterCandidate(raw, fxRates, now) {
     fxDate: fxDate,
     gbpMarket: gbpMarket,
     fetchedAt: raw.fetchedAt || now.toISOString(),
-    evidenceUrl: raw.evidenceUrl || "",
+    evidenceUrl: evidenceUrl,
   };
 }
 

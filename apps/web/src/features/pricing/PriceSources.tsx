@@ -471,7 +471,12 @@ export function PriceSources({
     haircutPct: settings.ebayHaircutPct,
     fxDate: fx.data?.date ?? null,
   })
-  const pickedRow = picked ? rows.find((row) => row.source === picked && row.gbp !== null) : null
+  // "Picked" only means something when it is not what the rules chose anyway:
+  // a line whose market came from the chosen source is chosen, not overruled.
+  const pickedRow =
+    picked && picked !== query.data?.chosen?.source
+      ? (rows.find((row) => row.source === picked && row.gbp !== null) ?? null)
+      : null
 
   return (
     <div className={cn("w-full", className)} data-testid="price-sources">
