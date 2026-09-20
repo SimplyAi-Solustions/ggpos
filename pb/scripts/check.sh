@@ -84,7 +84,9 @@ cleanup() {
     kill "$KEYLESS_PID" 2>/dev/null || true
     wait "$KEYLESS_PID" 2>/dev/null || true
   fi
-  [ -n "$KEYLESS_DIR" ] && rm -rf "$KEYLESS_DIR"
+  if [ -n "$KEYLESS_DIR" ]; then
+    rm -rf "$KEYLESS_DIR"
+  fi
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -1356,7 +1358,7 @@ KEYLESS_STATUS="$(curl -s -o "$KEYLESS_DIR/id-check.json" -w '%{http_code}' \
   -F "photo=@$TMP_DIR/id.png;type=image/png" \
   -F "id_type=passport" -F "id_expiry=2030-06-30")"
 [ "$KEYLESS_STATUS" = "500" ] || fail "the ID check without GG_ID_PHOTO_KEY returned $KEYLESS_STATUS, expected 500: $(cat "$KEYLESS_DIR/id-check.json")"
-KEYLESS_ENC="$(find "$KEYLESS_DIR/storage" -name '*.enc' -type f 2>/dev/null | head -n1)"
+KEYLESS_ENC="$(find "$KEYLESS_DIR/storage" -name '*.enc' -type f 2>/dev/null | head -n1 || true)"
 [ -z "$KEYLESS_ENC" ] || fail "the keyless server wrote an ID photo file anyway: $KEYLESS_ENC"
 kill "$KEYLESS_PID" 2>/dev/null || true
 wait "$KEYLESS_PID" 2>/dev/null || true

@@ -479,7 +479,6 @@ import type {
   LoyaltyProgramme,
   LoyaltyRule,
   LoyaltyTier,
-  PricingRule,
   TierPerk,
 } from "@gg/shared"
 
@@ -969,59 +968,22 @@ export interface MergeResult {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/vault/config
+// What the counter reads out of GET /api/vault/config
 //
-// `settings`, `pricing_rules` and `loyalty_*` are admin-only collections, so
-// an ordinary staff token is refused when it reads them directly. This one
-// staff-readable route carries everything the counter needs from them, with
-// the keys and secrets left behind on the server.
+// The wire shape (`VaultConfig` above) and the fetch itself live with the
+// buy-in wizard's helpers; this is the slice the Sell and Cash screens use,
+// already in the shared evaluator's shapes so no screen parses a row.
 // ---------------------------------------------------------------------------
 
-/** The shop's own details, for receipts and labels. */
-export interface VaultShop {
-  name: string
-  address: string
-  town: string
-  postcode: string
-  phone: string
-  email: string
-}
-
-/** `settings`, less `api_keys`, the email transport and the push keys. */
-export interface VaultSettings {
-  /** Integer GBP pence. A single cash payout may not exceed it. */
-  cashCap: number
+export interface CounterConfig {
   /**
-   * Integer GBP pence. A cash session closing over this variance is audited.
-   * Zero means no alert is configured, which is how the close route reads it.
+   * `settings.cash_variance_alert` in integer GBP pence. Zero means no alert
+   * is configured, which is exactly how the close route reads it, so there is
+   * no invented default anywhere on the client.
    */
   cashVarianceAlert: number
-  minSingleOffer: number
-  bulkRatePct: number
-  sourcePriority: string[]
-  retroSourcePriority: string[]
-  conditionMultipliers: Record<string, number>
-  markupBands: { from: number; multiplier: number }[]
-  sellRounding: string
-  offer: {
-    bulkThreshold: number
-    bulkCash: number
-    bulkCredit: number
-    minimumOffer: number
-  }
-  labelDefaultTemplate: string
-  defaultIntakeLocation: string
-  quoteExpiryDays: number
-  idPhotoRetentionMonths: number
-  vatRegistered: boolean
-  receiptTerms: string
-  shop: VaultShop
-}
-
-/** Everything the counter reads from the admin-only collections, in one call. */
-export interface VaultConfig {
-  settings: VaultSettings
-  /** Active rows only, in the shared evaluator's shape. */
-  pricingRules: PricingRule[]
+  /** `settings.cash_cap` in integer GBP pence. */
+  cashCap: number
+  /** The programme, its live rules and its tiers. */
   loyalty: LoyaltySetup
 }

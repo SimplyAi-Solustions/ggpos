@@ -505,22 +505,25 @@ function demoIdPhoto(): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
 
-/** The most recent ID document for a customer, when the server exposes one. */
+/**
+ * The newest ID document for a customer whose photo is still on disk.
+ *
+ * `id_documents` has every collection rule set to null, so the app cannot
+ * read it directly; this route answers for the one document the photo view
+ * needs, and returns null once the retention cron has purged it.
+ */
 export async function latestIdDocument(customerId: string): Promise<string | null> {
-  if (isDemo()) return findDemoCustomer(customerId)?.private.id_status === "verified"
-    ? "iddoc_demo"
-    : null
-  try {
-    const row = await pb
-      .collection("id_documents")
-      .getFirstListItem<{ id: string }>(
-        `customer = "${escapeFilter(customerId)}"`,
-        { sort: "-taken_at" }
-      )
-    return row.id
-  } catch {
-    // Every rule on `id_documents` is null (superuser only), so this is the
-    // expected answer until a route for it exists.
-    return null
+  if (isDemo()) {
+    return findDemoCustomer(customerId)?.private.id_status === "verified"
+      ? "iddoc_demo"
+      : null
   }
+  const result = await pb.send<{ document: IdDocumentSummary | null }>(
+    `/api/vault/customers/${customerId}/id-document`,
+    { method: "GET" }
+  )
+  return result.document?.id ?? null
 }
+
+/** Used by tests and by any screen that wants the dates as well as the id. */
+export { type IdDocumentSummary, type MergeResult }

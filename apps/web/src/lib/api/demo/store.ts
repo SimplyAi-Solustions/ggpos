@@ -94,6 +94,29 @@ export const DEMO_TIERS: LoyaltyTier[] = [
 /** No live rules in the demo, so the points preview is plain base earning. */
 export const DEMO_RULES: LoyaltyRule[] = []
 
+/**
+ * The slice of `settings` the counter reads, at the seed's figures
+ * (pb_migrations/1789819620_seed.js and 1789819680_phase2_fields.js). The
+ * demo stands in for `GET /api/vault/config`, so these are the same numbers
+ * a fresh shop has.
+ */
+export const DEMO_SETTINGS = {
+  /** £8,000. */
+  cash_cap: 800000,
+  /** £10.00. */
+  cash_variance_alert: 1000,
+}
+
+/** The tiers as the config route serves them, straight off `loyalty_tiers`. */
+export const DEMO_TIER_ROWS = DEMO_TIERS.map((tier) => ({
+  id: tier.id,
+  name: tier.name,
+  threshold_points: tier.thresholdPoints,
+  sort: tier.sort,
+  perks: tier.perks as unknown[],
+  paid_plan: tier.paidPlan,
+}))
+
 // ---------------------------------------------------------------------------
 // Customers a demo sale can be attached to
 // ---------------------------------------------------------------------------
