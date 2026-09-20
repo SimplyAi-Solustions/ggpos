@@ -462,6 +462,58 @@ that supports "install as app":
   the same automatic install prompt Chrome does, so this manual step is
   the normal way to install any PWA on iOS.
 
+## 14. SumUp
+
+SumUp takes the money; GG Vault is the record of what was sold. Two
+things connect them, and both are set from inside the app rather than
+from the command line:
+
+- **the merchant API key**, a long-lived personal access token from the
+  SumUp dashboard (Profile > Developers), stored in `settings.api_keys`
+  under `sumup`;
+- **the merchant code**, the `M...` identifier on the same page, stored
+  in `settings.sumup.merchant_code`.
+
+Both are saved through the app's own Settings screen as an admin, or in
+`/_/` on the `settings` record. They never leave the server: the staff
+config route drops `api_keys` wholesale, and no route ever returns the
+key. With both set, the hourly pull brings each day's transactions in for
+the Cash screen's reconciliation.
+
+### Solo card reader
+
+A SumUp Solo can take the card payment straight from the Sell screen, so
+nobody types the amount into the SumUp app twice. The key and merchant
+code above are all it needs; there is nothing else to buy or configure.
+
+Before pairing, check **Settings > Application** in `/_/`: the
+application URL has to be the real public address
+(`https://vault.ggentertainment.co.uk`), not `localhost`. The reader
+reports the result of every payment back to that address, so a wrong or
+empty one means the counter never hears whether the card went through -
+the app refuses to start a payment at all until it is set.
+
+To pair:
+
+1. On the Solo, open **Connections > API > Connect**. It shows an 8 or 9
+   character pairing code that lasts five minutes and changes every time.
+2. In GG Vault, as an admin, open **Settings > Card reader** and enter
+   that code (a name such as "Counter Solo" is optional and only used on
+   screen).
+3. The first reader paired becomes the counter's default. Pair a second
+   one the same way if the shop ever has two; unpairing one from the same
+   screen clears it from SumUp as well.
+
+Day to day: Sell puts the amount on the reader, the customer taps, and
+the sale completes against that payment with the reader's own transaction
+code on it. If the reader is off or offline the app says so and the sale
+can still be taken another way. A payment nobody completes is closed
+automatically after fifteen minutes.
+
+**Refunds stay in the SumUp app.** Nothing in GG Vault sends money back
+to a card: refund the transaction in SumUp, then record the refund in the
+app so stock and the ledgers agree.
+
 ## Before go-live checklist
 
 - [ ] A full restore rehearsal (`deploy/restore.md`) has been completed

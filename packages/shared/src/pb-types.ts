@@ -53,6 +53,7 @@ export const Collections = {
 	Staff: "staff",
 	StockCountLines: "stock_count_lines",
 	StockCounts: "stock_counts",
+	SumupCheckouts: "sumup_checkouts",
 	SumupTransactions: "sumup_transactions",
 	TradeInLines: "trade_in_lines",
 	TradeIns: "trade_ins",
@@ -538,16 +539,22 @@ export type ItemsRecord = {
 
 export const LabelJobsStatusOptions = {
 	"queued": "queued",
+	"printing": "printing",
 	"printed": "printed",
+	"failed": "failed",
 	"cancelled": "cancelled",
 } as const
 export type LabelJobsStatusOptions = typeof LabelJobsStatusOptions[keyof typeof LabelJobsStatusOptions]
 export type LabelJobsRecord = {
+	attempts?: number
+	claimed_at?: IsoDateString
 	copies?: number
 	created: IsoAutoDateString
+	error?: string
 	id: string
 	item: RecordIdString
 	printed_at?: IsoDateString
+	printer?: string
 	requested_by?: RecordIdString
 	status?: LabelJobsStatusOptions
 	template: RecordIdString
@@ -1001,6 +1008,7 @@ export type SalesRecord<Tpayment_split = unknown> = {
 	staff?: RecordIdString
 	status?: SalesStatusOptions
 	subtotal?: number
+	sumup_checkout?: RecordIdString
 	sumup_ref?: string
 	total?: number
 	updated: IsoAutoDateString
@@ -1119,6 +1127,36 @@ export type StockCountsRecord = {
 	started_at: IsoAutoDateString
 	started_by?: RecordIdString
 	status?: StockCountsStatusOptions
+	updated: IsoAutoDateString
+}
+
+export const SumupCheckoutsStatusOptions = {
+	"pending": "pending",
+	"paid": "paid",
+	"failed": "failed",
+	"cancelled": "cancelled",
+	"expired": "expired",
+} as const
+export type SumupCheckoutsStatusOptions = typeof SumupCheckoutsStatusOptions[keyof typeof SumupCheckoutsStatusOptions]
+export type SumupCheckoutsRecord = {
+	amount: number
+	callback_secret?: string
+	card_last4?: string
+	checkout_id?: string
+	client_transaction_id?: string
+	created: IsoAutoDateString
+	description?: string
+	error?: string
+	id: string
+	paid_at?: IsoDateString
+	reader_id?: string
+	reader_name?: string
+	sale?: RecordIdString
+	sale_client_id: string
+	staff?: RecordIdString
+	status?: SumupCheckoutsStatusOptions
+	transaction_code?: string
+	transaction_id?: string
 	updated: IsoAutoDateString
 }
 
@@ -1338,6 +1376,7 @@ export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unkno
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
+export type SumupCheckoutsResponse<Texpand = unknown> = Required<SumupCheckoutsRecord> & BaseSystemFields<Texpand>
 export type SumupTransactionsResponse<Tproducts = unknown, Texpand = unknown> = Required<SumupTransactionsRecord<Tproducts>> & BaseSystemFields<Texpand>
 export type TradeInLinesResponse<Texpand = unknown> = Required<TradeInLinesRecord> & BaseSystemFields<Texpand>
 export type TradeInsResponse<Texpand = unknown> = Required<TradeInsRecord> & BaseSystemFields<Texpand>
@@ -1397,6 +1436,7 @@ export type CollectionRecords = {
 	staff: StaffRecord
 	stock_count_lines: StockCountLinesRecord
 	stock_counts: StockCountsRecord
+	sumup_checkouts: SumupCheckoutsRecord
 	sumup_transactions: SumupTransactionsRecord
 	trade_in_lines: TradeInLinesRecord
 	trade_ins: TradeInsRecord
@@ -1455,6 +1495,7 @@ export type CollectionResponses = {
 	staff: StaffResponse
 	stock_count_lines: StockCountLinesResponse
 	stock_counts: StockCountsResponse
+	sumup_checkouts: SumupCheckoutsResponse
 	sumup_transactions: SumupTransactionsResponse
 	trade_in_lines: TradeInLinesResponse
 	trade_ins: TradeInsResponse

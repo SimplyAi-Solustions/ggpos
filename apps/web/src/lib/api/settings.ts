@@ -64,6 +64,10 @@ export const SETTINGS_FIELDS = [
   // Phase 6's customer-facing display: whether it is on, the ticker it
   // scrolls and where its sign-up QR points. Not a key and not a secret.
   "display",
+  // Phase 7's card reader: the merchant code and which paired Solo the
+  // counter sends a checkout to. The SumUp API key is `api_keys`, which is
+  // not on this list and never will be.
+  "sumup",
   "vat_registered",
   "shop_name",
   "shop_address",
@@ -96,6 +100,7 @@ function pick(row: SettingsRecord): SettingsRecord {
     push: row.push,
     holds: row.holds,
     display: row.display,
+    sumup: row.sumup,
     vat_registered: row.vat_registered,
     shop_name: row.shop_name,
     shop_address: row.shop_address,

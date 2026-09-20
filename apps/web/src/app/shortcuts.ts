@@ -8,16 +8,34 @@ import { focusScanField, focusSearchField } from "@/app/focus-registry"
  * the caret is in a field, and nothing here uses a modifier except the
  * palette, so a scanner's keystrokes can never trigger an action.
  *
- * Esc is not listed: every sheet and dialog in the system is a Base UI
- * popup, which closes itself on Esc.
+ * Esc has no entry of its own: every sheet and dialog in the system is a
+ * Base UI popup, which closes itself on Esc. The overlay says so in a line
+ * of its own instead.
  */
-export const SHORTCUTS: Array<{ keys: string; label: string }> = [
-  { keys: "S", label: "Scan" },
-  { keys: "N", label: "Add stock" },
-  { keys: "B", label: "New buy-in" },
-  { keys: "/", label: "Search" },
-  { keys: "K", label: "Command palette" },
+export type ShortcutGroup = "Go to" | "Find" | "Help"
+
+export interface Shortcut {
+  keys: string
+  label: string
+  group: ShortcutGroup
+}
+
+export const SHORTCUTS: Shortcut[] = [
+  { keys: "S", label: "Scan", group: "Go to" },
+  { keys: "N", label: "Add stock", group: "Go to" },
+  { keys: "B", label: "New buy-in", group: "Go to" },
+  { keys: "/", label: "Search", group: "Find" },
+  { keys: "K", label: "Command palette", group: "Find" },
+  { keys: "?", label: "Keyboard shortcuts", group: "Help" },
 ]
+
+/**
+ * The one line that is true of every sheet and dialog in the system. It is
+ * written to follow a drawn Esc key, not to stand on its own.
+ */
+export const ESC_LINE = "closes any sheet, dialog or menu."
+
+export const SHORTCUT_GROUPS: ShortcutGroup[] = ["Go to", "Find", "Help"]
 
 function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -31,7 +49,13 @@ function isTyping(target: EventTarget | null): boolean {
   return false
 }
 
-export function useShortcuts(openPalette: () => void) {
+export interface ShortcutHandlers {
+  openPalette: () => void
+  /** The overlay listing everything on this page. */
+  openShortcuts: () => void
+}
+
+export function useShortcuts({ openPalette, openShortcuts }: ShortcutHandlers) {
   const navigate = useNavigate()
 
   React.useEffect(() => {
@@ -67,11 +91,17 @@ export function useShortcuts(openPalette: () => void) {
           event.preventDefault()
           if (!focusSearchField()) openPalette()
           return
+        case "?":
+          // Shift and slash on a UK keyboard. The caret is never in a field
+          // here, so a question mark being typed is never taken for this.
+          event.preventDefault()
+          openShortcuts()
+          return
         default:
       }
     }
 
     window.addEventListener("keydown", handle)
     return () => window.removeEventListener("keydown", handle)
-  }, [navigate, openPalette])
+  }, [navigate, openPalette, openShortcuts])
 }

@@ -55,11 +55,29 @@ import { salePayload } from "@/features/display/payload"
 import { useDisplayPublish } from "@/features/display/publish"
 import { getVoucherByCode } from "@/lib/api/loyalty"
 import {
+  cancelCheckout,
+  createCheckout,
+  getCheckout,
+  listReaders,
+  subscribeCheckout,
+} from "@/lib/api/checkouts"
+import {
   dispatchBasket,
   getBasket,
   lineFromItem,
+  saleClientId,
   useBasket,
 } from "@/features/sell/basket-store"
+import {
+  heldPayment,
+  paidCheckoutId,
+  pendingCheckoutId,
+} from "@/features/sell/checkout"
+import {
+  dispatchCardPayment,
+  useCardPayment,
+} from "@/features/sell/checkout-store"
+import { CardPaymentSheet } from "@/features/sell/CardPaymentSheet"
 import { CustomerSearchSheet } from "@/features/sell/CustomerSearchSheet"
 import { MoneyInput } from "@/features/sell/money-input"
 import { penceToField } from "@/features/sell/money"
@@ -69,6 +87,7 @@ import type {
   RefundMethod,
   SaleDetail,
   SplitMethod,
+  SumUpCheckout,
 } from "@/lib/api/types"
 
 /** Panels own the pointer while they are open; the field must not fight them. */
@@ -227,6 +246,31 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
     queryFn: () => getSale(refundSaleId as string),
     enabled: Boolean(refundSaleId),
   })
+
+  // ---- The card reader ---------------------------------------------------
+
+  /**
+   * Which readers are paired, read once for the session. A shop with no
+   * SumUp key at all answers `not_configured`, and the till says nothing
+   * about card readers from then on.
+   */
+  const { data: readers } = useQuery({
+    queryKey: ["sumup-readers"],
+    queryFn: listReaders,
+    staleTime: Infinity,
+    retry: false,
+  })
+  const reader = readers?.not_configured ? null : (readers?.readers[0] ?? null)
+  const readerName =
+    readers?.readers.find((row) => row.id === readers.default_reader_id)?.name ??
+    reader?.name ??
+    "Card reader"
+
+  // Outside React, like the basket: a payment the reader has taken has to
+  // survive walking to the Cash screen to open a drawer and walking back.
+  const card = useCardPayment()
+  const held = heldPayment(card)
+  const waitingFor = pendingCheckoutId(card)
 
   /**
    * A sale, an undo and a refund all move stock, the drawer, the day's
@@ -439,8 +483,15 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
   // ---- Completing --------------------------------------------------------
 
   const sell = useMutation({
-    mutationFn: () =>
+    /**
+     * `checkoutId` is a `sumup_checkouts` row the reader has already taken
+     * the card part on. The client id goes on every attempt, paid on the
+     * reader or not, so a reply lost on the way back can never become a
+     * second sale.
+     */
+    mutationFn: (checkoutId?: string) =>
       completeSale({
+        client_id: saleClientId(),
         lines: basket.lines.map((line) => ({
           item: line.itemId,
           qty: line.qty,
@@ -455,8 +506,10 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
         reward_code: basket.voucher?.code ?? null,
         cash_session: cash?.session?.id ?? null,
         sumup_ref: "",
+        ...(checkoutId ? { sumup_checkout: checkoutId } : {}),
       }),
     onSuccess: (result) => {
+      dispatchCardPayment({ type: "completed" })
       setDone({
         id: result.sale.id,
         number: result.sale.number,
@@ -467,9 +520,110 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
       dispatchBasket({ type: "clear" })
       settle()
     },
-    onError: (error) =>
-      setSaleError(refusalOrFallback(error, "That sale did not go through. Try again.")),
+    onError: (error, checkoutId) => {
+      const message = refusalOrFallback(
+        error,
+        "That sale did not go through. Try again."
+      )
+      // The reader has the money. That belongs beside the transaction code
+      // in the card sheet, not in a line under the payment chips.
+      if (checkoutId) {
+        dispatchCardPayment({ type: "completionRefused", reason: message })
+        return
+      }
+      setSaleError(message)
+    },
   })
+
+  // ---- Taking the card part on the reader --------------------------------
+
+  const { mutate: completeNow } = sell
+
+  /** The amount goes to the reader; the sheet then watches the one row. */
+  const takeCard = useMutation({
+    mutationFn: (amount: number) =>
+      createCheckout({
+        amount,
+        saleClientId: saleClientId(),
+        description: `${basket.lines.length} ${basket.lines.length === 1 ? "item" : "items"}`,
+        readerId: readers?.default_reader_id || undefined,
+      }),
+    onSuccess: (checkout) => dispatchCardPayment({ type: "opened", checkout }),
+    onError: (error) =>
+      dispatchCardPayment({
+        type: "refused",
+        reason: refusalOrFallback(
+          error,
+          "The card reader could not be reached. Try again, or take the payment in the SumUp app."
+        ),
+      }),
+  })
+
+  const stopCard = useMutation({
+    mutationFn: (id: string) => cancelCheckout(id),
+    onSuccess: (checkout) => dispatchCardPayment({ type: "status", checkout }),
+    onError: (error, id) => {
+      // SumUp refuses a cancel the customer beat by a second. The row is
+      // read again rather than trusted either way: money that has moved is
+      // never lost to a race.
+      void getCheckout(id)
+        .then((checkout) => dispatchCardPayment({ type: "status", checkout }))
+        .catch(() =>
+          dispatchCardPayment({
+            type: "refused",
+            reason: refusalOrFallback(
+              error,
+              "That payment could not be stopped. Check the reader, and the SumUp app, before taking it again."
+            ),
+          })
+        )
+    },
+  })
+
+  function takeCardPayment() {
+    const amount = payment.sumupAmount
+    if (amount <= 0) return
+    // Nothing is sent twice: a checkout already on the reader, or a payment
+    // already taken, is what the sheet is showing.
+    if (card.phase !== "idle" && card.phase !== "stopped") return
+    dispatchCardPayment({ type: "take", amount })
+    takeCard.mutate(amount)
+  }
+
+  /**
+   * While the customer is paying: the row itself over realtime, and a read
+   * every three seconds underneath it, so a callback that never arrives
+   * costs a moment rather than the sale.
+   */
+  React.useEffect(() => {
+    if (!waitingFor) return undefined
+    let live = true
+    const apply = (checkout: SumUpCheckout) => {
+      if (live) dispatchCardPayment({ type: "status", checkout })
+    }
+    const stop = subscribeCheckout(waitingFor, apply)
+    const timer = window.setInterval(() => {
+      void getCheckout(waitingFor)
+        .then(apply)
+        .catch(() => {
+          // Keep waiting: the next tick, or the subscription, will say.
+        })
+    }, 3000)
+    return () => {
+      live = false
+      stop()
+      window.clearInterval(timer)
+    }
+  }, [waitingFor])
+
+  // Paid: complete the sale against that checkout, once.
+  const completingId = card.phase === "completing" ? card.checkout.id : null
+  const submitted = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!completingId || submitted.current === completingId) return
+    submitted.current = completingId
+    completeNow(completingId)
+  }, [completingId, completeNow])
 
   // The undo toast closes itself after eight seconds, and the sale stands.
   const undo = useMutation({
@@ -561,7 +715,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
       trailingArrow
       loading={sell.isPending}
       disabled={!payment.ok}
-      onClick={() => sell.mutate()}
+      onClick={() => sell.mutate(paidCheckoutId(card) ?? undefined)}
     >
       Mark sold
     </Button>
@@ -892,13 +1046,42 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
 
         {payment.sumupAmount > 0 ? (
           <div className="mt-10 flex flex-col gap-2">
-            <MicroLabel tone="ink">Key this into SumUp</MicroLabel>
-            <span
-              data-testid="sumup-amount"
-              className="tnum font-display text-[36px] leading-none tracking-[0.01em] text-foreground"
-            >
-              {formatGBP(payment.sumupAmount)}
-            </span>
+            <MicroLabel tone="ink">
+              {reader ? "Card payment" : "Key this into SumUp"}
+            </MicroLabel>
+            <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+              <span
+                data-testid="sumup-amount"
+                className="tnum font-display text-[36px] leading-none tracking-[0.01em] text-foreground"
+              >
+                {formatGBP(payment.sumupAmount)}
+              </span>
+              {reader && !held ? (
+                <Button
+                  variant="text"
+                  data-testid="take-card-payment"
+                  loading={takeCard.isPending}
+                  onClick={takeCardPayment}
+                >
+                  Take card payment
+                </Button>
+              ) : null}
+            </div>
+            {reader && !held ? (
+              <Hint>{readerName}</Hint>
+            ) : null}
+            {held ? (
+              <p
+                data-testid="card-payment-held"
+                className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground"
+              >
+                Paid on {readerName}
+                {held.checkout.transaction_code
+                  ? `, ${held.checkout.transaction_code}`
+                  : ""}
+                . Mark the sale sold to finish it, or refund it in the SumUp app.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -1001,6 +1184,17 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           </Button>
         </div>
       ) : null}
+
+      <CardPaymentSheet
+        state={card}
+        readerName={readerName}
+        cancelling={stopCard.isPending}
+        onCancel={() => {
+          if (waitingFor) stopCard.mutate(waitingFor)
+        }}
+        onRetry={takeCardPayment}
+        onClose={() => dispatchCardPayment({ type: "close" })}
+      />
 
       <CustomerSearchSheet
         open={customerOpen}

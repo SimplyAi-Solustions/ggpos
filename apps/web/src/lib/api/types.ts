@@ -103,6 +103,8 @@ export interface ItemRecord extends BaseRecord {
   status?: ItemStatus
   location?: string
   source?: "trade_in" | "supplier" | "opening_stock"
+  /** The buy-in that brought it in, when one did. Bulk reprint selects on it. */
+  trade_in?: string
   notes?: string
   created_by?: string
   acquired_at?: string
@@ -113,9 +115,14 @@ export interface LabelJobRecord extends BaseRecord {
   item: string
   template: string
   copies?: number
-  status?: "queued" | "printed" | "cancelled"
+  status?: LabelJobStatus
   requested_by?: string
   printed_at?: string
+  /** Phase 7: the device that claimed the job for the USB printer. */
+  printer?: string
+  claimed_at?: string
+  attempts?: number
+  error?: string
 }
 
 /** `staff` (auth). Ordinary staff read their own record via GET /api/vault/me. */
@@ -624,6 +631,13 @@ export interface CompleteSalePayload {
   reward_code: string | null
   cash_session: string | null
   sumup_ref: string
+  /**
+   * A `sumup_checkouts` id the reader has already taken the card part on.
+   * The server checks it is paid, unused and for exactly the card part of
+   * this sale before it writes anything (Phase 7 contract, "Solo reader
+   * checkouts").
+   */
+  sumup_checkout?: string
 }
 
 export interface CompleteSaleResult {
@@ -859,7 +873,17 @@ export type LabelTemplateKey =
   | "retro_50x30"
   | "customer_card_80x50"
 
-export type LabelJobStatus = "queued" | "printed" | "cancelled"
+/**
+ * `printing` and `failed` arrive with Phase 7's cross-device queue: a job is
+ * `printing` while the device that claimed it has it, and `failed` once three
+ * attempts have gone by (docs/label-spec.md, "Printing path 2").
+ */
+export type LabelJobStatus =
+  | "queued"
+  | "printing"
+  | "printed"
+  | "failed"
+  | "cancelled"
 
 /** A queued label with the words the print page puts on it. */
 export interface LabelJobDetail {
@@ -877,6 +901,41 @@ export interface LabelJobDetail {
   /** Integer GBP pence. */
   price: number
   requestedAt: string
+  /**
+   * What the QR carries, when the server has said. Blank means the layout
+   * works it out from the code, which is what the browser print path does.
+   */
+  qrText?: string
+  /** The device holding a `printing` job, and why a `failed` one failed. */
+  printer?: string
+  error?: string
+  attempts?: number
+}
+
+/**
+ * Bulk reprint: at least one selector, and the server resolves the items
+ * (Phase 7 contract, "Labels: bulk reprint and the cross-device print queue").
+ */
+export interface LabelQueueSelector {
+  items?: string[]
+  trade_in?: string
+  /** YYYY-MM-DD, inclusive. */
+  acquired_from?: string
+  acquired_to?: string
+  location?: string
+  kind?: ItemKind
+  game?: string
+  template?: LabelTemplateKey
+  copies?: number
+  /** Queue a second label for an item that already has one waiting. */
+  include_queued?: boolean
+}
+
+export interface LabelQueueResult {
+  queued: number
+  /** Items passed over because a label is already waiting for them. */
+  skipped: number
+  job_ids: string[]
 }
 
 // ---- Today ----------------------------------------------------------------
@@ -1001,8 +1060,16 @@ export interface VaultSettingsRow {
   shop_phone?: string
   shop_email?: string
   receipt_terms?: string
-  /** The SumUp merchant code. Not a key, so the config route serves it. */
-  sumup?: { merchant_code?: string }
+  /**
+   * The SumUp merchant code and, from Phase 7, which paired Solo reader the
+   * counter sends a checkout to. Neither is a key, so the config route
+   * serves them; the API key stays in `api_keys` on the server.
+   */
+  sumup?: {
+    merchant_code?: string
+    default_reader_id?: string
+    default_reader_name?: string
+  }
   /**
    * How customer email is addressed and whether it is sent at all. The mail
    * API key is `email_api_key`, a column of its own that never leaves the
@@ -1570,6 +1637,69 @@ export interface SumUpPullResult {
   matched: number
   unmatched: number
   refunded: number
+}
+
+// --- The Solo reader (Phase 7) ---------------------------------------------
+
+/** SumUp's own words for where a pairing has got to. */
+export type SumUpReaderStatus = "unknown" | "processing" | "paired" | "expired"
+
+/** One paired card reader, as `GET /api/vault/sumup/readers` lists it. */
+export interface SumUpReader {
+  id: string
+  name: string
+  status: SumUpReaderStatus
+  /** "Solo", or whatever SumUp calls the device. */
+  model: string
+}
+
+export interface SumUpReaderList {
+  readers: SumUpReader[]
+  default_reader_id: string
+  /**
+   * No merchant code or no key on the server. The Sell screen says nothing
+   * at all in that case: a shop that has not set SumUp up does not need
+   * telling on every sale.
+   */
+  not_configured: boolean
+}
+
+export type SumUpCheckoutStatus =
+  | "pending"
+  | "paid"
+  | "failed"
+  | "cancelled"
+  | "expired"
+
+/**
+ * A `sumup_checkouts` row: one attempt to take the card part of one sale on
+ * the reader. `sale_client_id` is the sale's own idempotency key, so a
+ * second press never opens a second checkout.
+ */
+/** What the Sell screen sends to open one. */
+export interface CreateCheckoutInput {
+  /** Integer GBP pence: the card part of the sale, never the whole total. */
+  amount: number
+  /** The sale's own idempotency key, so a second press finds the first checkout. */
+  saleClientId: string
+  /** What shows on the reader and the customer's slip. */
+  description?: string
+  readerId?: string
+}
+
+export interface SumUpCheckout {
+  id: string
+  status: SumUpCheckoutStatus
+  /** Integer GBP pence. */
+  amount: number
+  reader_name?: string
+  client_transaction_id?: string
+  /** SumUp's receipt code, the one printed on the customer's slip. */
+  transaction_code?: string
+  card_last4?: string
+  error?: string
+  paid_at?: string
+  created?: string
 }
 
 // ---------------------------------------------------------------------------

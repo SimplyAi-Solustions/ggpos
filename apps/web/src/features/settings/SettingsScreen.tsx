@@ -39,6 +39,7 @@ import {
   EMAIL_PROVIDER_LABEL,
   pushPublicKeyFrom,
 } from "@/lib/api/notifications"
+import { CardReader } from "@/features/settings/CardReader"
 import { RulesMatrix } from "@/features/settings/RulesMatrix"
 import { SourceOrder } from "@/features/settings/SourceOrder"
 import { OfferPreview, SellPreview } from "@/features/settings/previews"
@@ -542,6 +543,11 @@ function Editor({
             note="Where the QR on the idle screen sends a phone."
           />
         </div>
+      </Section>
+
+      {/* ---- Card reader ---- */}
+      <Section title="Card reader">
+        <CardReader settings={settings} />
       </Section>
 
       {/* ---- Shop ---- */}

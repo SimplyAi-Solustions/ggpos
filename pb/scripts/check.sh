@@ -44,6 +44,10 @@ KEYLESS_DIR=""
 # hook backdates a points_ledger row's `created` (section 24).
 BACKDATE_PID=""
 
+# A fourth, the same idea for a sumup_checkouts row's `created` and its
+# callback secret (section 25).
+P7_BACKDATE_PID=""
+
 # --- small helpers ----------------------------------------------------
 
 # Read JSON from stdin, print the value at a dot-separated path (numbers
@@ -114,6 +118,10 @@ cleanup() {
   if [ -n "$BACKDATE_PID" ] && kill -0 "$BACKDATE_PID" 2>/dev/null; then
     kill "$BACKDATE_PID" 2>/dev/null || true
     wait "$BACKDATE_PID" 2>/dev/null || true
+  fi
+  if [ -n "$P7_BACKDATE_PID" ] && kill -0 "$P7_BACKDATE_PID" 2>/dev/null; then
+    kill "$P7_BACKDATE_PID" 2>/dev/null || true
+    wait "$P7_BACKDATE_PID" 2>/dev/null || true
   fi
   if [ -n "$KEYLESS_DIR" ]; then
     rm -rf "$KEYLESS_DIR"
@@ -5986,6 +5994,877 @@ ok "a customer's own export carries their vouchers, memberships, perk counts, ti
 kill "$BACKDATE_PID" 2>/dev/null || true
 wait "$BACKDATE_PID" 2>/dev/null || true
 BACKDATE_PID=""
+
+# -----------------------------------------------------------------------
+# 25. Phase 7: the Solo card reader, reservation expiry, the price
+#     snapshot roll-up and the cross-device label queue.
+#
+#     Still under GG_ADAPTER_TRANSPORT_MODE=fixture (section 19's note),
+#     so every SumUp Readers API call below is answered by
+#     pb_hooks/adapters/fixture_transport.js. What that fixture answers is
+#     derived from the request itself: a checkout's own `description`
+#     carries the outcome this script wants to see (paid, pending, failed
+#     or a mismatched amount) and its amount, both of which come back
+#     inside the `client_transaction_id`, which is what the transactions
+#     lookup is then asked about. Nothing is remembered between calls, so
+#     a poll, a callback and the expiry cron all get the same answer.
+# -----------------------------------------------------------------------
+
+# The expiry cron measures from sumup_checkouts.created, an autodate
+# PocketBase rewrites on every write, so this needs the same trick
+# section 24 uses for points_ledger: a second, short-lived PocketBase on
+# this run's own data directory whose entire hooks directory is one
+# throwaway file doing the UPDATE through $app.db().
+mkdir -p "$TMP_DIR/check_p7_hooks"
+cat >"$TMP_DIR/check_p7_hooks/backdate.pb.js" <<'P7_BACKDATE_HOOK'
+/// Throwaway, written by pb/scripts/check.sh. Never part of pb_hooks/.
+/// Two columns only, both on sumup_checkouts: `created`, an autodate the
+/// API cannot set at all, and `callback_secret`, which holds the sha256
+/// of a token the server generates and never hands out - so the only way
+/// to post a callback the way SumUp does is to put a known token's own
+/// hash there first.
+routerAdd(
+  "POST",
+  "/api/check/set-checkout",
+  (e) => {
+    const info = e.requestInfo();
+    const body = (info && info.body) || {};
+    const column = String(body.column || "");
+    if (column !== "created" && column !== "callback_secret") {
+      throw e.badRequestError("check.sh only ever sets created or callback_secret", null);
+    }
+    $app
+      .db()
+      .newQuery("UPDATE sumup_checkouts SET " + column + " = {:value} WHERE id = {:id}")
+      .bind({ value: String(body.value || ""), id: String(body.id || "") })
+      .execute();
+    return e.json(200, { ok: true });
+  },
+  $apis.requireSuperuserAuth()
+);
+P7_BACKDATE_HOOK
+
+P7_BACKDATE_PORT="$(node -e "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});")"
+P7_BACKDATE_BASE="http://127.0.0.1:$P7_BACKDATE_PORT"
+"$PB" serve --http "127.0.0.1:$P7_BACKDATE_PORT" --dir "$TMP_DIR" \
+  --hooksDir "$TMP_DIR/check_p7_hooks" --hooksWatch=false \
+  --migrationsDir "$MIGRATIONS_DIR" --publicDir "$PUBLIC_DIR" \
+  >"$TMP_DIR/p7-backdate.log" 2>&1 &
+P7_BACKDATE_PID=$!
+for _ in $(seq 1 80); do
+  curl -sf "$P7_BACKDATE_BASE/api/health" >/dev/null 2>&1 && break
+  sleep 0.25
+done
+curl -sf "$P7_BACKDATE_BASE/api/health" >/dev/null 2>&1 \
+  || fail "the Phase 7 backdating helper server did not start: $(tail -n 5 "$TMP_DIR/p7-backdate.log")"
+
+p7_call() {
+  # $1 method, $2 path, $3 token, $4 body (optional) -> sets P7_STATUS and
+  # leaves the response body in $TMP_DIR/p7.json
+  if [ -n "${4:-}" ]; then
+    P7_STATUS="$(curl -s -o "$TMP_DIR/p7.json" -w '%{http_code}' -X "$1" "$BASE$2" \
+      -H "Authorization: $3" -H "Content-Type: application/json" -d "$4")"
+  else
+    P7_STATUS="$(curl -s -o "$TMP_DIR/p7.json" -w '%{http_code}' -X "$1" "$BASE$2" -H "Authorization: $3")"
+  fi
+}
+
+p7_val() {
+  # $1 dot path -> that value out of the last p7_call's body
+  jval "$1" <"$TMP_DIR/p7.json"
+}
+
+p7_record() {
+  # $1 collection, $2 id, $3 field -> that field, read as superuser
+  curl -s "$BASE/api/collections/$1/records/$2" -H "Authorization: $SUPER_TOKEN" | jval "$3"
+}
+
+p7_settings_sumup() {
+  # $1 key -> that key off settings.sumup
+  curl -s "$BASE/api/collections/settings/records/$SETTINGS_ID" -H "Authorization: $STAFF_TOKEN" | jval "sumup.$1"
+}
+
+p7_set_app_url() {
+  curl -s -o /dev/null -X PATCH "$BASE/api/settings" \
+    -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"meta\":{\"appURL\":\"$1\"}}"
+}
+
+p7_ago() {
+  # $1 minutes back -> a PocketBase stored timestamp
+  node -e 'process.stdout.write(new Date(Date.now() - Number(process.argv[1]) * 60000).toISOString().replace("T", " "));' "$1"
+}
+
+p7_set_checkout_column() {
+  # $1 checkout id, $2 column (created | callback_secret), $3 value
+  local status
+  status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$P7_BACKDATE_BASE/api/check/set-checkout" \
+    -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"id\":\"$1\",\"column\":\"$2\",\"value\":\"$3\"}")"
+  [ "$status" = "200" ] || fail "setting sumup_checkouts.$2 on row $1 returned $status"
+}
+
+p7_backdate_checkout() {
+  # $1 checkout id, $2 stored timestamp
+  p7_set_checkout_column "$1" created "$2"
+  local seen
+  seen="$(p7_record sumup_checkouts "$1" created)"
+  [ "$seen" = "$2" ] || fail "backdating checkout $1 to '$2' left it reading '$seen'"
+}
+
+p7_set_token() {
+  # $1 checkout id, $2 the token SumUp is to send back. The route hashes
+  # the token it generated into callback_secret and never hands the token
+  # out, so this puts a known token's own sha256 there instead - the same
+  # hash the callback route will look the row up by.
+  local hash
+  hash="$(node -e 'process.stdout.write(require("crypto").createHash("sha256").update(process.argv[1]).digest("hex"));' "$2")"
+  p7_set_checkout_column "$1" callback_secret "$hash"
+}
+
+p7_new_checkout() {
+  # $1 amount, $2 sale_client_id, $3 description, $4 reader id (optional)
+  # -> prints the checkout id
+  local reader=""
+  [ -n "${4:-}" ] && reader=",\"reader_id\":\"$4\""
+  p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" \
+    "{\"amount\":$1,\"sale_client_id\":\"$2\",\"description\":\"$3\"$reader}"
+  [ "$P7_STATUS" = "200" ] || fail "creating checkout '$2' returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+  p7_val "checkout.id"
+}
+
+p7_callback() {
+  # $1 token, $2 body (optional) -> sets P7_STATUS, body in p7.json
+  if [ -n "${2:-}" ]; then
+    P7_STATUS="$(curl -s -o "$TMP_DIR/p7.json" -w '%{http_code}' -X POST "$BASE/api/vault/sumup/callback/$1" \
+      -H "Content-Type: application/json" -d "$2")"
+  else
+    P7_STATUS="$(curl -s -o "$TMP_DIR/p7.json" -w '%{http_code}' -X POST "$BASE/api/vault/sumup/callback/$1" \
+      -H "Content-Type: application/json" -d '{}')"
+  fi
+}
+
+p7_wait_field() {
+  # $1 collection, $2 id, $3 field, $4 wanted value, $5 what to say if it never is
+  local tries=0
+  while [ "$tries" -lt 40 ]; do
+    [ "$(p7_record "$1" "$2" "$3")" = "$4" ] && return 0
+    sleep 0.25
+    tries=$((tries + 1))
+  done
+  fail "$5 (${1}.${3} is '$(p7_record "$1" "$2" "$3")', expected '$4')"
+}
+
+# --- 25a. Readers: not configured, pairing, the list and the default -----
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sumup":{"merchant_code":""}}'
+p7_call GET /api/vault/sumup/readers "$STAFF_TOKEN"
+[ "$P7_STATUS" = "200" ] || fail "GET /api/vault/sumup/readers with no merchant code returned $P7_STATUS, expected 200"
+[ "$(p7_val not_configured)" = "true" ] || fail "the readers list does not report not_configured with no merchant code: $(cat "$TMP_DIR/p7.json")"
+[ "$(jlen readers <"$TMP_DIR/p7.json")" = "0" ] || fail "the readers list returned readers with no merchant code"
+ok "the readers list answers 200 with not_configured before SumUp is set up, never a 500"
+
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sumup":{"merchant_code":"MFIXTURE1"}}'
+
+p7_call POST /api/vault/sumup/readers "$STAFF_TOKEN" '{"pairing_code":"BADCODE1","name":"Counter Solo"}'
+[ "$P7_STATUS" = "422" ] || fail "pairing with a refused code returned $P7_STATUS, expected 422: $(cat "$TMP_DIR/p7.json")"
+grep -qF "That pairing code was not accepted. Read the code off the reader again; it changes each time." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a refused pairing code: $(cat "$TMP_DIR/p7.json")"
+ok "a pairing code SumUp refuses comes back 422 with the sentence that says what to do"
+
+p7_call POST /api/vault/sumup/readers "$PLAIN_TOKEN" '{"pairing_code":"SOLO1234"}'
+[ "$P7_STATUS" = "403" ] || fail "a non-admin pairing a reader got $P7_STATUS, expected 403"
+ok "a non-admin staff account cannot pair a reader (403)"
+
+p7_call POST /api/vault/sumup/readers "$STAFF_TOKEN" '{"pairing_code":"SOLO1234","name":"Counter Solo"}'
+[ "$P7_STATUS" = "200" ] || fail "pairing a reader returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+P7_READER_ID="$(p7_val "reader.id")"
+[ "$P7_READER_ID" = "reader-solo1234" ] || fail "the paired reader's id is '$P7_READER_ID', expected reader-solo1234"
+[ "$(p7_settings_sumup default_reader_id)" = "$P7_READER_ID" ] \
+  || fail "pairing the first reader did not make it the default: $(p7_settings_sumup default_reader_id)"
+[ "$(p7_settings_sumup default_reader_name)" = "Counter Solo" ] \
+  || fail "the default reader's name is '$(p7_settings_sumup default_reader_name)', expected Counter Solo"
+P7_PAIR_AUDIT="$(wait_for_audit_row "perPage=5&filter=action%3D%22sumup_reader_paired%22")"
+[ "$(echo "$P7_PAIR_AUDIT" | jval totalItems)" -ge 1 ] || fail "pairing a reader wrote no sumup_reader_paired audit row"
+ok "pairing the first reader records it, makes it the default and audits it"
+
+p7_call POST /api/vault/sumup/readers "$STAFF_TOKEN" '{"pairing_code":"SOLO5678","name":"Back room Solo"}'
+[ "$P7_STATUS" = "200" ] || fail "pairing a second reader returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_settings_sumup default_reader_id)" = "$P7_READER_ID" ] \
+  || fail "pairing a second reader moved the default off the first"
+p7_call DELETE /api/vault/sumup/readers/reader-solo5678 "$STAFF_TOKEN"
+[ "$P7_STATUS" = "204" ] || fail "unpairing the second reader returned $P7_STATUS, expected 204"
+[ "$(p7_settings_sumup default_reader_id)" = "$P7_READER_ID" ] \
+  || fail "unpairing a reader that was not the default cleared the default anyway"
+ok "a second reader pairs without taking the default, and unpairs again with a 204"
+
+p7_call GET /api/vault/sumup/readers "$STAFF_TOKEN"
+[ "$P7_STATUS" = "200" ] || fail "GET /api/vault/sumup/readers returned $P7_STATUS"
+[ "$(jlen readers <"$TMP_DIR/p7.json")" -ge 1 ] || fail "the readers list came back empty once a reader was paired"
+[ "$(p7_val "readers.0.name")" != "" ] || fail "a listed reader has no name: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val default_reader_id)" = "$P7_READER_ID" ] || fail "the readers list does not report the default reader"
+ok "the readers list carries SumUp's own readers and this shop's default"
+
+# The settings write hook only ever accepts text for the two reader keys.
+P7_BAD_SETTING="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sumup":{"merchant_code":"MFIXTURE1","default_reader_id":42}}')"
+[ "$P7_BAD_SETTING" = "400" ] || fail "settings.sumup.default_reader_id as a number returned $P7_BAD_SETTING, expected 400"
+[ "$(p7_settings_sumup default_reader_id)" = "$P7_READER_ID" ] || fail "a refused settings write changed the default reader anyway"
+ok "the default reader can only be saved as text, and a refused write leaves the old one alone"
+
+# --- 25b. A checkout on the reader: the refusals, then the row ----------
+p7_set_app_url "http://vault.example.test"
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":4200,"sale_client_id":"p7-no-url"}'
+[ "$P7_STATUS" = "422" ] || fail "a checkout with a plain http application URL returned $P7_STATUS, expected 422"
+grep -qF "The application URL is not set, so the reader cannot report back." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a checkout with no usable application URL: $(cat "$TMP_DIR/p7.json")"
+ok "a checkout is refused while this instance has no https address for the reader to report back to"
+
+# 127.0.0.1 is the one exception to that rule, so a developer's own
+# machine (and this script) can take a payment at all.
+p7_set_app_url "$BASE"
+
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":0,"sale_client_id":"p7-zero"}'
+[ "$P7_STATUS" = "400" ] || fail "a checkout for 0p returned $P7_STATUS, expected 400"
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":"42.00","sale_client_id":"p7-pounds"}'
+[ "$P7_STATUS" = "400" ] || fail "a checkout for \"42.00\" returned $P7_STATUS, expected 400 (pence, not pounds)"
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":4200}'
+[ "$P7_STATUS" = "400" ] || fail "a checkout with no sale_client_id returned $P7_STATUS, expected 400"
+ok "a checkout refuses a zero amount, a decimal amount and a missing sale_client_id (400)"
+
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" \
+  '{"amount":4200,"sale_client_id":"p7-offline","reader_id":"reader-offline"}'
+[ "$P7_STATUS" = "422" ] || fail "a checkout on an offline reader returned $P7_STATUS, expected 422"
+grep -qF "The reader is offline. Check it is on and connected, then try again." "$TMP_DIR/p7.json" \
+  || fail "wrong message for an offline reader: $(cat "$TMP_DIR/p7.json")"
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" \
+  '{"amount":4200,"sale_client_id":"p7-unknown-reader","reader_id":"reader-unknown"}'
+[ "$P7_STATUS" = "422" ] || fail "a checkout on an unknown reader returned $P7_STATUS, expected 422"
+grep -qF "That reader is no longer paired. Pair it again under Settings." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a reader SumUp no longer knows: $(cat "$TMP_DIR/p7.json")"
+ok "an offline reader and one SumUp no longer knows each get their own 422 and sentence"
+
+P7_PAID_CHECKOUT="$(p7_new_checkout 4200 p7-sale-paid "P7 paid")"
+[ -n "$P7_PAID_CHECKOUT" ] || fail "no checkout id came back"
+[ "$(p7_val "checkout.status")" = "pending" ] || fail "a new checkout is '$(p7_val "checkout.status")', expected pending"
+[ "$(p7_val "checkout.amount")" = "4200" ] || fail "a new checkout is for $(p7_val "checkout.amount")p, expected 4200"
+[ "$(p7_val "checkout.reader_name")" = "Counter Solo" ] || fail "a new checkout names reader '$(p7_val "checkout.reader_name")'"
+[ -n "$(p7_val "checkout.client_transaction_id")" ] || fail "a new checkout carries no client_transaction_id"
+[ "$(p7_val "checkout.created")" != "" ] || fail "a new checkout carries no created stamp"
+ok "a checkout goes on the default reader and comes back pending, with SumUp's own client_transaction_id"
+
+P7_SECRET="$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" callback_secret)"
+echo "$P7_SECRET" | grep -Eq '^[0-9a-f]{64}$' || fail "callback_secret is not a sha256 hex digest: '$P7_SECRET'"
+curl -s "$BASE/api/collections/sumup_checkouts/records/$P7_PAID_CHECKOUT" -H "Authorization: $STAFF_TOKEN" \
+  | grep -q '"callback_secret"' || fail "sumup_checkouts does not carry callback_secret at all"
+ok "the row stores the sha256 of the callback token, never a token a reader could be impersonated with"
+
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":4200,"sale_client_id":"p7-sale-paid","description":"P7 paid"}'
+[ "$P7_STATUS" = "200" ] || fail "asking for the same sale's checkout twice returned $P7_STATUS"
+[ "$(p7_val "checkout.id")" = "$P7_PAID_CHECKOUT" ] \
+  || fail "a second checkout for the same sale_client_id made a new row: $(p7_val "checkout.id") vs $P7_PAID_CHECKOUT"
+[ "$(p7_val reused)" = "true" ] || fail "a repeated checkout request does not report itself as reused"
+[ "$(curl -sG -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=sale_client_id='p7-sale-paid'" \
+  "$BASE/api/collections/sumup_checkouts/records" | jval totalItems)" = "1" ] \
+  || fail "asking twice for the same sale's payment left two checkout rows"
+ok "a second checkout for the same sale_client_id returns the one already on the reader"
+
+# --- 25c. The callback: unknown tokens, pending, paid, mismatched -------
+P7_WRONG_TOKEN_BODY="$TMP_DIR/p7-wrong-token.txt"
+P7_WRONG_STATUS="$(curl -s -o "$P7_WRONG_TOKEN_BODY" -w '%{http_code}' -X POST \
+  "$BASE/api/vault/sumup/callback/not-a-real-token" -H "Content-Type: application/json" -d '{}')"
+[ "$P7_WRONG_STATUS" = "404" ] || fail "a callback with an unknown token returned $P7_WRONG_STATUS, expected 404"
+[ ! -s "$P7_WRONG_TOKEN_BODY" ] || fail "a callback with an unknown token answered with a body: $(cat "$P7_WRONG_TOKEN_BODY")"
+ok "a callback with a token nobody holds is a bare 404 with no body and no hint"
+
+P7_PENDING_CHECKOUT="$(p7_new_checkout 1500 p7-sale-pending "P7 pending")"
+p7_set_token "$P7_PENDING_CHECKOUT" "p7-token-pending"
+p7_callback "p7-token-pending"
+[ "$P7_STATUS" = "200" ] || fail "a callback on a pending payment returned $P7_STATUS, expected 200"
+sleep 0.5
+[ "$(p7_record sumup_checkouts "$P7_PENDING_CHECKOUT" status)" = "pending" ] \
+  || fail "a callback while SumUp still says PENDING moved the row to '$(p7_record sumup_checkouts "$P7_PENDING_CHECKOUT" status)'"
+ok "a callback is never believed on its own: SumUp still saying PENDING leaves the payment open"
+
+p7_set_token "$P7_PAID_CHECKOUT" "p7-token-paid"
+p7_callback "p7-token-paid"
+[ "$P7_STATUS" = "200" ] || fail "a callback on a successful payment returned $P7_STATUS, expected 200"
+p7_wait_field sumup_checkouts "$P7_PAID_CHECKOUT" status paid "the callback did not mark the payment paid"
+[ "$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" card_last4)" = "4242" ] \
+  || fail "the paid checkout does not carry the card's last four"
+P7_PAID_CODE="$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" transaction_code)"
+[ -n "$P7_PAID_CODE" ] || fail "the paid checkout carries no transaction code"
+[ -n "$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" transaction_id)" ] || fail "the paid checkout carries no transaction id"
+[ -n "$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" paid_at)" ] || fail "the paid checkout carries no paid_at"
+P7_PAID_AUDIT="$(wait_for_audit_row "perPage=20&filter=action%3D%22sumup_checkout_paid%22%26%26record%3D%22$P7_PAID_CHECKOUT%22")"
+[ "$(echo "$P7_PAID_AUDIT" | jval totalItems)" = "1" ] || fail "a paid checkout wrote $(echo "$P7_PAID_AUDIT" | jval totalItems) sumup_checkout_paid audit rows, expected 1"
+echo "$P7_PAID_AUDIT" | grep -q '"amount":4200' || fail "the sumup_checkout_paid audit row does not carry the amount: $P7_PAID_AUDIT"
+echo "$P7_PAID_AUDIT" | grep -qF "$P7_PAID_CODE" || fail "the sumup_checkout_paid audit row does not carry the transaction code"
+ok "a SUCCESSFUL transaction marks the payment paid with its code, its last four and an audit row of the amount"
+
+p7_callback "p7-token-paid"
+[ "$P7_STATUS" = "200" ] || fail "a repeated callback returned $P7_STATUS, expected 200"
+sleep 0.5
+[ "$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" status)" = "paid" ] || fail "a repeated callback moved a paid payment"
+[ "$(p6_count audit_log "action='sumup_checkout_paid' && record='$P7_PAID_CHECKOUT'")" = "1" ] \
+  || fail "a repeated callback wrote a second sumup_checkout_paid audit row"
+ok "a payment already in a final state is never rewritten, however many callbacks arrive"
+
+P7_MISMATCH_CHECKOUT="$(p7_new_checkout 4200 p7-sale-mismatch "P7 mismatch")"
+p7_set_token "$P7_MISMATCH_CHECKOUT" "p7-token-mismatch"
+p7_callback "p7-token-mismatch"
+p7_wait_field sumup_checkouts "$P7_MISMATCH_CHECKOUT" status failed "a reader that took a different amount did not fail the payment"
+p7_record sumup_checkouts "$P7_MISMATCH_CHECKOUT" error | grep -qF "The reader took a different amount (£47.00). Refund it from the SumUp app and take the payment again." \
+  || fail "wrong message for a mismatched amount: $(p7_record sumup_checkouts "$P7_MISMATCH_CHECKOUT" error)"
+[ "$(p6_count audit_log "action='sumup_checkout_amount_mismatch' && record='$P7_MISMATCH_CHECKOUT'")" = "1" ] \
+  || fail "a mismatched amount wrote no sumup_checkout_amount_mismatch audit row"
+ok "a reader that took a different amount fails the payment, says so in pounds and audits it"
+
+P7_FAILED_CHECKOUT="$(p7_new_checkout 990 p7-sale-failed "P7 failed")"
+p7_set_token "$P7_FAILED_CHECKOUT" "p7-token-failed"
+p7_callback "p7-token-failed" '{"id":"evt-1","event_type":"solo.transaction.updated","payload":{"status":"failed","failure_reason":"Card declined"},"timestamp":"2026-09-20T14:48:00Z"}'
+p7_wait_field sumup_checkouts "$P7_FAILED_CHECKOUT" status failed "a failed transaction did not fail the payment"
+[ "$(p7_record sumup_checkouts "$P7_FAILED_CHECKOUT" error)" = "Card declined" ] \
+  || fail "the failed payment does not carry the reason the callback gave: '$(p7_record sumup_checkouts "$P7_FAILED_CHECKOUT" error)'"
+ok "a failed transaction closes the payment with the reason the callback carried"
+
+# --- 25d. The counter's own poll, for a callback that never arrived -----
+P7_LOST_CHECKOUT="$(p7_new_checkout 2500 p7-sale-lost "P7 paid, callback lost")"
+p7_backdate_checkout "$P7_LOST_CHECKOUT" "$(p7_ago 1)"
+p7_call GET "/api/vault/sumup/checkouts/$P7_LOST_CHECKOUT" "$STAFF_TOKEN"
+[ "$P7_STATUS" = "200" ] || fail "reading a checkout back returned $P7_STATUS"
+[ "$(p7_val "checkout.status")" = "paid" ] \
+  || fail "polling a checkout SumUp had already taken left it '$(p7_val "checkout.status")', expected paid"
+[ "$(p7_val "checkout.card_last4")" = "4242" ] || fail "the polled checkout carries no card last four"
+ok "a poll settles a payment whose callback never arrived, so a lost callback never strands a sale"
+
+p7_call GET "/api/vault/sumup/checkouts/$P7_PENDING_CHECKOUT" "$STAFF_TOKEN"
+[ "$(p7_val "checkout.status")" = "pending" ] || fail "polling a genuinely pending payment changed it"
+p7_call GET "/api/vault/sumup/checkouts/doesnotexist000" "$STAFF_TOKEN"
+[ "$P7_STATUS" = "404" ] || fail "reading a checkout that does not exist returned $P7_STATUS, expected 404"
+ok "a poll leaves a genuinely pending payment alone, and an unknown one is a 404"
+
+# --- 25e. A sale paid for by the reader ---------------------------------
+P7_SALE_ITEM="$(make_item "P7 Reader Sale Item" 1 1000 4200)"
+[ -n "$P7_SALE_ITEM" ] || fail "could not create the reader sale's item"
+
+p7_call POST /api/vault/sales/complete "$STAFF_TOKEN" \
+  "{\"lines\":[{\"item\":\"$P7_SALE_ITEM\",\"qty\":1,\"unit_price\":4200}],\"payment\":\"sumup_card\",\"sumup_checkout\":\"$P7_PENDING_CHECKOUT\",\"client_id\":\"p7-complete-pending\"}"
+[ "$P7_STATUS" = "422" ] || fail "completing a sale against a pending payment returned $P7_STATUS, expected 422"
+grep -qF "not paid" "$TMP_DIR/p7.json" || fail "wrong message for a sale against a pending payment: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_record items "$P7_SALE_ITEM" status)" = "in_stock" ] || fail "a refused sale sold the item anyway"
+ok "a sale cannot be completed against a card payment the reader has not taken yet (422)"
+
+p7_call POST /api/vault/sales/complete "$STAFF_TOKEN" \
+  "{\"lines\":[{\"item\":\"$P7_SALE_ITEM\",\"qty\":1,\"unit_price\":4200}],\"payment\":\"sumup_card\",\"sumup_checkout\":\"$P7_PAID_CHECKOUT\",\"client_id\":\"p7-complete-1\"}"
+[ "$P7_STATUS" = "200" ] || fail "completing a sale against a paid card payment returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+P7_SALE_ID="$(p7_val "sale.id")"
+P7_SALE_NUMBER="$(p7_val "sale.number")"
+[ "$(p7_val sumup_amount)" = "4200" ] || fail "the sale reports $(p7_val sumup_amount) on card, expected 4200"
+[ "$(p7_record sales "$P7_SALE_ID" sumup_ref)" = "$P7_PAID_CODE" ] \
+  || fail "the sale's sumup_ref is '$(p7_record sales "$P7_SALE_ID" sumup_ref)', expected the reader's own code $P7_PAID_CODE"
+[ "$(p7_record sales "$P7_SALE_ID" sumup_checkout)" = "$P7_PAID_CHECKOUT" ] \
+  || fail "the sale does not point back at the card payment"
+[ "$(p7_record sumup_checkouts "$P7_PAID_CHECKOUT" sale)" = "$P7_SALE_ID" ] \
+  || fail "the card payment does not point at the sale it paid for"
+ok "a sale completed against a paid reader payment carries its transaction code and the two rows point at each other"
+
+P7_SALE_ITEM_2="$(make_item "P7 Reader Sale Item 2" 1 1000 4200)"
+p7_call POST /api/vault/sales/complete "$STAFF_TOKEN" \
+  "{\"lines\":[{\"item\":\"$P7_SALE_ITEM_2\",\"qty\":1,\"unit_price\":4200}],\"payment\":\"sumup_card\",\"sumup_checkout\":\"$P7_PAID_CHECKOUT\",\"client_id\":\"p7-complete-2\"}"
+[ "$P7_STATUS" = "409" ] || fail "a second sale on the same card payment returned $P7_STATUS, expected 409"
+grep -qF "$P7_SALE_NUMBER" "$TMP_DIR/p7.json" \
+  || fail "the refusal does not name the sale that payment already paid for: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_record items "$P7_SALE_ITEM_2" status)" = "in_stock" ] || fail "a refused second sale sold its item anyway"
+ok "one card payment can only ever pay for one sale, and the refusal names the sale that has it"
+
+p7_call POST /api/vault/sales/complete "$STAFF_TOKEN" \
+  "{\"lines\":[{\"item\":\"$P7_SALE_ITEM_2\",\"qty\":1,\"unit_price\":4200}],\"payment\":\"sumup_card\",\"sumup_checkout\":\"$P7_PAID_CHECKOUT\",\"client_id\":\"p7-complete-1\"}"
+[ "$P7_STATUS" = "200" ] || fail "replaying the first sale's client_id returned $P7_STATUS, expected 200"
+[ "$(p7_val "sale.id")" = "$P7_SALE_ID" ] \
+  || fail "a replayed client_id made a second sale: $(p7_val "sale.id") vs $P7_SALE_ID"
+ok "a replayed client_id still returns the first sale rather than spending the payment twice"
+
+P7_PART_CHECKOUT="$(p7_new_checkout 4200 p7-sale-cardpart "P7 paid")"
+p7_set_token "$P7_PART_CHECKOUT" "p7-token-cardpart"
+p7_callback "p7-token-cardpart"
+p7_wait_field sumup_checkouts "$P7_PART_CHECKOUT" status paid "the card-part checkout was not marked paid"
+P7_PART_ITEM="$(make_item "P7 Card Part Item" 1 900 4000)"
+p7_call POST /api/vault/sales/complete "$STAFF_TOKEN" \
+  "{\"lines\":[{\"item\":\"$P7_PART_ITEM\",\"qty\":1,\"unit_price\":4000}],\"payment\":\"sumup_card\",\"sumup_checkout\":\"$P7_PART_CHECKOUT\",\"client_id\":\"p7-complete-3\"}"
+[ "$P7_STATUS" = "422" ] || fail "a sale whose card part does not match the payment returned $P7_STATUS, expected 422"
+grep -qF "The reader took £42.00 but the card part of this sale is £40.00. Adjust the split or refund the difference from the SumUp app." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a card part that does not match: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_record items "$P7_PART_ITEM" status)" = "in_stock" ] || fail "a refused mismatched sale sold its item anyway"
+ok "a payment for a different amount than the sale's card part is refused with both figures"
+
+# The hourly pull matches by the checkout's own transaction id before it
+# tries a SKU in a product name or an amount and a time window. The
+# fixture's SKU-matching transaction is re-pointed at this sale's own
+# payment and pulled again to prove the order.
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/sumup_checkouts/records/$P7_PAID_CHECKOUT" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"transaction_id":"txn-sku-0001"}'
+P7_OLD_TXN_ID="$(curl -sG -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=sumup_id='txn-sku-0001'" \
+  "$BASE/api/collections/sumup_transactions/records" | jval "items.0.id")"
+[ -n "$P7_OLD_TXN_ID" ] || fail "section 22's own SKU-matched transaction is missing"
+curl -s -o /dev/null -X DELETE "$BASE/api/collections/sumup_transactions/records/$P7_OLD_TXN_ID" \
+  -H "Authorization: $STAFF_TOKEN"
+p6_run_cron sumup_pull
+P7_PULL_TRIES=0
+while [ "$P7_PULL_TRIES" -lt 40 ]; do
+  P7_NEW_MATCH="$(curl -sG -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=sumup_id='txn-sku-0001'" \
+    "$BASE/api/collections/sumup_transactions/records" | jval "items.0.matched_sale")"
+  [ -n "$P7_NEW_MATCH" ] && break
+  sleep 0.25
+  P7_PULL_TRIES=$((P7_PULL_TRIES + 1))
+done
+[ "$P7_NEW_MATCH" = "$P7_SALE_ID" ] \
+  || fail "the pull matched txn-sku-0001 to '$P7_NEW_MATCH', expected the checkout's own sale $P7_SALE_ID"
+ok "the hourly pull matches a transaction to the sale its own reader payment paid for, before any other rule"
+
+# --- 25f. Cancelling a payment ------------------------------------------
+P7_CANCEL_CHECKOUT="$(p7_new_checkout 750 p7-sale-cancel "P7 pending")"
+p7_call POST "/api/vault/sumup/checkouts/$P7_CANCEL_CHECKOUT/cancel" "$PLAIN_TOKEN" '{}'
+[ "$P7_STATUS" = "403" ] || fail "another staff member cancelling someone else's payment got $P7_STATUS, expected 403"
+p7_call POST "/api/vault/sumup/checkouts/$P7_CANCEL_CHECKOUT/cancel" "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "200" ] || fail "cancelling a pending payment returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val "checkout.status")" = "cancelled" ] || fail "a cancelled payment reads '$(p7_val "checkout.status")'"
+[ "$(p6_count audit_log "action='sumup_checkout_cancelled' && record='$P7_CANCEL_CHECKOUT'")" = "1" ] \
+  || fail "cancelling a payment wrote no sumup_checkout_cancelled audit row"
+ok "only the till that started a payment, or an admin, can stop it, and a cancel is audited"
+
+P7_LATE_CHECKOUT="$(p7_new_checkout 1250 p7-sale-late "P7 paid")"
+p7_call POST "/api/vault/sumup/checkouts/$P7_LATE_CHECKOUT/cancel" "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "409" ] || fail "cancelling a payment SumUp had already taken returned $P7_STATUS, expected 409"
+grep -qF "The customer already paid. Complete the sale." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a cancel that came too late: $(cat "$TMP_DIR/p7.json")"
+p7_wait_field sumup_checkouts "$P7_LATE_CHECKOUT" status paid "a cancel that came too late did not record the payment"
+ok "a cancel that arrives after the customer has paid records the payment and says to complete the sale (409)"
+
+# --- 25g. The expiry cron -----------------------------------------------
+P7_EXPIRE_CHECKOUT="$(p7_new_checkout 333 p7-sale-expire "P7 pending")"
+P7_EXPIRE_LOST="$(p7_new_checkout 444 p7-sale-expire-paid "P7 paid")"
+P7_EXPIRE_FRESH="$(p7_new_checkout 555 p7-sale-expire-fresh "P7 pending")"
+p7_backdate_checkout "$P7_EXPIRE_CHECKOUT" "$(p7_ago 20)"
+p7_backdate_checkout "$P7_EXPIRE_LOST" "$(p7_ago 20)"
+p6_run_cron checkouts_expire
+p7_wait_field sumup_checkouts "$P7_EXPIRE_CHECKOUT" status expired "the expiry cron did not close a payment the reader never reported"
+[ "$(p7_record sumup_checkouts "$P7_EXPIRE_LOST" status)" = "paid" ] \
+  || fail "the expiry cron expired a payment that had actually been taken: '$(p7_record sumup_checkouts "$P7_EXPIRE_LOST" status)'"
+[ "$(p7_record sumup_checkouts "$P7_EXPIRE_FRESH" status)" = "pending" ] \
+  || fail "the expiry cron closed a payment that is only seconds old"
+ok "the expiry cron closes a stale payment, marks one the reader did take as paid, and leaves a fresh one alone"
+
+P7_EXPIRED_BEFORE="$(p6_count sumup_checkouts "status='expired'")"
+p6_run_cron checkouts_expire
+sleep 1.5
+[ "$(p6_count sumup_checkouts "status='expired'")" = "$P7_EXPIRED_BEFORE" ] \
+  || fail "a second checkouts_expire run expired more payments (now $(p6_count sumup_checkouts "status='expired'"), was $P7_EXPIRED_BEFORE)"
+[ "$(p7_record sumup_checkouts "$P7_EXPIRE_FRESH" status)" = "pending" ] || fail "a second expiry run closed the fresh payment"
+ok "running the expiry cron again changes nothing"
+
+# --- 25h. Reservation expiry --------------------------------------------
+# The inverse set to wants.pb.js's holds_release: a hold a member of staff
+# promised across the counter, with no want-list row behind it.
+P7_RES_CUSTOMER="$(p5_make_customer "P7 Reserve Holder" "p7-reserve@local.test")"
+[ -n "$P7_RES_CUSTOMER" ] || fail "could not create the reservation check's customer"
+
+p7_reserve_item() {
+  # $1 title, $2 reserved_until (ISO) -> prints the item id
+  local id
+  id="$(make_item "$1" 1 400 1200)"
+  curl -s -o /dev/null -X PATCH "$BASE/api/collections/items/records/$id" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"status\":\"reserved\",\"reserved_for\":\"$P7_RES_CUSTOMER\",\"reserved_until\":\"$2\"}"
+  echo "$id"
+}
+
+P7_PAST_ISO="$(node -e 'process.stdout.write(new Date(Date.now() - 3600000).toISOString());')"
+P7_FUTURE_ISO="$(node -e 'process.stdout.write(new Date(Date.now() + 86400000).toISOString());')"
+
+P7_RES_STAFF_HOLD="$(p7_reserve_item "P7 Staff Hold" "$P7_PAST_ISO")"
+P7_RES_WANT_HOLD="$(p7_reserve_item "P7 Want Hold" "$P7_PAST_ISO")"
+P7_RES_FUTURE="$(p7_reserve_item "P7 Future Hold" "$P7_FUTURE_ISO")"
+[ -n "$P7_RES_STAFF_HOLD" ] && [ -n "$P7_RES_WANT_HOLD" ] && [ -n "$P7_RES_FUTURE" ] \
+  || fail "could not reserve the three reservation check items"
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/want_list/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P7_RES_CUSTOMER\",\"free_text\":\"P7 want-list hold\",\"status\":\"matched\",\"matched_item\":\"$P7_RES_WANT_HOLD\"}"
+
+p6_run_cron reservations_expire
+p7_wait_field items "$P7_RES_STAFF_HOLD" status in_stock "the reservations cron did not put an expired staff hold back on the shelf"
+[ "$(p7_record items "$P7_RES_STAFF_HOLD" reserved_for)" = "" ] || fail "the released item is still reserved for someone"
+[ "$(p7_record items "$P7_RES_STAFF_HOLD" reserved_until)" = "" ] || fail "the released item still carries a reserved_until"
+[ "$(p7_record items "$P7_RES_WANT_HOLD" status)" = "reserved" ] \
+  || fail "the reservations cron released a want-list hold, which is holds_release's job"
+[ "$(p7_record items "$P7_RES_FUTURE" status)" = "reserved" ] \
+  || fail "the reservations cron released a hold that has not run out yet"
+ok "an expired staff reservation goes back on the shelf; a want-list hold and a live reservation are left alone"
+
+P7_RES_NOTE="$(curl -sG -H "Authorization: $STAFF_TOKEN" \
+  --data-urlencode "filter=target_collection='items' && target_record='$P7_RES_STAFF_HOLD'" \
+  "$BASE/api/collections/notes/records")"
+[ "$(echo "$P7_RES_NOTE" | jval totalItems)" = "1" ] \
+  || fail "a released reservation left $(echo "$P7_RES_NOTE" | jval totalItems) notes on the item, expected 1"
+echo "$P7_RES_NOTE" | grep -qF "Hold for P7 Reserve Holder ended" \
+  || fail "the note does not say who the item was held for: $P7_RES_NOTE"
+echo "$P7_RES_NOTE" | grep -qF "back on the shelf." || fail "the note does not say where the item went: $P7_RES_NOTE"
+P7_RES_AUDIT="$(wait_for_audit_row "perPage=10&filter=action%3D%22reservation_expired%22%26%26record%3D%22$P7_RES_STAFF_HOLD%22")"
+[ "$(echo "$P7_RES_AUDIT" | jval totalItems)" = "1" ] || fail "a released reservation wrote no reservation_expired audit row"
+echo "$P7_RES_AUDIT" | grep -qF "$P7_RES_CUSTOMER" || fail "the reservation_expired audit row does not name the customer"
+[ "$(p6_count notifications "customer='$P7_RES_CUSTOMER' && type!='welcome'")" = "0" ] \
+  || fail "releasing a staff reservation notified the customer, which it never should"
+ok "a released reservation leaves one note naming the customer and the date, an audit row, and no notification"
+
+p6_run_cron reservations_expire
+sleep 1.5
+[ "$(curl -sG -H "Authorization: $STAFF_TOKEN" \
+  --data-urlencode "filter=target_collection='items' && target_record='$P7_RES_STAFF_HOLD'" \
+  "$BASE/api/collections/notes/records" | jval totalItems)" = "1" ] \
+  || fail "a second reservations_expire run wrote another note for the same item"
+[ "$(p6_count audit_log "action='reservation_expired' && record='$P7_RES_STAFF_HOLD'")" = "1" ] \
+  || fail "a second reservations_expire run wrote another audit row for the same item"
+ok "running the reservations cron again changes nothing"
+
+# --- 25i. The price snapshot roll-up ------------------------------------
+p7_week_day() {
+  # $1 whole days back, $2 days either side of that week's Wednesday ->
+  # an ISO timestamp guaranteed to be in the same ISO week whatever day
+  # of the week today happens to be.
+  node -e '
+    const d = new Date(Date.now() - Number(process.argv[1]) * 86400000);
+    const day = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + (3 - day) + Number(process.argv[2]));
+    d.setUTCHours(12, 0, 0, 0);
+    process.stdout.write(d.toISOString());
+  ' "$1" "$2"
+}
+
+p7_snapshot() {
+  # $1 card id, $2 source, $3 fetched_at -> prints the snapshot id
+  curl -s -X POST "$BASE/api/collections/price_snapshots/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"card\":\"$1\",\"finish\":\"\",\"source\":\"$2\",\"native_currency\":\"GBP\",\"native_market\":1000,\"fx_rate\":1,\"gbp_market\":1000,\"fetched_at\":\"$3\"}" \
+    | jval id
+}
+
+P7_ROLLUP_CARD="$(p5_make_card "P7 Rollup Card" "77")"
+P7_ROLLUP_ONCE_CARD="$(p5_make_card "P7 Priced Once Card" "78")"
+[ -n "$P7_ROLLUP_CARD" ] && [ -n "$P7_ROLLUP_ONCE_CARD" ] || fail "could not create the roll-up check's cards"
+
+P7_WEEK_A_OLD="$(p7_snapshot "$P7_ROLLUP_CARD" cardmarket "$(p7_week_day 200 -1)")"
+P7_WEEK_A_MID="$(p7_snapshot "$P7_ROLLUP_CARD" cardmarket "$(p7_week_day 200 0)")"
+P7_WEEK_A_NEW="$(p7_snapshot "$P7_ROLLUP_CARD" cardmarket "$(p7_week_day 200 1)")"
+P7_WEEK_B_OLD="$(p7_snapshot "$P7_ROLLUP_CARD" cardmarket "$(p7_week_day 150 -1)")"
+P7_WEEK_B_NEW="$(p7_snapshot "$P7_ROLLUP_CARD" cardmarket "$(p7_week_day 150 0)")"
+P7_RECENT_SNAPSHOT="$(p7_snapshot "$P7_ROLLUP_CARD" cardmarket "$(p7_week_day 10 0)")"
+P7_YEAR_OLD_SNAPSHOT="$(p7_snapshot "$P7_ROLLUP_ONCE_CARD" tcgplayer "$(p7_week_day 400 0)")"
+[ -n "$P7_WEEK_A_NEW" ] && [ -n "$P7_YEAR_OLD_SNAPSHOT" ] || fail "could not create the roll-up check's snapshots"
+
+p7_call POST /api/vault/prices/rollup "$PLAIN_TOKEN" '{}'
+[ "$P7_STATUS" = "403" ] || fail "a non-admin running the roll-up got $P7_STATUS, expected 403"
+
+p7_call POST /api/vault/prices/rollup "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "200" ] || fail "the roll-up returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val scanned)" = "6" ] || fail "the roll-up scanned $(p7_val scanned) rows over 90 days old, expected 6"
+[ "$(p7_val deleted)" = "3" ] || fail "the roll-up deleted $(p7_val deleted) rows, expected 3"
+[ "$(p7_val kept)" = "3" ] || fail "the roll-up kept $(p7_val kept) rows, expected 3"
+p7_snapshot_status() {
+  curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/price_snapshots/records/$1" -H "Authorization: $STAFF_TOKEN"
+}
+[ "$(p7_snapshot_status "$P7_WEEK_A_NEW")" = "200" ] || fail "the roll-up deleted the newest snapshot of its week"
+[ "$(p7_snapshot_status "$P7_WEEK_A_MID")" = "404" ] || fail "the roll-up kept a middle-of-the-week snapshot"
+[ "$(p7_snapshot_status "$P7_WEEK_A_OLD")" = "404" ] || fail "the roll-up kept the oldest snapshot of a week"
+[ "$(p7_snapshot_status "$P7_WEEK_B_NEW")" = "200" ] || fail "the roll-up deleted the newest snapshot of the second week"
+[ "$(p7_snapshot_status "$P7_WEEK_B_OLD")" = "404" ] || fail "the roll-up kept both snapshots of the second week"
+[ "$(p7_snapshot_status "$P7_RECENT_SNAPSHOT")" = "200" ] || fail "the roll-up touched a snapshot inside the 90 days"
+[ "$(p7_snapshot_status "$P7_YEAR_OLD_SNAPSHOT")" = "200" ] \
+  || fail "the roll-up deleted the only price a card has, which it must never do whatever its age"
+ok "the roll-up keeps one snapshot per week past 90 days, never the last price a card has, and never a recent row"
+
+P7_ROLLUP_AUDIT="$(wait_for_audit_row "perPage=10&filter=action%3D%22snapshots_rollup%22")"
+[ "$(echo "$P7_ROLLUP_AUDIT" | jval totalItems)" -ge 1 ] || fail "the roll-up wrote no snapshots_rollup audit row"
+echo "$P7_ROLLUP_AUDIT" | grep -q '"deleted":3' || fail "the snapshots_rollup audit row does not carry the counts: $P7_ROLLUP_AUDIT"
+
+p7_call POST /api/vault/prices/rollup "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "200" ] || fail "a second roll-up returned $P7_STATUS"
+[ "$(p7_val deleted)" = "0" ] || fail "a second roll-up deleted $(p7_val deleted) more rows, expected 0"
+[ "$(p7_val scanned)" = "3" ] || fail "a second roll-up scanned $(p7_val scanned) rows, expected the 3 it kept"
+ok "running the roll-up again deletes nothing, and it is audited with its counts"
+
+# --- 25j. The label queue: bulk reprint, the claim and the way back -----
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "400" ] || fail "queueing labels with no selector returned $P7_STATUS, expected 400"
+grep -qF "Pick what to print" "$TMP_DIR/p7.json" || fail "wrong message for a queue with no selector: $(cat "$TMP_DIR/p7.json")"
+ok "a label queue request with no selector at all is refused with what to do about it"
+
+P7_LABEL_ITEM_A="$(make_item "P7 Label Item A" 1 300 1500)"
+P7_LABEL_ITEM_B="$(make_item "P7 Label Item B" 1 300 1500)"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_LABEL_ITEM_A\",\"$P7_LABEL_ITEM_B\"]}"
+[ "$P7_STATUS" = "200" ] || fail "queueing two labels returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val queued)" = "2" ] || fail "queued $(p7_val queued) labels, expected 2"
+[ "$(p7_val skipped)" = "0" ] || fail "skipped $(p7_val skipped) of two fresh items, expected 0"
+[ "$(jlen job_ids <"$TMP_DIR/p7.json")" = "2" ] || fail "the queue response carries $(jlen job_ids <"$TMP_DIR/p7.json") job ids, expected 2"
+P7_LABEL_AUDIT="$(wait_for_audit_row "perPage=10&filter=action%3D%22labels_queued%22")"
+[ "$(echo "$P7_LABEL_AUDIT" | jval totalItems)" -ge 1 ] || fail "queueing labels wrote no labels_queued audit row"
+ok "queueing labels for two items writes two jobs and audits the count"
+
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_LABEL_ITEM_A\",\"$P7_LABEL_ITEM_B\"]}"
+[ "$(p7_val queued)" = "0" ] || fail "the same two items queued again anyway"
+[ "$(p7_val skipped)" = "2" ] || fail "the same two items reported $(p7_val skipped) skipped, expected 2"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" \
+  "{\"items\":[\"$P7_LABEL_ITEM_A\",\"$P7_LABEL_ITEM_B\"],\"include_queued\":true}"
+[ "$(p7_val queued)" = "2" ] || fail "include_queued did not queue the two items again"
+ok "an item that already has a queued label is skipped, unless include_queued says otherwise"
+
+P7_TRADEIN_HELD="$(curl -sG -H "Authorization: $STAFF_TOKEN" \
+  --data-urlencode "filter=trade_in_line.trade_in='$TRADE_ID' && (status='in_stock' || status='reserved' || status='listed_ebay')" \
+  "$BASE/api/collections/items/records" | jval totalItems)"
+[ "$P7_TRADEIN_HELD" -ge 1 ] || fail "section 14's buy-in has no items left in stock to reprint"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"trade_in\":\"$TRADE_ID\"}"
+[ "$P7_STATUS" = "200" ] || fail "queueing a whole buy-in's labels returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(($(p7_val queued) + $(p7_val skipped)))" = "$P7_TRADEIN_HELD" ] \
+  || fail "the buy-in selector reached $(($(p7_val queued) + $(p7_val skipped))) items, expected $P7_TRADEIN_HELD"
+ok "the buy-in selector reaches every item that buy-in put on the shelf"
+
+P7_TEMPLATE_ITEM="$(make_item "P7 Template Item" 1 300 1500)"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" \
+  "{\"items\":[\"$P7_TEMPLATE_ITEM\"],\"template\":\"retro_50x30\",\"copies\":2}"
+[ "$P7_STATUS" = "200" ] || fail "queueing with a named template returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+P7_TEMPLATE_JOB="$(p7_val "job_ids.0")"
+[ -n "$P7_TEMPLATE_JOB" ] || fail "no job id came back for the named-template queue"
+[ "$(p7_record label_jobs "$P7_TEMPLATE_JOB" copies)" = "2" ] || fail "the job does not carry the two copies asked for"
+P7_TEMPLATE_ID="$(p7_record label_jobs "$P7_TEMPLATE_JOB" template)"
+[ "$(curl -s "$BASE/api/collections/label_templates/records/$P7_TEMPLATE_ID" -H "Authorization: $STAFF_TOKEN" | jval key)" = "retro_50x30" ] \
+  || fail "the job did not use the template it was asked for"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_TEMPLATE_ITEM\"],\"template\":\"not-a-template\"}"
+[ "$P7_STATUS" = "400" ] || fail "an unknown template key returned $P7_STATUS, expected 400"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_TEMPLATE_ITEM\"],\"copies\":0}"
+[ "$P7_STATUS" = "400" ] || fail "zero copies returned $P7_STATUS, expected 400"
+ok "a named template and a copy count are honoured, and a template nobody has is refused"
+
+# The 500 cap, proved on a batch that really is over it: 501 items on a
+# shelf of their own, created through PocketBase's own Batch API.
+P7_BULK_LOCATION="$(curl -s -X POST "$BASE/api/collections/locations/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"P7 Bulk Shelf","type":"shelf"}' | jval id)"
+[ -n "$P7_BULK_LOCATION" ] || fail "could not create the bulk shelf"
+
+p7_bulk_items() {
+  # $1 how many, $2 the number to start their titles at
+  node -e '
+    const count = Number(process.argv[1]);
+    const offset = Number(process.argv[2]);
+    const requests = [];
+    for (let i = 0; i < count; i++) {
+      requests.push({
+        method: "POST",
+        url: "/api/collections/items/records",
+        body: {
+          kind: "sealed",
+          game: process.argv[3],
+          title: "P7 Bulk " + (offset + i),
+          qty: 1,
+          cost: 100,
+          price: 500,
+          status: "in_stock",
+          tax_scheme: "margin",
+          source: "supplier",
+          location: process.argv[4],
+        },
+      });
+    }
+    process.stdout.write(JSON.stringify({ requests: requests }));
+  ' "$1" "$2" "$GAME_ID" "$P7_BULK_LOCATION" >"$TMP_DIR/p7-batch.json"
+  local status
+  status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/batch" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    --data-binary @"$TMP_DIR/p7-batch.json")"
+  [ "$status" = "200" ] || fail "bulk-creating $1 items returned $status"
+}
+
+p7_bulk_items 200 1
+p7_bulk_items 200 201
+p7_bulk_items 101 401
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"location\":\"$P7_BULK_LOCATION\"}"
+[ "$P7_STATUS" = "400" ] || fail "queueing 501 labels returned $P7_STATUS, expected 400"
+grep -qF "That is 501 labels. Narrow the range to 500 or fewer." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a batch over the cap: $(cat "$TMP_DIR/p7.json")"
+[ "$(p6_count label_jobs "item.location='$P7_BULK_LOCATION'")" = "0" ] \
+  || fail "a batch refused for being over the cap queued some of its labels anyway"
+ok "a selector that reaches more than 500 items is refused with the figure, and queues nothing"
+
+# --- The claim, and what a printing device is handed --------------------
+p7_call POST /api/vault/labels/claim "$STAFF_TOKEN" '{"limit":2}'
+[ "$P7_STATUS" = "400" ] || fail "claiming with no printer name returned $P7_STATUS, expected 400"
+p7_call POST /api/vault/labels/claim "$STAFF_TOKEN" '{"printer":"Counter T003","limit":2}'
+[ "$P7_STATUS" = "200" ] || fail "claiming two labels returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(jlen jobs <"$TMP_DIR/p7.json")" = "2" ] || fail "a claim of 2 handed back $(jlen jobs <"$TMP_DIR/p7.json") jobs"
+P7_CLAIM_ONE="$(p7_val "jobs.0.id")"
+P7_CLAIM_TWO="$(p7_val "jobs.1.id")"
+[ -n "$(p7_val "jobs.0.item.sku")" ] || fail "a claimed job does not carry its item's SKU: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val "jobs.0.item.qr_text")" = "$(p7_val "jobs.0.item.sku")" ] \
+  || fail "a claimed job's qr_text is not the item's own SKU"
+[ -n "$(p7_val "jobs.0.template.key")" ] || fail "a claimed job does not name its template"
+[ "$(p7_val "jobs.0.template.width_mm")" -ge 1 ] || fail "a claimed job's template carries no width"
+[ "$(p7_val "jobs.0.copies")" -ge 1 ] || fail "a claimed job carries no copy count"
+[ "$(p7_record label_jobs "$P7_CLAIM_ONE" status)" = "printing" ] || fail "a claimed job is not marked printing"
+[ "$(p7_record label_jobs "$P7_CLAIM_ONE" printer)" = "Counter T003" ] || fail "a claimed job does not name the printer that took it"
+[ -n "$(p7_record label_jobs "$P7_CLAIM_ONE" claimed_at)" ] || fail "a claimed job carries no claimed_at"
+ok "a claim hands one device the oldest queued labels, with the item and template detail it has to print"
+
+p7_call POST /api/vault/labels/claim "$STAFF_TOKEN" '{"printer":"Back room T003","limit":2}'
+[ "$P7_STATUS" = "200" ] || fail "a second device claiming returned $P7_STATUS"
+P7_SECOND_CLAIM="$(cat "$TMP_DIR/p7.json")"
+echo "$P7_SECOND_CLAIM" | grep -qF "$P7_CLAIM_ONE" && fail "two devices were handed the same label job"
+echo "$P7_SECOND_CLAIM" | grep -qF "$P7_CLAIM_TWO" && fail "two devices were handed the same label job"
+ok "a second device claiming at the same counter gets different jobs, never the first device's"
+
+p7_call POST /api/vault/labels/claim "$STAFF_TOKEN" '{"printer":"Counter T003","limit":3,"templates":["retro_50x30"]}'
+[ "$P7_STATUS" = "200" ] || fail "claiming by template returned $P7_STATUS"
+P7_TEMPLATE_CLAIM_OK="yes"
+P7_TEMPLATE_CLAIM_COUNT="$(jlen jobs <"$TMP_DIR/p7.json")"
+P7_CLAIM_INDEX=0
+while [ "$P7_CLAIM_INDEX" -lt "$P7_TEMPLATE_CLAIM_COUNT" ]; do
+  [ "$(p7_val "jobs.$P7_CLAIM_INDEX.template.key")" = "retro_50x30" ] || P7_TEMPLATE_CLAIM_OK="no"
+  P7_CLAIM_INDEX=$((P7_CLAIM_INDEX + 1))
+done
+[ "$P7_TEMPLATE_CLAIM_COUNT" -ge 1 ] || fail "claiming by template handed back nothing at all"
+[ "$P7_TEMPLATE_CLAIM_OK" = "yes" ] || fail "claiming by template handed back a job for another template"
+ok "a device that can only load one label size claims only that size"
+
+p7_call POST "/api/vault/labels/$P7_CLAIM_ONE/printed" "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "200" ] || fail "marking a label printed returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val "job.status")" = "printed" ] || fail "a printed label reads '$(p7_val "job.status")'"
+[ -n "$(p7_val "job.printed_at")" ] || fail "a printed label carries no printed_at"
+p7_call POST "/api/vault/labels/$P7_CLAIM_ONE/printed" "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "409" ] || fail "marking an already-printed label printed again returned $P7_STATUS, expected 409"
+ok "a label the printer took is marked printed, and cannot be printed twice by accident"
+
+P7_FAIL_ITEM="$(make_item "P7 Failing Label Item" 1 300 1500)"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_FAIL_ITEM\"]}"
+P7_FAIL_JOB="$(p7_val "job_ids.0")"
+[ -n "$P7_FAIL_JOB" ] || fail "could not queue the failing label's job"
+p7_call POST "/api/vault/labels/$P7_FAIL_JOB/failed" "$STAFF_TOKEN" '{"error":"Printer out of labels"}'
+[ "$P7_STATUS" = "200" ] || fail "reporting a failed label returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val "job.status")" = "queued" ] || fail "a first failure left the label '$(p7_val "job.status")', expected queued"
+[ "$(p7_val "job.attempts")" = "1" ] || fail "a first failure counted $(p7_val "job.attempts") attempts"
+[ "$(p7_val "job.error")" = "Printer out of labels" ] || fail "the failed label does not carry the reason"
+p7_call POST "/api/vault/labels/$P7_FAIL_JOB/failed" "$STAFF_TOKEN" '{"error":"Printer out of labels"}'
+[ "$(p7_val "job.status")" = "queued" ] || fail "a second failure gave up too early"
+p7_call POST "/api/vault/labels/$P7_FAIL_JOB/failed" "$STAFF_TOKEN" '{"error":"Printer out of labels"}'
+[ "$(p7_val "job.status")" = "failed" ] || fail "a third failure left the label '$(p7_val "job.status")', expected failed"
+[ "$(p7_val "job.attempts")" = "3" ] || fail "the failed label counted $(p7_val "job.attempts") attempts, expected 3"
+ok "a label that will not print goes back in the queue twice and stops at the third failure"
+
+p7_call POST "/api/vault/labels/$P7_FAIL_JOB/requeue" "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "200" ] || fail "requeueing a failed label returned $P7_STATUS"
+[ "$(p7_val "job.status")" = "queued" ] || fail "a requeued label reads '$(p7_val "job.status")'"
+[ "$(p7_val "job.attempts")" = "0" ] || fail "a requeued label kept its attempts"
+[ "$(p7_val "job.error")" = "" ] || fail "a requeued label kept its error"
+p7_call POST "/api/vault/labels/$P7_FAIL_JOB/requeue" "$STAFF_TOKEN" '{}'
+[ "$P7_STATUS" = "409" ] || fail "requeueing an already-queued label returned $P7_STATUS, expected 409"
+ok "a failed label can be put back in the queue once it is worth another try, and only from failed or cancelled"
+
+P7_STUCK_ITEM="$(make_item "P7 Stuck Label Item" 1 300 1500)"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_STUCK_ITEM\"],\"template\":\"customer_card_80x50\"}"
+P7_STUCK_JOB="$(p7_val "job_ids.0")"
+p7_call POST /api/vault/labels/claim "$STAFF_TOKEN" '{"printer":"Dead PC","limit":5,"templates":["customer_card_80x50"]}'
+[ "$(p7_record label_jobs "$P7_STUCK_JOB" status)" = "printing" ] || fail "the stuck-label check's job was not claimed"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/label_jobs/records/$P7_STUCK_JOB" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"claimed_at\":\"$(node -e 'process.stdout.write(new Date(Date.now() - 20 * 60000).toISOString());')\"}"
+p6_run_cron labels_unstick
+p7_wait_field label_jobs "$P7_STUCK_JOB" status queued "the unstick cron did not put a job a dead device claimed back in the queue"
+[ "$(p7_record label_jobs "$P7_STUCK_JOB" error)" = "The printer stopped answering" ] \
+  || fail "the unstuck job does not say why: '$(p7_record label_jobs "$P7_STUCK_JOB" error)'"
+[ "$(p7_record label_jobs "$P7_STUCK_JOB" attempts)" = "1" ] || fail "the unstuck job did not count the attempt"
+[ "$(p7_record label_jobs "$P7_STUCK_JOB" printer)" = "" ] || fail "the unstuck job still names the device that died holding it"
+p6_run_cron labels_unstick
+sleep 1.5
+[ "$(p7_record label_jobs "$P7_STUCK_JOB" attempts)" = "1" ] || fail "a second labels_unstick run counted another attempt"
+ok "a label a device claimed and never printed goes back in the queue after ten minutes, once"
+
+# --- 25k. Who may reach any of this -------------------------------------
+P7_CUSTOMER_ID="$(p5_make_customer "P7 Nosy Customer" "p7-nosy@local.test")"
+P7_CUSTOMER_TOKEN="$(p5_impersonate "$P7_CUSTOMER_ID")"
+[ -n "$P7_CUSTOMER_TOKEN" ] || fail "could not impersonate the Phase 7 customer"
+
+p7_customer_refused() {
+  # $1 method, $2 path, $3 body (optional)
+  local status
+  if [ -n "${3:-}" ]; then
+    status="$(curl -s -o /dev/null -w '%{http_code}' -X "$1" "$BASE$2" \
+      -H "Authorization: $P7_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "$3")"
+  else
+    status="$(curl -s -o /dev/null -w '%{http_code}' -X "$1" "$BASE$2" -H "Authorization: $P7_CUSTOMER_TOKEN")"
+  fi
+  case "$status" in
+    401 | 403 | 404) return 0 ;;
+    *) fail "a customer token reached $1 $2 with $status" ;;
+  esac
+}
+
+p7_customer_refused GET /api/vault/sumup/readers
+p7_customer_refused POST /api/vault/sumup/readers '{"pairing_code":"SOLO1234"}'
+p7_customer_refused DELETE "/api/vault/sumup/readers/$P7_READER_ID"
+p7_customer_refused POST /api/vault/sumup/checkouts '{"amount":100,"sale_client_id":"p7-nosy"}'
+p7_customer_refused GET "/api/vault/sumup/checkouts/$P7_PAID_CHECKOUT"
+p7_customer_refused POST "/api/vault/sumup/checkouts/$P7_PAID_CHECKOUT/cancel" '{}'
+p7_customer_refused POST /api/vault/prices/rollup '{}'
+p7_customer_refused POST /api/vault/labels/queue "{\"items\":[\"$P7_LABEL_ITEM_A\"]}"
+p7_customer_refused POST /api/vault/labels/claim '{"printer":"Nosy"}'
+p7_customer_refused POST "/api/vault/labels/$P7_FAIL_JOB/printed" '{}'
+p7_customer_refused POST "/api/vault/labels/$P7_FAIL_JOB/failed" '{"error":"x"}'
+p7_customer_refused POST "/api/vault/labels/$P7_FAIL_JOB/requeue" '{}'
+ok "a customer token reaches none of the Phase 7 routes"
+
+# A plain string rule is applied as a query filter, so a customer's own
+# list call comes back 200 with nothing in it rather than 403; viewing one
+# specific row by id is where the rule shows up as a 404 (pb/README.md's
+# "API rules" section). Both are asserted.
+[ "$(curl -s "$BASE/api/collections/sumup_checkouts/records" -H "Authorization: $P7_CUSTOMER_TOKEN" | jval totalItems)" = "0" ] \
+  || fail "a customer token listed someone's card payments"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/sumup_checkouts/records/$P7_PAID_CHECKOUT" -H "Authorization: $P7_CUSTOMER_TOKEN")" = "404" ] \
+  || fail "a customer token read a card payment row by id"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/sumup_checkouts/records" -H "Authorization: $STAFF_TOKEN")" = "200" ] \
+  || fail "a staff token cannot list sumup_checkouts, which the Sell screen needs"
+P7_STAFF_CREATE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/sumup_checkouts/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sale_client_id":"p7-forged","amount":1,"status":"paid"}')"
+[ "$P7_STAFF_CREATE" = "400" ] || [ "$P7_STAFF_CREATE" = "403" ] \
+  || fail "a staff token creating a sumup_checkouts row got $P7_STAFF_CREATE, expected it to be refused"
+P7_STAFF_PATCH="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/sumup_checkouts/records/$P7_PENDING_CHECKOUT" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"status":"paid"}')"
+[ "$P7_STAFF_PATCH" = "403" ] || [ "$P7_STAFF_PATCH" = "404" ] \
+  || fail "a staff token marked a card payment paid through the collection API ($P7_STAFF_PATCH)"
+P7_STAFF_DELETE="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/collections/sumup_checkouts/records/$P7_PENDING_CHECKOUT" \
+  -H "Authorization: $STAFF_TOKEN")"
+[ "$P7_STAFF_DELETE" = "403" ] || [ "$P7_STAFF_DELETE" = "404" ] \
+  || fail "a staff token deleted a card payment row ($P7_STAFF_DELETE)"
+[ "$(p7_record sumup_checkouts "$P7_PENDING_CHECKOUT" status)" = "pending" ] \
+  || fail "the card payment row changed under those refused writes"
+ok "staff can read card payments but never write one: only the routes mark a payment paid"
+
+p7_call DELETE "/api/vault/sumup/readers/$P7_READER_ID" "$STAFF_TOKEN"
+[ "$P7_STATUS" = "204" ] || fail "unpairing the default reader returned $P7_STATUS, expected 204"
+[ "$(p7_settings_sumup default_reader_id)" = "" ] || fail "unpairing the default reader left it set as the default"
+[ "$(p6_count audit_log "action='sumup_reader_removed'")" -ge 1 ] || fail "unpairing a reader wrote no sumup_reader_removed audit row"
+p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":100,"sale_client_id":"p7-no-reader"}'
+[ "$P7_STATUS" = "422" ] || fail "a checkout with no reader paired returned $P7_STATUS, expected 422"
+grep -qF "No card reader is paired. Pair one under Settings." "$TMP_DIR/p7.json" \
+  || fail "wrong message for a shop with no reader paired: $(cat "$TMP_DIR/p7.json")"
+ok "unpairing the default reader clears it, is audited, and the next payment says to pair one"
+
+kill "$P7_BACKDATE_PID" 2>/dev/null || true
+wait "$P7_BACKDATE_PID" 2>/dev/null || true
+P7_BACKDATE_PID=""
 
 echo
 echo "All checks passed ($PASS_COUNT)."

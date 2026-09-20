@@ -74,9 +74,49 @@ ORGSTA T003: direct thermal, TSPL2 command language, handles label stock from 20
 
 `/labels/print?job=…` renders the label with `@page { size: 40mm 20mm; margin: 0 }` (or the matching size for the label template), one label per printed page. The counter PC has the T003's Windows driver installed and runs Chrome with `--kiosk-printing`, so printing a label is one click with no print dialog. This is the default path from launch.
 
-## Printing path 2: WebUSB TSPL2, later phase
+## Printing path 2: WebUSB TSPL2, as built
 
-A WebUSB sender running in the counter PC's Chrome talks TSPL2 directly to the printer (`SIZE`, `GAP`, `DENSITY`, `CLS`, `QRCODE`, `TEXT`, `PRINT`), driven by the `label_jobs` queue. This lets a phone queue a label that the counter PC then prints, without the phone needing its own driver. Windows needs the WinUSB binding set up through Zadig first (see the deployment runbook); macOS, Linux and ChromeOS work without that step.
+A WebUSB sender running in the counter PC's Chrome talks TSPL2 straight to the printer, driven by the `label_jobs` queue. A phone in the back room queues a label and the counter PC prints it, with no driver on the phone and nothing keyed twice.
+
+**The commands.** `apps/web/src/features/printing/tspl.ts` turns the same `labelLayout` result the browser print page draws into the bytes the T003 reads, so the two paths can never drift:
+
+```
+SIZE 40 mm,20 mm
+GAP 2 mm,0 mm
+DENSITY 8
+CODEPAGE 850
+CLS
+QRCODE 12,28,L,5,A,0,"GGS7F3K2B"
+TEXT 129,39,"2",0,1,1,"Charizard ex"
+TEXT 129,64,"1",0,1,1,"SV151 199/165 Holo"
+TEXT 129,81,"1",0,1,1,"NM"
+TEXT 129,98,"3",0,1,1,"£324.99"
+TEXT 292,136,"1",0,1,1,"GG"
+PRINT 1,1
+```
+
+- Every position is in dots, converted once from the layout's millimetres at 203 dpi (`DOTS_PER_MM`).
+- `CODEPAGE 850` is what makes the pound sign a single byte, `0x9C`. Everything else goes out as ASCII: an accent, a curly quote or a middot in a title is written in the plain letters it stands for, control characters are dropped, and `"` and `\` are escaped, so nothing in a card name can ever be read as a command.
+- Type is set in the printer's own bitmap fonts (`1` at 8 x 12 dots up to `4` at 24 x 32), choosing the font and multiplier nearest the millimetre size the layout asked for and preferring a larger cell over a blown-up small one. A line longer than its column is cut with a plain ellipsis rather than left to run off the label.
+- The QR cell is sized so the symbol lands on the size in the table above: 21 modules at 5 dots is 105 of the 110 the 40 x 20 label asks for, and a customer card's portal link is a bigger symbol at a smaller cell.
+- The G mark is a drawn shape, so a thermal label carries the two letters it stands for, in the smallest font, in the corner the browser path puts the mark in.
+
+**The sender.** `features/printing/usb.ts` asks for a device with no vendor filter (the T003's ids are not published), opens it, selects the first configuration, claims the interface whose class is 7, or else the first with a bulk OUT endpoint, and writes the bytes to it. Chrome remembers the permission, so `getDevices()` finds the printer again the next morning with nothing to press. Failures are reported in words: no WebUSB in this browser, the driver not bound on Windows, a device that is not a printer, and a cable pulled out part way through a label.
+
+**The queue.** The Labels screen claims jobs through `POST /api/vault/labels/claim` under the device's own name (`Counter PC` unless it is renamed), prints each one and marks it printed or failed. A realtime subscription on `label_jobs` is the quick trigger and a five-second poll runs underneath it. A job another device is holding reads "Printing on <device>"; three failed attempts leave it `failed` with the reason, and "Queue again" puts it back. A device can be told which roll is loaded, in which case it claims only labels that size and leaves the rest for whoever has that roll on.
+
+### Setting the counter PC up on Windows
+
+macOS, Linux and ChromeOS need none of this: Chrome can open the printer as it is. Windows will not let a browser open a device that is bound to a vendor driver, so the T003 is bound to WinUSB first.
+
+1. Print a test label through the Windows driver first, so it is known to work, then close anything holding the printer (the driver's own queue, any label software).
+2. Download Zadig (zadig.akeo.ie), run it as an administrator, and tick Options, then List All Devices.
+3. Pick the T003 in the list. Check the USB id shown matches the printer and not another device.
+4. Choose **WinUSB** as the driver to install, and press Replace Driver. It takes a few seconds.
+5. Open Chrome, go to the Labels screen, press Connect printer and pick the T003 in the list Chrome shows. Chrome asks once per device, per browser profile, and remembers it after that.
+6. Turn Auto-print on. The switch is remembered, so the counter PC picks the queue up again by itself after a restart.
+
+Binding WinUSB replaces the Windows driver for that device, so printing path 1 (the browser print dialog) stops working on that PC until the driver is put back through Device Manager. Decide which path the counter PC is on rather than switching between them.
 
 ## Scanner configuration
 

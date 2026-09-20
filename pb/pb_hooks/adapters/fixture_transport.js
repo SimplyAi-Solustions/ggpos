@@ -99,6 +99,133 @@ function resolveNowPlaceholders(json) {
   return json;
 }
 
+// -- The Solo reader fixtures (see the Readers API block in respond()) ---
+
+/** The outcome a checkout's own description asks for: the words a caller puts in it. */
+function readerOutcomeFrom(text) {
+  var lower = String(text || "").toLowerCase();
+  var tags = ["pending", "mismatch", "failed", "unknown"];
+  for (var i = 0; i < tags.length; i++) {
+    if (lower.indexOf(tags[i]) >= 0) return tags[i];
+  }
+  return "paid";
+}
+
+/** Integer pence as the decimal string SumUp's own transactions API answers with. */
+function penceToDecimal(pence) {
+  var whole = Math.floor(Math.abs(pence) / 100);
+  var rest = Math.abs(pence) % 100;
+  return (pence < 0 ? "-" : "") + whole + "." + (rest < 10 ? "0" + rest : String(rest));
+}
+
+/** `{ outcome, pence, nonce }` read back out of a `ctid-<outcome>-<pence>-<nonce>` id. */
+function readerIdParts(id) {
+  var parts = String(id || "").split("-");
+  return {
+    outcome: parts[1] || "paid",
+    pence: Number(parts[2] || 0),
+    nonce: parts[3] || "0",
+  };
+}
+
+function readerObject(id, name) {
+  return {
+    id: id,
+    name: name || "Counter Solo",
+    status: "paired",
+    device: { identifier: "SOLO-" + id, model: "solo" },
+    created_at: "2026-09-20T09:00:00Z",
+    updated_at: "2026-09-20T09:00:00Z",
+  };
+}
+
+/** Every /readers call: list, get one, pair, unpair, checkout, terminate. */
+function readersRespond(call, url) {
+  var method = call.method || "GET";
+  var body = {};
+  try {
+    body = call.body ? JSON.parse(call.body) : {};
+  } catch (err) {
+    body = {};
+  }
+
+  if (method === "POST" && url.indexOf("/terminate") >= 0) {
+    return { statusCode: 200, json: {}, headers: {}, body: null };
+  }
+
+  if (method === "POST" && url.indexOf("/checkout") >= 0) {
+    // The reader id itself carries the two failure cases, so a route's
+    // own refusals can be exercised without a second fixture mode.
+    if (url.indexOf("reader-unknown") >= 0) return { statusCode: 404, json: {}, headers: {}, body: null };
+    if (url.indexOf("reader-offline") >= 0) return { statusCode: 422, json: {}, headers: {}, body: null };
+    var amount = body.total_amount || {};
+    var pence = Number(amount.value || 0);
+    var outcome = readerOutcomeFrom(body.description);
+    var nonce = Math.floor(Math.random() * 1000000000).toString(36);
+    var suffix = outcome + "-" + pence + "-" + nonce;
+    return ok({ data: { checkout_id: "chk-" + suffix, client_transaction_id: "ctid-" + suffix } });
+  }
+
+  if (method === "GET" && url.indexOf("/checkout/") >= 0) {
+    var checkoutId = url.slice(url.indexOf("/checkout/") + "/checkout/".length);
+    var parts = readerIdParts(checkoutId);
+    var status = "PENDING";
+    if (parts.outcome === "paid" || parts.outcome === "mismatch") status = "SUCCESSFUL";
+    if (parts.outcome === "failed") status = "FAILED";
+    return ok({ data: { status: status, client_transaction_id: "ctid-" + checkoutId.slice(4) } });
+  }
+
+  if (method === "DELETE") return { statusCode: 204, json: null, headers: {}, body: null };
+
+  if (method === "POST") {
+    var code = String(body.pairing_code || "");
+    if (code.length < 8 || code.toUpperCase().indexOf("BAD") >= 0) {
+      return { statusCode: 422, json: { message: "invalid pairing code" }, headers: {}, body: null };
+    }
+    return {
+      statusCode: 201,
+      json: readerObject("reader-" + code.toLowerCase(), body.name || "Counter Solo"),
+      headers: {},
+      body: null,
+    };
+  }
+
+  if (url.indexOf("/readers/") >= 0) {
+    var readerId = url.slice(url.indexOf("/readers/") + "/readers/".length);
+    return ok(readerObject(readerId, "Counter Solo"));
+  }
+  return ok({ items: [readerObject("reader-solo-1", "Counter Solo"), readerObject("reader-solo-2", "Back room Solo")] });
+}
+
+/** The transactions lookup by client_transaction_id, answered from the id itself. */
+function readerTransactionRespond(call, url) {
+  var match = /client_transaction_id=([^&]+)/.exec(url);
+  var id = match ? decodeURIComponent(match[1]) : "";
+  var parts = readerIdParts(id);
+  if (parts.outcome === "unknown") {
+    // SumUp has never heard of this one: the reader has not reported yet.
+    return { statusCode: 404, json: {}, headers: {}, body: null };
+  }
+  var status = "PENDING";
+  if (parts.outcome === "paid" || parts.outcome === "mismatch") status = "SUCCESSFUL";
+  if (parts.outcome === "failed") status = "FAILED";
+  // A mismatch answers with £5.00 more than the reader was asked for, so
+  // a route that compares the two figures has something to catch.
+  var pence = parts.outcome === "mismatch" ? parts.pence + 500 : parts.pence;
+  var transaction = {
+    id: "txn-" + parts.outcome + "-" + parts.pence + "-" + parts.nonce,
+    transaction_code: "TFIX" + String(parts.pence) + parts.nonce.toUpperCase(),
+    amount: penceToDecimal(pence),
+    currency: "GBP",
+    status: status,
+    payment_type: "POS",
+    timestamp: new Date().toISOString(),
+    client_transaction_id: id,
+  };
+  if (status === "SUCCESSFUL") transaction.card = { last_4_digits: "4242", type: "VISA" };
+  return ok(transaction);
+}
+
 function refuse(call, why) {
   var http = require(__hooks + "/adapters/http.js");
   throw new Error(
@@ -234,6 +361,25 @@ function respond(call) {
   }
   if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-mixed-0005") >= 0) {
     return ok(resolveNowPlaceholders(loadFixture("sumup_HANDWRITTEN_transaction_mixed.json")));
+  }
+
+  // -- SumUp Readers API (the Solo checkouts, pb_hooks/lib/readers.js) ----
+  //    Answered from this module rather than a fixture file, because what
+  //    a reader checkout has to say back is a function of the request:
+  //    the amount that was asked for, and which of the four outcomes the
+  //    caller wants to see. Both travel in the checkout's own
+  //    `description`, which is the only field pb/scripts/check.sh can put
+  //    a marker in, and both come back inside the `client_transaction_id`
+  //    the checkout answers with (`ctid-<outcome>-<pence>`), which is the
+  //    id the transactions lookup below is then asked about. Nothing is
+  //    remembered between calls: every answer is derived from the id in
+  //    front of it, so the same lookup gives the same answer however many
+  //    times a poll, a callback and the expiry cron each ask it.
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("/readers") >= 0) {
+    return readersRespond(call, url);
+  }
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("client_transaction_id=") >= 0) {
+    return readerTransactionRespond(call, url);
   }
 
   return refuse(call, "");

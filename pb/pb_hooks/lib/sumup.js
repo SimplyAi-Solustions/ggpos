@@ -7,6 +7,10 @@
  *
  * Matching, in order, and only for a `SUCCESSFUL` transaction that is not
  * a refund (see STATUS below):
+ *  0. A `sumup_checkouts` row whose `transaction_id` is this one and
+ *     which a sale has already used (Phase 7, the Solo card reader):
+ *     SumUp's own id for a payment this app itself started and watched,
+ *     so it is tried before either inference below.
  *  1. A product name prefixed with one of our own SKUs (exactly the form
  *     GET /api/vault/exports/sumup.csv writes into "Item name") - the
  *     item it names is looked up directly, then the sale (not already
@@ -90,6 +94,30 @@ function readSinceMarker(app) {
 function writeSinceMarker(app, isoString) {
   var store = require(__hooks + "/adapters/statestore.js").forApp(app);
   store.set(SINCE_MARKER_KEY, isoString, "");
+}
+
+/**
+ * The sale a Solo reader checkout already paid for, when this
+ * transaction is that checkout's own (Phase 7). This is the surest match
+ * there is - SumUp's own transaction id, recorded on the checkout row by
+ * the callback that marked it paid - so the pull tries it before either
+ * of the two rules below, which are inferences from a name or from an
+ * amount and a time.
+ */
+function saleIdForCheckout(app, transactionId, alreadyMatchedIds) {
+  if (!transactionId) return null;
+  var row = null;
+  try {
+    row = app.findFirstRecordByFilter("sumup_checkouts", 'transaction_id = {:txn} && sale != ""', {
+      txn: transactionId,
+    });
+  } catch (err) {
+    return null;
+  }
+  if (!row) return null;
+  var saleId = row.getString("sale");
+  if (!saleId || alreadyMatchedIds.indexOf(saleId) >= 0) return null;
+  return saleId;
 }
 
 /** The encoded SKU a SumUp product name starts with, or null when it does not start with a valid one. */
@@ -352,7 +380,7 @@ function pull(app, actorId, ip) {
     } else if (effectiveStatus !== STATUS_SUCCESSFUL) {
       // Stored, but never matched or counted (FAILED, PENDING, ...).
     } else {
-      var saleId = null;
+      var saleId = saleIdForCheckout(app, summary.id, claimedSaleIds);
       var productsForMatch = products || [];
       for (var p = 0; p < productsForMatch.length && !saleId; p++) {
         var candidateSku = skuFromProductName(productsForMatch[p] && productsForMatch[p].name);

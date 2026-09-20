@@ -236,5 +236,63 @@ test.describe("settings", () => {
     ).toBeVisible()
     await expect(page.getByLabel(/api key/i)).toHaveCount(0)
     await expect(page.getByLabel(/vapid/i)).toHaveCount(0)
+    // The card reader is paired with a code off the reader, never a key.
+    await expect(page.getByLabel("Pairing code")).toBeVisible()
+    await expect(page.getByLabel(/sumup key/i)).toHaveCount(0)
+  })
+
+  // --- The card reader (Phase 7) ---
+  test("pairs a card reader and chooses which one takes the money", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await go(page, "Settings")
+
+    const section = page.getByTestId("card-reader")
+    await expect(section).toBeVisible()
+    // The demo shop has one Solo on the counter already.
+    await expect(section.getByTestId("reader-list").locator("li")).toHaveCount(1)
+    await expect(section).toContainText("Counter Solo")
+    await expect(section).toContainText("In use")
+
+    // A code that is not eight or nine characters is refused in SumUp's words.
+    await section.getByLabel("Pairing code").fill("ABC")
+    await section.getByTestId("pair-reader").click()
+    await expect(
+      section.getByText(
+        "That pairing code was not accepted. Read the code off the reader again; it changes each time."
+      )
+    ).toBeVisible()
+
+    await section.getByLabel("Pairing code").fill("QWER5678")
+    await section.getByLabel("Name").fill("Back counter")
+    await section.getByTestId("pair-reader").click()
+
+    await expect(section.getByTestId("reader-note")).toHaveText(
+      "Back counter is paired."
+    )
+    await expect(section.getByTestId("reader-list").locator("li")).toHaveCount(2)
+
+    // The new one takes over only when it is chosen.
+    await section
+      .getByRole("listitem")
+      .filter({ hasText: "Back counter" })
+      .getByRole("button", { name: "Use this reader" })
+      .click()
+    await expect(section.getByTestId("reader-note")).toHaveText(
+      "Card payments go to Back counter."
+    )
+    await expect(
+      section.getByRole("listitem").filter({ hasText: "Back counter" })
+    ).toContainText("In use")
+
+    // And removing it puts the counter Solo back in use.
+    await section
+      .getByRole("listitem")
+      .filter({ hasText: "Back counter" })
+      .getByRole("button", { name: "Remove Back counter" })
+      .click()
+    await expect(section.getByTestId("reader-list").locator("li")).toHaveCount(1)
+    await expect(section).toContainText("Counter Solo")
   })
 })

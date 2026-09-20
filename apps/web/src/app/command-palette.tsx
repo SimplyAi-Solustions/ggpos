@@ -22,6 +22,8 @@ type PaletteAction = {
 export interface CommandPaletteProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** The shortcut overlay, for anybody who reached for the mouse instead. */
+  onShowShortcuts: () => void
 }
 
 /** Nothing is priced until Phase 2 joins the price snapshots. */
@@ -61,7 +63,11 @@ function CardRow({ card }: { card: CardHit }) {
  * Filtering is done here rather than by cmdk so that catalogue hits, which
  * arrive already matched by the server, are never filtered a second time.
  */
-export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+  onShowShortcuts,
+}: CommandPaletteProps) {
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   const [query, setQuery] = React.useState("")
@@ -106,6 +112,15 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         run: () => go("/counter/exports"),
       },
       {
+        id: "shortcuts",
+        label: "Keyboard shortcuts",
+        hint: "?",
+        run: () => {
+          close()
+          onShowShortcuts()
+        },
+      },
+      {
         id: "night",
         label: "Toggle night mode",
         run: () => {
@@ -123,7 +138,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         },
       },
     ],
-    [close, go, navigate, setTheme, theme]
+    [close, go, navigate, onShowShortcuts, setTheme, theme]
   )
 
   // --- Customers and trade ---

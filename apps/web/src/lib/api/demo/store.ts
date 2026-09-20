@@ -434,6 +434,20 @@ export function ensureSeeded() {
     notes: "",
   })
 
+  /**
+   * The shelf stock came in on the first demo buy-in, on a day the counter
+   * can then reprint by number or by date. The two sold rows keep their own
+   * history: bulk reprint only ever takes stock the shop still holds.
+   */
+  for (const item of [items[0], items[1]]) {
+    if (!item) continue
+    item.trade_in = "trade_demo_1"
+    item.source = "trade_in"
+    if (!item.acquired_at) item.acquired_at = todayAt(9, 5)
+  }
+  heldPidgeot.trade_in = "trade_demo_1"
+  heldPidgeot.acquired_at = yesterdayAt(16, 20)
+
   for (const [index, item] of [items[0], items[1]].entries()) {
     if (!item) continue
     demoLabelJobs.push({

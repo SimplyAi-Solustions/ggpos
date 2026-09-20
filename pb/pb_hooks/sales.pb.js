@@ -23,6 +23,13 @@
  * replayed request carrying one that already exists returns that sale's
  * own body again rather than creating a second sale.
  *
+ * Since Phase 7 it accepts `sumup_checkout` too - the card payment a
+ * paired Solo reader has already taken (lib/readers.js). The checkout has
+ * to be `paid`, unused, and for exactly the card part of this sale; on
+ * success the sale carries the reader's own transaction code as
+ * `sumup_ref` and the two rows point at each other, all inside the same
+ * transaction as the rest of the sale.
+ *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
@@ -58,6 +65,7 @@ routerAdd(
     const balances = require(`${__hooks}/lib/balances.js`);
     const referralsLib = require(`${__hooks}/lib/referrals.js`);
     const rewardsLib = require(`${__hooks}/lib/rewards.js`);
+    const readersLib = require(`${__hooks}/lib/readers.js`);
     const notifyLib = require(`${__hooks}/lib/notify.js`);
     const saleline = require(`${__hooks}/lib/shared/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
@@ -235,6 +243,30 @@ routerAdd(
         `The payment adds up to ${money.formatGBP(splitTotal)} but the sale comes to ${money.formatGBP(total)}. Adjust the split.`,
         null
       );
+    }
+
+    // -----------------------------------------------------------------
+    // The card payment a Solo reader has already taken (Phase 7)
+    //
+    // `sumup_checkout` is the row POST /api/vault/sumup/checkouts made
+    // and the reader's own callback marked `paid` (lib/readers.js). It
+    // has to be paid, unused, and for exactly the card part of this sale
+    // - checked here for the fast refusal and again inside the
+    // transaction below against the live row, so two tills cannot both
+    // spend one payment.
+    // -----------------------------------------------------------------
+    const checkoutId = util.asStr(body.sumup_checkout);
+    let checkout = null;
+    if (checkoutId) {
+      try {
+        checkout = e.app.findRecordById("sumup_checkouts", checkoutId);
+      } catch (err) {
+        throw e.error(422, "That card payment was not found. Take the payment on the reader again.", null);
+      }
+      const checkoutRefusal = readersLib.saleRefusal(e.app, checkout, split.sumup_card);
+      if (checkoutRefusal) {
+        throw e.error(checkoutRefusal.status, checkoutRefusal.message, null);
+      }
     }
 
     // -----------------------------------------------------------------
@@ -473,6 +505,20 @@ routerAdd(
           }
         }
 
+        // The card payment is re-checked against the live row here, not
+        // the one read before the transaction opened, so a checkout that
+        // paid for another sale in the meantime cannot pay for this one
+        // too.
+        let liveCheckout = null;
+        if (checkout) {
+          liveCheckout = txApp.findRecordById("sumup_checkouts", checkout.id);
+          const liveRefusal = readersLib.saleRefusal(txApp, liveCheckout, split.sumup_card);
+          if (liveRefusal) {
+            halt = { status: liveRefusal.status, message: liveRefusal.message };
+            throw new Error(halt.message);
+          }
+        }
+
         const number = counters.nextNumber(txApp, "sale");
 
         const sale = new Record(txApp.findCollectionByNameOrId("sales"), {
@@ -483,7 +529,10 @@ routerAdd(
           total: total,
           payment: payment,
           payment_split: split,
-          sumup_ref: util.asStr(body.sumup_ref),
+          // The reader's own transaction code is the reference when there
+          // is one: it is what the SumUp app and the reconcile screen
+          // both show, and it cannot be mistyped.
+          sumup_ref: liveCheckout ? liveCheckout.getString("transaction_code") : util.asStr(body.sumup_ref),
           points_earned: pointsEarned,
           refunded_total: 0,
           status: "complete",
@@ -492,7 +541,13 @@ routerAdd(
         if (session) sale.set("cash_session", session.id);
         if (discountSource) sale.set("discount_source", discountSource);
         if (clientId) sale.set("client_id", clientId);
+        if (liveCheckout) sale.set("sumup_checkout", liveCheckout.id);
         txApp.save(sale);
+
+        if (liveCheckout) {
+          liveCheckout.set("sale", sale.id);
+          txApp.save(liveCheckout);
+        }
 
         const saleLines = txApp.findCollectionByNameOrId("sale_lines");
         for (let i = 0; i < planned.length; i++) {
@@ -628,6 +683,10 @@ routerAdd(
           meta.reward_redemption = redemption.id;
           meta.reward = redemption.getString("reward");
           meta.discount = saleDiscount;
+        }
+        if (liveCheckout) {
+          meta.sumup_checkout = liveCheckout.id;
+          meta.sumup_ref = liveCheckout.getString("transaction_code");
         }
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,

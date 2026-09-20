@@ -30,6 +30,10 @@ type ExpandedJob = {
   copies?: number
   status?: LabelJobStatus
   created?: string
+  /** Phase 7's queue fields: who has it, and why it last failed. */
+  printer?: string
+  error?: string
+  attempts?: number
   expand?: { item?: StockItemRecord; template?: TemplateRecord }
 }
 
@@ -49,6 +53,9 @@ function toDetail(job: ExpandedJob): LabelJobDetail {
     condition: item?.condition ?? "",
     price: item?.price ?? 0,
     requestedAt: job.created ?? "",
+    printer: job.printer ?? "",
+    error: job.error ?? "",
+    attempts: job.attempts ?? 0,
   }
 }
 
@@ -89,13 +96,19 @@ export async function queueLabels(
   return created
 }
 
-/** The queue screen's list. Blank status means every job. */
+/**
+ * The queue screen's list. Blank means every job; a list of statuses reads
+ * as "any of these", which is what the waiting view wants: a job somebody
+ * else's printer is holding is still waiting as far as the counter is
+ * concerned.
+ */
 export async function listLabelJobs(
-  status?: LabelJobStatus
+  status?: LabelJobStatus | LabelJobStatus[]
 ): Promise<LabelJobDetail[]> {
-  if (isDemo()) return demo.list(status)
+  const wanted = status ? (Array.isArray(status) ? status : [status]) : []
+  if (isDemo()) return demo.list(wanted)
   const jobs = await pb.collection("label_jobs").getFullList<ExpandedJob>({
-    filter: status ? `status = "${quote(status)}"` : "",
+    filter: wanted.map((one) => `status = "${quote(one)}"`).join(" || "),
     expand: JOB_EXPAND,
     sort: "-created",
   })

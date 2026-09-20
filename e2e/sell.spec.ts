@@ -176,6 +176,61 @@ test.describe("selling at the counter", () => {
     await expect(sheet.getByRole("button", { name: "Cash", exact: true })).toBeVisible()
   })
 
+  test("takes the card payment on the reader and completes the sale", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await expect(page.getByTestId("sumup-amount")).toHaveText("£324.99")
+
+    await page.getByTestId("take-card-payment").click()
+
+    const sheet = page.getByTestId("card-payment-sheet")
+    await expect(sheet).toBeVisible()
+    await expect(sheet).toContainText("Counter Solo")
+    await expect(sheet.getByTestId("card-payment-amount")).toHaveText("£324.99")
+    await expect(sheet.getByTestId("card-payment-status")).toContainText(
+      "Waiting for the reader."
+    )
+
+    // The reader answers, and the sale completes against that checkout.
+    await expect(sheet).toBeHidden({ timeout: 15_000 })
+    const done = page.getByTestId("sale-done")
+    await expect(done).toBeVisible()
+    await expect(done).toContainText(/GG-S-\d{6}/)
+    await expect(done).toContainText("£324.99")
+  })
+
+  test("says why the card was declined, and offers another go", async ({ page }) => {
+    // The demo reader declines the next card.
+    await page.addInitScript(() => {
+      window.localStorage.setItem("gg-demo-reader", "fail")
+    })
+    await signIn(page)
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await page.getByTestId("take-card-payment").click()
+
+    const sheet = page.getByTestId("card-payment-sheet")
+    await expect(sheet.getByTestId("card-payment-status")).toContainText(
+      "The card was declined.",
+      { timeout: 15_000 }
+    )
+    await expect(sheet.getByRole("button", { name: "Try again" })).toBeVisible()
+
+    // Nothing was sold, and the basket is still there to try again with.
+    await expect(page.getByTestId("sale-done")).toBeHidden()
+    // The footer's own Close, not the sheet's corner cross.
+    await sheet.getByRole("button", { name: "Close" }).first().click()
+    await expect(sheet).toBeHidden()
+    await expect(page.getByTestId("basket")).toContainText("Charizard ex")
+  })
+
   test("says what is wrong when cash is taken with no session open", async ({
     page,
   }) => {

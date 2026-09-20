@@ -37,6 +37,7 @@ import { CounterDockContext } from "@/app/counter-dock"
 import { IdleLock } from "@/app/idle-lock"
 import { dispatchScan, makeScanFallback } from "@/app/scan-bus"
 import { useShortcuts } from "@/app/shortcuts"
+import { ShortcutOverlay } from "@/app/shortcut-overlay"
 import { isScanField } from "@/app/focus-registry"
 import { createWedgeListener } from "@/lib/scanning/wedge"
 import { initials, logout, useStaff } from "@/lib/auth"
@@ -242,13 +243,15 @@ export function CounterShell() {
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   const [moreOpen, setMoreOpen] = React.useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = React.useState(false)
   const [dockSlot, setDockSlot] = React.useState<HTMLDivElement | null>(null)
   const dockRef = React.useRef<HTMLDivElement>(null)
   const demo = isDemo()
   const waiting = useQuotesWaiting()
 
   const openPalette = React.useCallback(() => setPaletteOpen(true), [])
-  useShortcuts(openPalette)
+  const openShortcuts = React.useCallback(() => setShortcutsOpen(true), [])
+  useShortcuts({ openPalette, openShortcuts })
 
   React.useEffect(() => {
     const fallback = makeScanFallback(navigate)
@@ -377,7 +380,12 @@ export function CounterShell() {
       </nav>
       </div>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onShowShortcuts={openShortcuts}
+      />
+      <ShortcutOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} />
       <IdleLock />
     </div>

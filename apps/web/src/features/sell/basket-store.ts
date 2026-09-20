@@ -16,10 +16,27 @@ import {
   type BasketState,
 } from "@/features/sell/basket"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
+import { newClientId } from "@/lib/offline/queue"
 import type { ItemDetail, ItemSummary } from "@/lib/api/types"
 
 let state: BasketState = emptyBasket()
 const listeners = new Set<() => void>()
+
+/**
+ * The counter's own id for the sale being built.
+ *
+ * One id per basket, minted the first time anything needs it and thrown
+ * away when the basket is cleared. It is the sale's idempotency key on
+ * `sales.complete`, the offline queue's key for the same sale, and the key
+ * a card checkout is opened against, so the three can never disagree about
+ * which sale they are talking about.
+ */
+let clientId: string | null = null
+
+export function saleClientId(): string {
+  if (!clientId) clientId = newClientId()
+  return clientId
+}
 
 function emit() {
   for (const listener of listeners) listener()
@@ -38,6 +55,10 @@ export function getBasket(): BasketState {
 
 export function dispatchBasket(action: BasketAction) {
   const next = basketReducer(state, action)
+  // Clearing ends the sale, so the next basket is a new sale with an id of
+  // its own: keeping the old one would make the server treat it as a replay
+  // of the sale just rung up.
+  if (action.type === "clear") clientId = null
   if (next === state) return
   state = next
   emit()

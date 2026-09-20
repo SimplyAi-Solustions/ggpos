@@ -749,6 +749,186 @@ test("sumup.fetchTransaction: returns the detail body, products[] included", () 
 });
 
 // =======================================================================
+// SumUp Readers API (Phase 7: the Solo card reader at the counter).
+// Every one of these answers { ok, status, message, data } rather than
+// throwing - see the adapter's own Phase 7 block.
+// =======================================================================
+
+test("sumup: the Readers API lives on /v0.1 and leaves the /v2.1 transactions calls alone", () => {
+  const sumup = adapter("sumup.js");
+  assert.equal(sumup.BASE_URL, "https://api.sumup.com/v2.1");
+  assert.equal(sumup.READERS_BASE_URL, "https://api.sumup.com/v0.1");
+  // The paging guard the history calls depend on is untouched by Phase 7.
+  assert.equal(sumup.resolveNextUrl("/v2.1/merchants/M/transactions/history?cursor=2"), sumup.ORIGIN + "/v2.1/merchants/M/transactions/history?cursor=2");
+  assert.equal(sumup.resolveNextUrl("https://evil.example.com/steal"), null);
+});
+
+test("sumup.listReaders: GETs the merchant's readers and reduces each to id, name, status and model", () => {
+  const sumup = adapter("sumup.js");
+  const transport = (req) => {
+    assert.equal(req.url, "https://api.sumup.com/v0.1/merchants/M1/readers");
+    assert.equal(req.method, "GET");
+    assert.equal(req.headers.Authorization, "Bearer test-key");
+    return {
+      statusCode: 200,
+      json: {
+        items: [
+          { id: "r1", name: "Counter Solo", status: "paired", device: { identifier: "S1", model: "solo" } },
+          { id: "", name: "half a row" },
+        ],
+      },
+    };
+  };
+  const result = sumup.listReaders("M1", "test-key", transport);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, [{ id: "r1", name: "Counter Solo", status: "paired", model: "solo" }]);
+});
+
+test("sumup.listReaders: a SumUp failure comes back as not ok with the 'did not answer' sentence", () => {
+  const sumup = adapter("sumup.js");
+  const result = sumup.listReaders("M1", "k", () => ({ statusCode: 500, json: null }));
+  assert.equal(result.ok, false);
+  assert.equal(result.message, sumup.READER_MESSAGES.unavailable);
+  assert.deepEqual(result.data, []);
+});
+
+test("sumup.pairReader: POSTs the pairing code as JSON and maps a refused code to its own sentence", () => {
+  const sumup = adapter("sumup.js");
+  let seen = null;
+  const good = (req) => {
+    seen = req;
+    return {
+      statusCode: 201,
+      json: { id: "r9", name: "Counter Solo", status: "paired", device: { identifier: "S9", model: "solo" } },
+    };
+  };
+  const paired = sumup.pairReader("M1", "k", "ABCD1234", "Counter Solo", good);
+  assert.equal(seen.url, "https://api.sumup.com/v0.1/merchants/M1/readers");
+  assert.equal(seen.method, "POST");
+  assert.equal(seen.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(seen.body), { pairing_code: "ABCD1234", name: "Counter Solo" });
+  assert.equal(paired.ok, true);
+  assert.equal(paired.data.id, "r9");
+
+  const refused = sumup.pairReader("M1", "k", "NOPE1234", "", () => ({ statusCode: 422, json: {} }));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.status, 422);
+  assert.equal(refused.message, sumup.READER_MESSAGES.pairing);
+});
+
+test("sumup.unpairReader: DELETEs the reader, and treats a 404 as already unpaired", () => {
+  const sumup = adapter("sumup.js");
+  let seen = null;
+  const result = sumup.unpairReader("M1", "k", "r9", (req) => {
+    seen = req;
+    return { statusCode: 204, json: null };
+  });
+  assert.equal(seen.url, "https://api.sumup.com/v0.1/merchants/M1/readers/r9");
+  assert.equal(seen.method, "DELETE");
+  assert.equal(result.ok, true);
+
+  const gone = sumup.unpairReader("M1", "k", "r9", () => ({ statusCode: 404, json: {} }));
+  assert.equal(gone.ok, true, "a reader SumUp has already forgotten is as unpaired as this call could make it");
+});
+
+test("sumup.createReaderCheckout: sends pence as SumUp's own minor-unit shape and reads data.checkout_id back", () => {
+  const sumup = adapter("sumup.js");
+  let seen = null;
+  const result = sumup.createReaderCheckout(
+    "M1",
+    "k",
+    "r9",
+    {
+      amountPence: 4200,
+      description: "GG-S-000456",
+      returnUrl: "https://vault.example.test/api/vault/sumup/callback/tok",
+    },
+    (req) => {
+      seen = req;
+      return { statusCode: 201, json: { data: { checkout_id: "chk-1", client_transaction_id: "ctid-1" } } };
+    }
+  );
+  assert.equal(seen.url, "https://api.sumup.com/v0.1/merchants/M1/readers/r9/checkout");
+  assert.equal(seen.method, "POST");
+  assert.equal(seen.headers.Authorization, "Bearer k");
+  const body = JSON.parse(seen.body);
+  // Integer pence, never a decimal built in JS.
+  assert.deepEqual(body.total_amount, { currency: "GBP", minor_unit: 2, value: 4200 });
+  assert.equal(body.description, "GG-S-000456");
+  assert.equal(body.return_url, "https://vault.example.test/api/vault/sumup/callback/tok");
+  assert.equal(result.ok, true);
+  assert.equal(result.data.checkout_id, "chk-1");
+  assert.equal(result.data.client_transaction_id, "ctid-1");
+});
+
+test("sumup.createReaderCheckout: 422 is the reader being offline, 404 is it no longer being paired", () => {
+  const sumup = adapter("sumup.js");
+  const offline = sumup.createReaderCheckout("M1", "k", "r9", { amountPence: 100 }, () => ({
+    statusCode: 422,
+    json: {},
+  }));
+  assert.equal(offline.ok, false);
+  assert.equal(offline.status, 422);
+  assert.equal(offline.message, "The reader is offline. Check it is on and connected, then try again.");
+
+  const unpaired = sumup.createReaderCheckout("M1", "k", "r9", { amountPence: 100 }, () => ({
+    statusCode: 404,
+    json: {},
+  }));
+  assert.equal(unpaired.status, 422);
+  assert.equal(unpaired.message, "That reader is no longer paired. Pair it again under Settings.");
+});
+
+test("sumup.getReaderCheckout and terminateReaderCheckout: the status and the stop call", () => {
+  const sumup = adapter("sumup.js");
+  let seen = null;
+  const status = sumup.getReaderCheckout("M1", "k", "r9", "chk-1", (req) => {
+    seen = req;
+    return { statusCode: 200, json: { data: { status: "SUCCESSFUL" } } };
+  });
+  assert.equal(seen.url, "https://api.sumup.com/v0.1/merchants/M1/readers/r9/checkout/chk-1");
+  assert.equal(seen.method, "GET");
+  assert.equal(status.data.status, "SUCCESSFUL");
+
+  const stopped = sumup.terminateReaderCheckout("M1", "k", "r9", (req) => {
+    seen = req;
+    return { statusCode: 200, json: {} };
+  });
+  assert.equal(seen.url, "https://api.sumup.com/v0.1/merchants/M1/readers/r9/terminate");
+  assert.equal(seen.method, "POST");
+  assert.equal(stopped.ok, true);
+});
+
+test("sumup.findTransactionByClientId: looks the payment up by client_transaction_id, on /v2.1", () => {
+  const sumup = adapter("sumup.js");
+  let seen = null;
+  const found = sumup.findTransactionByClientId("M1", "k", "ctid-1", (req) => {
+    seen = req;
+    return {
+      statusCode: 200,
+      json: { id: "txn-1", transaction_code: "TCODE1", amount: "42.00", status: "SUCCESSFUL", card: { last_4_digits: "4242" } },
+    };
+  });
+  assert.equal(seen.url, "https://api.sumup.com/v2.1/merchants/M1/transactions?client_transaction_id=ctid-1");
+  assert.equal(seen.headers.Authorization, "Bearer k");
+  assert.equal(found.ok, true);
+  assert.equal(found.data.transaction_code, "TCODE1");
+  // The amount stays the string SumUp sent: lib/readers.js parses it
+  // through the shared money helpers, never through a float.
+  assert.equal(found.data.amount, "42.00");
+
+  const listShape = sumup.findTransactionByClientId("M1", "k", "ctid-2", () => ({
+    statusCode: 200,
+    json: { items: [{ id: "txn-2" }] },
+  }));
+  assert.equal(listShape.data.id, "txn-2");
+
+  const unknown = sumup.findTransactionByClientId("M1", "k", "ctid-3", () => ({ statusCode: 404, json: {} }));
+  assert.equal(unknown.ok, true, "SumUp not knowing of a transaction yet is an answer, not a failure");
+  assert.equal(unknown.data, null);
+});
+
+// =======================================================================
 // Live smoke (GG_ADAPTER_SMOKE=1): calls the keyless sources for real, for
 // the exact cards named in the brief, and prints what came back. Skips
 // cleanly - no tests registered at all - without the flag.

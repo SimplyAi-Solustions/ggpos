@@ -41,6 +41,14 @@ export const DEMO_SETTINGS_RECORD: SettingsRecord = {
   // The customer-facing screen, off until an admin turns it on, exactly as
   // the Phase 6 migration seeds it.
   display: { enabled: false, ticker: "Game · Trade · Play", signup_url: "/estimate" },
+  // The merchant code the demo Cash screen compares against, and the Solo
+  // the demo counter takes card payments on. Neither is a key: the SumUp
+  // API key stays on the server, in demo mode and out of it.
+  sumup: {
+    merchant_code: "MDEMO001",
+    default_reader_id: "reader_demo_1",
+    default_reader_name: "Counter Solo",
+  },
   id_photo_retention_months: 12,
   vat_registered: false,
   shop_name: "GG Entertainment",

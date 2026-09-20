@@ -40,11 +40,12 @@ export function queue(
   return created
 }
 
-export function list(status?: LabelJobStatus): LabelJobDetail[] {
+export function list(status: LabelJobStatus[] = []): LabelJobDetail[] {
   ensureSeeded()
   return demoLabelJobs
-    .filter((job) => !status || job.status === status)
+    .filter((job) => status.length === 0 || status.includes(job.status))
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
+    .map((job) => ({ ...job }))
 }
 
 export function byIds(ids: string[]): LabelJobDetail[] {
