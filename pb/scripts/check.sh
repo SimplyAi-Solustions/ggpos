@@ -3957,6 +3957,51 @@ P5_ME_JSON="$(curl -s "$BASE/api/vault/me" -H "Authorization: $P5_CUSTOMER_TOKEN
 [ "$(echo "$P5_ME_JSON" | jval "id_status")" = "none" ] || fail "GET /me id_status is '$(echo "$P5_ME_JSON" | jval id_status)', expected none"
 ok "GET /api/vault/me sums both balances live from the ledgers, never the cached fields"
 
+[ "$(echo "$P5_ME_JSON" | jval "customer.notifications.email")" = "true" ] || fail "GET /me does not return notifications.email (default true): $P5_ME_JSON"
+[ "$(echo "$P5_ME_JSON" | jval "customer.notifications.push")" = "true" ] || fail "GET /me does not return notifications.push (default true): $P5_ME_JSON"
+ok "GET /api/vault/me returns the customer's own notification preferences"
+
+# --- 23b2. A customer can read their own trade_ins, trade_in_lines,
+#     credit_ledger and points_ledger directly through the collection API
+#     (Phase 1/2 rules, unchanged by this phase), and never another
+#     customer's -------------------------------------------------------
+P5_OWN_TRADE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/trade_ins/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$P5_OWN_TRADE_STATUS" = "200" ] || fail "a customer listing their own trade_ins returned $P5_OWN_TRADE_STATUS, expected 200"
+P5_OWN_CREDIT_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/credit_ledger/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$P5_OWN_CREDIT_STATUS" = "200" ] || fail "a customer listing their own credit_ledger returned $P5_OWN_CREDIT_STATUS, expected 200"
+P5_OWN_CREDIT_COUNT="$(curl -s "$BASE/api/collections/credit_ledger/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $P5_CUSTOMER_TOKEN" | jval totalItems)"
+[ "${P5_OWN_CREDIT_COUNT:-0}" -ge 1 ] || fail "a customer's own credit_ledger list came back empty"
+P5_OWN_POINTS_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/points_ledger/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$P5_OWN_POINTS_STATUS" = "200" ] || fail "a customer listing their own points_ledger returned $P5_OWN_POINTS_STATUS, expected 200"
+P5_OWN_POINTS_COUNT="$(curl -s "$BASE/api/collections/points_ledger/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $P5_CUSTOMER_TOKEN" | jval totalItems)"
+[ "${P5_OWN_POINTS_COUNT:-0}" -ge 1 ] || fail "a customer's own points_ledger list came back empty"
+ok "a customer can read their own trade_ins, credit_ledger and points_ledger through the collection API"
+
+P5_LEDGER_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"channel\":\"counter\",\"status\":\"draft\"}" | jval id)"
+[ -n "$P5_LEDGER_TRADE_ID" ] || fail "could not create a second draft trade-in for the trade_in_lines ownership check"
+P5_LEDGER_LINE_ID="$(curl -s -X POST "$BASE/api/collections/trade_in_lines/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$P5_LEDGER_TRADE_ID\",\"free_text_title\":\"Ownership Check Line\",\"qty\":1}" | jval id)"
+[ -n "$P5_LEDGER_LINE_ID" ] || fail "could not create a trade_in_lines row for the ownership check"
+P5_OWN_LINE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/trade_in_lines/records/$P5_LEDGER_LINE_ID" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$P5_OWN_LINE_STATUS" = "200" ] || fail "a customer viewing their own trade_in_lines row (via the trade_in relation) returned $P5_OWN_LINE_STATUS, expected 200"
+ok "a customer can view their own trade_in_lines through the trade_in relation"
+
+# ... and never another customer's.
+P5_LEDGER_OTHER_CUSTOMER_ID="$(p5_make_customer "Ledger Cross-Check Customer" "p5-ledger-cross@local.test")"
+P5_LEDGER_CUSTOMER_TOKEN="$(p5_impersonate "$P5_LEDGER_OTHER_CUSTOMER_ID")"
+P5_CROSS_TRADE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/trade_ins/records/$P5_LEDGER_TRADE_ID" -H "Authorization: $P5_LEDGER_CUSTOMER_TOKEN")"
+[ "$P5_CROSS_TRADE_STATUS" = "403" ] || [ "$P5_CROSS_TRADE_STATUS" = "404" ] || fail "a customer viewing another customer's trade_ins row returned $P5_CROSS_TRADE_STATUS, expected 403 or 404"
+P5_CROSS_LINE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/trade_in_lines/records/$P5_LEDGER_LINE_ID" -H "Authorization: $P5_LEDGER_CUSTOMER_TOKEN")"
+[ "$P5_CROSS_LINE_STATUS" = "403" ] || [ "$P5_CROSS_LINE_STATUS" = "404" ] || fail "a customer viewing another customer's trade_in_lines row returned $P5_CROSS_LINE_STATUS, expected 403 or 404"
+P5_CROSS_CREDIT_ID="$(curl -s "$BASE/api/collections/credit_ledger/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+P5_CROSS_CREDIT_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/credit_ledger/records/$P5_CROSS_CREDIT_ID" -H "Authorization: $P5_LEDGER_CUSTOMER_TOKEN")"
+[ "$P5_CROSS_CREDIT_STATUS" = "403" ] || [ "$P5_CROSS_CREDIT_STATUS" = "404" ] || fail "a customer viewing another customer's credit_ledger row returned $P5_CROSS_CREDIT_STATUS, expected 403 or 404"
+P5_CROSS_POINTS_ID="$(curl -s "$BASE/api/collections/points_ledger/records?filter=customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+P5_CROSS_POINTS_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/points_ledger/records/$P5_CROSS_POINTS_ID" -H "Authorization: $P5_LEDGER_CUSTOMER_TOKEN")"
+[ "$P5_CROSS_POINTS_STATUS" = "403" ] || [ "$P5_CROSS_POINTS_STATUS" = "404" ] || fail "a customer viewing another customer's points_ledger row returned $P5_CROSS_POINTS_STATUS, expected 403 or 404"
+ok "a customer token cannot view another customer's trade_ins, trade_in_lines, credit_ledger or points_ledger rows"
+
 # --- 23c. PATCH /api/vault/me: email refused, everything else applied ----
 P5_PATCH_EMAIL_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/vault/me" \
   -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
@@ -4199,9 +4244,12 @@ P5_CARD_B="$(p5_make_card "Phase 5 Card B" "7")"
 
 P5_WANT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/want-list" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_B\",\"max_price\":3000}")"
 [ "$(echo "$P5_WANT_JSON" | tail -n1)" = "200" ] || fail "creating a want-list row returned $(echo "$P5_WANT_JSON" | tail -n1)"
-P5_WANT_ID="$(echo "$P5_WANT_JSON" | head -n -1 | jval "want.id")"
+P5_WANT_ID="$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.id")"
 [ -n "$P5_WANT_ID" ] || fail "want-list creation did not return an id"
-[ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "want.status")" = "open" ] || fail "a new want-list row is not status open"
+[ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.status")" = "open" ] || fail "a new want-list row is not status open"
+[ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.card.name")" = "Phase 5 Card B" ] || fail "the want-list row does not expand the card's name: $(echo "$P5_WANT_JSON" | head -n -1)"
+[ -n "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.card.set")" ] || fail "the want-list row does not expand the card's set"
+[ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.card.number")" = "7" ] || fail "the want-list row does not expand the card's number"
 
 P5_WANT_ITEM_JSON="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_B\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":2500}")"
@@ -4324,7 +4372,8 @@ ok "a customer token cannot mark another customer's notification read (404)"
 
 # --- 23t. GET /api/vault/me/notifications and marking one read ----------
 P5_NOTIF_LIST="$(curl -s "$BASE/api/vault/me/notifications" -H "Authorization: $P5_CUSTOMER_TOKEN")"
-[ "$(echo "$P5_NOTIF_LIST" | jlen notifications)" -ge 1 ] || fail "GET /api/vault/me/notifications returned none for a customer with several"
+[ "$(echo "$P5_NOTIF_LIST" | jlen items)" -ge 1 ] || fail "GET /api/vault/me/notifications returned none for a customer with several"
+[ "$(echo "$P5_NOTIF_LIST" | jval unread)" -ge 1 ] || fail "GET /api/vault/me/notifications did not report an unread count"
 P5_READ_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/me/notifications/$P5_SOME_NOTIF_ID/read" -H "Authorization: $P5_CUSTOMER_TOKEN")"
 [ "$(echo "$P5_READ_JSON" | tail -n1)" = "200" ] || fail "marking a customer's own notification read returned $(echo "$P5_READ_JSON" | tail -n1)"
 [ -n "$(echo "$P5_READ_JSON" | head -n -1 | jval "notification.read_at")" ] || fail "marking a notification read did not set read_at"
