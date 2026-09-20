@@ -156,13 +156,19 @@ retrying `e.next()` on a unique-constraint failure.
 | `lib/quotes.js` | Phase 5: `sniffImageMime`/`photoFileName` (the same first-bytes sniffing `idphotos.pb.js` uses for ID photos, for a quote's own JPEG/PNG/WebP uploads), `ukDateShort` ("27 Sep 2026", distinct from `lib/receipts.js`'s full-month `ukDate`), `offerExpiry` (`settings.quote_expiry_days` from now), and `normalizeOfferLines` (validates and recomputes `offer_total` server-side from `POST /api/vault/quotes/:id/offer`'s lines - never trusts a client-sent total). |
 | `lib/wants.js` | Phase 5: the want-list matching, fulfilment and hold-release logic behind `wants.pb.js`'s `items` hooks and `holds_release` cron - `findOpenWant`, `matchOnStock`, `fulfilOnSale`, `releaseExpiredHolds`, `holdHours` (`settings.holds.hours`, default 48), `ukDateTime` ("22 Sep, 14:00"). |
 | `lib/estimate.js` | Phase 5: `searchCatalogue` (catalogue-only search, never an adapter or `registry.js`'s set-sync bootstrap), `pricingRulesFor` (the same snake_case-to-camelCase `pricing_rules` mapping `pb/scripts/check-pricing-loyalty.js` already uses), and `estimateForCard` (the public `GET /api/vault/estimate` body, through `adapters/pricing_policy.js` and the shared `computeOffer`). |
+| `lib/tiers.js` | Phase 6: the one place `customer_private.tier` is decided and written. `pointsRows`/`allTiers`/`activeMembership` (the inputs, read from `points_ledger`, `loyalty_tiers` and `memberships`), `evaluate` (read-only: the window total, the pinning membership and the tier that falls out of the two, through the shared `tierWindowPoints`/`resolveTier`), `recompute` (the same plus the write and the `tier_up` notification a promotion earns, returning `pending` for the caller to flush), and two formatters, `formatPoints` ("1,240") and `ukDayMonth` ("20 Sep"). Never opens a transaction of its own and never sends mail. |
+| `lib/referrals.js` | Phase 6: `normalise`/`unknownCodeMessage`/`resolve` (a `referred_by` value as a `GGC…` code or a record id), `createPending`, `onFirstCompletion` (called from the sale and trade-in completion routes inside their own transaction: flips the customer's `pending` referral to `earned` and writes both bonus rows, a no-op for anyone without one, so a second completion never pays twice) and `countsFor` for the portal. |
+| `lib/rewards.js` | Phase 6: the rewards catalogue as a customer sees it and the vouchers redeeming one produces. `voucherDays` (`settings.rewards.voucher_days`, default 90), `takenCount` (redemptions per reward, and per reward and customer), `reasonFor`/`reasonMessage` (why this customer cannot redeem this reward right now, and how to say it), `listFor`, `voucherShape`, `findByCode`, `isCounterType` and `expireVouchers` (the nightly pass). Every limit is counted from `reward_redemptions`, never from a figure kept on the reward itself, and the balance is summed from `points_ledger`. |
+| `lib/perks.js` | Phase 6: the monthly perks wallet. `currentPeriod`/`nextPeriodStart` (`YYYY-MM` and "1 Oct" in Europe/London civil time, through `lib/reports/dates.js`'s own `toLondon`), `usageRow`/`usedCount`, `walletFor` (the tier's two counted perks with this month's figures, then its informational ones), `check` (a refusal or null, so a route can refuse before opening a transaction) and `use` (the `perk_usage` upsert, re-checked inside the caller's). Allowances come from the shared `perkAllowance`, so the counter, the portal and the admin preview cannot disagree. |
+| `lib/display.js` | Phase 6: what may go on the customer-facing screen. `sanitise` rebuilds a payload field by field from the shapes the contract names and refuses one carrying an identifier, an email or a phone number at any depth (`forbiddenIn`); `stateRow`, `isStale`, `reset`, `clearIfStale` (a publish older than `TTL_MINUTES`, 15, resets itself) and `shape`. |
+| `lib/loyaltyconfig.js` | Phase 6: the shape checks behind the four admin-editable loyalty collections, registered as `*Request` hooks in `loyalty.pb.js`. `checkRule` (the `conditions` keys and types the shared evaluator actually reads, and the `value`/multiplier bounds), `checkTier` (every perk parses through the shared `parseTierPerk`; thresholds distinct among tiers that are not paid plans), `checkTierDelete` (409 while a customer is on it or an active membership carries it), `checkReward` and `checkProgramme`. Each reports `{status, message}` rather than throwing, so the calling hook raises it with its own event and the wording lives in one place. |
 | `lib/sumup.js` | PocketBase-specific glue behind `sumup.pb.js` and `crons_sumup.pb.js`: `pull(app, actorId, ip)` upserts `sumup_transactions` from `adapters/sumup.js` and matches each to a sale (by a SKU-prefixed product name, then by amount and a three-minute time window), and `reconcile(app, date)` builds the Cash screen's day-by-day comparison. See `docs/api-contract.md`'s Phase 4 section for the matching rules and response shapes. |
 | `lib/reports/{dates,query,daily,csv,registry,scheduled,digest,sales,buyins,margin,stock,channels,customers,loyalty,cash,compliance}.js` | Every real handler behind `reports.pb.js`, `stats.pb.js` and `crons.pb.js`'s three reporting crons, kept out of the `.pb.js` files themselves per CLAUDE.md's "keep hooks small". `dates.js` is the pure UTC day/range/week/month math (no PocketBase calls of its own) plus `toLondon`/`isBst`/`lastSundayUtc`, a hand-rolled Europe/London civil-clock conversion for the sales heatmap only (goja has no reliable timezone database); `query.js` a memoising `findRecordById` lookup, the finish-aware "what is this stock item currently worth" figure `daily.js` and `stock.js` both read, `roundPct`/`roundRatio` (the one shared half-up rounding to 1dp/3dp every percentage/ratio in this package goes through), `queryByIds`/`findAllByFilter` (a batched-by-id query and a paged unbounded-list read, replacing what used to be one query per parent id or one single unbounded read), `saleBreakdownsByLine` (every sale referenced by a batch of `sale_lines`, fetched once and broken down with the shared `saleline` evaluator), and a small `by=<dimension>` table accumulator; `daily.js` is `daily_stats`'s pure builder (`buildDayRow`), its stock-valuation half (`currentStockValuation`, computed once and shared across a whole batch rather than once per day), its find-or-create upserts (`upsertDayRow` / `upsertDayRows`, the latter tolerating one bad day without failing the rest) and the read-through the reports use (`rowForDate` / `rowsForEachDay`, live for any day the nightly cron has not reached yet, `rowsForEachDay` batching a whole range in one query); `csv.js` renders a report's `table` through `lib/vaultutil.js`'s own `csvRow`/`csvCell`; `registry.js` is the one place all nine report keys (and which are admin-only) are named; `sales.js` through `compliance.js` are the nine reports themselves, one file each, each declaring its own `MONEY_FIELDS` (which `totals` keys are pence, for `scheduled.js`'s emailed totals) and `PERIOD_SCOPED_TOTALS` (which `totals` keys `compare=previous` may show); `scheduled.js` sends due `saved_reports` rows - re-checking at send time that an admin-only report's owner is still a current admin, and re-validating `recipients` (shape, dedup, capped at 10) rather than trusting what was saved - `digest.js` the Monday admin digest. See `docs/api-contract.md`'s Phase 4 section. |
 | `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty; after the item is saved, opportunistically re-hosts its card's image through `adapters/images.js` if it is still a bare third-party URL - never blocks the create on a failure. A separate `onRecordUpdate` hook sets `listed_at` to now the moment `status` most recently became `listed_ebay`, and clears it the moment `status` leaves `listed_ebay` again - the channels report's listing-age figure reads this (falling back to `acquired_at` when blank), `docs/api-contract.md`'s Phase 4 section. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
 | `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
 | `staff.pb.js` | `onRecordAuthRequest` on `staff`: refuses to authenticate (issue a token, refresh one, ...) an account with `active: false`, with "This account is inactive. Ask an admin to reactivate it." A deactivated staff member keeps their row (for `audit_log` actor references and historic sales/trade-ins) but cannot sign in again. |
-| `singletons.pb.js` | Refuses a second `settings` or `loyalty_programme` record. |
+| `singletons.pb.js` | Refuses a second `settings`, `loyalty_programme` or `display_state` record. |
 | `audit.pb.js` | Logs deletes on `staff`, `customers`, `customer_private`, `id_documents`, `items`, `trade_ins`, `sales`, `credit_ledger`, `points_ledger` (a judgement call - PLAN.md says "sensitive collections" without naming them; revisit if Richard wants a different list), and updates to `pricing_rules` and every `loyalty_*`/`settings` collection. Uses the `*Request` hook variants because only those carry `e.auth` and `e.realIP()`; logs only after `e.next()` returns without throwing. `meta` never carries a field's *value*, only identifiers: for an update, the names of the fields that changed (`e.record.fieldsData()` diffed against `e.record.original()`, taken before `e.next()`); for a delete, one label from a short list of fields already known to be safe (`items.sku`, `trade_ins.number`, `sales.number`) or nothing at all for every other audited collection - `staff`, `customers`, `customer_private` and `id_documents` above all never contribute a label, since every field on those could be a password hash, `pin_hash`, an ID photo path or other PII. This keeps a password, `pin_hash`, ID photo or API key out of this permanent, superuser-only table, so erasing the original record actually erases it. |
 | `routes.pb.js` | `GET /api/vault/health` (staff-authenticated: status, PocketBase version, a few record counts) and `GET /api/vault/me` - the caller's own `staff` fields, hand-picked so `pin_hash` can never leak, or, since Phase 5, the caller's own `/me` portal summary when the token is a `customers` one (`lib/vaultutil.js`'s `meShapeFor`) - one registration branching on `e.auth.collection().name`, since PocketBase's router refuses two handlers on the same method and path. |
 | `ledgers.pb.js` | `credit_ledger` and `points_ledger`: `onRecordCreate` stamps `balance_after` before the row is written (computed from the ledger as it stands plus this row, never from the cache); `onRecordAfterCreateSuccess` recomputes both cached balances through `lib/balances.js`. Both fire inside whatever transaction the caller is in, so a correction row added straight through the collection API gets the same treatment a custom route's write does. |
@@ -188,6 +194,13 @@ retrying `e.next()` on a unique-constraint failure.
 | `wants.pb.js` | Phase 5: `GET /api/vault/want-list`, `POST /api/vault/want-list` and `:id/close`, the `items` hooks that match a want list on stock arrival and fulfil it on sale (separate registrations from `items.pb.js`'s own), and the `holds_release` cron. Logic in `lib/wants.js`. |
 | `portal.pb.js` | Phase 5: the customer's own account - `PATCH /api/vault/me` (the `GET` branch lives in `routes.pb.js`, above), `GET /api/vault/me/export`, `POST /api/vault/me/delete`, `GET /api/vault/c/:token`, `GET /api/vault/me/notifications`, `POST /api/vault/me/notifications/:id/read`, `POST`/`DELETE /api/vault/push/subscribe`. |
 | `estimate.pb.js` | Phase 5: the two public routes, `GET /api/vault/estimate/search` and `GET /api/vault/estimate` - no auth, no writes, never an adapter call. Logic in `lib/estimate.js`. |
+
+| `loyalty.pb.js` | Phase 6: the loyalty engine's own hooks, `POST /api/vault/loyalty/adjust` (admin, step-up) and two nightly passes over the ledger. The `customers` create hook resolves a `referred_by` **code** before `e.next()` and writes the welcome bonus and the `pending` referrals row after it (see `docs/api-contract.md`'s Phase 6 implementation notes for why that write is not an `onRecordAfterCreateSuccess` hook). A `points_ledger` after-create hook re-evaluates the tier from the rolling window and clears `customer_private.points_expiry_warned_at` whenever points come in; `memberships` create and update hooks re-evaluate it too, because a paid plan pins it. The four `loyalty_*` collections get their write-time shape checks (`lib/loyaltyconfig.js`). Crons: `tiers_recompute` (03:30) re-evaluates every customer so points ageing out of the window demote without a ledger write, and `points_expire` (03:40) expires a balance after `loyalty_programme.expiry_months_inactive` months with nothing coming in, warning once thirty days before. |
+| `rewards.pb.js` | Phase 6: `GET /api/vault/rewards` and `POST /api/vault/rewards/:id/redeem` (customer), `GET /api/vault/me/vouchers` (customer), `GET /api/vault/vouchers/:code` and `POST /api/vault/vouchers/:code/use` (staff), `POST /api/vault/vouchers/:code/cancel` (admin), and the nightly `vouchers_expire` cron (03:50). Logic in `lib/rewards.js`. |
+| `perks.pb.js` | Phase 6: `GET /api/vault/customers/:id/perks` and `POST /api/vault/customers/:id/perks/use` (staff). Logic in `lib/perks.js`. |
+| `memberships.pb.js` | Phase 6: `POST /api/vault/memberships`, `:id/renew` and `:id/cancel` (staff), and the nightly `memberships_lapse` cron (04:00). Never writes a tier itself - `loyalty.pb.js`'s `memberships` hooks do, so every route and cron reaches it by the same path. |
+| `display.pb.js` | Phase 6: `POST /api/vault/display`, `/display/accept` and `/display/clear` (staff). What may reach the screen is decided in `lib/display.js`, not here. |
+| `guild.pb.js` | Phase 6: `GET /api/vault/me/guild` and `GET /api/vault/me/points` (customer) - My Vault's Guild pages. Read-only, and about the caller alone: every query filters on `e.auth.id`, so there is no id in either path to get wrong. |
 
 ## Custom API routes (`/api/vault/*`)
 
@@ -251,6 +264,23 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/me/notifications` | **customer**. `{ items, unread }`, newest first, capped at 50. |
 | `POST /api/vault/me/notifications/:id/read` | **customer own**. Idempotent; response `{ notification }`. |
 | `GET /api/vault/quotes` | **customer**. The caller's own quotes, newest first, capped at 50 - no photos or lines. Additive: the collection API's own `filter=customer=<id>` read still works. |
+| `POST /api/vault/loyalty/adjust` | **admin, step-up**. `{ customer, delta, reason }`. Ledger row, a `notes` row carrying the reason, an audit row of figures only. 422 rather than let a balance go below zero, re-checked inside the transaction. |
+| `GET /api/vault/rewards` | **customer**. The catalogue with `remaining`, `per_customer_remaining`, `can_redeem` and a `reason` per reward. `loyalty_rewards` itself stays admin-only. |
+| `POST /api/vault/rewards/:id/redeem` | **customer**. One transaction: the voucher, the `redeem` points row, and for a `store_credit` reward the `credit_ledger` row and an immediately-`used` voucher. Everything re-checked against live rows inside it. 422 with the reason as a sentence. |
+| `GET /api/vault/me/vouchers` | **customer**. The caller's own vouchers, every status, newest first, capped at 100. |
+| `GET /api/vault/vouchers/:code` | **staff**. The voucher by its printed code, hyphened or bare, with the customer and reward on it. 404 for an unknown code. |
+| `POST /api/vault/vouchers/:code/use` | **staff**. `free_item`, `event_entry` and `custom` only; 409 for `money_off` ("Use this one on the sale: scan it at Sell."), for anything not `issued`, and for one past its expiry. |
+| `POST /api/vault/vouchers/:code/cancel` | **admin**. `cancelled`, the points back as an `adjust` row, and a note on the customer saying which voucher. |
+| `GET /api/vault/customers/:id/perks` | **staff**. `{ tier, perks }` - the counted perks with this month's allowance and use, then the informational ones. |
+| `POST /api/vault/customers/:id/perks/use` | **staff**. `{ type, count? }`, an upsert of the one `perk_usage` row for that customer, perk and period. 422 when the allowance is spent or the tier has no such perk. |
+| `POST /api/vault/memberships` | **staff**. `{ customer, tier, months, price, payment_note? }` on a `paid_plan` tier. 409 when one is already active. |
+| `POST /api/vault/memberships/:id/renew` | **staff**. Extends `renews_at` from the later of now and the current expiry. 409 for a cancelled membership. |
+| `POST /api/vault/memberships/:id/cancel` | **staff**. `cancelled`, tier re-evaluated, customer notified. |
+| `POST /api/vault/display` | **staff**. `{ mode, payload }`. The payload is rebuilt field by field; one carrying an identifier, an email or a phone number at any depth is refused with 400. Returns `{ token, mode, expires_at }`, fifteen minutes out. |
+| `POST /api/vault/display/accept` | **staff** (the tablet's own session). `{ token }`, and only against the live `buy_in` publish; a stale publish is cleared first, in its own transaction, then the accept refused with 409. |
+| `POST /api/vault/display/clear` | **staff**. Back to `idle`, keeping nothing of what was on screen. |
+| `GET /api/vault/me/guild` | **customer**. Tier, window points, the next tier, the membership, the perks wallet, the caller's own referral figures and their open voucher count - all computed live from `points_ledger`. |
+| `GET /api/vault/me/points` | **customer**. The caller's own ledger, newest first, capped at 100, each row with a one-sentence `note`. |
 
 Three patterns run through all of them.
 
@@ -654,6 +684,36 @@ refused with 404. Last, the tightened write rules: a staff `PATCH` of
 `sumup_transactions.matched_sale` accepted (the counter screen's manual
 match), and a staff `PATCH` of `sumup_transactions.amount` refused.
 
+Section 24 is the Phase 6 round: the welcome bonus landing once and
+putting the customer on the first tier; a referral resolved from a code at
+creation, refused for a code nobody holds and for the customer's own
+record, earned on the referee's first completed sale with both ledger rows
+and both notifications, and never paid twice; a promotion announced and a
+demotion made silently by the nightly `tiers_recompute` once the rolling
+window has moved past the rows; a paid membership pinning a higher tier,
+being renewed from the later of now and its own expiry, lapsing on the
+nightly cron and being cancelled; the points-expiry warning sent once per
+run-up and cleared by the next points in, then the whole balance expiring
+in one row; every refusal reason the rewards list can give, a redemption
+writing both rows, a store-credit reward crediting at once, a voucher used
+by staff, a money-off voucher refused at the counter, a cancel returning
+the points with a note, and the nightly `vouchers_expire`; the perks
+wallet and its monthly allowance; the points adjustment needing an admin,
+a step-up token and a reason, and refusing to go below zero; the four
+loyalty config validations; and the display publishing, stripping, being
+accepted only against its own live token, clearing itself after fifteen
+minutes, and staying entirely out of a customer token's reach.
+
+Two of those need `points_ledger` rows that are genuinely months old (the
+rolling window's demotion, and the expiry cron), and PocketBase rewrites
+an autodate field on every write, so `created` cannot be set through the
+API at all, superuser included. Section 24 therefore starts a second,
+short-lived PocketBase on the same data directory whose entire hooks
+directory is one throwaway file doing the `UPDATE` through `$app.db()`,
+and stops it again at the end of the section. Nothing in `pb_hooks/` gains
+a test-only route, and the server under test keeps serving this repo's own
+hooks throughout.
+
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),
 even if a check fails.
@@ -692,12 +752,12 @@ of the workspace, the same way `pnpm-lock.yaml` is committed).
 
 - **`loyalty_tiers` and `loyalty_rewards` are admin-only end to end.**
   That is the literal reading of PLAN.md's "admin role for ... loyalty_*"
-  applied to every collection whose name starts with `loyalty_`, but it
-  also means the portal's own tier badge and rewards catalogue (Phase 6)
-  cannot read them directly yet. Give the portal a read-only custom route
-  (server-side, bypassing the collection rule, the same pattern already
-  used for trade-in and sale completion) rather than loosening the rule,
-  when that phase starts.
+  applied to every collection whose name starts with `loyalty_`. Phase 6
+  took the follow-up this entry proposed rather than loosening the rule:
+  the portal reads the catalogue through `GET /api/vault/rewards` and its
+  own tier, perks and referral figures through `GET /api/vault/me/guild`,
+  both server-side routes that bypass the collection rule and return only
+  the caller's own data. Nothing about the rules themselves changed.
 - **`perk_usage` and `referrals`** are staff-only, since PLAN.md's
   customer-readable list does not name them and a customer's own
   referral code is really just their `customers.code`. Revisit if the
