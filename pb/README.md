@@ -328,13 +328,51 @@ and the Legend tier's perks all parse; generates 40 item SKUs to confirm
 their bodies are drawn uniformly rather than from the old biased
 construct (see "Hooks" above); confirms an `active: false` staff record
 cannot authenticate; and confirms updating `settings.email_api_key`
-never leaves that value, only the field's name, in `audit_log`. Prints
-`OK:`/`FAIL:` per step, exits non-zero on the first failure, and always
-tears the server and temp directory down again (a `trap ... EXIT`), even
-if a check fails.
+never leaves that value, only the field's name, in `audit_log`.
+
+Section 14 then runs one full Phase 2 round trip through the custom
+routes over HTTP, exactly as the counter app will:
+
+- opens a cash session with a float, confirms a second one is refused
+  with 409, and that `cash-sessions/current` reports the float;
+- creates a customer, a draft trade-in (which proves `trade_ins.number`
+  is no longer required) and two accepted lines;
+- confirms completing it for cash with no ID check is refused with 422;
+- posts an ID check as real multipart with a PNG the script generates,
+  confirms `customer_private.id_status` becomes `verified`, and reads the
+  file back **off disk** to confirm it is not a readable PNG any more;
+- completes the buy-in as 4000p cash plus 2500p credit and asserts the
+  number is `GG-BI-000001`, that three items exist (two singles one row
+  per unit, one sealed line) with valid SKUs and `status = in_stock`,
+  that three label jobs are queued, that the `credit_ledger` row and the
+  cached `customer_private.credit_balance` both read 2500, that the
+  drawer moved to 6000p, and that 125 points were earned on the credit;
+- confirms a cash payout over `settings.cash_cap` is refused with 422;
+- sells one of those items for store credit and asserts the sale number,
+  the item going `sold`, the credit debited and the points earned;
+- takes a step-up token (and confirms a wrong password is refused with
+  400, and a refund without a token with 403), refunds the sale, and
+  asserts the item is back `in_stock` with both balances reversed;
+- confirms the ID photo is 403 without step-up and, as an admin with one,
+  comes back 200 with `Cache-Control: no-store`, `Content-Disposition:
+  inline` and bytes that compare byte-for-byte with the PNG that went in,
+  with an `id_photo_view` audit row behind it;
+- closes the session and checks the expected total and the variance;
+- fetches the stock book CSV and checks its header row, its
+  `Content-Disposition: attachment` filename and that the buy-in's number
+  is in it;
+- fetches the receipt JSON and confirms the receipt email route reports
+  `{ sent: false, test_mode: true }` while `settings.email.test_mode` is
+  on.
+
+Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
+always tears the server and temp directory down again (a `trap ... EXIT`),
+even if a check fails.
 
 Requires `pb/pocketbase` (see "Running locally"), `curl`, and `node`
-(for both the JSON glue and the `sku.ts` check).
+(for the JSON glue, the `sku.ts` check and the test PNG). It starts its
+own server with a throwaway `GG_ID_PHOTO_KEY`, so nothing needs to be set
+in your shell.
 
 ## Regenerating `packages/shared/src/pb-types.ts`
 
@@ -386,3 +424,34 @@ of the workspace, the same way `pnpm-lock.yaml` is committed).
 - **`pb_public` is currently empty.** It is served as-is and copied
   as-is into the Docker image; the PWA lands there once `apps/web` has a
   production build step wired to it.
+- **Email goes through PocketBase's own SMTP settings, not a provider
+  API.** v0.40.4's `$mails` binding only exposes the built-in auth emails
+  (`sendRecordVerification`, `sendRecordOTP`, ...); a generic send is
+  `$app.newMailClient().send(new MailerMessage({...}))`, which uses the
+  SMTP host configured in the dashboard. `settings.email_provider` and
+  `settings.email_api_key` are therefore unused for now: wiring Resend,
+  Postmark or Brevo means an HTTP call from the hook rather than
+  `$mails`. `settings.email` (`from_name`, `from_address`, `reply_to`,
+  `test_mode`) holds the addressing either way, and seeds with
+  `test_mode: true` so a fresh install cannot email a customer by
+  accident.
+- **A partial refund reduces `sale_lines.qty` rather than recording a
+  refunded quantity.** There is no `refunded_qty` field, and `qty` has
+  `min: 1`, so a full-line refund sets `status = "refunded"` and leaves
+  `qty` alone, while a partial one leaves the line `sold` with `qty`
+  reduced to what is still sold. Add a `refunded_qty` field if a report
+  ever needs to tell "sold 3, refunded 1" from "sold 2".
+- **A refund pays out by the method the staff member picks**, not by
+  unwinding the original payment split. That matches the contract, but it
+  means a sale paid half on card and half on credit can be refunded
+  wholly to credit. Revisit if Richard wants the split honoured.
+- **`trade_in_lines.item` is a single relation**, so a line for two
+  singles (which becomes two `items` rows) points at the first of them.
+  Every unit points back at its line through `items.trade_in_line`, so
+  nothing is lost, but a query from the line's side only sees one.
+- **The trade-in route trusts the line's `offer_price`.** It checks the
+  payout matches the accepted lines, not that each `offer_price` is what
+  `computeOffer` would produce, because staff may override an offer with
+  a reason. Overrides are audited on the sale side (`price_override`);
+  buy-in overrides are not yet, since the line carries no "overridden"
+  flag to notice one by.
