@@ -117,19 +117,19 @@ export function HomeScreen() {
               <span className="mt-2 block text-[13px] text-muted-foreground-2">
                 {tile.hint}
               </span>
-              {trend ? (
-                <>
-                  <Sparkline
-                    values={trend[tile.trend]}
-                    height={40}
-                    className="mt-3"
-                  />
-                  <span className="sr-only">
-                    Over the last 30 days, the highest was{" "}
-                    {formatGBP(Math.max(0, ...trend[tile.trend]))}.
-                  </span>
-                </>
-              ) : null}
+              {/* The 40px is reserved whether or not the line has arrived,
+                  so the tiles do not jump when it does. */}
+              <span className="mt-3 block" style={{ height: 40 }}>
+                {trend ? (
+                  <>
+                    <Sparkline values={trend[tile.trend]} height={40} />
+                    <span className="sr-only">
+                      Over the last 30 days, the highest was{" "}
+                      {formatGBP(Math.max(0, ...trend[tile.trend]))}.
+                    </span>
+                  </>
+                ) : null}
+              </span>
             </dd>
           </div>
         ))}

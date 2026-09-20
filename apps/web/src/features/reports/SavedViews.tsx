@@ -142,18 +142,21 @@ function SaveViewForm({
 
   const save = useMutation({
     mutationFn: () =>
-      saveSavedReport({
-        // A second save under the same name replaces that view rather than
-        // leaving two rows nobody can tell apart.
-        id: views.find(
-          (view) => (view.name ?? "").toLowerCase() === name.trim().toLowerCase()
-        )?.id,
-        report_key: reportKey,
-        name: name.trim(),
-        filters,
-        schedule: admin ? schedule : "none",
-        recipients: admin ? splitEmails(recipients) : [],
-      }),
+      saveSavedReport(
+        {
+          // A second save under the same name replaces that view rather than
+          // leaving two rows nobody can tell apart.
+          id: views.find(
+            (view) => (view.name ?? "").toLowerCase() === name.trim().toLowerCase()
+          )?.id,
+          report_key: reportKey,
+          name: name.trim(),
+          filters,
+          schedule,
+          recipients: splitEmails(recipients),
+        },
+        { admin }
+      ),
     onSuccess: () => {
       void invalidate()
       onDone()

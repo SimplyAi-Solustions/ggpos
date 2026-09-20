@@ -456,7 +456,10 @@ function stockReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Partia
     { bucket: "0-30", min: 0, max: 30, weight: 38 },
     { bucket: "31-90", min: 31, max: 90, weight: 31 },
     { bucket: "91-180", min: 91, max: 180, weight: 19 },
-    { bucket: "180+", min: 181, max: null, weight: 12 },
+    { bucket: "180+", min: 181, max: null, weight: 11 },
+    // Stock with no acquired date on it has to go somewhere, and it is not
+    // "new": its own bucket, so the four ages above stay honest.
+    { bucket: "unknown", min: null, max: null, weight: 1 },
   ]
   const ageingCost = split(valueCost, ageing.map((entry) => entry.weight))
   const ageingMarket = split(valueMarket, ageing.map((entry) => entry.weight))
@@ -760,8 +763,26 @@ export function previousRange(from: string, to: string): { from: string; to: str
  * key the screen shows no delta for.
  */
 const PERIOD_SCOPED: Partial<Record<ReportKey, string[]>> = {
-  stock: [],
-  channels: ["revenue", "count", "items_ended"],
+  sales: ["revenue", "count", "avg_basket", "heatmap"],
+  buyins: ["spend", "count", "avg_offer_pct", "cash", "credit", "top_sellers"],
+  margin: ["revenue", "cost", "margin", "margin_pct", "vat_estimate"],
+  stock: ["sell_through"],
+  channels: ["revenue", "count", "by_channel", "items_ended"],
+  customers: [
+    "new",
+    "returning",
+    "top_by_spend",
+    "top_by_trade_in",
+    "credit_liability",
+  ],
+  loyalty: [
+    "points_earned",
+    "points_redeemed",
+    "perk_usage",
+    "reward_take_up",
+    "referrals",
+    "programme_cost_pct",
+  ],
 }
 
 function periodScoped(
@@ -865,13 +886,20 @@ export function demoSavedReports(key?: ReportKey): SavedReportRecord[] {
   return key ? saved.filter((row) => row.report_key === key) : [...saved]
 }
 
-export function demoSaveReport(input: SavedReportInput): SavedReportRecord {
+export function demoSaveReport(
+  input: SavedReportInput,
+  options: { admin: boolean }
+): SavedReportRecord {
+  // The same rule the live call applies: a staff member's save never
+  // carries a schedule or a recipient list.
+  const schedule = options.admin ? input.schedule : "none"
+  const recipients = options.admin ? input.recipients : []
   const existing = input.id ? saved.find((row) => row.id === input.id) : undefined
   if (existing) {
     existing.name = input.name
     existing.filters = input.filters
-    existing.schedule = input.schedule
-    existing.recipients = input.recipients
+    existing.schedule = schedule
+    existing.recipients = recipients
     return existing
   }
   savedSequence += 1
@@ -881,8 +909,8 @@ export function demoSaveReport(input: SavedReportInput): SavedReportRecord {
     report_key: input.report_key,
     name: input.name,
     filters: input.filters,
-    schedule: input.schedule,
-    recipients: input.recipients,
+    schedule,
+    recipients,
     created: new Date().toISOString(),
   }
   saved.push(record)

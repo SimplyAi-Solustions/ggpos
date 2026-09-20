@@ -6,7 +6,7 @@
  * screen downloads a real file with no server behind it. Every cell goes
  * through the same formula-injection guard the server uses.
  */
-import { displayCode, formatGBP } from "@gg/shared"
+import { displayCode } from "@gg/shared"
 
 import { buildCsv, poundsCell, type CsvColumn } from "@/features/reports/csv"
 import { demoItemStore } from "@/lib/api/index"
@@ -248,9 +248,4 @@ export function markEnded(ids: string[]): string[] {
     }
   }
   return ended
-}
-
-/** Only for a fixture that wants the money said in words. */
-export function say(pence: number): string {
-  return formatGBP(pence)
 }

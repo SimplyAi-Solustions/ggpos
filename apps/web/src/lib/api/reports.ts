@@ -33,13 +33,17 @@ import type {
   SparklineSeries,
 } from "@/lib/api/types"
 
-/** PocketBase stores a date as `YYYY-MM-DD HH:MM:SS.sssZ`, never a bare day. */
+/**
+ * PocketBase stores a date as `YYYY-MM-DD HH:MM:SS.sssZ`, never a bare day,
+ * and the last second of a day has a thousand milliseconds in it: an upper
+ * bound of `23:59:59` silently drops a row written at `23:59:59.500`.
+ */
 function dayStart(iso: string): string {
-  return `${iso} 00:00:00`
+  return `${iso} 00:00:00.000Z`
 }
 
 function dayEnd(iso: string): string {
-  return `${iso} 23:59:59`
+  return `${iso} 23:59:59.999Z`
 }
 
 function queryOf(query: ReportQuery): Record<string, string> {
@@ -78,7 +82,12 @@ export async function getDailyStats(
 ): Promise<DailyStatRow[]> {
   if (isDemo()) return demoDailyStats(from, to)
   const rows = await pb.collection("daily_stats").getFullList<DailyStatRow>({
-    filter: `date >= "${dayStart(from)}" && date <= "${dayEnd(to)}"`,
+    // Parameterised rather than interpolated: the SDK escapes the values,
+    // so a date that is not a date cannot become filter syntax.
+    filter: pb.filter("date >= {:from} && date <= {:to}", {
+      from: dayStart(from),
+      to: dayEnd(to),
+    }),
     sort: "date",
   })
   noteNetworkSuccess()
@@ -154,17 +163,25 @@ export async function listSavedReports(key?: ReportKey): Promise<SavedReportReco
   return rows
 }
 
+/**
+ * Save a view. Only an admin may schedule one: an ordinary staff member's
+ * save carries the name and the filters and nothing else, so a schedule or a
+ * recipient list cannot reach the record from a screen that never offered
+ * them, however the call was made.
+ */
 export async function saveSavedReport(
-  input: SavedReportInput
+  input: SavedReportInput,
+  options: { admin: boolean }
 ): Promise<SavedReportRecord> {
-  if (isDemo()) return demoSaveReport(input)
+  if (isDemo()) return demoSaveReport(input, options)
   const body = {
     owner: pb.authStore.record?.id,
     report_key: input.report_key,
     name: input.name,
     filters: input.filters,
-    schedule: input.schedule,
-    recipients: input.recipients,
+    ...(options.admin
+      ? { schedule: input.schedule, recipients: input.recipients }
+      : {}),
   }
   if (input.id) {
     return pb.collection("saved_reports").update<SavedReportRecord>(input.id, body)
