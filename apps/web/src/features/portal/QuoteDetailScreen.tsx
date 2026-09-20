@@ -154,14 +154,9 @@ export function QuoteDetailScreen({ id }: { id: string }) {
   return (
     <section className="pt-12 sm:pt-20">
       <PageTitle>Quote</PageTitle>
+      {/* A quote carries no number, so the day it was sent names it. */}
       <p className="mt-3 text-base leading-[1.5] text-muted-foreground">
-        {/* A code is never set in Jost, so the number keeps its mono. */}
-        {quote.number ? (
-          <>
-            <span className="tnum font-mono text-[13px] text-foreground">{quote.number}</span>,{" "}
-          </>
-        ) : null}
-        sent {formatDate(quote.created)}
+        Sent {formatDate(quote.created)}
       </p>
 
       <div className="mt-12">
@@ -179,7 +174,7 @@ export function QuoteDetailScreen({ id }: { id: string }) {
           </p>
           {quote.offer_expires_at ? (
             <Note className="mt-3">
-              {`Holds until ${formatDateTime(quote.offer_expires_at)}`}
+              {`Stands until ${formatDateTime(quote.offer_expires_at)}`}
             </Note>
           ) : null}
 

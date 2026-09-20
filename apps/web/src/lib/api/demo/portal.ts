@@ -339,7 +339,6 @@ export const demoQuotes: DemoQuote[] = [
     // Nobody has picked this one up yet: the counter's queue opens on it.
     id: "quote_demo_3",
     customer: "cust_demo_2",
-    number: "GG-Q-000016",
     status: "submitted",
     message:
       "Loft box from my brother. A stack of Pokemon holos and two Game Boy carts. What are they worth?",
@@ -363,7 +362,6 @@ export const demoQuotes: DemoQuote[] = [
   {
     id: "quote_demo_1",
     customer: DEMO_PORTAL_CUSTOMER_ID,
-    number: "GG-Q-000014",
     status: "offered",
     message: "Four holos and a boxed SNES game. Happy with credit if it is better.",
     drop_off: "in_store",
@@ -412,7 +410,6 @@ export const demoQuotes: DemoQuote[] = [
     // into a draft buy-in.
     id: "quote_demo_4",
     customer: "cust_demo_3",
-    number: "GG-Q-000012",
     status: "accepted",
     message: "Two graded slabs and a Mega Drive boxed game. Posting them if you want them.",
     drop_off: "post",
@@ -462,7 +459,6 @@ export const demoQuotes: DemoQuote[] = [
   {
     id: "quote_demo_2",
     customer: DEMO_PORTAL_CUSTOMER_ID,
-    number: "GG-Q-000009",
     status: "completed",
     message: "Bulk Pokemon, about 300 cards, plus two Game Boy carts.",
     drop_off: "in_store",
@@ -498,7 +494,7 @@ export const demoQuotes: DemoQuote[] = [
       {
         id: "quote_demo_2_m2",
         author: "staff",
-        body: "Offer sent. It holds for seven days.",
+        body: "Offer sent. It stands for seven days.",
         created: daysAgo(42),
       },
     ],
@@ -547,7 +543,6 @@ export function demoCreateQuote(input: NewQuoteInput): QuoteRecord {
   const quote: DemoQuote = {
     id,
     customer: demoPortalCustomerId(),
-    number: `GG-Q-0000${15 + demoQuotes.length}`,
     status: "submitted",
     message: input.message,
     drop_off: input.dropOff,
@@ -721,7 +716,7 @@ export const demoNotifications: DemoNotification[] = [
     customer: DEMO_PORTAL_CUSTOMER_ID,
     type: "quote_offer",
     title: "Your quote offer, £42.00",
-    body: "We have priced the lot you sent. The offer holds for four more days.",
+    body: "We have priced the lot you sent. The offer stands for four more days.",
     link: "/account/quotes/quote_demo_1",
     created: daysAgo(1),
   },

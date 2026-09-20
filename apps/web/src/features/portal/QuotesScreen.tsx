@@ -75,13 +75,11 @@ export function QuotesScreen() {
                   <MicroLabel tone="ink">
                     {quoteStatusLabel(quote.status)}
                   </MicroLabel>
+                  {/* A quote carries no number: `quotes` has no such column
+                      and no route invents one, so the day it was sent is what
+                      names it. */}
                   <span className="text-[15px] leading-[1.4] text-muted-foreground">
-                    {quote.number ? (
-                      <>
-                        <span className="tnum font-mono text-[13px] text-foreground">{quote.number}</span>,{" "}
-                      </>
-                    ) : null}
-                    sent {formatDate(quote.created)}
+                    Sent {formatDate(quote.created)}
                   </span>
                   {needsAnswer(quote) ? (
                     // Ink, not a grey hint: this is the one row on the

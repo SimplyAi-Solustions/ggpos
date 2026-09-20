@@ -142,7 +142,7 @@ test.describe("quotes", () => {
     // The timeline says where it is, in words.
     const current = page.locator('[aria-current="step"]')
     await expect(current).toContainText("Offer made")
-    await expect(current).toContainText("This offer holds until")
+    await expect(current).toContainText("This offer stands until")
 
     await primary(page, "Accept the offer").click()
     const sheet = page.getByRole("dialog", { name: "Accept this offer" })

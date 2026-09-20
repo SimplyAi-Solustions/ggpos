@@ -32,7 +32,7 @@ describe("quoteTimeline", () => {
     const result = steps("offered", { offer_expires_at: "2026-09-27T12:00:00Z" })
     const current = result.find((step) => step.state === "current")
     expect(current?.label).toBe("Offer made")
-    expect(current?.detail).toBe("This offer holds until 27 Sep 2026.")
+    expect(current?.detail).toBe("This offer stands until 27 Sep 2026.")
   })
 
   it("stops the path when a quote closes, rather than carrying on past it", () => {

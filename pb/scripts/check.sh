@@ -321,12 +321,15 @@ ok "customer can update their own marketing consent"
 # forge a row with any status, lines and offer_total it liked, which
 # received/complete would then pay out as if staff had priced it) -
 # customers submit only through POST /api/vault/quotes (Phase 5's own
-# multipart route, exercised in section 23).
+# multipart route, exercised in section 23). PocketBase's own record-create
+# endpoint answers a failed createRule with a plain 400 "Failed to create
+# record.", not the 403/404 a failed list/view rule gives (confirmed
+# directly against this binary) - so 400 is what this asserts, not 403.
 QUOTE_CUSTOMER_CREATE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/quotes/records" \
   -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$CUSTOMER_ID\",\"status\":\"accepted\",\"offer_total\":999999,\"message\":\"Loft box of cards\"}")"
-[ "$QUOTE_CUSTOMER_CREATE_STATUS" = "403" ] || fail "a customer token creating a quotes row directly returned $QUOTE_CUSTOMER_CREATE_STATUS, expected 403 (a forged accepted status with a priced total must be refused outright)"
-ok "a customer token cannot create a quotes row directly (403; quotes.createRule is staff-only)"
+[ "$QUOTE_CUSTOMER_CREATE_STATUS" = "400" ] || fail "a customer token creating a quotes row directly returned $QUOTE_CUSTOMER_CREATE_STATUS, expected 400 (a forged accepted status with a priced total must be refused outright)"
+ok "a customer token cannot create a quotes row directly (400; quotes.createRule is staff-only)"
 
 QUOTE_JSON="$(curl -s -X POST "$BASE/api/collections/quotes/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
@@ -3985,6 +3988,15 @@ P5_CONFIG_CUSTOMER_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v
 [ "$P5_CONFIG_CUSTOMER_STATUS" = "403" ] || fail "a customer token reading GET /api/vault/config returned $P5_CONFIG_CUSTOMER_STATUS, expected 403 (unwidened, staff-only)"
 ok "push.vapid_public_key is readable by a customer through /me, and by staff through /config, which stays staff-only"
 
+# The Phase 1 settings.push_vapid_public_key / .push_vapid_private_key
+# fields are gone (fix round, finding 16, the orchestrator's own): nothing
+# ever read either, and settings.push.vapid_public_key above is the public
+# half's one home now.
+P5_SETTINGS_FIELD_NAMES="$(curl -s "$BASE/api/collections/settings" -H "Authorization: $SUPER_TOKEN" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>console.log(JSON.parse(d).fields.map(f=>f.name).join(",")))')"
+echo "$P5_SETTINGS_FIELD_NAMES" | grep -qw "push_vapid_public_key" && fail "settings still has the unused push_vapid_public_key field"
+echo "$P5_SETTINGS_FIELD_NAMES" | grep -qw "push_vapid_private_key" && fail "settings still has the unused push_vapid_private_key field"
+ok "settings no longer carries the unused push_vapid_public_key / push_vapid_private_key fields"
+
 # --- 23b2. A customer can read their own trade_ins, trade_in_lines,
 #     credit_ledger and points_ledger directly through the collection API
 #     (Phase 1/2 rules, unchanged by this phase), and never another
@@ -4564,6 +4576,21 @@ P5_ESTIMATE_UNKNOWN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/
 [ "$P5_ESTIMATE_UNKNOWN_STATUS" = "404" ] || fail "the public estimate for an unknown card returned $P5_ESTIMATE_UNKNOWN_STATUS, expected 404"
 ok "the public estimate 404s cleanly for an unknown card"
 
+# --- 23q2. The *:auth rate limit fires on a burst from one IP (fix round,
+#     finding 4) - wrong credentials on purpose, since a limiter that only
+#     counted successful logins would do nothing to slow a brute-force
+#     guess. Only 5 other auth-classified calls happen anywhere else in
+#     this whole script (the staff/superuser logins near the top and this
+#     section's own request-otp), so a burst of 12 here cannot be confused
+#     with, or itself disrupt, anything else this script does. -----------
+P5_AUTH_BURST_429_COUNT=0
+for _ in $(seq 1 12); do
+  P5_AUTH_BURST_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/staff/auth-with-password" -H "Content-Type: application/json" -d '{"identity":"admin-check@local.test","password":"definitely-the-wrong-password"}')"
+  [ "$P5_AUTH_BURST_STATUS" = "429" ] && P5_AUTH_BURST_429_COUNT=$((P5_AUTH_BURST_429_COUNT + 1))
+done
+[ "$P5_AUTH_BURST_429_COUNT" -ge 1 ] || fail "12 rapid login attempts from one IP never tripped the *:auth rate limit"
+ok "the *:auth rate limit fires on a burst of login attempts from one IP ($P5_AUTH_BURST_429_COUNT/12 refused with 429)"
+
 # --- 23r. Push subscribe and unsubscribe ---------------------------------
 P5_PUSH_SUB_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d '{"endpoint":"https://push.example.com/p5-endpoint","keys":{"p256dh":"p256dh-value","auth":"auth-value"}}')"
@@ -4577,12 +4604,35 @@ P5_PUSH_SUB_COUNT_2="$(curl -s "$BASE/api/collections/push_subscriptions/records
 [ "$P5_PUSH_SUB_COUNT_2" = "1" ] || fail "subscribing again with the same endpoint duplicated the row (count $P5_PUSH_SUB_COUNT_2)"
 ok "push subscribe upserts by endpoint rather than duplicating"
 
+# A different customer subscribing with the SAME endpoint must never
+# re-point the first customer's own row (fix round, finding 8) - it gets
+# its own new row instead, even though the endpoint string is identical.
+P5_PUSH_ORIGINAL_OWNER_ID="$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+curl -s -o /dev/null -X POST "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"endpoint":"https://push.example.com/p5-endpoint","keys":{"p256dh":"stolen-attempt","auth":"stolen-attempt"}}'
+P5_PUSH_SHARED_ENDPOINT_JSON="$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_PUSH_SHARED_ENDPOINT_JSON" | jval totalItems)" = "2" ] || fail "a second customer subscribing with another's endpoint did not create its own row (expected 2 rows, got $(echo "$P5_PUSH_SHARED_ENDPOINT_JSON" | jval totalItems))"
+P5_PUSH_ORIGINAL_STILL_OWNED="$(curl -s "$BASE/api/collections/push_subscriptions/records/$P5_PUSH_ORIGINAL_OWNER_ID" -H "Authorization: $STAFF_TOKEN" | jval customer)"
+[ "$P5_PUSH_ORIGINAL_STILL_OWNED" = "$P5_CUSTOMER_ID" ] || fail "the first customer's own push_subscriptions row was re-pointed to another customer"
+ok "a different customer subscribing with the same endpoint gets its own row, never re-pointing the first customer's"
+
+# Unsubscribing an endpoint you do not own is a 404, not a delete of
+# someone else's row (fix round, finding 8).
+P5_PUSH_UNSUB_OTHER_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/vault/push/subscribe" -H "Authorization: $(p5_impersonate "$P5_HOLD_CUSTOMER_ID")" -H "Content-Type: application/json" \
+  -d '{"endpoint":"https://push.example.com/p5-endpoint"}')"
+[ "$P5_PUSH_UNSUB_OTHER_STATUS" = "404" ] || fail "unsubscribing an endpoint you do not own returned $P5_PUSH_UNSUB_OTHER_STATUS, expected 404"
+[ "$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)" = "2" ] || fail "a 404'd unsubscribe attempt still deleted a row"
+ok "a customer token cannot unsubscribe another customer's push subscription (404, and nothing is deleted)"
+
+curl -s -o /dev/null -X DELETE "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"endpoint":"https://push.example.com/p5-endpoint"}'
+
 P5_PUSH_UNSUB_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/vault/push/subscribe" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d '{"endpoint":"https://push.example.com/p5-endpoint"}')"
 [ "$P5_PUSH_UNSUB_STATUS" = "200" ] || fail "push unsubscribe returned $P5_PUSH_UNSUB_STATUS, expected 200"
 P5_PUSH_SUB_COUNT_3="$(curl -s "$BASE/api/collections/push_subscriptions/records?filter=endpoint%3D%22https%3A%2F%2Fpush.example.com%2Fp5-endpoint%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
-[ "$P5_PUSH_SUB_COUNT_3" = "0" ] || fail "the push subscription still exists after unsubscribe"
-ok "push unsubscribe removes the subscription"
+[ "$P5_PUSH_SUB_COUNT_3" = "0" ] || fail "the push subscription still exists after both owners unsubscribed"
+ok "push unsubscribe removes the caller's own subscription"
 
 P5_PUSH_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22push_subscribe%22%7C%7Caction%3D%22push_unsubscribe%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
 [ "${P5_PUSH_AUDIT:-0}" -ge 2 ] || fail "push subscribe/unsubscribe were not both audited"

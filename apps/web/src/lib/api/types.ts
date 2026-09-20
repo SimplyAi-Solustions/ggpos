@@ -1638,7 +1638,9 @@ export interface QuoteLine {
 /** `quotes`. */
 export interface QuoteRecord extends BaseRecord {
   customer: string
-  number?: string
+  // No `number`: `quotes` has no such column and no route invents one, so a
+  // quote is referred to by the day it was sent. Buy-ins and sales are the
+  // numbered records; a quote is a conversation that may never become one.
   status: QuoteStatus
   message?: string
   drop_off?: QuoteDropOff

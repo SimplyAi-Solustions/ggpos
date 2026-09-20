@@ -130,7 +130,7 @@ function currentDetail(
       return "A member of staff is pricing your items now."
     case "offered":
       return quote.offer_expires_at
-        ? `This offer holds until ${formatDate(quote.offer_expires_at)}.`
+        ? `This offer stands until ${formatDate(quote.offer_expires_at)}.`
         : "Accept or decline below."
     case "accepted":
       return "Bring the items in, or post them, and we will check them over."
