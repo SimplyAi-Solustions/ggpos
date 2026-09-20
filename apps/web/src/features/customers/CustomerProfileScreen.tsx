@@ -13,8 +13,8 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useStaff } from "@/lib/auth"
+import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
 import { movedSentence } from "@/features/customers/merge-words"
-import { StepUpDialog } from "@/features/customers/StepUpDialog"
 import { IdPhotoSheet } from "@/features/customers/IdPhotoSheet"
 import {
   ALL_FLAGS,
@@ -23,11 +23,14 @@ import {
   formatDate,
   formatShortDate,
 } from "@/features/customers/format"
+import { StepUpCancelled, stepUp } from "@/lib/auth-stepup"
 import {
   eraseCustomer,
+  fetchIdPhoto,
   getCreditLedger,
   getCustomer,
   getCustomerTradeIns,
+  latestIdDocument,
   mergeCustomers,
   refusalOrFallback,
   updateCustomer,
@@ -134,10 +137,12 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
   const isAdmin = staff?.role === "admin"
 
   const [photoOpen, setPhotoOpen] = React.useState(false)
+  const [photoUrl, setPhotoUrl] = React.useState<string | null>(null)
   const [mergeTarget, setMergeTarget] = React.useState<string | null>(null)
   const [eraseOpen, setEraseOpen] = React.useState(false)
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [cardNote, setCardNote] = React.useState<string | null>(null)
+  const [actionNote, setActionNote] = React.useState<string | null>(null)
 
   const profileQuery = useQuery({
     queryKey: ["customer", code],
@@ -174,6 +179,54 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
       setSaveError(
         refusalOrFallback(error, "That change did not save. Try it again.")
       ),
+  })
+
+  /** Cancelling the password prompt is a decision, not a failure. */
+  function noteFailure(error: unknown, fallback: string) {
+    if (error instanceof StepUpCancelled) return
+    setActionNote(refusalOrFallback(error, fallback))
+  }
+
+  const photo = useMutation({
+    mutationFn: async () => {
+      const token = await stepUp()
+      const documentId = await latestIdDocument(customerId)
+      if (!documentId) {
+        throw new Error(
+          "No ID photo is stored for this customer, or it has passed its retention date."
+        )
+      }
+      return fetchIdPhoto(documentId, token)
+    },
+    onSuccess: (url) => {
+      setActionNote(null)
+      setPhotoUrl(url)
+      setPhotoOpen(true)
+    },
+    onError: (error) => noteFailure(error, "That photo could not be opened."),
+  })
+
+  const merge = useMutation({
+    mutationFn: async (mergeId: string) =>
+      mergeCustomers(customerId, mergeId, await stepUp()),
+    onSuccess: (result) => {
+      setMergeTarget(null)
+      apply(result.profile)
+      void queryClient.invalidateQueries({ queryKey: ["customer-credit"] })
+      void queryClient.invalidateQueries({ queryKey: ["customer-trade-ins"] })
+      setActionNote(movedSentence(result.moved))
+    },
+    onError: (error) => noteFailure(error, "That merge did not go through."),
+  })
+
+  const erase = useMutation({
+    mutationFn: async () => eraseCustomer(customerId, await stepUp()),
+    onSuccess: (next) => {
+      setEraseOpen(false)
+      apply(next)
+      setActionNote("That customer has been erased. The numbered records are kept.")
+    },
+    onError: (error) => noteFailure(error, "That erasure did not go through."),
   })
 
   if (profileQuery.isPending) {
@@ -329,7 +382,12 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         </div>
         {isAdmin && idStatus === "verified" ? (
           <div className="mt-6">
-            <Button variant="text" type="button" onClick={() => setPhotoOpen(true)}>
+            <Button
+              variant="text"
+              type="button"
+              loading={photo.isPending}
+              onClick={() => photo.mutate()}
+            >
               View photo
             </Button>
           </div>
@@ -517,6 +575,14 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
             Erasing a customer is an admin job. Ask Richard.
           </p>
         )}
+        {actionNote ? (
+          <p
+            role="status"
+            className="max-w-[46ch] text-[13px] leading-[1.45] text-muted-foreground"
+          >
+            {actionNote}
+          </p>
+        ) : null}
         {cardNote ? (
           <p
             aria-live="polite"
@@ -529,39 +595,36 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
 
       <IdPhotoSheet
         open={photoOpen}
-        onOpenChange={setPhotoOpen}
-        customerId={customerId}
+        onOpenChange={(open) => {
+          setPhotoOpen(open)
+          if (!open) setPhotoUrl(null)
+        }}
+        url={photoUrl}
         customerName={customer.name}
       />
 
-      <StepUpDialog
+      <ConfirmDialog
         open={mergeTarget !== null}
         onOpenChange={(open) => {
           if (!open) setMergeTarget(null)
         }}
         title="Merge customers"
-        description={`Everything on the other card moves to ${customer.name}, and the other card is removed. This cannot be undone, so confirm your password.`}
+        description={`Everything on the other card moves to ${customer.name}, and the other card is removed. This cannot be undone, and it asks for your password.`}
         confirmLabel="Merge"
-        onConfirm={async (token) => {
-          if (!mergeTarget) return null
-          const result = await mergeCustomers(customerId, mergeTarget, token)
-          apply(result.profile)
-          void queryClient.invalidateQueries({ queryKey: ["customer-credit"] })
-          void queryClient.invalidateQueries({ queryKey: ["customer-trade-ins"] })
-          return movedSentence(result.moved)
+        busy={merge.isPending}
+        onConfirm={() => {
+          if (mergeTarget) merge.mutate(mergeTarget)
         }}
       />
 
-      <StepUpDialog
+      <ConfirmDialog
         open={eraseOpen}
         onOpenChange={setEraseOpen}
         title="Erase this customer"
-        description="The name, phone, email, address and notes are replaced with nothing, the ID photo is deleted, open rewards are cancelled and the want list, quotes and notifications go. Numbered trade-ins and sales keep their seller details, because tax law requires the shop to hold them for six years. Confirm your password to go ahead."
+        description="The name, phone, email, address and notes are replaced with nothing, the ID photo is deleted, open rewards are cancelled, and the want list, quotes and notifications go. Numbered trade-ins and sales keep their seller details, because tax law requires the shop to hold them for six years. It asks for your password."
         confirmLabel="Erase"
-        onConfirm={async (token) => {
-          apply(await eraseCustomer(customerId, token))
-          return "That customer has been erased. The numbered records are kept."
-        }}
+        busy={erase.isPending}
+        onConfirm={() => erase.mutate()}
       />
     </section>
   )

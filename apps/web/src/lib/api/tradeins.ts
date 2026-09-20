@@ -451,16 +451,6 @@ export async function getCustomerTradeIns(
 // The ID photo (admin, step-up)
 // ---------------------------------------------------------------------------
 
-/** Confirms the signed-in staff member's password for the next ten minutes. */
-export async function stepUp(password: string): Promise<string> {
-  if (isDemo()) return "demo-step-up"
-  const result = await pb.send<{ token: string; expires_at: string }>(
-    "/api/vault/step-up",
-    { method: "POST", body: { password } }
-  )
-  return result.token
-}
-
 /**
  * The decrypted ID photo as an object URL, for an admin who has just
  * confirmed their password. The caller revokes the URL when the sheet closes.

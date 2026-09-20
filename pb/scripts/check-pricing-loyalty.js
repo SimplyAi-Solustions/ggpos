@@ -70,10 +70,24 @@ const tiers = readItems("loyalty_tiers.json").items || [];
 const legend = tiers.find((t) => t.name === "Legend");
 if (!legend) fail("no seeded 'Legend' loyalty_tiers row was found");
 
-// A £20.00 NM Pokemon single must produce a non-zero cash and credit offer.
-const cardOffer = pricing.computeOffer(2000, { game: "pokemon", kind: "single", condition: "NM" }, pricingRules);
-if (!(cardOffer.cash > 0) || !(cardOffer.credit > 0)) {
-  fail("a £20.00 NM Pokemon single produced a zero offer: " + JSON.stringify(cardOffer));
+// A £20.00 Pokemon single must produce a non-zero cash and credit offer in
+// every condition. The seeded single bands used to be NM-only, which left an
+// LP or MP card matching no rule and offering nothing; condition is applied
+// by adjustForCondition before a rule is picked, so the bands are wildcards.
+for (const condition of ["NM", "LP", "MP", "HP", "DMG"]) {
+  const offer = pricing.computeOffer(2000, { game: "pokemon", kind: "single", condition }, pricingRules);
+  if (!(offer.cash > 0) || !(offer.credit > 0)) {
+    fail(`a £20.00 ${condition} Pokemon single produced a zero offer: ` + JSON.stringify(offer));
+  }
+}
+
+// And a worse condition must offer strictly less than a better one.
+const nmOffer = pricing.computeOffer(2000, { game: "pokemon", kind: "single", condition: "NM" }, pricingRules);
+const mpOffer = pricing.computeOffer(2000, { game: "pokemon", kind: "single", condition: "MP" }, pricingRules);
+if (!(mpOffer.cash < nmOffer.cash)) {
+  fail(
+    "an MP single offered " + mpOffer.cash + " against an NM single's " + nmOffer.cash + ", expected less"
+  );
 }
 
 // A £30.00 loose retro item must produce a non-zero offer.

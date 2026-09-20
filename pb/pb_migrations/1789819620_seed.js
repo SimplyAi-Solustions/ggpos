@@ -102,9 +102,15 @@ migrate((app) => {
   }
 
   // -----------------------------------------------------------------
-  // pricing_rules: defaults for NM singles (banded), flat retro and
-  // sealed rates. game is left empty (wildcard) throughout - kind (plus
+  // pricing_rules: banded single rates plus flat retro and sealed rates.
+  // game and condition are left empty (wildcard) throughout - kind (plus
   // band, for singles) is specific enough on its own; see pb/README.md.
+  //
+  // condition is deliberately a wildcard on the single bands. The shared
+  // evaluator applies adjustForCondition to the market value *before* it
+  // picks a rule, so an LP or MP card is already discounted by the time
+  // selectRule runs; a condition-specific band would then leave every
+  // non-NM single matching no rule at all and offering nothing.
   //
   // Bands chain on the exclusive-upper convention selectRule uses (band_min
   // inclusive, band_max exclusive): 0-500, 500-5000, 5000-open, so every
@@ -118,9 +124,9 @@ migrate((app) => {
   const pricingRulesCollection = app.findCollectionByNameOrId("pricing_rules");
   const pricingRules = [
     // kind, condition, band_min, band_max, cash_pct, credit_pct, rounding, priority
-    ["single", "NM", 0, 500, 40, 55, 25, 10], // under £5
-    ["single", "NM", 500, 5000, 50, 65, 50, 20], // £5 to £50
-    ["single", "NM", 5000, null, 60, 75, 50, 30], // £50 and over
+    ["single", "", 0, 500, 40, 55, 25, 10], // under £5
+    ["single", "", 500, 5000, 50, 65, 50, 20], // £5 to £50
+    ["single", "", 5000, null, 60, 75, 50, 30], // £50 and over
     // Retro: loose, boxed and cib all take the same flat rate, so one
     // wildcard-condition row covers all three completeness values.
     ["retro", "", 0, null, 45, 60, 50, 40],

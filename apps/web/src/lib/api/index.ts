@@ -343,7 +343,6 @@ export {
   latestIdDocument,
   listTradeIns,
   saveTradeInLines,
-  stepUp,
   submitIdCheck,
 } from "@/lib/api/tradeins"
 
