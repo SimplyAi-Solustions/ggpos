@@ -3972,6 +3972,19 @@ ok "GET /api/vault/me sums both balances live from the ledgers, never the cached
 [ "$(echo "$P5_ME_JSON" | jval "customer.notifications.push")" = "true" ] || fail "GET /me does not return notifications.push (default true): $P5_ME_JSON"
 ok "GET /api/vault/me returns the customer's own notification preferences"
 
+# GET /api/vault/config is staff-only, so it is not where a customer reads
+# push.vapid_public_key from - /me carries it too (fix round, finding 2),
+# and /config keeps it for staff, unwidened.
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$(curl -s "$BASE/api/collections/settings/records?perPage=1" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"push":{"vapid_public_key":"p5-test-vapid-public-key"}}'
+P5_ME_PUSH_JSON="$(curl -s "$BASE/api/vault/me" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_ME_PUSH_JSON" | jval "push.vapid_public_key")" = "p5-test-vapid-public-key" ] || fail "GET /me does not carry push.vapid_public_key: $P5_ME_PUSH_JSON"
+P5_CONFIG_PUSH_JSON="$(curl -s "$BASE/api/vault/config" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_CONFIG_PUSH_JSON" | jval "push.vapid_public_key")" = "p5-test-vapid-public-key" ] || fail "GET /config does not carry push.vapid_public_key: $P5_CONFIG_PUSH_JSON"
+P5_CONFIG_CUSTOMER_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/config" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$P5_CONFIG_CUSTOMER_STATUS" = "403" ] || fail "a customer token reading GET /api/vault/config returned $P5_CONFIG_CUSTOMER_STATUS, expected 403 (unwidened, staff-only)"
+ok "push.vapid_public_key is readable by a customer through /me, and by staff through /config, which stays staff-only"
+
 # --- 23b2. A customer can read their own trade_ins, trade_in_lines,
 #     credit_ledger and points_ledger directly through the collection API
 #     (Phase 1/2 rules, unchanged by this phase), and never another
@@ -4365,8 +4378,26 @@ P5_WANT_AFTER_SALE="$(curl -s "$BASE/api/collections/want_list/records/$P5_WANT_
 [ "$(echo "$P5_WANT_AFTER_SALE" | jval status)" = "fulfilled" ] || fail "the want-list row is '$(echo "$P5_WANT_AFTER_SALE" | jval status)' after the sale, expected fulfilled"
 ok "selling a reserved item to its own customer marks the want-list row fulfilled"
 
+# --- 23o2. Closing a matched want-list row releases the held item back to
+#     in_stock, in the same request (fix round, finding 11) ---------------
+P5_CARD_CLOSE="$(p5_make_card "Phase 5 Card Close" "72")"
+P5_WANT_CLOSE_ID="$(curl -s -X POST "$BASE/api/vault/want-list" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_CLOSE\",\"max_price\":0}" | jval "row.id")"
+[ -n "$P5_WANT_CLOSE_ID" ] || fail "could not create the want-list row for the close-releases-item check"
+P5_ITEM_CLOSE_ID="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_CLOSE\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":1200}" | jval id)"
+[ "$(curl -s "$BASE/api/collections/items/records/$P5_ITEM_CLOSE_ID" -H "Authorization: $STAFF_TOKEN" | jval status)" = "reserved" ] || fail "the close-releases-item check's item was not reserved by its want match"
+P5_CLOSE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/want-list/$P5_WANT_CLOSE_ID/close" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_CLOSE_JSON" | tail -n1)" = "200" ] || fail "closing a matched want-list row returned $(echo "$P5_CLOSE_JSON" | tail -n1)"
+[ "$(echo "$P5_CLOSE_JSON" | head -n -1 | jval "row.status")" = "closed" ] || fail "the closed want-list row is not status closed"
+P5_ITEM_AFTER_CLOSE="$(curl -s "$BASE/api/collections/items/records/$P5_ITEM_CLOSE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_ITEM_AFTER_CLOSE" | jval status)" = "in_stock" ] || fail "an item held by a closed want-list row is '$(echo "$P5_ITEM_AFTER_CLOSE" | jval status)', expected in_stock"
+[ "$(echo "$P5_ITEM_AFTER_CLOSE" | jval reserved_for)" = "" ] || fail "an item held by a closed want-list row still carries reserved_for"
+ok "closing a matched want-list row puts its held item back in stock, in the same transaction"
+
 # --- 23p. holds_release: an expired hold goes back to in_stock, its row
-#     closes, and the customer is told -----------------------------------
+#     closes, and the customer is told; a hold not yet due, and a staff
+#     reservation with no want-list row at all, both survive the same
+#     cron pass untouched (fix round, findings 3 and 12) ------------------
 P5_CARD_C="$(p5_make_card "Phase 5 Card C" "8")"
 P5_HOLD_CUSTOMER_ID="$(p5_make_customer "Hold Release Customer" "p5-hold@local.test")"
 curl -s -o /dev/null -X POST "$BASE/api/vault/want-list" -H "Authorization: $(p5_impersonate "$P5_HOLD_CUSTOMER_ID")" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_C\",\"max_price\":0}"
@@ -4374,8 +4405,31 @@ P5_HOLD_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Aut
   -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_C\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":1000}" | jval id)"
 [ "$(curl -s "$BASE/api/collections/items/records/$P5_HOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval status)" = "reserved" ] || fail "the hold-release item was not reserved by its want match"
 P5_HOLD_WANT_ID="$(curl -s "$BASE/api/collections/want_list/records?filter=card%3D%22$P5_CARD_C%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
-
 curl -s -o /dev/null -X PATCH "$BASE/api/collections/items/records/$P5_HOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"reserved_until":"2020-01-01 00:00:00.000Z"}'
+
+# A want-list hold due later today (not in the past): the whole reason for
+# finding 3's fix is that comparing an ISO "T" now against a PocketBase
+# space-separated reserved_until used to release every same-day hold
+# regardless of what time later today it was actually due.
+P5_CARD_NOTDUE="$(p5_make_card "Phase 5 Card Not Due" "73")"
+P5_NOTDUE_CUSTOMER_ID="$(p5_make_customer "Hold Not Due Customer" "p5-hold-notdue@local.test")"
+curl -s -o /dev/null -X POST "$BASE/api/vault/want-list" -H "Authorization: $(p5_impersonate "$P5_NOTDUE_CUSTOMER_ID")" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_NOTDUE\",\"max_price\":0}"
+P5_NOTDUE_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_NOTDUE\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":1500}" | jval id)"
+[ "$(curl -s "$BASE/api/collections/items/records/$P5_NOTDUE_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval status)" = "reserved" ] || fail "the not-due hold item was not reserved by its want match"
+P5_NOTDUE_LATER_TODAY="$(node -e 'console.log(new Date(Date.now() + 6 * 3600000).toISOString().replace("T"," "))')"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/items/records/$P5_NOTDUE_ITEM_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"reserved_until\":\"$P5_NOTDUE_LATER_TODAY\"}"
+
+# A staff reservation with no want-list row behind it at all - the cron
+# must never touch this, whatever its own reserved_until says.
+P5_CARD_STAFFHOLD="$(p5_make_card "Phase 5 Card Staff Hold" "74")"
+P5_STAFFHOLD_CUSTOMER_ID="$(p5_make_customer "Staff Hold Customer" "p5-staffhold@local.test")"
+P5_STAFFHOLD_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_STAFFHOLD\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":800}" | jval id)"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/items/records/$P5_STAFFHOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"status\":\"reserved\",\"reserved_for\":\"$P5_STAFFHOLD_CUSTOMER_ID\",\"reserved_until\":\"2020-01-01 00:00:00.000Z\"}"
+[ "$(curl -s "$BASE/api/collections/want_list/records?filter=card%3D%22$P5_CARD_STAFFHOLD%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)" = "0" ] || fail "the staff-hold card unexpectedly has a want-list row"
+
 P5_RELEASE_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/holds_release" -H "Authorization: $SUPER_TOKEN")"
 [ "$P5_RELEASE_CRON_STATUS" = "204" ] || fail "POST /api/crons/holds_release returned $P5_RELEASE_CRON_STATUS, expected 204"
 sleep 1
@@ -4389,6 +4443,15 @@ P5_RELEASE_NOTIF_JSON="$(curl -s "$BASE/api/collections/notifications/records?pe
 [ "$(echo "$P5_RELEASE_NOTIF_JSON" | jval totalItems)" -ge 1 ] || fail "the holds_release cron did not notify the customer"
 [ "$(echo "$P5_RELEASE_NOTIF_JSON" | jval "items.0.link")" = "/account/wants" ] || fail "a hold-released notification's link is '$(echo "$P5_RELEASE_NOTIF_JSON" | jval "items.0.link")', expected /account/wants"
 ok "the holds_release cron puts an expired hold back in stock, closes its want-list row and notifies the customer"
+
+P5_NOTDUE_ITEM_AFTER="$(curl -s "$BASE/api/collections/items/records/$P5_NOTDUE_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_NOTDUE_ITEM_AFTER" | jval status)" = "reserved" ] || fail "a hold not yet due is '$(echo "$P5_NOTDUE_ITEM_AFTER" | jval status)' after holds_release, expected still reserved (finding 3's date-format bug would release it early)"
+ok "a want-list hold due later today survives the holds_release cron"
+
+P5_STAFFHOLD_ITEM_AFTER="$(curl -s "$BASE/api/collections/items/records/$P5_STAFFHOLD_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_STAFFHOLD_ITEM_AFTER" | jval status)" = "reserved" ] || fail "a staff reservation with no want-list row is '$(echo "$P5_STAFFHOLD_ITEM_AFTER" | jval status)' after holds_release, expected still reserved"
+[ "$(echo "$P5_STAFFHOLD_ITEM_AFTER" | jval reserved_for)" = "$P5_STAFFHOLD_CUSTOMER_ID" ] || fail "a staff reservation's reserved_for changed after holds_release"
+ok "a staff reservation with no matched want-list row survives the holds_release cron untouched"
 
 # --- 23q. Public estimate: no token, real bands, never an adapter call --
 curl -s -o /dev/null -X POST "$BASE/api/vault/cards/$P5_CARD_A/uk-comp" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
