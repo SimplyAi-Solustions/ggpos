@@ -2140,6 +2140,8 @@ ok "the fx cron stores the ECB rate's own date (2026-09-18), not just when this 
 
 FX_LIVE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/fx")"
 [ "$(echo "$FX_LIVE_JSON" | jval stale)" = "false" ] || fail "GET /api/vault/fx reports stale right after the fx cron ran: $FX_LIVE_JSON"
+[ "$(echo "$FX_LIVE_JSON" | jval date)" = "2026-09-18" ] || fail "GET /api/vault/fx does not return the rate's own ECB date: $FX_LIVE_JSON"
+ok "GET /api/vault/fx returns the ECB reference date beside the rates"
 FX_EUR_RATE="$(echo "$FX_LIVE_JSON" | jval "rates.EUR")"
 FX_USD_RATE="$(echo "$FX_LIVE_JSON" | jval "rates.USD")"
 node -e 'if (!(Number(process.argv[1]) > 0)) { console.error("EUR rate not positive: " + process.argv[1]); process.exit(1); }' "$FX_EUR_RATE" \

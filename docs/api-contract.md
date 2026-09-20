@@ -291,10 +291,10 @@ The same body and rules as the card version, with `completeness` standing in for
 `GET /api/vault/fx`
 
 ```json
-{ "base": "GBP", "rates": { "EUR": 0.8606, "USD": 0.75 }, "fetched_at": "...", "stale": false }
+{ "base": "GBP", "rates": { "EUR": 0.8606, "USD": 0.75 }, "date": "2026-09-18", "fetched_at": "...", "stale": false }
 ```
 
-Reads the latest `fx_rates` row only - the daily 07:00 cron (`crons.pb.js`) is the only thing that ever calls Frankfurter. `rates[code]` is **GBP per one unit of `code`** (so `£1 = €1 / 0.8606`), the same direction as every helper in `packages/shared/src/money.ts`. Stale after 3 days. With no `fx_rates` row at all (a fresh install before the first 07:00 run), returns `{ "base": "GBP", "rates": {}, "fetched_at": null, "stale": true }` rather than an error.
+Reads the latest `fx_rates` row only - the daily 07:00 cron (`crons.pb.js`) is the only thing that ever calls Frankfurter. `rates[code]` is **GBP per one unit of `code`** (so `£1 = €1 / 0.8606`), the same direction as every helper in `packages/shared/src/money.ts`. Stale after 3 days. With no `fx_rates` row at all (a fresh install before the first 07:00 run), returns `{ "base": "GBP", "rates": {}, "date": null, "fetched_at": null, "stale": true }` rather than an error. `date` is the ECB reference date the rate belongs to (a weekend fetch carries Friday's date), null for rows written before the column existed; the counter prints it in the conversion detail.
 
 ### Implementation notes (as built in Phase 3)
 

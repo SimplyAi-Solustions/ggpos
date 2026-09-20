@@ -34,7 +34,7 @@ routerAdd(
     const row = rows[0] || null;
 
     if (!row) {
-      return e.json(200, { base: "GBP", rates: {}, fetched_at: null, stale: true });
+      return e.json(200, { base: "GBP", rates: {}, date: null, fetched_at: null, stale: true });
     }
 
     const fetchedAt = row.getString("fetched_at");
@@ -44,6 +44,9 @@ routerAdd(
     return e.json(200, {
       base: row.getString("base") || "GBP",
       rates: quotes,
+      // The ECB reference date the rate belongs to (weekends carry Friday's
+      // rate), or null for rows written before the column existed.
+      date: row.getString("date") ? row.getString("date").slice(0, 10) : null,
       fetched_at: fetchedAt,
       stale: !isFinite(ageHours) || ageHours > STALE_HOURS,
     });
