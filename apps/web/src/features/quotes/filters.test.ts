@@ -1,63 +1,38 @@
-import { describe, expect, it } from "vitest"
-
 import {
-  applyQuoteFilters,
   canCancel,
   canOffer,
+  holdHasEnded,
   offerHasExpired,
   showsQuoteMessage,
   statusesFor,
+  statusesForFilters,
 } from "@/features/quotes/filters"
-import type { QuoteQueueRow, QuoteStatus } from "@/lib/api/types"
+import type { QuoteStatus } from "@/lib/api/types"
 
-function row(status: QuoteStatus, id = status): QuoteQueueRow {
-  return {
-    id,
-    status,
-    customerId: "cust_1",
-    customerName: "Jasmine Okafor",
-    customerCode: "GGC-4K7M2",
-    photoCount: 3,
-    message: "Four holos and a boxed SNES game.",
-    dropOff: "in_store",
-    offerTotal: null,
-    offerExpiresAt: null,
-    created: "2026-09-19T10:00:00Z",
-  }
-}
-
-describe("applyQuoteFilters", () => {
-  const rows = [
-    row("submitted"),
-    row("reviewing"),
-    row("offered"),
-    row("accepted"),
-    row("received"),
-    row("completed"),
-    row("declined"),
-    row("expired"),
-  ]
-
-  it("shows everything when no chip is pressed", () => {
-    expect(applyQuoteFilters(rows, [])).toHaveLength(rows.length)
+describe("statusesForFilters", () => {
+  it("asks for everything when no chip is pressed", () => {
+    expect(statusesForFilters([])).toEqual([])
   })
 
   it("puts the two statuses waiting on us under one chip", () => {
-    expect(applyQuoteFilters(rows, ["waiting"]).map((entry) => entry.status)).toEqual([
-      "submitted",
-      "reviewing",
-    ])
+    expect(statusesForFilters(["waiting"])).toEqual(["submitted", "reviewing"])
   })
 
   it("treats several chips as an or", () => {
-    expect(
-      applyQuoteFilters(rows, ["offered", "accepted"]).map((entry) => entry.status)
-    ).toEqual(["offered", "accepted"])
+    expect(statusesForFilters(["offered", "accepted"])).toEqual([
+      "offered",
+      "accepted",
+    ])
   })
 
   it("counts a received quote as closed, because it is on a buy-in now", () => {
     expect(statusesFor("closed")).toContain("received")
-    expect(applyQuoteFilters(rows, ["closed"])).toHaveLength(4)
+    expect(statusesForFilters(["closed"])).toHaveLength(4)
+  })
+
+  it("never asks for the same status twice", () => {
+    const statuses = statusesForFilters(["waiting", "waiting", "offered"])
+    expect(statuses).toEqual([...new Set(statuses)])
   })
 })
 

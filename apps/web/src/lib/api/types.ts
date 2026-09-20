@@ -1700,6 +1700,16 @@ export interface QuoteQueueRow {
   created: string
 }
 
+/**
+ * One read of the queue: the rows that came back and how many the filter
+ * matched in all, so a truncated read can say so rather than quietly
+ * disagreeing with the count in the nav.
+ */
+export interface QuoteQueuePage {
+  rows: QuoteQueueRow[]
+  total: number
+}
+
 /** `GET /api/vault/quotes/:id` as the counter reads it, the sender included. */
 export interface StaffQuoteDetail extends QuoteDetail {
   customer: {

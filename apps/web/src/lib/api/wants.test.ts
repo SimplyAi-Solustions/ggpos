@@ -127,3 +127,45 @@ describe("addWant", () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// The counter's own read of the holds
+// ---------------------------------------------------------------------------
+
+const { holdsFilter } = await import("@/lib/api/wants")
+
+const NOW = new Date("2026-09-20T14:30:00Z")
+
+/**
+ * The filter string itself is the thing worth testing: PocketBase stores a
+ * date as "2026-09-20 17:00:00.000Z", so an ISO string with its T in the
+ * middle only ever compares the date half, and a filter with no lower bound
+ * counts a hold that lapsed last week as one that ends today.
+ */
+describe("holdsFilter", () => {
+  const filter = holdsFilter(NOW)
+
+  it("asks for reserved items only", () => {
+    expect(filter).toContain('status = "reserved"')
+  })
+
+  it("writes both bounds the way PocketBase stores a date", () => {
+    const moments = filter.match(/reserved_until [<>]= "([^"]+)"/g) ?? []
+    expect(moments).toHaveLength(2)
+    for (const moment of moments) {
+      expect(moment).toMatch(/"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"/)
+      expect(moment).not.toContain("T")
+    }
+  })
+
+  it("is bounded at both ends of the day", () => {
+    expect(filter).toContain("reserved_until >=")
+    expect(filter).toContain("reserved_until <=")
+    const [from, to] = (filter.match(/"[\d-]{10} [\d:]{8}"/g) ?? []) as string[]
+    expect(from! < to!).toBe(true)
+  })
+
+  it("moves with the day it is asked about", () => {
+    expect(holdsFilter(new Date("2026-09-21T09:00:00Z"))).not.toEqual(filter)
+  })
+})

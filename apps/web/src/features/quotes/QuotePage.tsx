@@ -61,11 +61,11 @@ import { offerSettingsFrom, rulesFrom, useVaultConfig } from "@/lib/api"
 // shell imports: Phase 4 and Phase 5's own modules stay out of the entry
 // chunk (see the note in lib/api/index.ts).
 import {
+  QUOTE_QUEUE_KEY,
   cancelQuote,
   getStaffQuote,
   markQuoteReceived,
   markQuoteReviewing,
-  quoteQueueQuery,
   sendQuoteOffer,
   sendStaffQuoteMessage,
 } from "@/lib/api/quotes"
@@ -159,7 +159,8 @@ export function QuotePage({ id }: { id: string }) {
   const settle = React.useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["quote", id] }),
-      queryClient.invalidateQueries({ queryKey: quoteQueueQuery.queryKey }),
+      // The prefix, so every filtered read of the queue is refreshed.
+      queryClient.invalidateQueries({ queryKey: QUOTE_QUEUE_KEY }),
       queryClient.invalidateQueries({ queryKey: ["quotes-waiting"] }),
     ])
   }, [id, queryClient])

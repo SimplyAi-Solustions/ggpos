@@ -37,8 +37,9 @@ import type {
   QuoteDetail,
   QuoteLine,
   QuoteMessage,
-  QuoteQueueRow,
+  QuoteQueuePage,
   QuoteRecord,
+  QuoteStatus,
   StaffQuoteDetail,
   TradeInLineInput,
   VaultMe,
@@ -801,9 +802,14 @@ function demoCustomerFor(id: string) {
   return findDemoCustomer(id)?.customer ?? null
 }
 
-/** The whole queue, newest first, exactly as the collection read returns it. */
-export function demoQuoteQueue(): QuoteQueueRow[] {
-  return [...demoQuotes]
+/**
+ * The whole queue, newest first, filtered by status the way the collection
+ * read filters it: no statuses means everything.
+ */
+export function demoQuoteQueue(statuses: QuoteStatus[] = []): QuoteQueuePage {
+  const wanted = new Set<QuoteStatus>(statuses)
+  const rows = demoQuotes
+    .filter((quote) => wanted.size === 0 || wanted.has(quote.status))
     .sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""))
     .map((quote) => {
       const customer = demoCustomerFor(quote.customer)
@@ -821,6 +827,7 @@ export function demoQuoteQueue(): QuoteQueueRow[] {
         created: quote.created ?? "",
       }
     })
+  return { rows, total: rows.length }
 }
 
 export function demoStaffQuote(id: string): StaffQuoteDetail {

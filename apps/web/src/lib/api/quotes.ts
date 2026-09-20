@@ -34,6 +34,7 @@ import type {
   QuoteDetail,
   QuoteLine,
   QuoteMessage,
+  QuoteQueuePage,
   QuoteQueueRow,
   QuoteRecord,
   QuoteStatus,
@@ -153,22 +154,43 @@ function toQueueRow(record: ExpandedQuote): QuoteQueueRow {
   }
 }
 
-/** The whole queue, newest first. The screen filters it by status. */
-export async function listQuoteQueue(): Promise<QuoteQueueRow[]> {
-  if (isDemo()) return demoQuoteQueue()
-  const page = await pb.collection("quotes").getList<ExpandedQuote>(1, 100, {
-    sort: "-created",
-    expand: "customer",
-  })
+/** The most rows one read of the queue brings back. */
+export const QUOTE_QUEUE_PAGE = 100
+
+/**
+ * The queue, newest first, filtered by status on the server.
+ *
+ * The statuses go into the collection filter rather than being sifted out
+ * afterwards: a shop with more than a page of quotes would otherwise have a
+ * "Waiting" chip that disagreed with the count in the nav, because the chip
+ * would only ever see the newest hundred.
+ */
+export async function listQuoteQueue(
+  statuses: QuoteStatus[] = []
+): Promise<QuoteQueuePage> {
+  if (isDemo()) return demoQuoteQueue(statuses)
+  const filter = statuses.map((status) => `status = "${status}"`).join(" || ")
+  const page = await pb
+    .collection("quotes")
+    .getList<ExpandedQuote>(1, QUOTE_QUEUE_PAGE, {
+      filter,
+      sort: "-created",
+      expand: "customer",
+    })
   noteNetworkSuccess()
-  return page.items.map(toQueueRow)
+  return { rows: page.items.map(toQueueRow), total: page.totalItems }
 }
 
+/** The key every read and write of the queue shares, filters included. */
+export const QUOTE_QUEUE_KEY = ["quote-queue"] as const
+
 /** The queue as a TanStack query, so the screen and its writes share a key. */
-export const quoteQueueQuery = {
-  queryKey: ["quote-queue"] as const,
-  queryFn: listQuoteQueue,
-  staleTime: 15_000,
+export function quoteQueueQuery(statuses: QuoteStatus[] = []) {
+  return {
+    queryKey: [...QUOTE_QUEUE_KEY, statuses.join(",")] as const,
+    queryFn: () => listQuoteQueue(statuses),
+    staleTime: 15_000,
+  }
 }
 
 /**
@@ -178,7 +200,7 @@ export const quoteQueueQuery = {
  * nothing but the count travels.
  */
 export async function countQuotesWaiting(): Promise<number> {
-  if (isDemo()) return demoQuoteQueue().filter((row) => QUOTES_WAITING.includes(row.status)).length
+  if (isDemo()) return demoQuoteQueue(QUOTES_WAITING).total
   const filter = QUOTES_WAITING.map((status) => `status = "${status}"`).join(" || ")
   const page = await pb.collection("quotes").getList(1, 1, { filter, fields: "id" })
   return page.totalItems

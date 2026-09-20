@@ -6,7 +6,7 @@
  * buy-in list's own filters: no chip pressed means everything, and several
  * are an "or", never an "and".
  */
-import type { QuoteQueueRow, QuoteStatus } from "@/lib/api/types"
+import type { QuoteStatus } from "@/lib/api/types"
 
 export type QuoteFilter = "waiting" | "offered" | "accepted" | "closed"
 
@@ -36,13 +36,16 @@ export function statusesFor(filter: QuoteFilter): QuoteStatus[] {
   return STATUSES[filter]
 }
 
-export function applyQuoteFilters(
-  rows: QuoteQueueRow[],
-  active: QuoteFilter[]
-): QuoteQueueRow[] {
-  if (active.length === 0) return rows
+/**
+ * The statuses the pressed chips stand for, as one list for the server.
+ *
+ * No chip pressed is an empty list, which the queue reads as "everything".
+ * Several chips are an or, never an and, the same grammar the buy-in list's
+ * own filters use.
+ */
+export function statusesForFilters(active: QuoteFilter[]): QuoteStatus[] {
   const wanted = new Set<QuoteStatus>(active.flatMap(statusesFor))
-  return rows.filter((row) => wanted.has(row.status))
+  return [...wanted]
 }
 
 /** True while an offer can still be made on this quote. */
