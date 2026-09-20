@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 
-import { addStockSchema, finishesFor } from "@/features/stock/schema"
+import {
+  addStockSchema,
+  defaultFinish,
+  finishesFor,
+} from "@/features/stock/schema"
 
 const single = {
   gameId: "game_pokemon",
@@ -133,5 +137,34 @@ describe("finishesFor", () => {
 
   it("falls back rather than showing nothing for an unknown finish", () => {
     expect(finishesFor(["mystery"]).length).toBeGreaterThan(2)
+  })
+})
+
+
+describe("defaultFinish", () => {
+  /**
+   * Every price route matches `price_snapshots.finish` exactly, so a card
+   * chosen with no finish finds no snapshots and reads as worthless. Add
+   * stock and price check both land on a real finish the moment a card is
+   * picked.
+   */
+  it("takes the card's own first printing", () => {
+    expect(defaultFinish(["holo", "normal"])).toBe("holo")
+    expect(defaultFinish(["normal", "reverse"])).toBe("normal")
+  })
+
+  it("skips a printing this app has no name for", () => {
+    expect(defaultFinish(["borderless", "foil"])).toBe("foil")
+  })
+
+  it("falls back to normal for a card that lists none, like a manual one", () => {
+    expect(defaultFinish([])).toBe("normal")
+    expect(defaultFinish(undefined)).toBe("normal")
+  })
+
+  it("never answers with an empty string", () => {
+    for (const available of [[], undefined, ["nonsense"], ["holo"]]) {
+      expect(defaultFinish(available)).not.toBe("")
+    }
   })
 })

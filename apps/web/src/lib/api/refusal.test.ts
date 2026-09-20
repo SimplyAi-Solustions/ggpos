@@ -39,6 +39,22 @@ describe("refusalMessage", () => {
     expect(refusalMessage(error)).toBe("That number is too long.")
   })
 
+  it("shows a 502 from a lookup, which staff can act on", () => {
+    // "IGDB did not answer. Try again, or add the title manually." is a
+    // sentence with something to do in it, unlike a 500.
+    const error = response(502, {
+      code: 502,
+      message: "IGDB did not answer. Try again, or add the title manually.",
+      data: {},
+    })
+    expect(refusalMessage(error)).toBe(
+      "IGDB did not answer. Try again, or add the title manually."
+    )
+    expect(refusalOrFallback(error, "Try again.")).toBe(
+      "IGDB did not answer. Try again, or add the title manually."
+    )
+  })
+
   it("says nothing about a 500, which has nothing staff can act on", () => {
     expect(refusalMessage(response(500, { code: 500, message: "boom" }))).toBeNull()
   })
