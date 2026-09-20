@@ -29,7 +29,6 @@ routerAdd(
   "GET",
   "/api/vault/me/guild",
   (e) => {
-    const util = require(`${__hooks}/lib/vaultutil.js`);
     const tiersLib = require(`${__hooks}/lib/tiers.js`);
     const perksLib = require(`${__hooks}/lib/perks.js`);
     const referralsLib = require(`${__hooks}/lib/referrals.js`);

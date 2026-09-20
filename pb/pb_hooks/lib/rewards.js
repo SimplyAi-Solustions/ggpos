@@ -61,10 +61,12 @@ function imageUrl(reward, token) {
  * Why this customer cannot redeem this reward right now, or "ok".
  * `not_yet` is a reward that is active and on the list but has not opened
  * yet (`starts_at` in the future) - see docs/api-contract.md's Phase 6
- * section on why such a reward is listed rather than hidden.
+ * section on why such a reward is listed rather than hidden. `off` is the
+ * whole programme being switched off, which beats every other reason.
  */
-function reasonFor(reward, now, balance, remaining, perCustomerRemaining) {
+function reasonFor(reward, now, balance, remaining, perCustomerRemaining, programmeOff) {
   var util = require(`${__hooks}/lib/vaultutil.js`);
+  if (programmeOff) return "off";
   var startsAt = reward.getString("starts_at");
   if (startsAt && new Date(String(startsAt).replace(" ", "T")).getTime() > now.getTime()) {
     return "not_yet";
@@ -80,6 +82,8 @@ function reasonMessage(reason, reward, balance) {
   var tiers = require(`${__hooks}/lib/tiers.js`);
   var cost = reward.getInt("cost_points");
   switch (reason) {
+    case "off":
+      return "The rewards programme is switched off at the moment. Ask at the counter.";
     case "insufficient":
       return `You need ${tiers.formatPoints(cost)} points for this and have ${tiers.formatPoints(balance)}.`;
     case "sold_out":
@@ -96,9 +100,14 @@ function reasonMessage(reason, reward, balance) {
 /** Every reward a customer may see, with the figures the portal shows. */
 function listFor(app, customerId, auth, now) {
   var balances = require(`${__hooks}/lib/balances.js`);
+  var util = require(`${__hooks}/lib/vaultutil.js`);
   var at = now || new Date();
   var token = fileTokenFor(auth);
   var balance = customerId ? balances.pointsBalance(app, customerId) : 0;
+  // A programme switched off refuses every redemption (the redeem route
+  // says so in as many words), so the list says so too rather than
+  // offering a page of rewards that all fail at the last step.
+  var programmeOff = !util.programme(app).enabled;
 
   var rows = [];
   try {
@@ -121,7 +130,7 @@ function listFor(app, customerId, auth, now) {
       perCustomerLimit > 0 && customerId
         ? perCustomerLimit - takenCount(app, reward.id, customerId)
         : null;
-    var reason = reasonFor(reward, at, balance, remaining, perCustomerRemaining);
+    var reason = reasonFor(reward, at, balance, remaining, perCustomerRemaining, programmeOff);
 
     out.push({
       id: reward.id,

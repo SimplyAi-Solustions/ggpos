@@ -111,15 +111,47 @@ export async function saveProgramme(
   return pb.collection("loyalty_programme").update<LoyaltyProgrammeRecord>(id, patch)
 }
 
+/**
+ * A refusal from one row of a save that writes several.
+ *
+ * The rows go one at a time, so a refused rule leaves the rules before it
+ * written: the screen has to be able to say which row was refused and to
+ * re-read what landed, which is what `index` and the kept `cause` are for.
+ */
+export class RowWriteError extends Error {
+  /** Which of the two lists the refused row came from. */
+  collection: "loyalty_rules" | "loyalty_tiers"
+  /** The position in the array that was handed to the save. */
+  index: number
+  /** The server's own error, so its sentence still reaches the screen. */
+  cause: unknown
+
+  constructor(
+    collection: "loyalty_rules" | "loyalty_tiers",
+    index: number,
+    cause: unknown
+  ) {
+    super("One row was refused.")
+    this.name = "RowWriteError"
+    this.collection = collection
+    this.index = index
+    this.cause = cause
+  }
+}
+
 /** A rule with an id is updated; one without is created. Nothing is deleted. */
 export async function saveRules(
   writes: LoyaltyRuleWrite[]
 ): Promise<LoyaltyRuleRecord[]> {
   if (isDemo()) return demo.demoSaveRules(writes)
-  for (const write of writes) {
+  for (const [index, write] of writes.entries()) {
     const { id, ...fields } = write
-    if (id) await pb.collection("loyalty_rules").update(id, fields)
-    else await pb.collection("loyalty_rules").create(fields)
+    try {
+      if (id) await pb.collection("loyalty_rules").update(id, fields)
+      else await pb.collection("loyalty_rules").create(fields)
+    } catch (error) {
+      throw new RowWriteError("loyalty_rules", index, error)
+    }
   }
   return pb
     .collection("loyalty_rules")
@@ -130,10 +162,14 @@ export async function saveTiers(
   writes: LoyaltyTierWrite[]
 ): Promise<LoyaltyTierRecord[]> {
   if (isDemo()) return demo.demoSaveTiers(writes)
-  for (const write of writes) {
+  for (const [index, write] of writes.entries()) {
     const { id, ...fields } = write
-    if (id) await pb.collection("loyalty_tiers").update(id, fields)
-    else await pb.collection("loyalty_tiers").create(fields)
+    try {
+      if (id) await pb.collection("loyalty_tiers").update(id, fields)
+      else await pb.collection("loyalty_tiers").create(fields)
+    } catch (error) {
+      throw new RowWriteError("loyalty_tiers", index, error)
+    }
   }
   return pb.collection("loyalty_tiers").getFullList<LoyaltyTierRecord>({ sort: "sort" })
 }

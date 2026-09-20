@@ -596,9 +596,12 @@ routerAdd(
         // earned on their first completed buy-in or sale, paying both
         // sides. One call, in this route's own transaction, so the two
         // bonus rows are atomic with the buy-in that earned them
-        // (lib/referrals.js). A customer with no pending referral, or one
-        // already earned, is a no-op.
-        referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+        // (lib/referrals.js). A buy-in without a seller on it, a customer
+        // with no pending referral, or one already earned, is a no-op -
+        // the same guard the sale route carries.
+        if (customerId) {
+          referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+        }
 
         // --- the trade-in itself, with the seller snapshot -------------
         t.set("number", number);

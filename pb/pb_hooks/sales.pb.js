@@ -57,6 +57,7 @@ routerAdd(
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
     const referralsLib = require(`${__hooks}/lib/referrals.js`);
+    const rewardsLib = require(`${__hooks}/lib/rewards.js`);
     const notifyLib = require(`${__hooks}/lib/notify.js`);
     const saleline = require(`${__hooks}/lib/shared/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
@@ -324,13 +325,11 @@ routerAdd(
       if (!customerId) {
         throw e.error(422, "Add the customer to the sale before using their reward.", null);
       }
-      try {
-        redemption = e.app.findFirstRecordByFilter(
-          "reward_redemptions",
-          "code = {:code}",
-          { code: rewardCode }
-        );
-      } catch (err) {
+      // The same lookup the two staff voucher routes use, so a code
+      // typed in as it is printed (GGV-ABC12) finds the same row a
+      // scanner's bare GGVABC12 does (lib/rewards.js's findByCode).
+      redemption = rewardsLib.findByCode(e.app, rewardCode);
+      if (!redemption) {
         throw e.error(422, "That reward code was not found. Check the voucher.", null);
       }
       if (redemption.getString("customer") !== customerId) {

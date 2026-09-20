@@ -106,11 +106,25 @@ function checkTier(app, record) {
     return { status: 400, message: "Perks must be a list. Use [] for a tier with no perks." };
   }
   for (var i = 0; i < perks.length; i++) {
-    if (!loyalty.parseTierPerk(perks[i])) {
+    var perk = loyalty.parseTierPerk(perks[i]);
+    if (!perk) {
       return {
         status: 400,
         message: `Perk ${i + 1} is not a perk this app knows. Use percent_off, points_multiplier, free_event_entries, lounge_hours, priority_release_booking or member_event_pricing, with the fields each one takes.`,
       };
+    }
+    // The two counted perks are counted in whole ones: lib/perks.js
+    // compares `used + count` against the allowance, and half a free
+    // entry is not a thing anybody can hand over. The shared parser
+    // takes any number (it is the reader, not the editor), so the
+    // editor refuses it here instead.
+    if (perk.type === "free_event_entries" || perk.type === "lounge_hours") {
+      if (Math.round(perk.value) !== perk.value || perk.value < 0) {
+        return {
+          status: 400,
+          message: `Perk ${i + 1} has ${perk.value} ${perk.type === "lounge_hours" ? "lounge hours" : "free entries"} a month. Use a whole number.`,
+        };
+      }
     }
   }
 

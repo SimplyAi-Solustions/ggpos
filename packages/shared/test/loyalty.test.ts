@@ -277,11 +277,28 @@ describe("perkAllowance", () => {
 })
 
 describe("resolveTier", () => {
-  it("pins the membership's tier over the earned one, both ways", () => {
+  it("grants the membership's tier over a lower earned one, both ways", () => {
     expect(resolveTier(tiers, 0, "pass")?.name).toBe("Guild Pass")
     expect(resolveTier(tiers, 20000, "pass")?.name).toBe("Guild Pass")
     expect(resolveTier(tiers, 20000, null)?.name).toBe("Legend")
     expect(resolveTier(tiers, 2600, null)?.name).toBe("Regular")
+  })
+  it("never lowers a customer below the tier their own points have earned", () => {
+    // A pass that sits below Legend on the ladder: a Legend who buys one
+    // keeps Legend, and a Member who buys one gets the pass.
+    const lowPass: LoyaltyTier[] = [
+      ...tiers.filter((t) => !t.paidPlan),
+      { id: "lite", name: "Pass Lite", thresholdPoints: 0, sort: 1, perks: [], paidPlan: true },
+    ]
+    expect(resolveTier(lowPass, 20000, "lite")?.name).toBe("Legend")
+    expect(resolveTier(lowPass, 0, "lite")?.name).toBe("Pass Lite")
+  })
+  it("a tie on sort goes to the membership they are paying for", () => {
+    const sameSort: LoyaltyTier[] = [
+      { id: "m", name: "Member", thresholdPoints: 0, sort: 0, perks: [], paidPlan: false },
+      { id: "twin", name: "Twin Pass", thresholdPoints: 0, sort: 0, perks: [], paidPlan: true },
+    ]
+    expect(resolveTier(sameSort, 0, "twin")?.name).toBe("Twin Pass")
   })
   it("falls back to the earned tier when the pinned one no longer exists", () => {
     expect(resolveTier(tiers, 2600, "deleted-tier-id")?.name).toBe("Regular")

@@ -272,9 +272,11 @@ function TierFormBody({
 export interface TiersSectionProps {
   tiers: TierForm[]
   onSave: (tier: TierForm) => void
+  /** The row a half-landed save was refused on, and the server's sentence. */
+  refused?: { key: string; message: string } | null
 }
 
-export function TiersSection({ tiers, onSave }: TiersSectionProps) {
+export function TiersSection({ tiers, onSave, refused }: TiersSectionProps) {
   const [draft, setDraft] = React.useState<TierForm | null>(null)
 
   return (
@@ -283,7 +285,11 @@ export function TiersSection({ tiers, onSave }: TiersSectionProps) {
         {tiers.map((tier) => {
           const perks = tierPerks(tier)
           return (
-            <li key={tier.key} className="border-b border-hairline-soft first:border-t">
+            <li
+              key={tier.key}
+              className="border-b border-hairline-soft first:border-t"
+              data-refused={refused?.key === tier.key || undefined}
+            >
               <button
                 type="button"
                 onClick={() => setDraft({ ...tier })}
@@ -307,6 +313,11 @@ export function TiersSection({ tiers, onSave }: TiersSectionProps) {
                   </span>
                 )}
               </button>
+              {refused?.key === tier.key ? (
+                <p role="alert" className="pb-3 text-[13px] leading-[1.45] text-destructive">
+                  {refused.message}
+                </p>
+              ) : null}
             </li>
           )
         })}

@@ -349,9 +349,13 @@ export function perkAllowance(
 }
 
 /**
- * The tier a customer is actually on: a paid plan pins it for as long as the
- * membership is active, whatever the window says; otherwise it is earned from
- * the window's own points.
+ * The tier a customer is actually on: a paid plan grants its own tier for as
+ * long as the membership is active, and the window's points earn one on their
+ * own. The customer gets whichever of the two sits higher up the ladder
+ * (`sort`), so buying a pass can only ever add to what somebody has already
+ * earned, never take a tier off a long-standing customer whose points have
+ * carried them past it. A tie goes to the membership, which is the one they
+ * are paying for.
  *
  * An `activeMembershipTierId` naming a tier that no longer exists falls back
  * to the earned tier rather than leaving the customer with none.
@@ -361,9 +365,10 @@ export function resolveTier(
   windowPoints: number,
   activeMembershipTierId: string | null
 ): LoyaltyTier | null {
-  if (activeMembershipTierId) {
-    const pinned = (tiers || []).find((t) => t && t.id === activeMembershipTierId)
-    if (pinned) return pinned
-  }
-  return tierForPoints(tiers, windowPoints)
+  const earned = tierForPoints(tiers, windowPoints)
+  if (!activeMembershipTierId) return earned
+  const pinned = (tiers || []).find((t) => t && t.id === activeMembershipTierId) ?? null
+  if (!pinned) return earned
+  if (!earned) return pinned
+  return earned.sort > pinned.sort ? earned : pinned
 }

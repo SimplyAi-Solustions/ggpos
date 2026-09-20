@@ -92,9 +92,15 @@ export async function acceptDisplay(token: string): Promise<void> {
  * Follows the row. The callback is handed the whole state on every change,
  * and the returned function stops listening.
  *
- * Live mode subscribes before it reads, so a change that lands between the
- * two is not missed; demo mode listens to the other page's `localStorage`
- * writes, which is the same idea with the browser as the broker.
+ * A kiosk is left running for days on a shop's wifi, so the subscription is
+ * not a one-shot: a failed connect is retried with a widening backoff, and
+ * every (re)connect re-reads the row, because anything published while the
+ * socket was down never arrived as an event. Coming back to a visible tab
+ * re-reads too, which is what a tablet waking up does. The screen's own
+ * 15-minute expiry still stands underneath all of it.
+ *
+ * Demo mode listens to the other page's `localStorage` writes, which is the
+ * same idea with the browser as the broker.
  */
 export function subscribeDisplay(
   onChange: (state: DisplayState) => void
@@ -107,30 +113,56 @@ export function subscribeDisplay(
 
   let live = true
   let unsubscribe: (() => void) | null = null
+  let attempt = 0
+  let timer = 0
 
-  void pb
-    .collection("display_state")
-    .subscribe<DisplayRow>("*", (event) => onChange(fromRow(event.record)))
-    .then((stop) => {
-      if (!live) {
-        void stop()
-        return
-      }
-      unsubscribe = stop
-    })
-    .catch(() => {
-      // A dropped subscription is not a reason to blank the screen: the
-      // state already on it stands until the next successful read.
-    })
+  /** What is on the display now, asked for directly rather than awaited. */
+  function read() {
+    void getDisplayState()
+      .then((state) => {
+        if (live) onChange(state)
+      })
+      .catch(() => {
+        // A failed read leaves the screen showing what it had; the next
+        // connect or the next event will put it right.
+      })
+  }
 
-  void getDisplayState()
-    .then((state) => {
-      if (live) onChange(state)
-    })
-    .catch(() => {})
+  function retry() {
+    if (!live) return
+    attempt += 1
+    // One second, then two, four, eight, to half a minute.
+    const wait = Math.min(30_000, 1000 * 2 ** (attempt - 1))
+    timer = window.setTimeout(connect, wait)
+  }
+
+  function connect() {
+    void pb
+      .collection("display_state")
+      .subscribe<DisplayRow>("*", (event) => onChange(fromRow(event.record)))
+      .then((stop) => {
+        if (!live) {
+          void stop()
+          return
+        }
+        unsubscribe = stop
+        attempt = 0
+        read()
+      })
+      .catch(retry)
+  }
+
+  function onVisible() {
+    if (document.visibilityState === "visible" && live) read()
+  }
+
+  connect()
+  document.addEventListener("visibilitychange", onVisible)
 
   return () => {
     live = false
+    window.clearTimeout(timer)
+    document.removeEventListener("visibilitychange", onVisible)
     if (unsubscribe) void unsubscribe()
   }
 }

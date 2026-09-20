@@ -1576,6 +1576,15 @@ MERGE_NO_STEPUP="$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$MERGE_NO_STEPUP" = "403" ] || fail "merging without a step-up token returned $MERGE_NO_STEPUP, expected 403"
 ok "a merge is refused on itself (409), on a missing record (404) and without step-up (403)"
 
+# A customer who signed up twice and gave their own (first) code the
+# second time: after the merge both ends of this row would be the kept
+# record, and lib/referrals.js would pay both bonuses to one person on
+# their next sale. It has to go, not move (fix round, finding 1).
+MERGE_SELF_REFERRAL="$(curl -s -X POST "$BASE/api/collections/referrals/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"referrer\":\"$KEEP_ID\",\"referee\":\"$DUPE_ID\",\"status\":\"pending\"}" | jval id)"
+[ -n "$MERGE_SELF_REFERRAL" ] || fail "could not seed the merge's self-referral row"
+
 MERGE_STATUS="$(curl -s -o "$TMP_DIR/merge.json" -w '%{http_code}' \
   -X POST "$BASE/api/vault/customers/$DUPE_ID/merge" \
   -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STEPUP_TOKEN" -H "Content-Type: application/json" \
@@ -1587,8 +1596,8 @@ for MOVED_KEY in trade_ins credit_ledger push_subscriptions; do
     || fail "the merge moved '$(jval "moved.$MOVED_KEY" <"$TMP_DIR/merge.json")' $MOVED_KEY rows, expected 1"
 done
 # Two points rows: the 300 seeded above and the duplicate's own 100 welcome
-# bonus (Phase 6). Two notifications: the one seeded above and the "you are
-# now a Member" the welcome bonus's tier promotion wrote.
+# bonus (Phase 6). Two notifications: the one seeded above and the welcome
+# one the bonus itself wrote.
 [ "$(jval "moved.points_ledger" <"$TMP_DIR/merge.json")" = "2" ] \
   || fail "the merge moved '$(jval "moved.points_ledger" <"$TMP_DIR/merge.json")' points_ledger rows, expected 2"
 [ "$(jval "moved.notifications" <"$TMP_DIR/merge.json")" = "2" ] \
@@ -1601,14 +1610,37 @@ MERGED_TRADE_CUSTOMER="$(curl -s "$BASE/api/collections/trade_ins/records/$DUPE_
 [ "$MERGED_TRADE_CUSTOMER" = "$KEEP_ID" ] || fail "the duplicate's trade-in still points at '$MERGED_TRADE_CUSTOMER'"
 ok "a merge re-points every relation and deletes the duplicate"
 
+MERGE_SELF_REFERRAL_AFTER="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/referrals/records/$MERGE_SELF_REFERRAL" -H "Authorization: $STAFF_TOKEN")"
+[ "$MERGE_SELF_REFERRAL_AFTER" = "404" ] \
+  || fail "the merge kept a referral whose two ends folded into one customer (got $MERGE_SELF_REFERRAL_AFTER)"
+[ "$(jval "moved.referrals_dropped" <"$TMP_DIR/merge.json")" = "1" ] \
+  || fail "the merge reports '$(jval "moved.referrals_dropped" <"$TMP_DIR/merge.json")' dropped referrals, expected 1"
+[ "$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=referrer='$KEEP_ID' && referee='$KEEP_ID'" "$BASE/api/collections/referrals/records" | jval totalItems)" = "0" ] \
+  || fail "the kept customer is left referring themselves"
+ok "a merge deletes a referral whose two ends would fold into one customer, rather than re-pointing it"
+
+MERGE_WELCOME_ROWS="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=customer='$KEEP_ID' && reason='welcome'" \
+  "$BASE/api/collections/points_ledger/records" | jval totalItems)"
+[ "$MERGE_WELCOME_ROWS" = "2" ] \
+  || fail "the kept customer holds $MERGE_WELCOME_ROWS welcome rows after the merge, expected both (the ledger is append-only)"
+[ "$(jval "moved.welcome_bonus_removed" <"$TMP_DIR/merge.json")" = "100" ] \
+  || fail "the merge did not take the duplicate's welcome bonus back off: '$(jval "moved.welcome_bonus_removed" <"$TMP_DIR/merge.json")'"
+curl -s -G -H "Authorization: $STAFF_TOKEN" \
+  --data-urlencode "filter=target_collection='customers' && target_record='$KEEP_ID'" \
+  "$BASE/api/collections/notes/records" | grep -q "Duplicate welcome bonus removed on merge" \
+  || fail "the merge left no note saying the duplicate welcome bonus was removed"
+ok "a merge takes the duplicate's welcome bonus back off with an adjust row and a note, leaving both welcome rows in the ledger"
+
 KEEP_PRIVATE_JSON="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$KEEP_ID%22" \
   -H "Authorization: $STAFF_TOKEN")"
 [ "$(echo "$KEEP_PRIVATE_JSON" | jval totalItems)" = "1" ] || fail "the kept customer has $(echo "$KEEP_PRIVATE_JSON" | jval totalItems) customer_private rows, expected 1"
 [ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.credit_balance")" = "1000" ] \
   || fail "the kept customer's credit balance is '$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.credit_balance")', expected 1000"
-# 300 seeded on the duplicate, plus a 100 welcome bonus each (Phase 6).
-[ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.points_balance")" = "500" ] \
-  || fail "the kept customer's points balance is '$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.points_balance")', expected 500"
+# 300 seeded on the duplicate, plus a 100 welcome bonus each, less the
+# duplicate's own bonus taken back off by the merge (fix round, finding 11a).
+[ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.points_balance")" = "400" ] \
+  || fail "the kept customer's points balance is '$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.points_balance")', expected 400"
 [ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.address")" = "9 Sherwood Lodge, Bolsover, S44 6AB" ] \
   || fail "the merge did not fill the kept customer's empty address"
 [ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.id_status")" = "verified" ] \
@@ -4921,8 +4953,29 @@ p6_expect_private "$P6_REFERRER_ID" points_balance 100 "the welcome bonus did no
 ok "a new customer gets one welcome bonus row of 100 points, and the cached balance follows"
 
 p6_expect_tier "$P6_REFERRER_ID" Member "a customer with the welcome bonus was left with no tier"
-p6_expect_count notifications "customer='$P6_REFERRER_ID' && type='tier_up'" 1 "joining the Guild did not notify the customer once"
-ok "the welcome bonus puts the customer on the first tier and notifies them once"
+p6_expect_count notifications "customer='$P6_REFERRER_ID' && type='welcome'" 1 "joining the Guild did not write one welcome notification"
+P6_WELCOME_NOTE="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=customer='$P6_REFERRER_ID' && type='welcome'" \
+  "$BASE/api/collections/notifications/records")"
+[ "$(echo "$P6_WELCOME_NOTE" | jval "items.0.title")" = "Welcome to GG Guild" ] \
+  || fail "the welcome notification reads '$(echo "$P6_WELCOME_NOTE" | jval "items.0.title")', expected 'Welcome to GG Guild'"
+echo "$P6_WELCOME_NOTE" | grep -q "100 points are on your card" \
+  || fail "the welcome notification does not name the bonus: $P6_WELCOME_NOTE"
+# Landing on the first rung is not news: the welcome notification above is
+# what a new customer gets instead (fix round, finding 7).
+[ "$(p6_notifications "$P6_REFERRER_ID" tier_up)" = "0" ] \
+  || fail "joining the Guild also announced the first tier, which the welcome notification already covers"
+ok "joining the Guild writes one welcome notification naming the bonus, and no tier announcement"
+
+# A customer with no email address has nowhere to read it, so no row at all.
+P6_NOEMAIL_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"P6 No Email","source":"counter"}' | jval id)"
+[ -n "$P6_NOEMAIL_ID" ] || fail "could not create a customer without an email address"
+p6_expect_private "$P6_NOEMAIL_ID" points_balance 100 "a customer with no email address missed the welcome bonus"
+[ "$(p6_notifications "$P6_NOEMAIL_ID" welcome)" = "0" ] \
+  || fail "a customer with no email address was sent a welcome notification they cannot read"
+ok "a counter customer with no email still gets the bonus, and no notification they could never read"
 
 p6_award "$P6_REFERRER_ID" 50
 [ "$(p6_points_rows "$P6_REFERRER_ID" welcome)" = "1" ] \
@@ -5021,7 +5074,8 @@ ok "a second completed sale never pays the referral a second time"
 P6_TIER_ID="$(p6_customer "P6 Tier" "p6-tier@local.test")"
 p6_award "$P6_TIER_ID" 2500
 p6_expect_tier "$P6_TIER_ID" Regular "2600 window points did not promote the customer"
-p6_expect_count notifications "customer='$P6_TIER_ID' && type='tier_up'" 2 "the promotion to Regular did not add a second tier_up notification (Member, then Regular)"
+# One, not two: joining wrote a welcome notification rather than a tier one.
+p6_expect_count notifications "customer='$P6_TIER_ID' && type='tier_up'" 1 "the promotion to Regular did not write exactly one tier_up notification"
 P6_TIER_UP_TITLE="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
   --data-urlencode "filter=customer='$P6_TIER_ID' && type='tier_up'" --data-urlencode "sort=-created" \
   "$BASE/api/collections/notifications/records" | jval "items.0.title")"
@@ -5034,7 +5088,7 @@ ok "a ledger write promotes the customer and notifies them, naming the tier"
 p6_backdate_points "$P6_TIER_ID" "$(p6_ago 13 0)"
 p6_run_cron tiers_recompute
 p6_expect_tier "$P6_TIER_ID" Member "after the window rolled past, tiers_recompute did not demote the customer"
-[ "$(p6_notifications "$P6_TIER_ID" tier_up)" = "2" ] \
+[ "$(p6_notifications "$P6_TIER_ID" tier_up)" = "1" ] \
   || fail "the demotion was announced; it is meant to be silent"
 [ "$(p6_private_field "$P6_TIER_ID" points_balance)" = "2600" ] \
   || fail "the demotion changed the points balance, which the rolling window must never touch"

@@ -152,6 +152,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
+    const quotes = require(`${__hooks}/lib/quotes.js`);
 
     const staff = e.auth;
     const body = util.body(e);
@@ -174,6 +175,28 @@ routerAdd(
     }
     if (membership.getString("status") === "cancelled") {
       throw e.error(409, "That membership was cancelled. Start a new one instead.", null);
+    }
+
+    // Renewing a lapsed membership makes it active again, so the same
+    // "one active membership per customer" rule the create route enforces
+    // has to hold here: otherwise a lapsed one renewed alongside a live
+    // one leaves two, and which of them pins the tier is a coin toss.
+    let otherActive = null;
+    try {
+      otherActive = e.app.findFirstRecordByFilter(
+        "memberships",
+        'customer = {:customer} && status = "active" && id != {:id}',
+        { customer: membership.getString("customer"), id: membership.id }
+      );
+    } catch (err) {
+      otherActive = null;
+    }
+    if (otherActive) {
+      throw e.error(
+        409,
+        `This customer already has a membership until ${quotes.ukDateShort(otherActive.getString("renews_at"))}. Renew that one instead.`,
+        null
+      );
     }
 
     // From the later of now and the current expiry, so renewing early adds

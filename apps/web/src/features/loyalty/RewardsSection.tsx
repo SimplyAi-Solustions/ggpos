@@ -237,6 +237,9 @@ function RewardFormBody({
                 aria-invalid={Boolean(shown.endsAt) || undefined}
                 onChange={(event) => onChange({ endsAt: event.target.value })}
               />
+              <p className="mt-2 text-[13px] leading-[1.45] text-muted-foreground-2">
+                It can be claimed to the end of that day.
+              </p>
             </Field>
           </div>
 

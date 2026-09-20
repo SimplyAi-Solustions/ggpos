@@ -15,6 +15,10 @@
  * route. A customer token can neither read nor write it - the screen shows
  * whoever is at the counter right now, which is nobody's own record.
  *
+ * A `display_state` update through the collection API goes through the
+ * same strip (the hook below), because staff can write that row directly
+ * and the three routes would otherwise be optional.
+ *
  * What may go on the screen is decided in lib/display.js, not here: the
  * payload is rebuilt field by field from the shapes the contract names, a
  * payload carrying an identifier, an email or a phone number is refused
@@ -24,6 +28,44 @@
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
+
+// ---------------------------------------------------------------------
+// display_state through the collection API
+//
+// Staff can update the row directly (the collection's own updateRule says
+// so, and the tablet needs list and view to subscribe over realtime at
+// all), which would otherwise be a way straight past everything the three
+// routes below exist to do: the payload strip, and the token that decides
+// whose Accept counts. A *Request hook, so it sees only what a client
+// actually sent; the routes write through `txApp.save` and never reach it.
+// ---------------------------------------------------------------------
+onRecordUpdateRequest((e) => {
+  const util = require(`${__hooks}/lib/vaultutil.js`);
+  const displayLib = require(`${__hooks}/lib/display.js`);
+
+  const body = util.body(e);
+  if (body.customer_accepted_at !== undefined) {
+    throw e.badRequestError(
+      "Only the customer's own Accept stamps the display. Use POST /api/vault/display/accept.",
+      null
+    );
+  }
+  if (body.token !== undefined) {
+    throw e.badRequestError(
+      "The display's token is set when it is published. Use POST /api/vault/display.",
+      null
+    );
+  }
+
+  const mode = util.asStr(e.record.get("mode")) || "idle";
+  const sanitised = displayLib.sanitise(mode, util.jsonField(e.record, "payload", {}));
+  if (!sanitised.ok) {
+    throw e.badRequestError(sanitised.message, null);
+  }
+  e.record.set("payload", sanitised.payload);
+
+  e.next();
+}, "display_state");
 
 // ---------------------------------------------------------------------
 // POST /api/vault/display   (staff)

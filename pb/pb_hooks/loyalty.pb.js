@@ -5,16 +5,17 @@
  * moves points by hand, and the two nightly passes over the ledger.
  *
  *   POST /api/vault/loyalty/adjust        (admin, step-up)
- *   cron tiers_recompute                  (03:30)
+ *   cron tiers_recompute                  (03:20)
  *   cron points_expire                    (03:40)
  *
  * Hooks registered here:
  *  - `customers` on create: resolve a `referred_by` **code** into the
  *    customer it names, refusing one nobody holds or the customer's own,
- *    then write the welcome bonus and the `pending` referrals row.
+ *    then write the welcome bonus, its own notification and the `pending`
+ *    referrals row.
  *  - `points_ledger` after create: re-evaluate the tier from the rolling
  *    window, and clear the points-expiry warning whenever points come in.
- *  - `memberships` after create and after update: re-evaluate the tier,
+ *  - `memberships` after create, update and delete: re-evaluate the tier,
  *    because a paid plan pins it.
  *  - `loyalty_programme`, `loyalty_rules`, `loyalty_tiers` and
  *    `loyalty_rewards` on write: the shape checks that keep a rule or a
@@ -111,6 +112,8 @@ onRecordCreateRequest((e) => {
     alreadyWelcomed = false;
   }
 
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+  let pending = [];
   try {
     if (programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed) {
       e.app.save(
@@ -121,11 +124,32 @@ onRecordCreateRequest((e) => {
           ref: customerId,
         })
       );
+
+      // One notification for joining, naming the bonus, in place of the
+      // "you are now a Member" a first tier would otherwise produce
+      // (lib/tiers.js's isJoiningTier). Only when there is an address to
+      // send it to: a customer created at the counter without one has
+      // nowhere to read it, and the row would just be noise in the list
+      // they find when they do claim the account.
+      if (e.record.getString("email")) {
+        const tiers = require(`${__hooks}/lib/tiers.js`);
+        const n = notifyLib.notify(e.app, {
+          customer: customerId,
+          type: "welcome",
+          title: "Welcome to GG Guild",
+          body: `${tiers.formatPoints(programme.welcomeBonus)} points are on your card. Sign in to My Vault with this email address to see them.`,
+          link: "/account",
+          email: true,
+        });
+        pending = n.pending || [];
+      }
     }
     if (referrerId) referrals.createPending(e.app, referrerId, customerId);
   } catch (err) {
     console.log(`[loyalty] welcome bonus or referral failed for ${customerId}: ${err}`);
   }
+  // After the writes, never between them (lib/notify.js).
+  notifyLib.sendPending(e.app, pending);
 }, "customers");
 
 // ---------------------------------------------------------------------
@@ -186,9 +210,7 @@ onRecordAfterCreateSuccess((e) => {
   let pending = [];
   if (customerId) {
     try {
-      e.app.runInTransaction((txApp) => {
-        pending = tiers.recompute(txApp, customerId).pending || [];
-      });
+      pending = tiers.recompute(e.app, customerId).pending || [];
     } catch (err) {
       console.log(`[loyalty] tier re-evaluation failed after a membership create: ${err}`);
     }
@@ -206,11 +228,30 @@ onRecordAfterUpdateSuccess((e) => {
   let pending = [];
   if (customerId) {
     try {
-      e.app.runInTransaction((txApp) => {
-        pending = tiers.recompute(txApp, customerId).pending || [];
-      });
+      pending = tiers.recompute(e.app, customerId).pending || [];
     } catch (err) {
       console.log(`[loyalty] tier re-evaluation failed after a membership update: ${err}`);
+    }
+    notifyLib.sendPending(e.app, pending);
+  }
+
+  e.next();
+}, "memberships");
+
+// A membership deleted outright (an admin undoing a mistake through the
+// collection API rather than cancelling it) would otherwise leave a pinned
+// tier behind with nothing pinning it. Same re-evaluation, same path.
+onRecordAfterDeleteSuccess((e) => {
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const customerId = e.record.getString("customer");
+  let pending = [];
+  if (customerId) {
+    try {
+      pending = tiers.recompute(e.app, customerId).pending || [];
+    } catch (err) {
+      console.log(`[loyalty] tier re-evaluation failed after a membership delete: ${err}`);
     }
     notifyLib.sendPending(e.app, pending);
   }
@@ -394,14 +435,18 @@ routerAdd(
 );
 
 // ---------------------------------------------------------------------
-// Cron: tiers_recompute, nightly at 03:30.
+// Cron: tiers_recompute, nightly at 03:20.
+//
+// Ten minutes ahead of points_expire, and ten behind the two 03:30 passes
+// (retention, quote_photos_retention): every one of them walks a whole
+// collection, and one SQLite file would rather take them one at a time.
 //
 // The ledger hook above re-evaluates a tier the moment points move, which
 // covers every promotion. A demotion needs this: points roll out of the
 // rolling window with the passage of time alone, and nothing writes a row
 // to notice it.
 // ---------------------------------------------------------------------
-cronAdd("tiers_recompute", "30 3 * * *", () => {
+cronAdd("tiers_recompute", "20 3 * * *", () => {
   const query = require(`${__hooks}/lib/reports/query.js`);
   const tiers = require(`${__hooks}/lib/tiers.js`);
   const notifyLib = require(`${__hooks}/lib/notify.js`);

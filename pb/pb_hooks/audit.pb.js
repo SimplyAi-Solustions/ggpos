@@ -8,7 +8,10 @@
  *    (PII, money and stock);
  *  - updates to pricing_rules, every loyalty_* collection and settings,
  *    per PLAN.md's "Written for ... price overrides ... loyalty rule
- *    changes" and "admin role for settings, pricing_rules, loyalty_*".
+ *    changes" and "admin role for settings, pricing_rules, loyalty_*";
+ *  - creates on the four loyalty config collections, since adding a tier,
+ *    a rule or a reward changes the programme's terms exactly as editing
+ *    one does (the four are audited on delete too, above).
  *
  * Both use the *Request hook variants (not the plain onRecordUpdate /
  * onRecordDelete) because only the request-level event carries who made
@@ -44,6 +47,12 @@ const AUDITED_DELETE_COLLECTIONS = [
   "sales",
   "credit_ledger",
   "points_ledger",
+  // The loyalty config: deleting a tier, a rule or a reward changes what
+  // every customer earns from then on, exactly as editing one does.
+  "loyalty_programme",
+  "loyalty_rules",
+  "loyalty_tiers",
+  "loyalty_rewards",
 ];
 
 const AUDITED_UPDATE_COLLECTIONS = [
@@ -53,6 +62,17 @@ const AUDITED_UPDATE_COLLECTIONS = [
   "loyalty_tiers",
   "loyalty_rewards",
   "settings",
+];
+
+// Creates worth a permanent record: a new tier, rule or reward is a change
+// to the programme's own terms and belongs in the same trail as an edit to
+// one. Nothing else here is audited on create - a sale, a trade-in or an
+// item is already its own numbered record.
+const AUDITED_CREATE_COLLECTIONS = [
+  "loyalty_programme",
+  "loyalty_rules",
+  "loyalty_tiers",
+  "loyalty_rewards",
 ];
 
 onRecordDeleteRequest((e) => {
@@ -67,6 +87,10 @@ onRecordDeleteRequest((e) => {
     items: "sku",
     trade_ins: "number",
     sales: "number",
+    loyalty_rules: "name",
+    loyalty_tiers: "name",
+    loyalty_rewards: "name",
+    loyalty_programme: "name",
   };
 
   const collectionName = e.record.collection().name;
@@ -86,6 +110,35 @@ onRecordDeleteRequest((e) => {
     ip: e.realIP(),
   });
 }, ...AUDITED_DELETE_COLLECTIONS);
+
+onRecordCreateRequest((e) => {
+  // The same reasoning as the delete handler below: a label only from a
+  // field already known to carry no PII or secret. Every collection here
+  // is loyalty config, whose `name` is the shop's own wording.
+  const SAFE_CREATE_LABEL_FIELDS = {
+    loyalty_rules: "name",
+    loyalty_tiers: "name",
+    loyalty_rewards: "name",
+    loyalty_programme: "name",
+  };
+
+  const collectionName = e.record.collection().name;
+  const labelField = SAFE_CREATE_LABEL_FIELDS[collectionName];
+  const label = labelField ? e.record.getString(labelField) : "";
+
+  e.next();
+
+  const audit = require(`${__hooks}/lib/audit.js`);
+  audit.writeAuditLog(e.app, {
+    actor: e.auth ? e.auth.id : "system",
+    action: "create",
+    collection: collectionName,
+    // Read after e.next(), because a created record only has its id then.
+    record: e.record.id,
+    meta: label ? { label: label } : {},
+    ip: e.realIP(),
+  });
+}, ...AUDITED_CREATE_COLLECTIONS);
 
 onRecordUpdateRequest((e) => {
   /**

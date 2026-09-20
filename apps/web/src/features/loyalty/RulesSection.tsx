@@ -222,6 +222,9 @@ function RuleFormBody({
                 aria-invalid={Boolean(shown.endsAt) || undefined}
                 onChange={(event) => onChange({ endsAt: event.target.value })}
               />
+              <p className="mt-2 text-[13px] leading-[1.45] text-muted-foreground-2">
+                It runs to the end of that day.
+              </p>
             </Field>
           </div>
 
@@ -287,10 +290,18 @@ export interface RulesSectionProps {
   rules: RuleForm[]
   games: GameRecord[]
   onSave: (rule: RuleForm) => void
+  /** The row a half-landed save was refused on, and the server's sentence. */
+  refused?: { key: string; message: string } | null
   children?: React.ReactNode
 }
 
-export function RulesSection({ rules, games, onSave, children }: RulesSectionProps) {
+export function RulesSection({
+  rules,
+  games,
+  onSave,
+  refused,
+  children,
+}: RulesSectionProps) {
   const [draft, setDraft] = React.useState<RuleForm | null>(null)
   const gameNames = Object.fromEntries(games.map((game) => [game.id, game.name]))
 
@@ -305,7 +316,11 @@ export function RulesSection({ rules, games, onSave, children }: RulesSectionPro
           </li>
         ) : null}
         {rules.map((rule) => (
-          <li key={rule.key} className="border-b border-hairline-soft first:border-t">
+          <li
+            key={rule.key}
+            className="border-b border-hairline-soft first:border-t"
+            data-refused={refused?.key === rule.key || undefined}
+          >
             <button
               type="button"
               onClick={() => setDraft({ ...rule })}
@@ -330,6 +345,11 @@ export function RulesSection({ rules, games, onSave, children }: RulesSectionPro
                 {rule.priority}
               </span>
             </button>
+            {refused?.key === rule.key ? (
+              <p role="alert" className="pb-3 text-[13px] leading-[1.45] text-destructive">
+                {refused.message}
+              </p>
+            ) : null}
           </li>
         ))}
       </ul>

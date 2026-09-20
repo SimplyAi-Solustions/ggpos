@@ -243,6 +243,97 @@ routerAdd(
       created: n.getString("created"),
     }));
 
+    // --- Phase 6: the Guild's own records ------------------------------
+    const rewardNames = {};
+    function rewardFor(rewardId) {
+      if (!rewardId) return { name: "", cost_points: 0 };
+      if (rewardNames[rewardId] !== undefined) return rewardNames[rewardId];
+      let shape = { name: "", cost_points: 0 };
+      try {
+        const reward = e.app.findRecordById("loyalty_rewards", rewardId);
+        shape = { name: reward.getString("name"), cost_points: reward.getInt("cost_points") };
+      } catch (err) {
+        shape = { name: "", cost_points: 0 };
+      }
+      rewardNames[rewardId] = shape;
+      return shape;
+    }
+
+    const vouchers = list("reward_redemptions").map((v) => {
+      const reward = rewardFor(v.getString("reward"));
+      return {
+        number: v.getString("number"),
+        code: v.getString("code"),
+        reward: reward.name,
+        cost_points: reward.cost_points,
+        points_spent: v.getInt("points_spent"),
+        status: v.getString("status"),
+        issued: v.getString("created"),
+        expires_at: v.getString("expires_at"),
+      };
+    });
+
+    function tierName(tierId) {
+      if (!tierId) return "";
+      try {
+        return e.app.findRecordById("loyalty_tiers", tierId).getString("name");
+      } catch (err) {
+        return "";
+      }
+    }
+
+    const memberships = list("memberships").map((m) => ({
+      tier: tierName(m.getString("tier")),
+      status: m.getString("status"),
+      started_at: m.getString("started_at"),
+      renews_at: m.getString("renews_at"),
+      price: m.getInt("price"),
+    }));
+
+    // This year's counters only: a perk allowance is a monthly thing and
+    // a list going back years is noise, not data about them.
+    const thisYear = new Date().toISOString().slice(0, 4);
+    const perkUsage = [];
+    const perkRows = list("perk_usage", "period");
+    for (let i = 0; i < perkRows.length; i++) {
+      const row = perkRows[i];
+      if (!row) continue;
+      if (row.getString("period").slice(0, 4) !== thisYear) continue;
+      perkUsage.push({
+        perk: row.getString("perk_type"),
+        period: row.getString("period"),
+        used: row.getInt("used_count"),
+      });
+    }
+
+    // Direction, status and date only. The other person is somebody else's
+    // customer record: their id, code and name are their data, not this
+    // caller's, and a subject access request is not a way to read them.
+    const referralRows = [];
+    try {
+      const rows = e.app.findRecordsByFilter(
+        "referrals",
+        "referrer = {:c} || referee = {:c}",
+        "created",
+        0,
+        0,
+        { c: customerId }
+      );
+      for (let i = 0; i < rows.length; i++) {
+        if (!rows[i]) continue;
+        referralRows.push({
+          direction: rows[i].getString("referrer") === customerId ? "referred_by_you" : "you_were_referred",
+          status: rows[i].getString("status"),
+          earned_at: rows[i].getString("earned_at"),
+          created: rows[i].getString("created"),
+        });
+      }
+    } catch (err) {
+      // leave it empty
+    }
+
+    const guildState = require(`${__hooks}/lib/tiers.js`).evaluate(e.app, customerId, new Date());
+
     const exportBody = {
       exported_at: new Date().toISOString(),
       customer: {
@@ -263,6 +354,14 @@ routerAdd(
       quotes: quotes,
       want_list: wantList,
       notifications: notifications,
+      guild: {
+        tier: guildState.tier ? guildState.tier.name : "",
+        window_points: guildState.windowPoints,
+      },
+      vouchers: vouchers,
+      memberships: memberships,
+      perk_usage: perkUsage,
+      referrals: referralRows,
     };
 
     auditLib.writeAuditLog(e.app, {
@@ -274,6 +373,9 @@ routerAdd(
         trade_ins: tradeIns.length,
         sales: sales.length,
         quotes: quotes.length,
+        vouchers: vouchers.length,
+        memberships: memberships.length,
+        referrals: referralRows.length,
       },
       ip: e.realIP(),
     });

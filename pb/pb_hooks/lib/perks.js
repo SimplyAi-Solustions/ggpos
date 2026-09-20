@@ -108,9 +108,22 @@ function perkWords(type) {
     : { plural: "lounge hours", singular: "lounge hour" };
 }
 
-/** The refusal when this month's allowance is already spent. */
-function usedUpMessage(type, allowed, now) {
+/**
+ * The refusal when a request asks for more of a perk than is left. Two
+ * shapes, because they are two different pieces of news: none left at all
+ * (say when the next ones come), and some left but fewer than asked for
+ * (say how many, so staff can offer what there is).
+ */
+function usedUpMessage(type, allowed, now, used) {
   var words = perkWords(type);
+  var remaining = allowed - (used || 0);
+
+  if (remaining > 0) {
+    return remaining === 1
+      ? `Only 1 ${words.singular} is left this month.`
+      : `Only ${remaining} ${words.plural} are left this month.`;
+  }
+
   var opening =
     allowed === 2
       ? `Both ${words.plural} this month are used.`
@@ -150,7 +163,7 @@ function check(app, customerId, tier, type, count, now) {
   var period = currentPeriod(now);
   var used = usedCount(app, customerId, type, period);
   if (used + n > allowed) {
-    return { status: 422, message: usedUpMessage(type, allowed, now) };
+    return { status: 422, message: usedUpMessage(type, allowed, now, used) };
   }
   return null;
 }

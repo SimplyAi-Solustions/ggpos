@@ -64,6 +64,7 @@ import {
   saveReward,
   saveRules,
   saveTiers,
+  RowWriteError,
   type LoyaltyAdmin,
 } from "@/lib/api/loyalty"
 import type { LoyaltyProgramme } from "@gg/shared"
@@ -136,6 +137,11 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
   const [rewardError, setRewardError] = React.useState<string | null>(null)
   const [planError, setPlanError] = React.useState<string | null>(null)
   const [adjustOpen, setAdjustOpen] = React.useState(false)
+  /** The one row a half-landed save was refused on, and why. */
+  const [refusedRow, setRefusedRow] = React.useState<{
+    key: string
+    message: string
+  } | null>(null)
   const [adjustNote, setAdjustNote] = React.useState<string | null>(null)
 
   const { data: memberships = [] } = useQuery({
@@ -179,7 +185,10 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
       }
       return { record, ...written }
     },
-    onMutate: () => setError(null),
+    onMutate: () => {
+      setError(null)
+      setRefusedRow(null)
+    },
     onSuccess: ({ record, rules: writtenRules, tiers: writtenTiers }) => {
       const nextProgramme = programmeToForm(record)
       setProgramme(nextProgramme)
@@ -202,8 +211,30 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
         void queryClient.invalidateQueries({ queryKey: key })
       }
     },
-    onError: (problem) =>
-      setError(refusalOrFallback(problem, "That did not save. Try it again.")),
+    onError: (problem) => {
+      // The rows go one at a time, so some of them may have landed before
+      // the refusal. Re-read the programme rather than leaving the screen
+      // showing a state the server never agreed to, and put the sentence on
+      // the row it came from.
+      const row = problem instanceof RowWriteError ? problem : null
+      const refused = row
+        ? (row.collection === "loyalty_rules"
+            ? changedRules[row.index]
+            : changedTiers[row.index])
+        : null
+      setError(
+        refusalOrFallback(row ? row.cause : problem, "That did not save. Try it again.")
+      )
+      setRefusedRow(
+        refused
+          ? {
+              key: refused.key,
+              message: refusalOrFallback(row?.cause, "That row was refused."),
+            }
+          : null
+      )
+      void queryClient.invalidateQueries({ queryKey: ["loyalty-admin"] })
+    },
   })
 
   const writeReward = useMutation({
@@ -448,6 +479,7 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
         <RulesSection
           rules={rules}
           games={games}
+          refused={refusedRow}
           onSave={(rule) => {
             setSaved(false)
             setRules((current) =>
@@ -472,6 +504,7 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
       <Section title="Tiers and perks">
         <TiersSection
           tiers={tiers}
+          refused={refusedRow}
           onSave={(tier) => {
             setSaved(false)
             setTiers((current) =>

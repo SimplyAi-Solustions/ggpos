@@ -201,6 +201,49 @@ function isoDay(value: string | undefined): string {
   return value.slice(0, 10)
 }
 
+/** Minutes London is ahead of UTC at that instant (0 in winter, 60 in BST). */
+function londonOffsetMinutes(at: Date): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(at)
+  const read = (type: string) =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0")
+  const asUtc = Date.UTC(
+    read("year"),
+    read("month") - 1,
+    read("day"),
+    read("hour") % 24,
+    read("minute"),
+    read("second")
+  )
+  return Math.round((asUtc - at.getTime()) / 60_000)
+}
+
+/**
+ * The last instant of a day in the shop's own timezone.
+ *
+ * A date field gives back "2026-10-31", and a rule or a reward stored with
+ * that as its end is dead from midnight: the day it says it runs to is the
+ * one day it does not run. The stored instant is the end of that day in
+ * London, so "to 31 October" means the whole of the 31st.
+ */
+export function endOfDayLondon(day: string): string {
+  const date = isoDay(day)
+  if (!date) return ""
+  const midnightUtc = new Date(`${date}T23:59:59.999Z`)
+  if (Number.isNaN(midnightUtc.getTime())) return ""
+  return new Date(
+    midnightUtc.getTime() - londonOffsetMinutes(midnightUtc) * 60_000
+  ).toISOString()
+}
+
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []
 }
@@ -303,7 +346,8 @@ export function formToRule(form: RuleForm): LoyaltyRuleWrite {
     active: form.active,
     priority: parseSigned(form.priority) ?? 0,
     starts_at: form.startsAt,
-    ends_at: form.endsAt,
+    // Inclusive: a rule that ends on the 31st runs all day on the 31st.
+    ends_at: endOfDayLondon(form.endsAt),
   }
 }
 
@@ -662,7 +706,8 @@ export function formToReward(form: RewardForm): LoyaltyRewardWrite {
     per_customer_limit: parseCount(form.perCustomerLimit) ?? 0,
     active: form.active,
     starts_at: form.startsAt,
-    ends_at: form.endsAt,
+    // Inclusive: a reward that ends on the 31st can be claimed all day.
+    ends_at: endOfDayLondon(form.endsAt),
     image: form.image,
   }
 }
