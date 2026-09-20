@@ -12,7 +12,13 @@ GG Entertainment ("we", "us") trades from [shop address], Bolsover, Chesterfield
 
 **ID for cash buy-ins.** If we pay you cash for what you sell, we ask for photo ID and record your name, address, ID type, the last four digits of the ID number, and its expiry date. We take a photo of the ID itself and keep it for a limited time (see below). We do this to prevent and detect crime, such as the resale of stolen goods, which the Data (Use and Access) Act 2025 recognises as a legitimate interest that does not need your separate consent. Your other ID details stay on your customer record for as long as the trade-in record itself is kept.
 
-**GG Guild, our loyalty programme.** If you join GG Guild, we record your purchases, points, tier and any rewards you redeem, under the programme's terms, which you accept when you join. We do not use this to make any automated decision that affects you; a member of staff can always explain how your points or tier were worked out.
+**GG Guild, our loyalty programme.** If you join GG Guild, we record your purchases, points, tier and any rewards you redeem, under the programme's terms, which you accept when you join. Your tier is worked out from the points you have earned over a rolling period, and a paid membership sets it directly for as long as the membership runs. If a tier gives you something with a monthly limit, such as free event entries or lounge hours, we count how many you have used each month so we know what is left. Points expire after a period without any coming in; we tell you a month before that happens, and any purchase starts the clock again. We do not use any of this to make an automated decision that affects you; a member of staff can always explain how your points or tier were worked out.
+
+**Referrals.** If somebody gives us your customer code when they join, or you give us theirs, we record that the two of you are linked and whether the bonus has been paid. We need this to pay the bonus once and only once. We never tell either of you anything about the other beyond the fact that a referral has been earned.
+
+**Rewards and vouchers.** When you spend points on a reward we keep the voucher, its number and code, what it cost you and whether it has been used, cancelled or expired, so the counter can honour it and so your points history adds up.
+
+**The screen at the counter.** If the shop has a customer screen, what you are buying or selling is shown on it while you are standing there, with the totals and your first name. It never shows your email address, your phone number, your address or any record number, the till clears it when the sale or the offer is finished, and it clears itself after fifteen minutes in any case. Nothing is kept from it afterwards.
 
 **Marketing.** We only send you marketing, such as offers or news, if you have said yes. You can withdraw that at any time in My Vault or by asking a member of staff, and we will stop.
 
@@ -20,7 +26,7 @@ GG Entertainment ("we", "us") trades from [shop address], Bolsover, Chesterfield
 
 ## How long we keep it
 
-We keep different kinds of record for different lengths of time, generally set by tax law or by how long we need the information to serve you. The full list is in our retention schedule, `docs/retention-schedule.md`. In short: your ID photo is kept for up to 12 months, your ID details and trade-in and sale records are kept for 6 years for tax purposes, quote photos are deleted 90 days after the quote closes, and your points and credit balance are kept for as long as your customer record exists.
+We keep different kinds of record for different lengths of time, generally set by tax law or by how long we need the information to serve you. The full list is in our retention schedule, `docs/retention-schedule.md`. In short: your ID photo is kept for up to 12 months, your ID details and trade-in and sale records are kept for 6 years for tax purposes, quote photos are deleted 90 days after the quote closes, and your points and credit balance, your referral and membership records and your reward vouchers are kept for as long as your customer record exists. An unused voucher stops being valid 90 days after you claim it, and points expire after 18 months with none coming in; in both cases the record of it stays on your history.
 
 ## Who sees it
 
