@@ -7,7 +7,7 @@
  */
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery } from "@tanstack/react-query"
 import { displayCode, formatGBP } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
@@ -56,13 +56,27 @@ export function StockListScreen() {
 
   React.useEffect(() => registerSearchField(searchRef.current), [])
 
-  const { data, isPending } = useQuery({
+  // One page at a time, and "Show more" asks for the next: the count in the
+  // field and the rows under it have to agree, and a shop with four thousand
+  // cards should not send them all to a phone.
+  const {
+    data,
+    isPending,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
     queryKey: ["items", status, deferred],
-    queryFn: () => listItems({ status: status ?? undefined, search: deferred }, 1),
+    queryFn: ({ pageParam }) =>
+      listItems({ status: status ?? undefined, search: deferred }, pageParam),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.page < last.totalPages ? last.page + 1 : undefined,
     staleTime: 10_000,
   })
 
-  const rows = data?.items ?? []
+  const rows = data?.pages.flatMap((page) => page.items) ?? []
+  const totalItems = data?.pages[0]?.totalItems ?? 0
 
   return (
     <section className="pt-16 sm:pt-24">
@@ -76,7 +90,7 @@ export function StockListScreen() {
           placeholder="Title, code, set or barcode"
           aria-label="Search stock"
           autoComplete="off"
-          trailingHint={data ? `${data.totalItems} items` : undefined}
+          trailingHint={data ? `${totalItems} items` : undefined}
           onChange={(event) => setSearch(event.target.value)}
         />
       </div>
@@ -181,6 +195,21 @@ export function StockListScreen() {
           </Table>
         )}
       </div>
+
+      {hasNextPage ? (
+        <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-3">
+          <Button
+            variant="text"
+            loading={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
+          >
+            Show more
+          </Button>
+          <Hint className="tnum">
+            {rows.length} of {totalItems}
+          </Hint>
+        </div>
+      ) : null}
     </section>
   )
 }

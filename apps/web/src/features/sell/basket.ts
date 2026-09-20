@@ -110,6 +110,23 @@ export function lineTotal(line: BasketLine): number {
 }
 
 /**
+ * A manual amount off never outlives the basket it was typed against: when
+ * the basket shrinks below it, the stored figure comes down with it, so what
+ * is on screen and what is sent are the same number. A percentage needs no
+ * clamp, because it is of whatever the basket is now.
+ */
+function clampDiscount(state: BasketState): BasketState {
+  if (state.manualDiscount.kind !== "amount") return state
+  const subtotal = state.lines.reduce((total, line) => total + lineTotal(line), 0)
+  if (state.manualDiscount.value <= subtotal) return state
+  return {
+    ...state,
+    manualDiscount:
+      subtotal === 0 ? { kind: "none" } : { kind: "amount", value: subtotal },
+  }
+}
+
+/**
  * Scanning the same code twice adds one more of a multi-quantity line and
  * leaves a single alone: a card is one row per unit and there is only ever
  * one of it.
@@ -134,29 +151,33 @@ export function basketReducer(
     case "setQty": {
       const qty = Math.max(0, Math.floor(action.qty))
       if (qty === 0) return basketReducer(state, { type: "remove", itemId: action.itemId })
-      return {
+      return clampDiscount({
         ...state,
         lines: state.lines.map((line) =>
           line.itemId === action.itemId
             ? { ...line, qty: Math.min(line.maxQty, qty) }
             : line
         ),
-      }
+      })
     }
     case "remove": {
       const lines = state.lines.filter((line) => line.itemId !== action.itemId)
       // Nothing left to take a reward off, so the reward comes off too.
-      return { ...state, lines, voucher: lines.length === 0 ? null : state.voucher }
+      return clampDiscount({
+        ...state,
+        lines,
+        voucher: lines.length === 0 ? null : state.voucher,
+      })
     }
     case "setUnitPrice":
-      return {
+      return clampDiscount({
         ...state,
         lines: state.lines.map((line) =>
           line.itemId === action.itemId
             ? { ...line, unitPrice: Math.max(0, Math.round(action.unitPrice)) }
             : line
         ),
-      }
+      })
     case "attachCustomer": {
       // A voucher belongs to the customer who earned it.
       const voucher =

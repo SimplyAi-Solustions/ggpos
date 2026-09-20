@@ -139,6 +139,43 @@ test.describe("selling at the counter", () => {
     await expect(page.getByTestId("label-page")).toHaveCount(1)
   })
 
+  test("asks where a split payment goes back instead of undoing it blind", async ({
+    page,
+  }) => {
+    await signIn(page)
+
+    await go(page, "Cash session")
+    await page.getByLabel("Float").fill("100.00")
+    await primary(page, "Open session").click()
+    await expect(page.getByTestId("cash-expected")).toHaveText("£100.00")
+
+    await go(page, "Sell")
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "Mixed", exact: true }).click()
+
+    // A three-decimal amount is refused rather than quietly becoming nothing.
+    await page.getByLabel("Cash").fill("100.005")
+    await expect(page.getByText("Pounds and pence, for example 12.50.")).toBeVisible()
+
+    await page.getByLabel("Cash").fill("100.00")
+    await page.getByLabel("SumUp card").fill("224.99")
+    await expect(page.getByTestId("sumup-amount")).toHaveText("£224.99")
+
+    await primary(page, "Mark sold").click()
+    const done = page.getByTestId("sale-done")
+    await expect(done).toBeVisible()
+
+    const toast = page.getByTestId("undo-toast")
+    await expect(toast).toContainText("Split payment")
+    await toast.getByRole("button", { name: "Undo" }).click()
+
+    // The refund sheet, with the method chips, rather than a silent card refund.
+    const sheet = page.getByRole("dialog").filter({ hasText: "Refund" })
+    await expect(sheet).toBeVisible()
+    await expect(sheet.getByRole("button", { name: "Store credit" })).toBeVisible()
+    await expect(sheet.getByRole("button", { name: "Cash", exact: true })).toBeVisible()
+  })
+
   test("says what is wrong when cash is taken with no session open", async ({
     page,
   }) => {

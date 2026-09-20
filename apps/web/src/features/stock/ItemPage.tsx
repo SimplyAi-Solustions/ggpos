@@ -9,7 +9,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   DEFAULT_MARKUP_BANDS,
   displayCode,
@@ -319,6 +319,13 @@ export function ItemPage({ sku }: { sku: string }) {
     queryFn: listLocations,
     staleTime: 5 * 60_000,
   })
+  const queryClient = useQueryClient()
+
+  /** Anything that changes this item changes the stock list behind it. */
+  function settle() {
+    void refetch()
+    void queryClient.invalidateQueries({ queryKey: ["items"] })
+  }
 
   function onFailure(fallback: string) {
     return (err: unknown) => setError(refusalOrFallback(err, fallback))
@@ -331,7 +338,7 @@ export function ItemPage({ sku }: { sku: string }) {
       setPriceOpen(false)
       setError(null)
       setNote("Saved")
-      void refetch()
+      settle()
     },
     onError: onFailure("That did not save. Check the connection and try again."),
   })
@@ -341,7 +348,7 @@ export function ItemPage({ sku }: { sku: string }) {
     onSuccess: (updated) => {
       setError(null)
       setNote(`Held for ${updated.reservedForName ?? "the customer"} for 48 hours`)
-      void refetch()
+      settle()
     },
     onError: onFailure("That reservation did not stick. Try again."),
   })
@@ -351,6 +358,7 @@ export function ItemPage({ sku }: { sku: string }) {
     onSuccess: () => {
       setError(null)
       setNote("Label queued")
+      void queryClient.invalidateQueries({ queryKey: ["label-jobs-list"] })
     },
     onError: onFailure("That label could not be queued. Try again."),
   })
@@ -361,7 +369,7 @@ export function ItemPage({ sku }: { sku: string }) {
       setWriteOffOpen(false)
       setError(null)
       setNote("Written off")
-      void refetch()
+      settle()
     },
     onError: onFailure("That write-off did not save. Try again."),
   })
@@ -555,7 +563,11 @@ export function ItemPage({ sku }: { sku: string }) {
         <Button variant="text" onClick={() => setReserveOpen(true)} disabled={!sellable}>
           Reserve
         </Button>
-        <Button variant="text" loading={label.isPending} onClick={() => label.mutate()}>
+        <Button
+          variant="text"
+          loading={label.isPending}
+          onClick={() => label.mutate()}
+        >
           Print label
         </Button>
         <Button
@@ -571,7 +583,11 @@ export function ItemPage({ sku }: { sku: string }) {
         <Button variant="text" onClick={() => setReserveOpen(true)} disabled={!sellable}>
           Reserve
         </Button>
-        <Button variant="text" loading={label.isPending} onClick={() => label.mutate()}>
+        <Button
+          variant="text"
+          loading={label.isPending}
+          onClick={() => label.mutate()}
+        >
           Print label
         </Button>
         <Button

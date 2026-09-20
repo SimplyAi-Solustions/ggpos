@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   LABEL_SPECS,
   labelLayout,
+  nextPrintBatch,
   pxToMm,
   qrTextFor,
   textWidthMm,
@@ -153,5 +154,32 @@ describe("a title that does not fit", () => {
   it("leaves the text column beside the QR", () => {
     expect(textWidthMm(LABEL_SPECS.toploader_40x20)).toBeCloseTo(21.74, 1)
     expect(textWidthMm(LABEL_SPECS.retro_50x30)).toBeCloseTo(26.73, 1)
+  })
+})
+
+describe("a print run of mixed label sizes", () => {
+  it("takes the oldest size first and says how many are left", () => {
+    const batch = nextPrintBatch([
+      job({ id: "j1", template: "toploader_40x20", requestedAt: "2026-09-20T09:00:00Z" }),
+      job({ id: "j2", template: "retro_50x30", requestedAt: "2026-09-20T09:05:00Z" }),
+      job({ id: "j3", template: "toploader_40x20", requestedAt: "2026-09-20T09:10:00Z" }),
+      job({ id: "j4", template: "sleeve_25x15", requestedAt: "2026-09-20T09:15:00Z" }),
+    ])
+    expect(batch.template).toBe("toploader_40x20")
+    expect(batch.jobs.map((row) => row.id)).toEqual(["j1", "j3"])
+    expect(batch.waiting).toBe(2)
+  })
+
+  it("prints the lot in one go when they are all the same size", () => {
+    const batch = nextPrintBatch([
+      job({ id: "j1", requestedAt: "2026-09-20T09:00:00Z" }),
+      job({ id: "j2", requestedAt: "2026-09-20T09:05:00Z" }),
+    ])
+    expect(batch.jobs).toHaveLength(2)
+    expect(batch.waiting).toBe(0)
+  })
+
+  it("has nothing to print on an empty queue", () => {
+    expect(nextPrintBatch([])).toEqual({ template: null, jobs: [], waiting: 0 })
   })
 })

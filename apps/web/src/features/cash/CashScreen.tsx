@@ -314,6 +314,10 @@ export function CashScreen() {
   })
 
   const countedPence = parseDecimalToMinor(counted)
+  const floatPence = parseDecimalToMinor(floatValue)
+  // Only once something has been typed: an empty field is not a mistake yet.
+  const countedInvalid = counted.trim() !== "" && countedPence === null
+  const floatInvalid = floatValue.trim() !== "" && floatPence === null
   const liveVariance = countedPence === null ? null : countedPence - expected
   const overAlert =
     liveVariance !== null && alertAt > 0 && Math.abs(liveVariance) > alertAt
@@ -323,7 +327,7 @@ export function CashScreen() {
       className={`w-full min-[900px]:w-auto ${BLOCKED}`}
       trailingArrow
       loading={close.isPending}
-      disabled={countedPence === null}
+      disabled={countedPence === null || close.isPending}
       onClick={() => countedPence !== null && close.mutate(countedPence)}
     >
       Close session
@@ -333,10 +337,9 @@ export function CashScreen() {
       className={`w-full min-[900px]:w-auto ${BLOCKED}`}
       trailingArrow
       loading={open.isPending}
-      disabled={parseDecimalToMinor(floatValue) === null}
+      disabled={floatPence === null || open.isPending}
       onClick={() => {
-        const pence = parseDecimalToMinor(floatValue)
-        if (pence !== null) open.mutate(pence)
+        if (floatPence !== null) open.mutate(floatPence)
       }}
     >
       Open session
@@ -452,8 +455,14 @@ export function CashScreen() {
                 id="cash-counted"
                 value={counted}
                 onChange={setCounted}
+                invalid={countedInvalid}
                 aria-label="Counted"
               />
+              {countedInvalid ? (
+                <FieldError>
+                  Enter the count in pounds and pence, for example 124.50.
+                </FieldError>
+              ) : null}
             </Field>
             <Field label="Notes" htmlFor="cash-notes" className="mt-10">
               <Textarea
@@ -504,8 +513,14 @@ export function CashScreen() {
               id="cash-float"
               value={floatValue}
               onChange={setFloatValue}
+              invalid={floatInvalid}
               aria-label="Float"
             />
+            {floatInvalid ? (
+              <FieldError>
+                Enter the float in pounds and pence, for example 100.00.
+              </FieldError>
+            ) : null}
           </Field>
           {error ? (
             <p role="alert" className="mt-6 text-[13px] text-destructive">

@@ -8,7 +8,14 @@
  * no effect reaches in to clear them, so nothing re-renders twice to do it.
  */
 import * as React from "react"
-import { formatGBP, parseDecimalToMinor } from "@gg/shared"
+import {
+  breakdown,
+  formatGBP,
+  parseDecimalToMinor,
+  refundAmount,
+  remainingQty,
+  type LineBreakdown,
+} from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
@@ -297,14 +304,35 @@ function RefundForm({
   onConfirm: (lineIds: string[], method: RefundMethod, reason: string) => void
   onCancel: () => void
 }) {
-  // `qty` is never rewritten by a refund, so what is left on a line is its
-  // quantity less what has already gone back.
+  /**
+   * What each line was actually paid, from the shared sale-line helper, so
+   * the figure here is the figure the refund route moves. A line's own
+   * discount and its share of the sale-level discount both come off: the
+   * ticket price is not what went in the till.
+   */
+  const sold = breakdown(
+    sale.lines.map((line) => ({
+      id: line.id,
+      qty: line.qty ?? 1,
+      unitPrice: line.unit_price ?? 0,
+      discount: line.discount ?? 0,
+      refundedQty: line.refunded_qty ?? 0,
+    })),
+    sale.discount ?? 0
+  )
+
   const refundable = sale.lines
-    .map((line) => ({
-      line,
-      remaining: (line.qty ?? 1) - (line.refunded_qty ?? 0),
+    .map((line) => ({ line, row: sold.byId[line.id] }))
+    .filter(
+      (entry): entry is { line: (typeof sale.lines)[number]; row: LineBreakdown } =>
+        Boolean(entry.row) && remainingQty(entry.row as LineBreakdown) > 0
+    )
+    .map((entry) => ({
+      line: entry.line,
+      row: entry.row,
+      remaining: remainingQty(entry.row),
+      amount: refundAmount(entry.row, remainingQty(entry.row)),
     }))
-    .filter((row) => row.remaining > 0)
   const [chosen, setChosen] = React.useState<string[]>(() =>
     refundable.map((row) => row.line.id)
   )
@@ -318,8 +346,8 @@ function RefundForm({
   const [reason, setReason] = React.useState("")
 
   const total = refundable
-    .filter((row) => chosen.includes(row.line.id))
-    .reduce((sum, row) => sum + (row.line.unit_price ?? 0) * row.remaining, 0)
+    .filter((entry) => chosen.includes(entry.line.id))
+    .reduce((sum, entry) => sum + entry.amount, 0)
 
   return (
     <>
@@ -330,7 +358,7 @@ function RefundForm({
           </p>
         ) : (
           <ul>
-            {refundable.map(({ line, remaining }) => {
+            {refundable.map(({ line, remaining, amount }) => {
               const on = chosen.includes(line.id)
               const part = (line.refunded_qty ?? 0) > 0
               return (
@@ -369,7 +397,7 @@ function RefundForm({
                       ) : null}
                     </span>
                     <span className="tnum shrink-0 text-[15px] text-foreground">
-                      {formatGBP((line.unit_price ?? 0) * remaining)}
+                      {formatGBP(amount)}
                     </span>
                   </button>
                 </li>

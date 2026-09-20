@@ -172,3 +172,30 @@ export function labelLayout(
     priceMm: big ? 4.4 : 3.4,
   }
 }
+
+/**
+ * The next print run, and what is left after it.
+ *
+ * `@page` takes one size and the printer has one roll loaded, so a queue of
+ * mixed templates goes in batches. The oldest job leads, because that is the
+ * one that has been waiting longest.
+ */
+export interface PrintBatch {
+  template: LabelTemplateKey | null
+  jobs: LabelJobDetail[]
+  /** How many queued jobs are on some other label size. */
+  waiting: number
+}
+
+export function nextPrintBatch(queued: LabelJobDetail[]): PrintBatch {
+  const oldest = [...queued].sort((a, b) =>
+    a.requestedAt.localeCompare(b.requestedAt)
+  )[0]
+  if (!oldest) return { template: null, jobs: [], waiting: 0 }
+  const jobs = queued.filter((job) => job.template === oldest.template)
+  return {
+    template: oldest.template,
+    jobs,
+    waiting: queued.length - jobs.length,
+  }
+}

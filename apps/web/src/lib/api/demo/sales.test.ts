@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest"
+import { breakdown, refundAmount, remainingQty } from "@gg/shared"
 
 import { completeSale, getSale, refundSale, todayStats } from "@/lib/api/demo/sales"
 import { close as closeSession, getCurrent, open, openSession } from "@/lib/api/demo/cash"
@@ -245,5 +246,41 @@ describe("the refund contract", () => {
         sumup_ref: "",
       })
     ).toThrow("A reward is the whole discount")
+  })
+})
+
+describe("what a refund is worth", () => {
+  beforeAll(() => {
+    ensureSeeded()
+  })
+
+  it("gives back what was paid, not the ticket price, on a discounted sale", () => {
+    // GG-S-000455: a £49.95 box with £2.50 off the sale, so £47.45 went in.
+    const sale = getSale("sale_demo_1")!
+    expect(sale.total).toBe(4745)
+
+    const sold = breakdown(
+      sale.lines.map((line) => ({
+        id: line.id,
+        qty: line.qty ?? 1,
+        unitPrice: line.unit_price ?? 0,
+        discount: line.discount ?? 0,
+        refundedQty: line.refunded_qty ?? 0,
+      })),
+      sale.discount ?? 0
+    )
+    const sheetFigure = sold.lines.reduce(
+      (sum, row) => sum + refundAmount(row, remainingQty(row)),
+      0
+    )
+    expect(sheetFigure).toBe(4745)
+
+    const result = refundSale("sale_demo_1", {
+      lines: [{ sale_line: "sale_line_demo_1", qty: 1 }],
+      reason: "Faulty",
+      refund_method: "sumup_card",
+    })
+    expect(result.refunded).toBe(sheetFigure)
+    expect(result.sale.status).toBe("refunded")
   })
 })

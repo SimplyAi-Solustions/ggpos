@@ -51,6 +51,7 @@ import {
 } from "@/features/sell/basket"
 import {
   dispatchBasket,
+  getBasket,
   lineFromItem,
   useBasket,
 } from "@/features/sell/basket-store"
@@ -184,12 +185,12 @@ export function SellScreen() {
   // One read of the shop's configuration for the session, shared with Cash.
   const { data: config } = useCounterConfig()
   const setup = config?.loyalty
-  const { data: cash, refetch: refetchCash } = useQuery({
+  const { data: cash } = useQuery({
     queryKey: ["cash-current"],
     queryFn: getCurrentCashSession,
     staleTime: 10_000,
   })
-  const { data: todaysSales = [], refetch: refetchSales } = useQuery({
+  const { data: todaysSales = [] } = useQuery({
     queryKey: ["sales-today"],
     queryFn: () => listSales(10),
     staleTime: 10_000,
@@ -224,6 +225,7 @@ export function SellScreen() {
   const payment = checkPayment(basket, totals, {
     programme: setup?.programme,
     cashSessionOpen: Boolean(cash?.session),
+    cashCap: config?.cashCap,
   })
   const points = pointsPreview(basket, totals, setup, payment.split.points)
 
@@ -272,11 +274,18 @@ export function SellScreen() {
             setScanError("That voucher has been used or has run out. Check the code.")
             return
           }
-          if (!basket.customer) {
+          // The basket as it is at scan time, not as it was when this screen
+          // last rendered: a lookup takes a moment and a scanner is quick.
+          const current = getBasket()
+          if (!current.customer) {
             setScanError("Scan the customer's card first, then their voucher.")
             return
           }
-          const problem = voucherProblem(voucher, basket.customer, totals.subtotal)
+          const problem = voucherProblem(
+            voucher,
+            current.customer,
+            summarise(current).subtotal
+          )
           if (problem) {
             setScanError(problem)
             return
@@ -306,7 +315,7 @@ export function SellScreen() {
         setScanError(refusalOrFallback(error, "That code could not be looked up. Try again."))
       }
     },
-    [basket.customer, totals.subtotal]
+    []
   )
 
   React.useEffect(() => setScanHandler((raw) => void commit(raw)), [commit])
@@ -369,12 +378,6 @@ export function SellScreen() {
   })
 
   // The undo toast closes itself after eight seconds, and the sale stands.
-  React.useEffect(() => {
-    if (undoLeft <= 0) return undefined
-    const timer = window.setTimeout(() => setUndoLeft(0), undoLeft)
-    return () => window.clearTimeout(timer)
-  }, [undoLeft])
-
   const undo = useMutation({
     mutationFn: async (sale: DoneSale) => {
       const full = await getSale(sale.id)
@@ -409,6 +412,14 @@ export function SellScreen() {
       setSaleError(refusalOrFallback(error, "That sale could not be undone. Refund it instead."))
     },
   })
+
+  // The eight seconds stop while the step-up dialog is open, so a password
+  // typed at the sixth second still undoes the sale.
+  React.useEffect(() => {
+    if (undoLeft <= 0 || undo.isPending) return undefined
+    const timer = window.setTimeout(() => setUndoLeft(0), undoLeft)
+    return () => window.clearTimeout(timer)
+  }, [undoLeft, undo.isPending])
 
   const refund = useMutation({
     mutationFn: async ({
@@ -683,11 +694,15 @@ export function SellScreen() {
             tone="muted"
           />
         ) : null}
-        {totals.voucherDiscount > 0 && basket.voucher ? (
+        {basket.voucher ? (
           <>
             <TotalRow
               label={basket.voucher.rewardName}
-              value={`-${formatGBP(totals.voucherDiscount)}`}
+              value={
+                totals.voucherDiscount > 0
+                  ? `-${formatGBP(totals.voucherDiscount)}`
+                  : "Not money off"
+              }
               tone="muted"
               action={
                 <Button
@@ -698,10 +713,12 @@ export function SellScreen() {
                 </Button>
               }
             />
-            <p className="mt-3 text-[13px] text-muted-foreground-2">
-              A reward is the whole discount on a sale, so the tier perk and any
-              manual amount stand aside while it is on.
-            </p>
+            {totals.voucherDiscount > 0 ? (
+              <p className="mt-3 text-[13px] text-muted-foreground-2">
+                A reward is the whole discount on a sale, so the tier perk and any
+                manual amount stand aside while it is on.
+              </p>
+            ) : null}
           </>
         ) : null}
         <TotalRow
@@ -870,6 +887,7 @@ export function SellScreen() {
           <Button
             variant="text"
             loading={undo.isPending}
+            disabled={undo.isPending}
             onClick={() => {
               // A split payment has no single way back, so the sheet asks
               // where the money should go rather than guessing the card.

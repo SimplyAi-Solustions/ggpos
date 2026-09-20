@@ -25,7 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LABEL_SPECS } from "@/features/labels/layout"
+import { LABEL_SPECS, nextPrintBatch } from "@/features/labels/layout"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { getItem, listLabelJobs, queueLabels } from "@/lib/api"
 import type { LabelJobStatus } from "@/lib/api/types"
@@ -54,11 +54,15 @@ export function LabelQueueScreen() {
 
   const queued = jobs.filter((job) => job.status === "queued")
 
+  // One print run is one label size, oldest first; the rest wait for the
+  // roll to be changed over.
+  const batch = nextPrintBatch(queued)
+
   function printAll() {
-    if (queued.length === 0) return
+    if (batch.jobs.length === 0) return
     void navigate({
       to: "/labels/print",
-      search: { jobs: queued.map((job) => job.id).join(","), print: 1 },
+      search: { jobs: batch.jobs.map((job) => job.id).join(","), print: 1 },
     })
   }
 
@@ -77,9 +81,12 @@ export function LabelQueueScreen() {
       setReprint("")
       setReprintError(null)
       void refetch()
+      // Again, one size per run: the first code's template leads.
+      const size = created[0]?.template
+      const run = created.filter((job) => job.template === size)
       void navigate({
         to: "/labels/print",
-        search: { jobs: created.map((job) => job.id).join(","), print: 1 },
+        search: { jobs: run.map((job) => job.id).join(","), print: 1 },
       })
     },
     onError: (error) =>
@@ -168,11 +175,19 @@ export function LabelQueueScreen() {
         )}
       </div>
 
-      {queued.length > 0 ? (
-        <div className="mt-14">
-          <Button onClick={printAll} trailingArrow>
-            Print all queued
+      {batch.jobs.length > 0 ? (
+        <div className="mt-14 flex flex-wrap items-center gap-x-8 gap-y-3">
+          <Button onClick={printAll} trailingArrow data-testid="print-all">
+            {batch.waiting > 0 && batch.template
+              ? `Print ${batch.jobs.length} on ${templateName(batch.template)}`
+              : "Print all queued"}
           </Button>
+          {batch.waiting > 0 ? (
+            <p className="text-[13px] text-muted-foreground-2">
+              {batch.waiting} more on other label sizes. Change the roll and
+              print again.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

@@ -8,6 +8,7 @@ import {
   perkFor,
   pointsPreview,
   summarise,
+  voucherProblem,
   type BasketLine,
   type BasketState,
 } from "@/features/sell/basket"
@@ -400,5 +401,139 @@ describe("the payment check", () => {
     const check = checkPayment(state, summarise(state), ctx)
     expect(check.ok).toBe(false)
     expect(check.problems).toContain("Scan an item to start a sale.")
+  })
+})
+
+describe("a reward that cannot go on the basket", () => {
+  const voucher: RewardVoucher = {
+    id: "r1",
+    code: "GGV3H7K9T",
+    customer: LEGEND.id,
+    rewardName: "Five pounds off",
+    type: "money_off",
+    value: 500,
+    expiresAt: null,
+  }
+
+  it("refuses anything that is not money off", () => {
+    expect(
+      voucherProblem({ ...voucher, type: "free_item" }, LEGEND, 10000)
+    ).toBe("That reward is not money off. Use it on the customer's account instead.")
+  })
+
+  it("refuses one worth more than the basket, which the route could not take", () => {
+    expect(voucherProblem(voucher, LEGEND, 300)).toBe(
+      "This £5.00 reward is more than the basket. Add another item or take the reward off."
+    )
+  })
+
+  it("refuses one issued to somebody else", () => {
+    expect(voucherProblem(voucher, null, 10000)).toBe(
+      "A reward needs the customer it was issued to on the sale."
+    )
+  })
+
+  it("lets a money-off reward that fits through", () => {
+    expect(voucherProblem(voucher, LEGEND, 10000)).toBeNull()
+  })
+
+  it("comes off with the last item, so no reward is left on an empty basket", () => {
+    let state = basketReducer(withLines(line()), {
+      type: "attachCustomer",
+      customer: LEGEND,
+    })
+    state = basketReducer(state, { type: "applyVoucher", voucher })
+    expect(state.voucher).not.toBeNull()
+    state = basketReducer(state, { type: "remove", itemId: "item_1" })
+    expect(state.voucher).toBeNull()
+  })
+})
+
+describe("a manual amount against a shrinking basket", () => {
+  it("comes down with the basket rather than printing what was typed", () => {
+    let state = withLines(line({ unitPrice: 5000 }), SEALED)
+    state = basketReducer(state, {
+      type: "setDiscount",
+      discount: { kind: "amount", value: 6000 },
+    })
+    expect(summarise(state).manualDiscount).toBe(6000)
+
+    state = basketReducer(state, { type: "remove", itemId: "item_1" })
+    // Only the £49.95 box left, so that is the most that can come off, and
+    // the stored figure says so too rather than the £60.00 that was typed.
+    expect(state.manualDiscount).toEqual({ kind: "amount", value: 4995 })
+    expect(summarise(state).manualDiscount).toBe(4995)
+    expect(summarise(state).total).toBe(0)
+
+    state = basketReducer(state, { type: "remove", itemId: "item_2" })
+    expect(state.manualDiscount).toEqual({ kind: "none" })
+  })
+
+  it("leaves a discount that still fits alone", () => {
+    let state = withLines(line({ unitPrice: 5000 }), SEALED)
+    state = basketReducer(state, {
+      type: "setDiscount",
+      discount: { kind: "amount", value: 1000 },
+    })
+    state = basketReducer(state, { type: "remove", itemId: "item_1" })
+    expect(state.manualDiscount).toEqual({ kind: "amount", value: 1000 })
+  })
+})
+
+describe("the cash cap", () => {
+  it("refuses cash when the shop has switched cash sales off", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setPayment",
+      payment: "cash",
+    })
+    const check = checkPayment(state, summarise(state), {
+      programme: PROGRAMME,
+      cashSessionOpen: true,
+      cashCap: 0,
+    })
+    expect(check.problems).toContain("Cash sales are switched off in settings.")
+  })
+
+  it("refuses cash over the cap, and says to put the rest on the card", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setPayment",
+      payment: "cash",
+    })
+    const check = checkPayment(state, summarise(state), {
+      programme: PROGRAMME,
+      cashSessionOpen: true,
+      cashCap: 30000,
+    })
+    expect(check.problems[0]).toContain("over the £300.00 cash cap")
+  })
+
+  it("refuses nothing on the cap's account while the config is still loading", () => {
+    const state = basketReducer(withLines(line()), {
+      type: "setPayment",
+      payment: "cash",
+    })
+    const check = checkPayment(state, summarise(state), {
+      programme: PROGRAMME,
+      cashSessionOpen: true,
+    })
+    expect(check.ok).toBe(true)
+  })
+})
+
+describe("the discount spread", () => {
+  it("adds back up to the total, with the last line absorbing the remainder", () => {
+    const state = basketReducer(
+      withLines(
+        line({ itemId: "a", unitPrice: 1000 }),
+        line({ itemId: "b", unitPrice: 1000, maxQty: 1 }),
+        line({ itemId: "c", unitPrice: 1000, maxQty: 1 })
+      ),
+      { type: "setDiscount", discount: { kind: "amount", value: 100 } }
+    )
+    const totals = summarise(state)
+    expect(totals.lineTotals.map((row) => row.total)).toEqual([967, 967, 966])
+    expect(totals.lineTotals.reduce((sum, row) => sum + row.total, 0)).toBe(
+      totals.total
+    )
   })
 })

@@ -4,6 +4,8 @@ const getStepUp = vi.fn()
 
 vi.mock("@/lib/api/sales", () => ({ getStepUp }))
 
+const { setDataMode } = await import("@/lib/api/mode")
+const { logout } = await import("@/lib/auth")
 const {
   clearStepUp,
   hasStepUp,
@@ -83,6 +85,47 @@ describe("the step-up cache", () => {
     setStepUpToken({ token: "tok", expiresAt: inMinutes(10) })
     expect(hasStepUp()).toBe(true)
     clearStepUp()
+    expect(hasStepUp()).toBe(false)
+  })
+})
+
+describe("the step-up and the session", () => {
+  beforeEach(() => {
+    clearStepUp()
+    getStepUp.mockReset()
+    try {
+      localStorage.clear()
+      sessionStorage.clear()
+    } catch {
+      // Private browsing: nothing to clear.
+    }
+  })
+
+  it("is gone after a sign-out, so the next person confirms again", async () => {
+    setDataMode(true)
+    localStorage.setItem("gg-demo-staff", JSON.stringify({ id: "staff_demo" }))
+    setStepUpToken({ token: "tok", expiresAt: inMinutes(10) })
+    expect(hasStepUp()).toBe(true)
+
+    logout()
+    expect(hasStepUp()).toBe(false)
+
+    getStepUp.mockResolvedValue({ token: "fresh", expiresAt: inMinutes(10) })
+    const prompt = vi.fn().mockResolvedValue("ggvault-demo")
+    const release = setStepUpPrompt(prompt)
+    localStorage.setItem("gg-demo-staff", JSON.stringify({ id: "staff_demo" }))
+    await expect(stepUp()).resolves.toBe("fresh")
+    expect(prompt).toHaveBeenCalledTimes(1)
+    release()
+  })
+
+  it("is not inherited by a different staff member on the same counter", () => {
+    setDataMode(true)
+    localStorage.setItem("gg-demo-staff", JSON.stringify({ id: "staff_ada" }))
+    setStepUpToken({ token: "ada", expiresAt: inMinutes(10) })
+    expect(hasStepUp()).toBe(true)
+
+    localStorage.setItem("gg-demo-staff", JSON.stringify({ id: "staff_bea" }))
     expect(hasStepUp()).toBe(false)
   })
 })
