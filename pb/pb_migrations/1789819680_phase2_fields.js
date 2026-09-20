@@ -52,6 +52,32 @@ migrate((app) => {
   app.save(idDocuments);
 
   // -------------------------------------------------------------------
+  // trade_in_lines: what an items row needs that a line could not say
+  // -------------------------------------------------------------------
+  const games = app.findCollectionByNameOrId("games");
+  const tradeInLines = app.findCollectionByNameOrId("trade_in_lines");
+  tradeInLines.fields.add(
+    new Field({
+      name: "kind",
+      type: "select",
+      maxSelect: 1,
+      values: ["single", "graded", "retro", "sealed", "accessory", "other"],
+    })
+  );
+  tradeInLines.fields.add(
+    new Field({ name: "game", type: "relation", collectionId: games.id, maxSelect: 1 })
+  );
+  tradeInLines.fields.add(
+    new Field({
+      name: "completeness",
+      type: "select",
+      maxSelect: 1,
+      values: ["loose", "boxed", "cib"],
+    })
+  );
+  app.save(tradeInLines);
+
+  // -------------------------------------------------------------------
   // settings: new fields
   // -------------------------------------------------------------------
   const locations = app.findCollectionByNameOrId("locations");
@@ -127,6 +153,12 @@ migrate((app) => {
   settings.fields.removeByName("offer");
   settings.fields.removeByName("cash_variance_alert");
   app.save(settings);
+
+  const tradeInLines = app.findCollectionByNameOrId("trade_in_lines");
+  tradeInLines.fields.removeByName("completeness");
+  tradeInLines.fields.removeByName("game");
+  tradeInLines.fields.removeByName("kind");
+  app.save(tradeInLines);
 
   const idDocuments = app.findCollectionByNameOrId("id_documents");
   idDocuments.fields.removeByName("mime");
