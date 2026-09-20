@@ -65,3 +65,22 @@ export function offerHasExpired(
   if (Number.isNaN(at.getTime())) return false
   return at.getTime() <= now.getTime()
 }
+
+/**
+ * Whether the message the quote came with still needs showing.
+ *
+ * `POST /api/vault/quotes` stores it on the record and does not put it in
+ * the thread, so the counter shows it above the thread. A client that also
+ * opened the thread with it (the demo shop does) would otherwise say the
+ * same thing twice.
+ */
+export function showsQuoteMessage(
+  message: string | undefined,
+  messages: { author: "customer" | "staff"; body: string }[]
+): boolean {
+  const clean = message?.trim()
+  if (!clean) return false
+  const opening = messages[0]
+  if (!opening || opening.author !== "customer") return true
+  return opening.body.trim() !== clean
+}
