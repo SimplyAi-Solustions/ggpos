@@ -151,17 +151,30 @@ test.describe("one quote", () => {
   test("goes offer, accept, received, and lands on the draft buy-in", async ({
     page,
   }) => {
+    // One page load throughout: the demo shop lives in the tab's own
+    // memory, so an address-bar navigation would start it over and lose the
+    // offer this test has just sent. Every step below is a click.
     await signIn(page)
-    await page.goto(`/counter/quotes/${NEW_QUOTE}?demo=1`)
+    // The customer who sent this quote, so My Vault opens as them when the
+    // counter hands over. Read on the first navigation into /account.
+    await page.evaluate(() =>
+      window.localStorage.setItem("gg-demo-customer", "cust_demo_2")
+    )
 
     // 1. The counter prices it and sends the offer.
+    await page.getByTestId("waiting-line").getByRole("link", { name: "Quotes" }).click()
+    await page.getByTestId("quote-row").first().click()
+    await expect(page.getByTestId("quote-status")).toHaveText("New")
     await addChargeLine(page)
     await primary(page, "Send the offer").click()
     await expect(page.getByTestId("quote-status")).toHaveText("Offered")
 
-    // 2. The customer answers from home. Same tab, so the same demo shop:
-    //    `demo_as` signs the portal in as the customer who sent it.
-    await page.goto(`/account/quotes/${NEW_QUOTE}?demo=1&demo_as=cust_demo_2`)
+    // 2. The customer answers from home, in the same tab and the same shop.
+    await page.getByRole("button", { name: /Account menu/ }).click()
+    await page.getByRole("menuitem", { name: "My Vault" }).click()
+    await expect(page.getByRole("heading", { name: "My card" })).toBeVisible()
+    await page.getByRole("link", { name: "Quotes", exact: true }).first().click()
+    await page.getByRole("link", { name: /Offer made/ }).first().click()
     await expect(page.getByTestId("quote-offer-total")).toHaveText("£60.00")
     await page.getByRole("button", { name: "Accept the offer" }).click()
     const sheet = page.getByRole("dialog")
@@ -169,10 +182,13 @@ test.describe("one quote", () => {
     await sheet.getByRole("button", { name: "Accept", exact: true }).click()
     await expect(sheet).toBeHidden()
 
-    // 3. The items arrive and the counter receives them. The line the screen
-    //    built is the line the received route has to consume, kind and game
-    //    included, or the quote sticks at accepted.
-    await page.goto(`/counter/quotes/${NEW_QUOTE}?demo=1`)
+    // 3. The items arrive and the counter receives them. The lines the
+    //    screen built are the lines the received route has to consume, kind
+    //    and game included, or the quote sticks at accepted.
+    for (let back = 0; back < 8; back += 1) {
+      if (/\/counter\/quotes\//.test(page.url())) break
+      await page.goBack()
+    }
     await expect(page.getByTestId("quote-status")).toHaveText("Accepted")
     await primary(page, "Mark as received").click()
 
