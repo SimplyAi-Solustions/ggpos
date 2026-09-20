@@ -46,6 +46,7 @@ import {
 import { refusalOrFallback } from "@/lib/api/refusal"
 import type { PriceView, UkCompInput } from "@/lib/api/types"
 import {
+  finishWords,
   fxWarning,
   sourceRows,
   type SourceRowView,
@@ -256,14 +257,14 @@ function PickBody({
 function CompSheet({
   open,
   onOpenChange,
-  title,
+  description,
   pending,
   serverError,
   onSave,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  title: string
+  description: string
   pending: boolean
   serverError: string | null
   onSave: (values: { price: number; url: string; sold_at: string }) => void
@@ -273,7 +274,7 @@ function CompSheet({
       <SheetContent side="bottom">
         {open ? (
           <CompBody
-            title={title}
+            description={description}
             pending={pending}
             serverError={serverError}
             onSave={onSave}
@@ -285,14 +286,34 @@ function CompSheet({
   )
 }
 
+/**
+ * What the comp sheet says it wants.
+ *
+ * It names the finish or completeness it will be filed under, because the
+ * routes file a comp against exactly that and a staff member looking at the
+ * holo row has no other way to know. A card asks for the near-mint price:
+ * market value is the near-mint figure and the condition multiplier comes
+ * after it, so a comp taken off a played copy would drag every band down.
+ */
+function compDescription(subject: PriceSubject): string {
+  const words = finishWords(subject.finish)
+  const named = [subject.title, words].filter(Boolean).join(", ")
+  const opening = named ? `${named}. ` : ""
+  const asked =
+    subject.kind === "card"
+      ? "Enter what a near-mint copy sold for on ebay.co.uk"
+      : "Enter what one sold for on ebay.co.uk"
+  return `${opening}${asked}; it leads every other source for 30 days.`
+}
+
 function CompBody({
-  title,
+  description,
   pending,
   serverError,
   onSave,
   onClose,
 }: {
-  title: string
+  description: string
   pending: boolean
   serverError: string | null
   onSave: (values: { price: number; url: string; sold_at: string }) => void
@@ -314,10 +335,7 @@ function CompBody({
     <>
       <SheetHeader>
         <SheetTitle>Add UK comp</SheetTitle>
-        <SheetDescription>
-          {title ? `${title}. ` : ""}A sold price from ebay.co.uk leads every
-          other source for 30 days.
-        </SheetDescription>
+        <SheetDescription>{description}</SheetDescription>
       </SheetHeader>
       <SheetBody>
         <div className="flex flex-col gap-8">
@@ -584,7 +602,7 @@ export function PriceSources({
           setCompOpen(open)
           if (!open) setCompError(null)
         }}
-        title={subject.title ?? ""}
+        description={compDescription(subject)}
         pending={comp.isPending}
         serverError={compError}
         onSave={(body) =>

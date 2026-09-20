@@ -76,6 +76,17 @@ export function shortDate(iso: string | null | undefined): string {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`
 }
 
+/**
+ * A finish or a completeness as a person says it: "holo", "first edition",
+ * "CIB". Used where the sheet has to name what is being priced, so a comp is
+ * never filed against a finish nobody was looking at.
+ */
+export function finishWords(value: string | undefined): string {
+  if (!value) return ""
+  if (value.toLowerCase() === "cib") return "CIB"
+  return value.replace(/_/g, " ")
+}
+
 /** "0.8606", with the trailing zeros of a round rate left off. */
 export function formatRate(rate: number | null | undefined): string {
   if (!rate && rate !== 0) return ""

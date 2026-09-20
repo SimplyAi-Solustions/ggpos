@@ -1,6 +1,8 @@
 import { formatGBP } from "@gg/shared"
 import {
   computeOffer,
+  DEFAULT_CONDITION_MULTIPLIERS,
+  type ConditionMultipliers,
   type OfferSettings,
   type PricingRule,
 } from "@gg/shared/pricing"
@@ -181,7 +183,8 @@ export function bulkCountFrom(title: string): number {
 export function lineOffer(
   line: TradeLine,
   rules: PricingRule[],
-  settings: OfferSettings
+  settings: OfferSettings,
+  multipliers: ConditionMultipliers = DEFAULT_CONDITION_MULTIPLIERS
 ): LineOffer {
   if (line.kind === "bulk") {
     // A lot is priced as a whole: one figure, whatever the card count, so
@@ -200,6 +203,22 @@ export function lineOffer(
   }
 
   const marketTotal = line.marketPence * line.qty
+
+  // A line whose price routes have not answered yet is not a penny card: it
+  // is a card nobody has priced. Quoting the bulk rate for it would put a
+  // real offer on the counter for a figure that is about to arrive.
+  if (line.marketSource === PENDING_SOURCE && line.overrideCash === undefined) {
+    return {
+      cash: 0,
+      credit: 0,
+      cashTotal: 0,
+      creditTotal: 0,
+      marketTotal,
+      source: "none",
+      cashPct: 0,
+      creditPct: 0,
+    }
+  }
 
   if (line.overrideCash !== undefined && line.overrideCredit !== undefined) {
     return {
@@ -223,7 +242,8 @@ export function lineOffer(
       finish: line.finish ?? null,
     },
     rules,
-    settings
+    settings,
+    multipliers
   )
 
   const nothingMatched = !offer.bulk && offer.rule === null
@@ -250,13 +270,14 @@ export interface Totals {
 export function totals(
   lines: TradeLine[],
   rules: PricingRule[],
-  settings: OfferSettings
+  settings: OfferSettings,
+  multipliers: ConditionMultipliers = DEFAULT_CONDITION_MULTIPLIERS
 ): Totals {
   return lines
     .filter((line) => line.accepted)
     .reduce<Totals>(
       (sum, line) => {
-        const offer = lineOffer(line, rules, settings)
+        const offer = lineOffer(line, rules, settings, multipliers)
         return {
           market: sum.market + offer.marketTotal,
           cash: sum.cash + offer.cashTotal,
@@ -635,9 +656,17 @@ export function canAdvance(
       return state.customer
         ? OK
         : { ok: false, reason: "Scan or search for the customer first." }
-    case "items":
+    case "items": {
       if (sums.lines === 0) {
         return { ok: false, reason: "Add at least one item to make an offer." }
+      }
+      // A price on its way is not a price. Moving on now would show the
+      // customer an offer the next render is about to change.
+      const waiting = state.lines.some(
+        (line) => line.accepted && line.marketSource === PENDING_SOURCE
+      )
+      if (waiting) {
+        return { ok: false, reason: "One line is still being priced. Give it a moment." }
       }
       if (sums.market === 0 && sums.cash === 0 && sums.credit === 0) {
         return {
@@ -646,6 +675,7 @@ export function canAdvance(
         }
       }
       return OK
+    }
     case "offer": {
       if (!state.termsAccepted) {
         return { ok: false, reason: "Read the terms to the customer and tick the box." }
@@ -675,10 +705,11 @@ export function toLineInputs(
   lines: TradeLine[],
   rules: PricingRule[],
   settings: OfferSettings,
-  payoutType: PayoutType
+  payoutType: PayoutType,
+  multipliers: ConditionMultipliers = DEFAULT_CONDITION_MULTIPLIERS
 ): TradeInLineInput[] {
   return lines.map((line) => {
-    const offer = lineOffer(line, rules, settings)
+    const offer = lineOffer(line, rules, settings, multipliers)
     // The stored offer is the one the customer is taking, so the receipt and
     // the item's cost match what was actually paid. A mixed payout is priced
     // at the cash rate throughout, which is what `payoutFor` splits.
@@ -708,6 +739,7 @@ export function toLineInputs(
       kind: itemKindFor(line.kind),
       gameId: line.gameId,
       cardId: line.cardId,
+      retroTitleId: line.retroTitleId,
       title: line.title,
       finish: line.finish,
       condition: line.kind === "retro" ? undefined : line.condition,
@@ -781,6 +813,7 @@ export function hydrate(
         kind: (line.kind ?? "single") as LineKind,
         title,
         cardId: line.card || undefined,
+        retroTitleId: line.retro_title || undefined,
         gameId: line.game || undefined,
         finish: line.finish || undefined,
         condition: line.completeness || line.condition || undefined,
