@@ -85,6 +85,17 @@ describe("the demo price book", () => {
     expect(view.condition_adjusted).toBeNull()
   })
 
+  it("matches the finish exactly, as the route's own filter does", () => {
+    // `card = {:card} && finish = {:finish}`: a holo row is not an answer to
+    // a question about the normal printing, and a demo that matched loosely
+    // would price cards the counter cannot.
+    const holo = getPrices("card_sv151_199", "holo", DEFAULT_TCG_PRIORITY, 1)
+    const normal = getPrices("card_sv151_199", "normal", DEFAULT_TCG_PRIORITY, 1)
+    expect(holo.chosen?.gbp_market).not.toBe(normal.chosen?.gbp_market)
+    // And a finish nobody has priced has nothing, rather than everything.
+    expect(getPrices("card_sv151_199", "etched", DEFAULT_TCG_PRIORITY, 1).sources).toHaveLength(0)
+  })
+
   it("answers nothing for a card it has never priced", () => {
     const view = getPrices("card_fdn_179", "foil", DEFAULT_TCG_PRIORITY, 1)
     expect(view.chosen).toBeNull()
@@ -111,6 +122,21 @@ describe("what the write routes change", () => {
     const after = getPrices("card_op01_001", "normal", DEFAULT_TCG_PRIORITY, 1)
     expect(after.sources.find((row) => row.source === "cardmarket")?.stale).toBe(false)
     expect(after.chosen?.source).toBe("cardmarket")
+  })
+
+  it("files a retro comp under its completeness", () => {
+    addUkComp("retro_gt", {
+      completeness: "cib",
+      price: 9000,
+      url: "https://www.ebay.co.uk/itm/2",
+      sold_at: new Date().toISOString().slice(0, 10),
+    })
+
+    expect(getRetroPrices("retro_gt", "cib", DEFAULT_RETRO_PRIORITY).chosen?.source).toBe(
+      "uk_sold_manual"
+    )
+    // And nowhere else: a comp for the boxed copy is not one for the loose one.
+    expect(getRetroPrices("retro_gt", "loose", DEFAULT_RETRO_PRIORITY).chosen).toBeNull()
   })
 
   it("puts a UK comp at the top", () => {
