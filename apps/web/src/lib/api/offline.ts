@@ -90,13 +90,18 @@ function itemWord(count: number): string {
   return count === 1 ? "item" : "items"
 }
 
+/** A sale payload that is certainly carrying its client id. */
+type IdentifiedSale = CompleteSalePayload & { client_id: string }
+
 /**
  * The payload with a client id on it. The same id is the queue's key, so a
  * sale that goes straight out, a sale that is retried and a sale that waits
  * in the queue are all the one sale as far as the server is concerned.
  */
-function identified(payload: CompleteSalePayload): CompleteSalePayload {
-  return payload.client_id ? payload : { ...payload, client_id: newClientId() }
+function identified(payload: CompleteSalePayload): IdentifiedSale {
+  return payload.client_id
+    ? (payload as IdentifiedSale)
+    : { ...payload, client_id: newClientId() }
 }
 
 async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResult> {
@@ -104,7 +109,7 @@ async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResu
   const total = saleTotal(body)
   const count = body.lines.reduce((sum, line) => sum + line.qty, 0)
   const entry = await enqueue({
-    id: body.client_id as string,
+    id: body.client_id,
     work: { kind: "mark_sold", body },
     summary: `Sale, ${count} ${itemWord(count)}, ${formatGBP(total)}`,
     total,

@@ -14,9 +14,21 @@ cronAdd("fx", "0 7 * * *", () => {
   const frankfurter = require(`${__hooks}/adapters/frankfurter.js`);
   try {
     const rates = frankfurter.fetchRates(["EUR", "USD"]);
+    // Frankfurter answers with 200 even on a day it has nothing to say (a
+    // weekend or a bank holiday can come back with an empty rates object,
+    // or a single quote dropped for being non-positive - see
+    // frankfurter.js). Writing that as today's row would tell every reader
+    // of fx_rates a rate is known when it is not, so skip the write
+    // entirely and let the previous row (still fetched within the last
+    // day or two) stand until the next run has something real to say.
+    if (!rates.quotes || Object.keys(rates.quotes).length === 0) {
+      console.log("[cron:fx] Frankfurter returned no usable quotes, leaving the last stored rate in place");
+      return;
+    }
     const record = new Record($app.findCollectionByNameOrId("fx_rates"), {
       base: rates.base,
       quotes: rates.quotes,
+      date: rates.date || "",
       fetched_at: rates.fetchedAt,
     });
     $app.save(record);
@@ -193,4 +205,21 @@ cronAdd("retention", "30 3 * * *", () => {
 // stock-at-market figures use fresh prices.
 cronAdd("stats", "30 4 * * *", () => {
   console.log("[cron:stats] placeholder - build daily_stats for yesterday");
+});
+
+// Drains adapters/images.js's "image_queue" (see items.pb.js's onRecordCreate
+// and images.js's own header comment for why an item create only ever
+// queues, never fetches): every five minutes is often enough that a fresh
+// buy-in's cards get their local image within minutes, and rare enough that
+// a card whose image host is briefly down is not hammered every tick.
+cronAdd("image_queue", "*/5 * * * *", () => {
+  const images = require(`${__hooks}/adapters/images.js`);
+  try {
+    const result = images.drainImageQueue($app, 15);
+    if (result.processed) {
+      console.log(`[cron:image_queue] cached ${result.cached} of ${result.processed} queued card image(s)`);
+    }
+  } catch (err) {
+    console.log(`[cron:image_queue] failed: ${err}`);
+  }
 });

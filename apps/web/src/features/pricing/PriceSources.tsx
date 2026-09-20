@@ -9,7 +9,12 @@
  */
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { formatGBP, type PriceSource } from "@gg/shared"
+import {
+  adjustForCondition,
+  formatGBP,
+  type CardCondition,
+  type PriceSource,
+} from "@gg/shared"
 import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
@@ -478,6 +483,16 @@ export function PriceSources({
       ? (rows.find((row) => row.source === picked && row.gbp !== null) ?? null)
       : null
 
+  const inUseMarket = pickedRow?.gbp ?? query.data?.chosen?.gbp_market ?? null
+  const adjusted =
+    inUseMarket === null || !subject.condition
+      ? null
+      : adjustForCondition(
+          inUseMarket,
+          subject.condition as CardCondition,
+          settings.conditionMultipliers
+        )
+
   return (
     <div className={cn("w-full", className)} data-testid="price-sources">
       {fx.data?.stale ? (
@@ -508,15 +523,22 @@ export function PriceSources({
         </ul>
       )}
 
-      {/* Only worth saying when the condition actually takes something off. */}
-      {query.data &&
-      query.data.condition_adjusted !== null &&
-      query.data.chosen &&
-      query.data.condition_adjusted !== query.data.chosen.gbp_market &&
-      subject.condition ? (
+      {/* Only worth saying when the condition actually takes something off.
+          Worked out here rather than read off the response, so it follows a
+          source a staff member picked over the one the rules chose. */}
+      {adjusted !== null && adjusted !== inUseMarket && subject.condition ? (
         <p className="mt-4 text-[13px] leading-[1.45] text-muted-foreground">
           {subject.condition} takes it to{" "}
-          <span className="tnum">{formatGBP(query.data.condition_adjusted)}</span>.
+          <span className="tnum">{formatGBP(adjusted)}</span>.
+        </p>
+      ) : null}
+
+      {query.isError ? (
+        <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+          {refusalOrFallback(
+            query.error,
+            "Those prices did not load. Try Refresh, or check the connection."
+          )}
         </p>
       ) : null}
 

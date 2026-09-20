@@ -257,7 +257,7 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
             className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground"
           >
             {priceMode
-              ? "Scan a card code or type a set and number. Nothing is saved."
+              ? "Scan a card code or type a set and number. Nothing is added to stock."
               : "Scan a barcode or enter an item code to continue."}
           </p>
           {/* At least a 48px target in the thumb zone on a phone. */}

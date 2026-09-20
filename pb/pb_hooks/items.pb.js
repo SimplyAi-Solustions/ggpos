@@ -101,20 +101,26 @@ onRecordCreate((e) => {
 
   // Phase 3 (docs/PLAN.md, "Card images and market prices"): the first time
   // an item is created against a card whose image is still a bare
-  // third-party URL, fetch it once and cache it in PocketBase, so a label
-  // or a receipt printed years later never depends on that host still
-  // being up. Only after e.next() has actually committed the item, and
-  // wrapped so that a slow or unreachable image host can never turn into a
-  // failed item create - a card with no image, or one already re-hosted
-  // (YGOPRODeck/OPTCG results are re-hosted immediately at lookup time, so
-  // this is a no-op for them), costs nothing here.
+  // third-party URL, queue it to be fetched and cached in PocketBase, so a
+  // label or a receipt printed years later never depends on that host still
+  // being up. Only after e.next() has actually committed the item.
+  //
+  // This only ever queues, never fetches: a buy-in creates every item
+  // inside one $app.runInTransaction, so e.app here can be that
+  // transaction's own txApp, and a network call at this point would hold
+  // the whole transaction open for as long as the image host takes to
+  // answer - a slow or unreachable host would then time out the buy-in
+  // itself. The actual fetch happens later, off this path entirely, when
+  // crons.pb.js's "image_queue" cron drains the queue. A card with no image,
+  // or one already re-hosted (YGOPRODeck/OPTCG results are re-hosted
+  // immediately at lookup time), costs nothing here either way.
   const cardId = e.record.getString("card");
   if (cardId) {
     try {
       const images = require(`${__hooks}/adapters/images.js`);
-      images.ensureCardImageCached(e.app, cardId);
+      images.enqueueImageCache(e.app, cardId);
     } catch (err) {
-      console.log(`[items] could not cache the image for card ${cardId}: ${err}`);
+      console.log(`[items] could not queue the image cache for card ${cardId}: ${err}`);
     }
   }
 }, "items");

@@ -179,6 +179,11 @@ function Stepper({
  * 900px, and a single black block to finish. The card preview sits beside the
  * form on a desktop and above it on a phone, where the primary button docks
  * to the thumb zone.
+ *
+ * A chosen card brings its market with it: every source side by side under
+ * the fields, and the sell price the shop's own markup bands suggest from the
+ * condition-adjusted figure, which fills the price box until somebody types
+ * their own.
  */
 export function AddStockScreen({
   initialSet,

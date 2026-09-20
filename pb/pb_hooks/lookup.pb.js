@@ -324,7 +324,7 @@ routerAdd(
           // member of staff has already resolved once.
           if (found.cover) {
             const images = require(`${__hooks}/adapters/images.js`);
-            images.cacheImageFromUrl(e.app, record, found.cover, 15);
+            images.cacheImageFromUrl(e.app, record, "cover", [], found.cover, 15);
           } else {
             e.app.save(record);
           }

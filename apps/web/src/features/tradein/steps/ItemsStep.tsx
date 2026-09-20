@@ -402,11 +402,12 @@ export interface ItemsStepProps {
 /**
  * The lines.
  *
- * Every line carries its own market value, because Phase 2 has no live price
- * feed at the counter yet: the field is labelled "Manual" so nobody mistakes
- * a typed figure for a fetched one. The cash and credit offers beside it come
- * from the shared evaluator with the shop's own bands, and an override needs
- * a reason before it will save.
+ * A card or a retro title prices itself from the price routes, and the line
+ * says which source and how old it is; anything without a catalogue row
+ * behind it (a sealed box, a lot, a title nobody recognised) takes a figure
+ * by hand and says so. The cash and credit offers beside it come from the
+ * shared evaluator with the shop's own bands either way, and an override
+ * still needs a reason before it will save.
  */
 export function ItemsStep({
   lines,
