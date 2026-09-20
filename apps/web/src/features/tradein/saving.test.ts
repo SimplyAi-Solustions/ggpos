@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   UNSAVED,
+  needsFlush,
   needsSave,
   nextSavedShape,
 } from "@/features/tradein/saving"
@@ -45,6 +46,23 @@ describe("needsSave", () => {
     expect(needsSave(UNSAVED, UNSAVED, false)).toBe(false)
     expect(UNSAVED).not.toBe("[]")
     expect(UNSAVED).not.toBe("")
+  })
+})
+
+describe("flushing before a completion", () => {
+  it("writes an outstanding shape before the buy-in is completed", () => {
+    // Switching the payout tile rewrites every line's price, and the write
+    // is debounced. Completing on top of that would price the buy-in on the
+    // lines from before the switch.
+    expect(needsFlush("[cash]", "[credit]")).toBe(true)
+  })
+
+  it("does not write again when the server already has it", () => {
+    expect(needsFlush("[cash]", "[cash]")).toBe(false)
+  })
+
+  it("writes after a failure, whatever the shape was", () => {
+    expect(needsFlush("[cash]", UNSAVED)).toBe(true)
   })
 })
 

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { PageTitle } from "@/components/ui/page-title"
 import { useCounterDock } from "@/app/counter-dock"
 import { Prog } from "@/features/tradein/Prog"
-import { needsSave, nextSavedShape } from "@/features/tradein/saving"
+import { needsFlush, needsSave, nextSavedShape } from "@/features/tradein/saving"
 import { CustomerStep } from "@/features/tradein/steps/CustomerStep"
 import { DoneStep } from "@/features/tradein/steps/DoneStep"
 import {
@@ -201,9 +201,9 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       // Flush anything the debounce is still holding, so the server prices
       // the lines the counter is looking at rather than the ones from
       // before the payout tile was switched.
-      if (shape !== savedShape.current) {
+      if (needsFlush(shape, savedShape.current)) {
         const written = await saveTradeInLines(state.tradeInId, lineInputs)
-        savedShape.current = shape
+        savedShape.current = nextSavedShape("saved", shape)
         dispatch({
           type: "adopt-line-ids",
           ids: written.map((record) => record.id),

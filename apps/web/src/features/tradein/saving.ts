@@ -29,3 +29,15 @@ export function nextSavedShape(
 ): string {
   return outcome === "saved" ? shape : UNSAVED
 }
+
+/**
+ * Whether completing has to write the lines first.
+ *
+ * Unlike `needsSave` this ignores whether a write is in flight: the
+ * completion awaits its own write either way, so the server prices the
+ * lines the counter is looking at rather than the ones from before the
+ * payout tile was switched.
+ */
+export function needsFlush(shape: string, savedShape: string): boolean {
+  return shape !== savedShape
+}
