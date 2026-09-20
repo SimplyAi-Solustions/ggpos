@@ -597,9 +597,12 @@ customer shape (`lib/vaultutil.js`'s `meShapeFor`, the one place `GET /me`, `PAT
   "balances": { "credit": 1000, "points": 300 },
   "tier": { "id": "...", "name": "Regular" } | null,
   "id_status": "none" | "verified" | "expired" | "rejected",
+  "push": { "vapid_public_key": "" },
   "counts": { "trade_ins": 2, "open_quotes": 1, "want_list": 1 }
 }
 ```
+
+`push.vapid_public_key` (fix round, finding 2) is the same field `GET /api/vault/config` already carries, added here too: `/config` is staff-only, so it was the only place a customer's own portal could ever have read this from, meaning push could never actually be turned on there. `/config` itself is unchanged and stays staff-only - this is additive, not a widening of that route.
 
 `balances` is always summed live from `credit_ledger`/`points_ledger` (`lib/balances.js`'s `creditBalance`/`pointsBalance`, not `.recompute`, which also writes - a `GET` never does), never `customer_private`'s cached fields. `tier`/`id_status` are the only two things read off `customer_private`; nothing else on that record ever reaches a customer route. `counts.trade_ins` is every trade-in the customer has (any status); `counts.open_quotes` is `submitted`, `reviewing`, `offered`, `accepted` or `received` (not `declined`/`expired`/`completed`); `counts.want_list` is `open` or `matched` (not `closed`/`fulfilled`) - none of this is specified further than the field names in the brief this package was built against, so these are the counting rules actually shipped.
 
@@ -621,7 +624,7 @@ Public. No `qr_token` match: 404 "Not found." (never distinguishing "no such tok
 
 ### Quotes
 
-`quotes.createRule` is **not** tightened to staff-only as the brief describes ("customers submit through the route"): doing that refuses `pb/scripts/check.sh` section 8's own `POST /api/collections/quotes/records` as a customer token, part of the sections this phase leaves alone. `POST /api/vault/quotes` (below) is additive - the documented way a photo upload actually happens - not a replacement for the existing collection-level create. See this package's build report for the same note.
+`quotes.createRule` is staff-only, as the brief's own migration list describes ("customers submit through the route"). An earlier build of this package left it at the Phase 2 expression (staff, or a customer creating their own row) to avoid touching `pb/scripts/check.sh` section 8's own direct-create assertion; a fix-round review found the real cost of that choice - a customer's own token could create a `quotes` row with any `status`, `lines` and `offer_total` it liked, which `POST /:id/received` then copied into a draft trade-in exactly as given and completion paid out, so a forged `accepted` row with priced lines was a genuine path to money, not just a shape mismatch. `createRule` is now tightened; section 8's own assertion was updated to expect the 400 PocketBase's own record-create endpoint gives for a failed createRule (not the 403/404 a failed list/view rule gives). `POST /api/vault/quotes` (below) is the only way a customer submits one; the `customer = @request.auth.id` update-rule carve-out (replying, accepting, declining their own quote) is untouched.
 
 `POST /api/vault/quotes` (customer, multipart): `photos` (1-20 files, JPEG/PNG/WebP, 10 MB each, sniffed from the first bytes the same way `idphotos.pb.js` sniffs an ID photo - a client-declared content type or file extension is never trusted), `message` (≤4000), `drop_off` (`in_store` | `post`, defaults to `in_store`). Every accepted photo is re-wrapped through `$filesystem.fileFromBytes` from the bytes this route itself read and sniffed, never the raw multipart upload object, so what is actually stored is provably the sniffed image and nothing else. Creates the quote `submitted`, notifies every active admin (one `notifications` row each, emailed). Response `{ "quote": {...} }`. 400 "Photo *n* is not a JPEG, PNG or WebP image. Choose photos and try again." for a non-image; the same wording, by index, for an oversized one.
 

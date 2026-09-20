@@ -698,7 +698,7 @@ export function ItemsStep({
           empty step are noise, and the sticky bar has nothing to summarise
           until there is a line. */}
       {lines.length > 0 ? (
-  <div className="sticky bottom-[var(--gg-dock-h,0px)] z-10 mt-10 border-t border-hairline bg-background py-4">
+        <div className="sticky bottom-[var(--gg-dock-h,0px)] z-10 mt-10 border-t border-hairline bg-background py-4">
           <dl className="flex flex-wrap items-baseline gap-x-10 gap-y-3">
             <div className="flex items-baseline gap-3">
               <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">

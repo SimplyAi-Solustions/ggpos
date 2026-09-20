@@ -3,7 +3,7 @@
  * fixtures: Add stock with a card chosen and its sources, the source view on
  * its own, price-check mode on Scan, and a buy-in line priced from a source.
  *
- *   pnpm --filter web build
+ *   VITE_DEMO_SWITCH=1 pnpm --filter web build   # the switch honours ?demo=1
  *   pnpm --filter web exec vite preview --port 4173   # in one terminal
  *   node apps/web/scripts/pricing-screens.mjs [baseUrl]
  *

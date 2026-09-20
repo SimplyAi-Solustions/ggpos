@@ -3,7 +3,7 @@
  * fixtures: Settings, the offline strip and its conflicts sheet, and a stock
  * count from start to close.
  *
- *   pnpm --filter web build
+ *   VITE_DEMO_SWITCH=1 pnpm --filter web build   # the switch honours ?demo=1
  *   pnpm --filter web exec vite preview --port 4173   # in one terminal
  *   node apps/web/scripts/settings-offline-count-screens.mjs [baseUrl]
  *

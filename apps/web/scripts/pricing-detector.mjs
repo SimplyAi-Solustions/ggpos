@@ -3,7 +3,7 @@
  * detector can scan states that only exist behind the demo sign-in and after
  * a card has been chosen.
  *
- *   pnpm --filter web build
+ *   VITE_DEMO_SWITCH=1 pnpm --filter web build   # the switch honours ?demo=1
  *   pnpm --filter web exec vite preview --port 4173      # in one terminal
  *   node apps/web/scripts/pricing-detector.mjs <outDir> [baseUrl] [w] [h]
  *   IMPECCABLE_BROWSER=/path/to/chromium \

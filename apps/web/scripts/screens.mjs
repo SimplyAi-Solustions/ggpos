@@ -2,7 +2,7 @@
  * Screenshots the counter screens, signed in against the demo fixtures, so
  * they can be held against docs/design-references/ without a PocketBase.
  *
- *   pnpm --filter web build
+ *   VITE_DEMO_SWITCH=1 pnpm --filter web build   # the switch honours ?demo=1
  *   pnpm --filter web exec vite preview --port 4173   # in one terminal
  *   node apps/web/scripts/screens.mjs [baseUrl]
  *

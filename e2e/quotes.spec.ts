@@ -148,6 +148,39 @@ test.describe("one quote", () => {
     )
   })
 
+  test("goes offer, accept, received, and lands on the draft buy-in", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto(`/counter/quotes/${NEW_QUOTE}?demo=1`)
+
+    // 1. The counter prices it and sends the offer.
+    await addChargeLine(page)
+    await primary(page, "Send the offer").click()
+    await expect(page.getByTestId("quote-status")).toHaveText("Offered")
+
+    // 2. The customer answers from home. Same tab, so the same demo shop:
+    //    `demo_as` signs the portal in as the customer who sent it.
+    await page.goto(`/account/quotes/${NEW_QUOTE}?demo=1&demo_as=cust_demo_2`)
+    await expect(page.getByTestId("quote-offer-total")).toHaveText("£60.00")
+    await page.getByRole("button", { name: "Accept the offer" }).click()
+    const sheet = page.getByRole("dialog")
+    await expect(sheet).toBeVisible()
+    await sheet.getByRole("button", { name: "Accept", exact: true }).click()
+    await expect(sheet).toBeHidden()
+
+    // 3. The items arrive and the counter receives them. The line the screen
+    //    built is the line the received route has to consume, kind and game
+    //    included, or the quote sticks at accepted.
+    await page.goto(`/counter/quotes/${NEW_QUOTE}?demo=1`)
+    await expect(page.getByTestId("quote-status")).toHaveText("Accepted")
+    await primary(page, "Mark as received").click()
+
+    await expect(page.getByRole("heading", { name: "Buy-in" })).toBeVisible()
+    await expect(page.getByTestId("trade-line")).toHaveCount(1)
+    await expect(page.getByTestId("trade-line").first()).toContainText("Charizard ex")
+  })
+
   test("turns an accepted quote into a draft buy-in", async ({ page }) => {
     await signIn(page)
     await page.goto(`/counter/quotes/${ACCEPTED_QUOTE}?demo=1`)
