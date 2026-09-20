@@ -264,6 +264,7 @@ export function demoGetCustomer(idOrCode: string): CustomerProfile | null {
     private: { ...entry.private },
     lastVisit: demoLastVisit.get(entry.customer.id) ?? null,
     duplicates: demoDuplicatesFor(entry),
+    verifiedByName: entry.private.id_verified_by ? "Demo Counter" : null,
   }
 }
 
@@ -339,15 +340,36 @@ export function demoMergeCustomers(keepId: string, mergeId: string): CustomerPro
   for (const row of demoCreditLedger) {
     if (row.customer === merge.customer.id) row.customer = keep.customer.id
   }
-  keep.private.credit_balance =
-    (keep.private.credit_balance ?? 0) + (merge.private.credit_balance ?? 0)
+  // The route recomputes the cached balances from the moved ledger rows
+  // rather than adding the two cached numbers, so this does the same.
+  keep.private.credit_balance = demoCreditLedger
+    .filter((row) => row.customer === keep.customer.id)
+    .reduce((sum, row) => sum + row.amount, 0)
   keep.private.points_balance =
     (keep.private.points_balance ?? 0) + (merge.private.points_balance ?? 0)
+  // Flags are a union: a `no_cash` on either card has to survive a merge.
+  keep.private.flags = [
+    ...new Set([...(keep.private.flags ?? []), ...(merge.private.flags ?? [])]),
+  ]
   if (!keep.customer.email && merge.customer.email) {
     keep.customer.email = merge.customer.email
   }
+  if (!keep.customer.phone && merge.customer.phone) {
+    keep.customer.phone = merge.customer.phone
+  }
   if (!keep.private.address && merge.private.address) {
     keep.private.address = merge.private.address
+  }
+  // ID details move only into a card that has none of its own: the kept
+  // customer's own verification is never overwritten by an older one.
+  if (keep.private.id_status !== "verified" && merge.private.id_status === "verified") {
+    keep.private.id_status = merge.private.id_status
+    keep.private.id_type = merge.private.id_type
+    keep.private.id_expiry = merge.private.id_expiry
+    keep.private.id_ref_last4 = merge.private.id_ref_last4
+    keep.private.id_verified_by = merge.private.id_verified_by
+    keep.private.id_verified_at = merge.private.id_verified_at
+    if (!keep.private.dob) keep.private.dob = merge.private.dob
   }
   const mergedVisit = demoLastVisit.get(merge.customer.id)
   const keptVisit = demoLastVisit.get(keep.customer.id)
@@ -448,8 +470,13 @@ export function demoEraseCustomer(customerId: string): CustomerProfile {
   entry.private.id_type = ""
   entry.private.id_expiry = ""
   entry.private.id_ref_last4 = ""
-  entry.private.points_balance = 0
+  entry.private.id_verified_by = ""
+  entry.private.id_verified_at = ""
   entry.private.flags = []
+  // Points stay: the ledger is kept as long as the record is, and the route
+  // does not touch it. The QR token rotates, so a printed card stops
+  // opening a portal that is no longer anybody's.
+  entry.customer.qr_token = randomId("token")
   return demoGetCustomer(customerId) as CustomerProfile
 }
 
