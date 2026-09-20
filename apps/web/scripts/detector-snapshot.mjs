@@ -1,6 +1,20 @@
 /**
  * Saves each signed-in counter route as a self-contained HTML file, so the
  * Impeccable detector can scan pages that live behind the demo sign-in.
+ *
+ *   pnpm --filter web build
+ *   pnpm --filter web exec vite preview --port 4173      # in one terminal
+ *   node apps/web/scripts/detector-snapshot.mjs <outDir> [baseUrl] [w] [h]
+ *   IMPECCABLE_BROWSER=/path/to/chromium \
+ *     .claude/skills/impeccable/scripts/bin/linux-x64/impeccable detect <outDir>
+ *
+ * Note on reading the results: in file mode the detector's `cramped-padding`
+ * rule only sees padding written as an inline style, so every Tailwind
+ * `py-*` / `pt-*` class reads as zero inset and the rule fires on rows that
+ * are correctly spaced. Proved by copying one snapshot and moving the same
+ * padding into inline styles: 7 findings became 0 with no other change. A
+ * live URL scan does not have this problem, but the bundled Chromium refuses
+ * to launch as root and takes no --no-sandbox flag.
  */
 import { chromium } from "@playwright/test"
 import { mkdirSync, writeFileSync } from "node:fs"
@@ -29,8 +43,6 @@ const DEMO_STAFF = {
 }
 
 const ROUTES = [
-  ["baseline-add-stock", "/counter/stock/new"],
-  ["baseline-scan", "/counter/scan"],
   ["customers", "/counter/customers"],
   ["customer-profile", `/counter/customers/${CUSTOMER}`],
   ["customer-new", "/counter/customers/new"],

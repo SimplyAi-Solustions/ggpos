@@ -17,6 +17,16 @@
  * AES-256-GCM and rejects anything else). Without it the upload route
  * refuses with 500 rather than storing a photo in the clear.
  *
+ * The bytes go into $security.encrypt as an Array<number> and come back out
+ * of $security.decrypt through toBytes(), so a photo is never turned into a
+ * base64 string in either direction. A 320 KB photo encrypts in about 20 ms
+ * this way; the base64 round trip it replaced took about 15 seconds for
+ * 200 KB (see lib/base64.js).
+ *
+ * The stored MIME type is sniffed from the first bytes of the upload, never
+ * taken from a client-supplied form field or a file extension, so a page of
+ * HTML named photo.jpg cannot be stored and later served back as an image.
+ *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
@@ -29,8 +39,11 @@ routerAdd(
   "/api/vault/customers/{id}/id-check",
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
-    const base64 = require(`${__hooks}/lib/base64.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
+
+    // The client already downscales, so anything larger than this is a
+    // mistake rather than a photo of a passport.
+    const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
     /** A form field, from the parsed body or straight off the multipart form. */
     function field(body, name) {
@@ -43,13 +56,40 @@ routerAdd(
       }
     }
 
-    /** The MIME type of an uploaded image, from its extension. */
-    function mimeFor(name) {
-      const lower = String(name || "").toLowerCase();
-      if (/\.png$/.test(lower)) return "image/png";
-      if (/\.webp$/.test(lower)) return "image/webp";
-      if (/\.heic$/.test(lower)) return "image/heic";
-      return "image/jpeg";
+    /** Four bytes at `at` as lower-case ASCII, or "" when they run past the end. */
+    function tag(bytes, at) {
+      if (bytes.length < at + 4) return "";
+      let out = "";
+      for (let i = at; i < at + 4; i++) out += String.fromCharCode(bytes[i] & 0xff);
+      return out.toLowerCase();
+    }
+
+    /**
+     * The real MIME type of an upload, from its first bytes. Returns "" for
+     * anything that is not one of the photo formats a phone or the counter
+     * tablet produces.
+     */
+    function sniffMime(bytes) {
+      if (bytes.length < 12) return "";
+      const b = bytes;
+      if ((b[0] & 0xff) === 0xff && (b[1] & 0xff) === 0xd8 && (b[2] & 0xff) === 0xff) {
+        return "image/jpeg";
+      }
+      if (
+        (b[0] & 0xff) === 0x89 &&
+        (b[1] & 0xff) === 0x50 &&
+        (b[2] & 0xff) === 0x4e &&
+        (b[3] & 0xff) === 0x47
+      ) {
+        return "image/png";
+      }
+      if (tag(b, 0) === "riff" && tag(b, 8) === "webp") return "image/webp";
+      if (tag(b, 4) === "ftyp") {
+        const brand = tag(b, 8);
+        if (brand === "heic" || brand === "heix" || brand === "hevc") return "image/heic";
+        if (brand === "mif1" || brand === "msf1") return "image/heif";
+      }
+      return "";
     }
 
     const staff = e.auth;
@@ -97,21 +137,29 @@ routerAdd(
     if (util.isPast(idExpiry, now)) {
       throw e.error(422, "That ID has expired. Ask for one that is still in date.", null);
     }
+    if (idRefLast4 && idRefLast4.length > 4) {
+      throw e.badRequestError("Enter only the last four characters of the ID number.", null);
+    }
 
     const uploads = e.findUploadedFiles("photo");
     if (!uploads || uploads.length === 0 || !uploads[0]) {
       throw e.badRequestError("Take a photo of the ID before saving the check.", null);
     }
     const upload = uploads[0];
+    if (upload.size > MAX_PHOTO_BYTES) {
+      throw e.badRequestError(
+        "That photo is over 8 MB. Take it again at a lower resolution.",
+        null
+      );
+    }
 
-    // Read the bytes, base64 them, then encrypt that text: $security.encrypt
-    // takes and returns text, so the photo goes in as a base64 string and
-    // the .enc file on disk holds the ciphertext, never the image.
+    // Read at most the cap plus one byte, so an upload that lies about its
+    // size is still refused rather than pulled into memory whole.
     let plainBytes = null;
     let reader = null;
     try {
       reader = upload.reader.open();
-      plainBytes = toBytes(reader);
+      plainBytes = toBytes(reader, MAX_PHOTO_BYTES + 1);
     } catch (err) {
       throw e.badRequestError("That photo could not be read. Take it again.", null);
     } finally {
@@ -123,18 +171,34 @@ routerAdd(
         }
       }
     }
+    if (plainBytes.length > MAX_PHOTO_BYTES) {
+      throw e.badRequestError(
+        "That photo is over 8 MB. Take it again at a lower resolution.",
+        null
+      );
+    }
 
+    // Sniffed, never taken from the request: a client-supplied `mime` field
+    // and the file's own extension are both ignored.
+    const mime = sniffMime(plainBytes);
+    if (!mime) {
+      throw e.badRequestError(
+        "That file is not a photo. Take a JPEG or PNG photo of the ID.",
+        null
+      );
+    }
+
+    // $security.encrypt takes the byte array as it is, so the .enc file on
+    // disk holds the ciphertext and the image never becomes a string.
     let cipherText = "";
     try {
-      cipherText = $security.encrypt(base64.encode(plainBytes), key);
+      cipherText = $security.encrypt(plainBytes, key);
     } catch (err) {
       throw e.internalServerError(
         "ID photo key is not valid. It must be exactly 32 characters.",
         null
       );
     }
-
-    const mime = field(body, "mime") || mimeFor(upload.name || upload.originalName);
 
     const settings = util.settings(e.app);
     const retentionMonths = settings ? settings.getInt("id_photo_retention_months") || 12 : 12;
@@ -204,7 +268,6 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const stepup = require(`${__hooks}/lib/stepup.js`);
-    const base64 = require(`${__hooks}/lib/base64.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
 
     const staff = util.requireAdmin(e);
@@ -257,9 +320,10 @@ routerAdd(
       }
     }
 
+    // Straight back to bytes: no base64 anywhere on this path.
     let bytes = null;
     try {
-      bytes = base64.decode(toString($security.decrypt(cipherText, key)));
+      bytes = toBytes($security.decrypt(cipherText, key));
     } catch (err) {
       throw e.internalServerError(
         "That ID photo could not be decrypted. Check GG_ID_PHOTO_KEY has not changed.",

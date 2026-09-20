@@ -76,7 +76,7 @@ function Label({ layout, job }: { layout: LabelLayout; job: LabelJobDetail }) {
                 return (
                   <span
                     key={line.role}
-                    className="truncate font-sans leading-[1.15] font-medium"
+                    className="block w-full truncate font-sans leading-[1.15] font-medium"
                     style={{ fontSize: `${layout.titleMm}mm` }}
                   >
                     {line.text}
@@ -97,7 +97,7 @@ function Label({ layout, job }: { layout: LabelLayout; job: LabelJobDetail }) {
               return (
                 <span
                   key={line.role}
-                  className="tnum truncate font-mono leading-none tracking-[0.08em] uppercase"
+                  className="tnum block w-full truncate font-mono leading-none tracking-[0.08em] uppercase"
                   style={{ fontSize: `${layout.metaMm}mm` }}
                 >
                   {line.text}
@@ -172,7 +172,12 @@ export function PrintPage({ jobs, autoPrint = true }: PrintPageProps) {
 
   return (
     <main data-testid="label-sheet" className="bg-white">
-      <style>{`@page { size: ${pageSize.widthMm}mm ${pageSize.heightMm}mm; margin: 0 }
+      <style>{`/* This page is a printed label, not a screen: its type is sized in
+   millimetres for the ORGSTA T003 at 203 dpi (docs/label-spec.md), which is
+   under the screen floor by design and prints at the right physical size.
+   impeccable-disable undersized-ui-text: sized in mm for a 203 dpi label
+   impeccable-disable tiny-text: sized in mm for a 203 dpi label */
+        @page { size: ${pageSize.widthMm}mm ${pageSize.heightMm}mm; margin: 0 }
         html, body { background: #ffffff }
         body::before { display: none }
         @media screen {

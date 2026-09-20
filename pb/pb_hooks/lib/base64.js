@@ -2,10 +2,22 @@
  * Base64 for the hooks runtime.
  *
  * PocketBase's goja runtime has no atob/btoa and no base64 binding (only
- * toString/toBytes, which are raw byte conversions), so the ID photo and
- * signature routes carry their own codec. Both directions work on plain
+ * toString/toBytes, which are raw byte conversions), so the signature data
+ * URL on a buy-in carries its own codec. Both directions work on plain
  * arrays of byte values, which is what toBytes() returns and what
  * $filesystem.fileFromBytes() accepts.
+ *
+ * ID photos do NOT come through here any more: $security.encrypt takes an
+ * Array<number> directly and $security.decrypt's result goes back to bytes
+ * with toBytes(), so a photo is never turned into a string at all (see
+ * idphotos.pb.js).
+ *
+ * Both directions are linear. The previous encode() built its result with
+ * `out += ...` one character at a time, which goja turns into a fresh
+ * string allocation per character: 200 KB took about 15 seconds. Everything
+ * here now accumulates into an array and joins once, and the decode lookup
+ * is an array indexed by character code rather than an object keyed by a
+ * one-character string, so neither direction allocates per byte.
  *
  * require() this from inside each handler, not at file top level - see
  * pb/README.md on pb_hooks isolation.
@@ -13,9 +25,10 @@
 
 var ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/** Reverse lookup, built once per module load. */
-var LOOKUP = {};
-for (var i = 0; i < ALPHABET.length; i++) LOOKUP[ALPHABET.charAt(i)] = i;
+/** Character code to 6-bit value; -1 for anything outside the alphabet. */
+var LOOKUP = [];
+for (var slot = 0; slot < 128; slot++) LOOKUP.push(-1);
+for (var i = 0; i < ALPHABET.length; i++) LOOKUP[ALPHABET.charCodeAt(i)] = i;
 
 /**
  * Copy a value that behaves like a byte array (a Go []byte handed over by
@@ -24,24 +37,24 @@ for (var i = 0; i < ALPHABET.length; i++) LOOKUP[ALPHABET.charAt(i)] = i;
 function toByteArray(bytes) {
   var out = [];
   var length = bytes.length;
-  for (var i = 0; i < length; i++) out.push(bytes[i] & 0xff);
+  for (var n = 0; n < length; n++) out.push(bytes[n] & 0xff);
   return out;
 }
 
 /** Bytes to a standard, padded base64 string. */
 function encode(bytes) {
   var b = toByteArray(bytes);
-  var out = "";
-  for (var i = 0; i < b.length; i += 3) {
-    var b0 = b[i];
-    var b1 = i + 1 < b.length ? b[i + 1] : 0;
-    var b2 = i + 2 < b.length ? b[i + 2] : 0;
-    out += ALPHABET.charAt(b0 >> 2);
-    out += ALPHABET.charAt(((b0 & 3) << 4) | (b1 >> 4));
-    out += i + 1 < b.length ? ALPHABET.charAt(((b1 & 15) << 2) | (b2 >> 6)) : "=";
-    out += i + 2 < b.length ? ALPHABET.charAt(b2 & 63) : "=";
+  var parts = [];
+  for (var n = 0; n < b.length; n += 3) {
+    var b0 = b[n];
+    var b1 = n + 1 < b.length ? b[n + 1] : 0;
+    var b2 = n + 2 < b.length ? b[n + 2] : 0;
+    parts.push(ALPHABET.charAt(b0 >> 2));
+    parts.push(ALPHABET.charAt(((b0 & 3) << 4) | (b1 >> 4)));
+    parts.push(n + 1 < b.length ? ALPHABET.charAt(((b1 & 15) << 2) | (b2 >> 6)) : "=");
+    parts.push(n + 2 < b.length ? ALPHABET.charAt(b2 & 63) : "=");
   }
-  return out;
+  return parts.join("");
 }
 
 /**
@@ -53,9 +66,10 @@ function decode(text) {
   var out = [];
   var buffer = 0;
   var bits = 0;
-  for (var i = 0; i < text.length; i++) {
-    var value = LOOKUP[text.charAt(i)];
-    if (value === undefined) continue;
+  for (var n = 0; n < text.length; n++) {
+    var code = text.charCodeAt(n);
+    var value = code < 128 ? LOOKUP[code] : -1;
+    if (value < 0) continue;
     buffer = (buffer << 6) | value;
     bits += 6;
     if (bits >= 8) {
