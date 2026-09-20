@@ -206,6 +206,44 @@ test.describe("the buy-in wizard", () => {
     await expect(primary(page, "Complete buy-in")).toBeVisible()
   })
 
+  test("takes a bulk lot as one flat figure, whatever the card count", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/counter/trade/new")
+
+    await page.getByLabel("Find them").fill("Jasmine")
+    await page.getByRole("button", { name: /Jasmine Okafor/ }).click()
+    await primary(page, "Add items").click()
+
+    await page.getByRole("button", { name: "Bulk lot", exact: true }).click()
+    await page.getByLabel("How many cards").fill("400")
+    await page.getByLabel("Flat offer for the lot").fill("20")
+    await page.getByRole("button", { name: "Add lot" }).click()
+
+    const line = page.getByTestId("trade-line").first()
+    await expect(line).toContainText("Bulk lot, 400 cards")
+
+    // £20 the lot, not £20 a card. Four hundred cards at £20 each would be
+    // £8,000 and the completion route would refuse the whole buy-in.
+    await expect(page.getByTestId("total-cash")).toHaveText("£20.00")
+    await expect(page.getByTestId("total-credit")).toHaveText("£20.00")
+
+    await primary(page, "Make the offer").click()
+    await expect(page.getByTestId("tile-credit")).toContainText("£20.00")
+    await page
+      .getByRole("switch", {
+        name: "The customer has heard the terms and agrees to them",
+      })
+      .click()
+    await sign(page)
+    await primary(page, "Complete buy-in").click()
+
+    await expect(page.getByRole("heading", { name: "Bought in" })).toBeVisible()
+    // One row on the shelf, not four hundred.
+    await expect(page.getByText("1 label queued for the counter printer")).toBeVisible()
+  })
+
   test("goes straight past the ID gate for a customer already verified", async ({
     page,
   }) => {
