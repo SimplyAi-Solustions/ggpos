@@ -295,7 +295,10 @@ export function demoCreditLedger() {
 // Quotes
 // ---------------------------------------------------------------------------
 
-interface DemoQuote extends QuoteRecord {
+// The record, but with the photos already resolved: the demo shop has no
+// file store, so a photo is the art and its name rather than a file name on
+// a record (`QuoteRecord.photos`, which the live collection read carries).
+interface DemoQuote extends Omit<QuoteRecord, "photos"> {
   messages: QuoteMessage[]
   photos: { name: string; url: string }[]
 }

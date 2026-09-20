@@ -26,6 +26,7 @@ import type {
   HoldRow,
   ItemRecord,
   NewWantInput,
+  StockItemRecord,
   WantListRecord,
   WantListRow,
 } from "@/lib/api/types"
@@ -116,8 +117,7 @@ export function endOfToday(now: Date = new Date()): Date {
   return end
 }
 
-type ReservedItem = ItemRecord & {
-  reserved_until?: string
+type ReservedItem = StockItemRecord & {
   expand?: { reserved_for?: { id: string; name?: string; code?: string } }
 }
 
