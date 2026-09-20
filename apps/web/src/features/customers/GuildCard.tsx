@@ -2,7 +2,7 @@ import * as React from "react"
 import { displayCode } from "@gg/shared"
 import { cn } from "cn"
 
-import { GMark } from "@/components/ui/wordmark"
+import { GGLogo } from "@/components/ui/wordmark"
 import { portalLink } from "@/features/customers/format"
 
 /**
@@ -143,7 +143,7 @@ export function GuildCardFront({
           <span className="font-mono text-[6pt] leading-none font-bold tracking-[0.16em] text-muted-foreground uppercase">
             {tier}
           </span>
-          <GMark className="h-[3.5mm]" title="GG Entertainment" />
+          <GGLogo className="h-[3.5mm]" title="GG Entertainment" />
         </div>
       </div>
     </div>
@@ -190,7 +190,7 @@ export function GuildCardBack({
         <rect width="80" height="50" fill="url(#gg-pinstripe)" />
       </svg>
       <span className="relative flex items-center gap-[2mm] bg-background px-[3mm] py-[1.5mm]">
-        <GMark className="h-[4mm]" title="GG Entertainment" />
+        <GGLogo className="h-[4mm]" title="GG Entertainment" />
         <span className="font-mono text-[7pt] leading-none font-bold tracking-[0.28em] text-foreground uppercase">
           GG Guild
         </span>

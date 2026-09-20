@@ -61,7 +61,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { GMark, Wordmark } from "@/components/ui/wordmark"
+import { GGLogo, GMark, Wordmark } from "@/components/ui/wordmark"
 import { ProductImage } from "@/components/product-image"
 import { PLATFORM_KEYS, PLATFORMS } from "@/design/platforms"
 import { useCountUp } from "@/design/motion"
@@ -640,15 +640,20 @@ export function BrandSection() {
     <KitSection
       id="brand"
       title="Brand"
-      note="The wordmark, the G traced from the logo, the done seal and the site's three doodles. Stickers appear in empty states, on the customer card and nowhere else."
+      note="The wordmark, the logo lockup and its volt G traced from the logo, the done seal and the site's three doodles. Stickers appear in empty states, on the customer card and nowhere else."
     >
       <div className="flex flex-col gap-10">
-        <KitDemo label="Wordmark and mark">
+        <KitDemo
+          label="Wordmark and mark"
+          note="The ink outline is the logo's own construction and is what makes a paper G visible on paper. On ink it vanishes and the lockup reads as the site's logo-dark."
+        >
           <div className="flex flex-wrap items-center gap-10">
             <Wordmark />
             <Wordmark mark />
+            <GGLogo className="h-10" />
             <GMark className="h-8" />
-            <span className="rounded-[var(--radius)] border border-hairline bg-gg-ink px-5 py-3">
+            <span className="flex items-center gap-6 rounded-[var(--radius)] border border-hairline bg-gg-ink px-5 py-3">
+              <GGLogo className="h-6" />
               <GMark className="h-6" />
             </span>
           </div>
