@@ -2829,6 +2829,39 @@ echo "$REGISTER_CSV" | head -n1 | grep -qF "Trade-in number,Date,Staff,Customer,
   || fail "the buy-in register export CSV header row is wrong: $(echo "$REGISTER_CSV" | head -n1)"
 ok "the inventory, sales and buy-in register exports have header rows, and the register is admin only"
 
+# --- 22c2. Row-level content: a money cell reading 19.99, a seller
+#     snapshot row, and a formula-injection guard on the inventory export -
+INV_MONEY_ROW="$(echo "$INVENTORY_CSV" | grep -F "$SUMUP_ITEM_SKU,")"
+[ -n "$INV_MONEY_ROW" ] || fail "the inventory export has no row for $SUMUP_ITEM_SKU: $INVENTORY_CSV"
+echo "$INV_MONEY_ROW" | grep -qF ",19.99," || fail "the inventory export's money cell for $SUMUP_ITEM_SKU is not 19.99: $INV_MONEY_ROW"
+ok "the inventory export has a row-level money cell reading 19.99"
+
+FORMULA_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"title\":\"=SUM(A1:A2)\",\"qty\":1,\"status\":\"in_stock\"}" | jval id)"
+[ -n "$FORMULA_ITEM_ID" ] || fail "could not create the formula-injection check's item"
+FORMULA_INVENTORY_CSV="$(curl -s "$BASE/api/vault/exports/inventory.csv" -H "Authorization: $STAFF_TOKEN")"
+echo "$FORMULA_INVENTORY_CSV" | grep -qF "\"'=SUM(A1:A2)\"" || fail "the inventory export did not guard a title starting with '=': $(echo "$FORMULA_INVENTORY_CSV" | grep -F 'SUM(A1')"
+ok "the inventory export prefixes and quotes a title that opens with '=' (formula-injection guard)"
+
+REGISTER_SNAPSHOT_ROW="$(echo "$REGISTER_CSV" | grep -F "GG-BI-000001")"
+[ -n "$REGISTER_SNAPSHOT_ROW" ] || fail "the buy-in register does not list GG-BI-000001: $REGISTER_CSV"
+echo "$REGISTER_SNAPSHOT_ROW" | grep -qF "Seller Check" || fail "the buy-in register row for GG-BI-000001 does not carry the seller snapshot name: $REGISTER_SNAPSHOT_ROW"
+ok "the buy-in register carries a seller snapshot row for a real completed buy-in"
+
+ROWCHECK_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"title\":\"Sales Row Check Item\",\"qty\":1,\"price\":1999,\"status\":\"in_stock\"}" | jval id)"
+ROWCHECK_ITEM_SKU="$(curl -s "$BASE/api/collections/items/records/$ROWCHECK_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sku)"
+curl -s -o /dev/null -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$ROWCHECK_ITEM_ID\",\"qty\":1,\"unit_price\":1999,\"discount\":0}],\"payment\":\"sumup_card\"}"
+SALES_CSV_2="$(curl -s "$BASE/api/vault/exports/sales.csv?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
+SALES_ROW_CHECK="$(echo "$SALES_CSV_2" | grep -F "$ROWCHECK_ITEM_SKU")"
+[ -n "$SALES_ROW_CHECK" ] || fail "the sales export has no row for $ROWCHECK_ITEM_SKU: $SALES_CSV_2"
+echo "$SALES_ROW_CHECK" | grep -qF ",19.99," || fail "the sales export row for $ROWCHECK_ITEM_SKU does not show 19.99: $SALES_ROW_CHECK"
+ok "the sales export has a row-level money cell reading 19.99"
+
 # --- 22d. end-listings.csv and clearing a listing -------------------------
 ENDLIST_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
@@ -2852,6 +2885,32 @@ ENDLIST_AFTER_JSON="$(curl -s "$BASE/api/collections/items/records/$ENDLIST_ITEM
 END_LISTINGS_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22end_ebay_listings%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
 [ "${END_LISTINGS_AUDIT:-0}" -ge 1 ] || fail "ending an eBay listing wrote no audit_log row"
 ok "POST /api/vault/items/end-listings clears the listing and writes an audit row"
+
+# --- 22d2. A Card-Uploader-shaped item (ebay_sku only, no ebay_listing_id)
+#     sold at the counter still appears in end-listings.csv ----------------
+CU_COUNTER_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"title\":\"Counter Sold Listing\",\"qty\":1,\"price\":1200,\"status\":\"in_stock\",\"ebay_sku\":\"CS-COUNTER-1\"}" | jval id)"
+[ -n "$CU_COUNTER_ITEM_ID" ] || fail "could not create the ebay_sku-only end-listings check's item"
+curl -s -o /dev/null -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$CU_COUNTER_ITEM_ID\",\"qty\":1,\"unit_price\":1200,\"discount\":0}],\"payment\":\"sumup_card\"}"
+[ "$(curl -s "$BASE/api/collections/items/records/$CU_COUNTER_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval status)" = "sold" ] \
+  || fail "the ebay_sku-only item was not sold by the counter sale"
+
+END_LISTINGS_CSV_2="$(curl -s "$BASE/api/vault/exports/end-listings.csv" -H "Authorization: $STAFF_TOKEN")"
+echo "$END_LISTINGS_CSV_2" | grep -qF "CS-COUNTER-1" \
+  || fail "end-listings.csv did not list a sold item with only an ebay_sku (no ebay_listing_id): $END_LISTINGS_CSV_2"
+ok "end-listings.csv lists a Card-Uploader-shaped item (ebay_sku only) sold at the counter"
+
+CU_COUNTER_END_STATUS="$(curl -s -o "$TMP_DIR/end-listings-2.json" -w '%{http_code}' -X POST "$BASE/api/vault/items/end-listings" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"ids\":[\"$CU_COUNTER_ITEM_ID\"]}")"
+[ "$CU_COUNTER_END_STATUS" = "200" ] || fail "ending the ebay_sku-only listing returned $CU_COUNTER_END_STATUS: $(cat "$TMP_DIR/end-listings-2.json")"
+[ "$(jval "ended.0" <"$TMP_DIR/end-listings-2.json")" = "$CU_COUNTER_ITEM_ID" ] || fail "ending the ebay_sku-only listing did not report it: $(cat "$TMP_DIR/end-listings-2.json")"
+[ "$(curl -s "$BASE/api/collections/items/records/$CU_COUNTER_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval ebay_sku)" = "" ] \
+  || fail "ending the listing did not clear ebay_sku"
+ok "POST /api/vault/items/end-listings clears an ebay_sku-only listing too"
 
 # --- 22e. Card Uploader import: one id-matched row, one name-only review row
 CU_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
