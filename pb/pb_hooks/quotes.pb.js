@@ -150,6 +150,49 @@ routerAdd(
 );
 
 // ---------------------------------------------------------------------
+// GET /api/vault/quotes   (customer own quotes, newest first, 50)
+//
+// Additive: the same rows are already readable through
+// GET /api/collections/quotes/records?filter=customer=<id> under the
+// collection's own rule, which stays exactly as it is - this is a
+// dedicated route for the portal to use instead of building that filter
+// itself, not a replacement for the collection read.
+// ---------------------------------------------------------------------
+routerAdd(
+  "GET",
+  "/api/vault/quotes",
+  (e) => {
+    const customer = e.auth;
+    let rows = [];
+    try {
+      rows = e.app.findRecordsByFilter(
+        "quotes",
+        "customer = {:c}",
+        "-created",
+        50,
+        0,
+        { c: customer.id }
+      );
+    } catch (err) {
+      rows = [];
+    }
+    const quotes = rows.map((q) => ({
+      id: q.id,
+      status: q.getString("status"),
+      message: q.getString("message"),
+      offer_total: q.getInt("offer_total"),
+      offer_expires_at: q.getString("offer_expires_at"),
+      drop_off: q.getString("drop_off"),
+      closed_at: q.getString("closed_at"),
+      created: q.getString("created"),
+      updated: q.getString("updated"),
+    }));
+    return e.json(200, { quotes: quotes });
+  },
+  $apis.requireAuth("customers")
+);
+
+// ---------------------------------------------------------------------
 // GET /api/vault/quotes/{id}   (customer own, or staff)
 // ---------------------------------------------------------------------
 routerAdd(
@@ -942,7 +985,7 @@ cronAdd("quotes_expire", "0 * * * *", () => {
               "",
               1,
               0,
-              { customer: quote.getString("customer"), link: `/quotes/${quote.id}` }
+              { customer: quote.getString("customer"), link: `/account/quotes/${quote.id}` }
             )
             .length > 0;
       } catch (err) {
@@ -954,7 +997,7 @@ cronAdd("quotes_expire", "0 * * * *", () => {
           type: "quote_expiring",
           title: "Your quote offer expires soon",
           body: `Your quote offer expires on ${quotesLib.ukDateShort(expiresAt)}. Sign in to accept or decline.`,
-          link: `/quotes/${quote.id}`,
+          link: `/account/quotes/${quote.id}`,
           email: true,
         });
         warnedCount += 1;

@@ -137,7 +137,7 @@ function matchOnStock(app, item) {
       type: "want_match",
       title: "It is in and held for you",
       body: `${title} is in. Held for you until ${ukDateTime(until.toISOString())}.`,
-      link: "",
+      link: "/account/want-list",
       email: true,
     });
   } catch (err) {
@@ -244,7 +244,7 @@ function releaseExpiredHolds(app) {
           type: "hold_released",
           title: "Hold released",
           body: `The hold on ${title} has ended, so it is back on the shelf. Ask at the counter if you would still like it.`,
-          link: "",
+          link: "/account/want-list",
           email: true,
         });
       }
