@@ -69,11 +69,40 @@ describe("validateComp", () => {
     )
   })
 
-  it("takes a sale just inside the 30 days, and refuses one just outside", () => {
-    // The route measures from midnight on the sale date to now, exactly as
-    // this does, so the two agree on the day either side of the window.
-    expect(validateComp({ ...good, soldAt: "2026-08-22" }, NOW).ok).toBe(true)
-    expect(validateComp({ ...good, soldAt: "2026-08-21" }, NOW).ok).toBe(false)
+  it("counts whole days, so a sale exactly 30 days old still counts", () => {
+    // Whole calendar days from midnight today, exactly as the route counts
+    // them (pb_hooks/adapters/pricing_policy.js). Measuring from "now",
+    // which carries the time of day, refused a comp sold 30 days ago for
+    // the afternoon shift and took it for the morning one.
+    expect(validateComp({ ...good, soldAt: "2026-08-21" }, NOW).ok).toBe(true)
+    expect(validateComp({ ...good, soldAt: "2026-08-20" }, NOW).ok).toBe(false)
+  })
+
+  it("agrees with itself whatever time of day it is asked", () => {
+    const morning = new Date("2026-09-20T07:00:00.000Z")
+    const evening = new Date("2026-09-20T19:30:00.000Z")
+    const thirtyDaysAgo = { ...good, soldAt: "2026-08-21" }
+    expect(validateComp(thirtyDaysAgo, morning).ok).toBe(true)
+    expect(validateComp(thirtyDaysAgo, evening).ok).toBe(true)
+  })
+
+  it("takes a sale from today, and refuses tomorrow's", () => {
+    expect(validateComp({ ...good, soldAt: "2026-09-20" }, NOW).ok).toBe(true)
+    const future = validateComp({ ...good, soldAt: "2026-09-21" }, NOW)
+    expect(future.ok).toBe(false)
+    if (future.ok) return
+    expect(future.errors.soldAt).toBe("That sale date is in the future.")
+  })
+
+  it("refuses a price that is pounds where pence were asked for", () => {
+    // £50,000.01 in pence, one penny over the route's own ceiling.
+    const result = validateComp({ ...good, price: "50000.01" }, NOW)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.errors.price).toBe(
+      "That price looks too high. Check it is in pence, not pounds, and try again."
+    )
+    expect(validateComp({ ...good, price: "50000.00" }, NOW).ok).toBe(true)
   })
 
   it("refuses a date it cannot read", () => {

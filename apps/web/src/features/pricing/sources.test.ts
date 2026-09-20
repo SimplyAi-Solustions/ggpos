@@ -87,12 +87,20 @@ describe("sourceDetail", () => {
     ).toBe("from TCGplayer (OPTCG) $18.99 at 0.8606, 20 Sep")
   })
 
-  it("says the haircut has already come off an eBay asking price", () => {
+  it("says the haircut has already come off an eBay asking price, and when", () => {
     expect(
       sourceDetail(row({ source: "ebay_uk_asking", native_currency: "GBP" }), {
         haircutPct: 15,
       })
-    ).toBe("eBay UK asking, after the 15% haircut")
+    ).toBe("eBay UK asking, after the 15% haircut, 20 Sep")
+  })
+
+  it("takes the shop's own haircut", () => {
+    expect(
+      sourceDetail(row({ source: "ebay_uk_asking", native_currency: "GBP" }), {
+        haircutPct: 20,
+      })
+    ).toContain("after the 20% haircut")
   })
 
   it("dates a UK sold comp from the sale, not from the fetch", () => {

@@ -125,13 +125,37 @@ describe("the offer over a sourced market", () => {
     expect(lp.credit).toBeLessThan(nm.credit)
   })
 
-  it("leaves a line with no source at nothing until somebody prices it", () => {
+  it("offers nothing at all for a line the routes have not answered for", () => {
+    // Not the bulk rate: a card waiting on its price is not a penny card,
+    // and a real offer for a figure that is about to arrive is worse than
+    // no offer at all.
     const offer = lineOffer(
       line({ marketSource: PENDING_SOURCE, marketPence: 0 }),
       RULES,
       SETTINGS
     )
-    expect(offer.cashTotal).toBe(SETTINGS.bulkCash)
-    expect(totals([line({ marketPence: 0, marketSource: PENDING_SOURCE })], RULES, SETTINGS).market).toBe(0)
+    expect(offer.cash).toBe(0)
+    expect(offer.credit).toBe(0)
+    expect(offer.source).toBe("none")
+    expect(
+      totals([line({ marketPence: 0, marketSource: PENDING_SOURCE })], RULES, SETTINGS)
+        .market
+    ).toBe(0)
+  })
+
+  it("still takes an override on a line that is waiting", () => {
+    const offer = lineOffer(
+      line({
+        marketSource: PENDING_SOURCE,
+        marketPence: 0,
+        overrideCash: 1200,
+        overrideCredit: 1500,
+        overrideReason: "Agreed at the counter",
+      }),
+      RULES,
+      SETTINGS
+    )
+    expect(offer.cash).toBe(1200)
+    expect(offer.source).toBe("override")
   })
 })
