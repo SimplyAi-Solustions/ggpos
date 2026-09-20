@@ -2,15 +2,18 @@
  * The Card Uploader review queue: the rows that carried a name but no id, so
  * the importer would not guess which card they are.
  *
- * Each one gets a lookup box. Linking it puts the card on as listed on eBay
- * with the file's own custom label and price; skipping it takes the row off
- * the queue and changes nothing. Neither invents a cost: a listing with
- * nothing already in stock behind it has no purchase price, and a made-up one
- * would put a false margin on the item for ever.
+ * Each one gets a lookup box. Picking a card posts the row number and that
+ * card id to `POST /api/vault/imports/:id/link`, and the route does the rest:
+ * it runs the same three-path rule the automatic import runs, marks the item
+ * listed with the row's own price and SKU, and rewrites the import's errors
+ * inside one transaction. Nothing here guesses at a price, a SKU or a title,
+ * and nothing here writes an item: a screen that did could only disagree with
+ * the file the server already read.
+ *
+ * Skipping a row dismisses it and lists nothing.
  */
 import * as React from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { formatGBP } from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
@@ -22,7 +25,20 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 import { lookupCards } from "@/lib/api"
 import { linkReviewRow, skipReviewRow } from "@/lib/api/imports"
 import { useDebounced } from "@/features/pricing/use-debounced"
-import type { CardHit, CsvImportError, CsvImportRecord } from "@/lib/api/types"
+import type {
+  CardHit,
+  CsvImportError,
+  LinkReviewResult,
+  ReviewLinkPath,
+} from "@/lib/api/types"
+
+/** What the row now is, said in the same words the route uses for it. */
+const PATH_WORDS: Record<ReviewLinkPath, string> = {
+  ebay_sku: "Linked to the item already carrying that SKU.",
+  in_stock: "Linked to the copy already in stock.",
+  created: "Listed as a new item. It has no cost, so check it.",
+  skipped: "Skipped.",
+}
 
 function Candidate({
   card,
@@ -57,61 +73,68 @@ function Candidate({
 function ReviewRow({
   importId,
   entry,
-  onChanged,
+  onResolved,
 }: {
   importId: string
   entry: CsvImportError
-  onChanged: (record: CsvImportRecord) => void
+  onResolved: (result: LinkReviewResult) => void
 }) {
   const [query, setQuery] = React.useState(entry.name ?? "")
   const [error, setError] = React.useState<string | null>(null)
+  // A queue of twenty rows must not fire twenty adapter lookups on mount, so
+  // the search only runs once this row is the one being worked on.
+  const [active, setActive] = React.useState(false)
   const needle = useDebounced(query, 250)
 
   const hits = useQuery({
     queryKey: ["review-lookup", needle],
     queryFn: ({ signal }) => lookupCards("", needle, 5, signal),
-    enabled: needle.trim().length >= 2,
+    enabled: active && needle.trim().length >= 2,
     staleTime: 60_000,
   })
 
   const link = useMutation({
     mutationFn: (card: CardHit) =>
-      linkReviewRow({
-        importId,
-        row: entry.row ?? 0,
-        cardId: card.id,
-        ebaySku: entry.ebay_sku ?? "",
-        price: entry.price ?? 0,
-        title: card.name,
-      }),
-    onSuccess: onChanged,
+      linkReviewRow({ importId, row: entry.row ?? 0, cardId: card.id }),
+    onSuccess: onResolved,
     onError: (err) =>
       setError(refusalOrFallback(err, "That did not link. Try again.")),
   })
 
   const skip = useMutation({
     mutationFn: () => skipReviewRow(importId, entry.row ?? 0),
-    onSuccess: onChanged,
+    onSuccess: onResolved,
     onError: (err) =>
       setError(refusalOrFallback(err, "That row did not go. Try again.")),
   })
 
   const pending = link.isPending || skip.isPending
+  const detail = [
+    `Line ${entry.row ?? 0}`,
+    entry.set,
+    entry.number,
+    entry.condition,
+    entry.quantity && entry.quantity > 1 ? `${entry.quantity} of them` : "",
+    entry.ebay_sku,
+  ].filter(Boolean)
 
   return (
     <li data-testid="review-row" className="border-b border-hairline-soft py-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
         <span className="flex min-w-0 flex-col gap-1">
-          <span className="text-[15px] text-foreground">{entry.name || "No name on the row"}</span>
+          <span className="text-[15px] text-foreground">
+            {entry.name || "No name on the row"}
+          </span>
           <span className="text-[13px] text-muted-foreground-2">
-            Line {entry.row ?? 0}
-            {entry.set ? ` · ${entry.set}` : ""}
-            {entry.number ? ` · ${entry.number}` : ""}
-            {entry.ebay_sku ? ` · ${entry.ebay_sku}` : ""}
+            {detail.join(" · ")}
           </span>
         </span>
         <span className="tnum shrink-0 text-[15px] text-foreground">
-          {formatGBP(entry.price ?? 0)}
+          {/* The price the server parsed from the file, and nothing else. A
+              row whose price it could not read says so rather than £0.00. */}
+          {typeof entry.price === "number"
+            ? formatGBP(entry.price)
+            : "No price on the row"}
         </span>
       </div>
 
@@ -126,14 +149,16 @@ function ReviewRow({
           value={query}
           autoComplete="off"
           placeholder="Name, or set and number"
+          onFocus={() => setActive(true)}
           onChange={(event) => {
+            setActive(true)
             setQuery(event.target.value)
             setError(null)
           }}
         />
       </Field>
 
-      {hits.data && hits.data.length > 0 ? (
+      {active && hits.data && hits.data.length > 0 ? (
         <ul className="mt-4">
           {hits.data.map((card) => (
             <Candidate
@@ -144,7 +169,7 @@ function ReviewRow({
             />
           ))}
         </ul>
-      ) : needle.trim().length >= 2 && !hits.isFetching ? (
+      ) : active && needle.trim().length >= 2 && !hits.isFetching ? (
         <p className="mt-4 text-[13px] text-muted-foreground-2">
           Nothing matches that. Try the set code and the number.
         </p>
@@ -168,24 +193,37 @@ function ReviewRow({
 export function ReviewQueue({
   importId,
   rows,
-  onChanged,
+  onResolved,
 }: {
   importId: string
   rows: CsvImportError[]
-  onChanged: (record: CsvImportRecord) => void
+  onResolved: (result: LinkReviewResult) => void
 }) {
   const queryClient = useQueryClient()
+  const [said, setSaid] = React.useState<string | null>(null)
 
-  function changed(record: CsvImportRecord) {
-    void queryClient.invalidateQueries({ queryKey: ["csv-import", importId] })
-    onChanged(record)
+  function resolved(result: LinkReviewResult) {
+    setSaid(PATH_WORDS[result.path])
+    // A link can list a new item or move one on to eBay, so the stock the
+    // rest of the counter is reading is no longer what it was.
+    void queryClient.invalidateQueries({ queryKey: ["items"] })
+    void queryClient.invalidateQueries({ queryKey: ["item"] })
+    void queryClient.invalidateQueries({ queryKey: ["end-listings"] })
+    onResolved(result)
   }
 
   if (rows.length === 0) {
     return (
-      <p className="text-[15px] text-muted-foreground-2">
-        Nothing is waiting to be matched.
-      </p>
+      <>
+        <p className="text-[15px] text-muted-foreground-2">
+          Nothing is waiting to be matched.
+        </p>
+        {said ? (
+          <p aria-live="polite" className="mt-3 text-[13px] text-muted-foreground-2">
+            {said}
+          </p>
+        ) : null}
+      </>
     )
   }
 
@@ -196,13 +234,18 @@ export function ReviewQueue({
         TCGplayer or Cardmarket id, so the import did not guess. Find the card
         and the listing goes on with it.
       </p>
+      {said ? (
+        <p aria-live="polite" className="mb-6 text-[13px] text-muted-foreground-2">
+          {said}
+        </p>
+      ) : null}
       <ul data-testid="review-queue">
         {rows.map((entry) => (
           <ReviewRow
             key={entry.row}
             importId={importId}
             entry={entry}
-            onChanged={changed}
+            onResolved={resolved}
           />
         ))}
       </ul>

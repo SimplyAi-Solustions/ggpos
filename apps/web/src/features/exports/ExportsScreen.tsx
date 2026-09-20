@@ -10,14 +10,15 @@
  */
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { CopyIcon } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { CheckIcon, CopyIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Field } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
+import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useCounterDock } from "@/app/counter-dock"
 import { useStaff } from "@/lib/auth"
@@ -32,8 +33,10 @@ import {
 } from "@/lib/api/exports"
 import {
   ImportFileError,
+  MAX_IMPORT_BYTES,
   importCardUploader,
   importEbayOrders,
+  isZeroCostNote,
   problemRows,
   reviewRows,
 } from "@/lib/api/imports"
@@ -44,7 +47,7 @@ import {
   mapRows,
   type MappedFile,
 } from "@/lib/api/csv-parse"
-import { todayIso } from "@/lib/api/dates"
+import { useToday } from "@/lib/use-today"
 import type {
   CsvImportRecord,
   CsvImportType,
@@ -81,12 +84,15 @@ function ExportRow({
   detail,
   onRun,
   pending,
+  disabled,
   children,
 }: {
   def: ExportDef
   detail: string
   onRun: () => void
   pending: boolean
+  /** A dated file cannot be taken while the range would be refused. */
+  disabled?: boolean
   children?: React.ReactNode
 }) {
   return (
@@ -107,10 +113,17 @@ function ExportRow({
         </span>
         {children}
       </span>
-      {/* The circle variant already puts its label in a hidden span, which
-          is where its accessible name comes from. */}
-      <Button variant="circle" loading={pending} onClick={onRun}>
-        {`Download the ${def.label} file`}
+      {/* Seven black discs down one page is seven primary actions. The one
+          block button on this screen is the import; taking a file is a
+          secondary action, so it reads as the tracked text link it is. */}
+      <Button
+        variant="text"
+        loading={pending}
+        disabled={disabled}
+        onClick={onRun}
+        aria-label={`Download the ${def.label} file`}
+      >
+        Download
       </Button>
     </li>
   )
@@ -175,15 +188,61 @@ interface Chosen {
 // End listings
 // ---------------------------------------------------------------------------
 
-function EndListings({ rows, onEnded }: { rows: EndListingRow[]; onEnded: () => void }) {
+/** A hairline square, ticked in ink. The system has no checkbox of its own. */
+function RowCheck({
+  id,
+  checked,
+  onChange,
+  label,
+}: {
+  id: string
+  checked: boolean
+  onChange: (next: boolean) => void
+  label: string
+}) {
+  return (
+    <span className="relative flex size-5 shrink-0 items-center justify-center">
+      <input
+        id={id}
+        type="checkbox"
+        aria-label={label}
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="peer size-5 cursor-pointer appearance-none rounded-[var(--radius)] border border-hairline bg-transparent outline-none checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-volt"
+      />
+      <CheckIcon
+        aria-hidden="true"
+        className="pointer-events-none absolute size-3.5 stroke-[2] text-primary-foreground opacity-0 peer-checked:opacity-100"
+      />
+    </span>
+  )
+}
+
+function EndListings({
+  rows,
+  loading,
+  onEnded,
+}: {
+  rows: EndListingRow[]
+  loading: boolean
+  onEnded: () => void
+}) {
   const [copied, setCopied] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  // Every row to hand, ticked. Clearing the eBay fields cannot be undone, so
+  // the ones being cleared are the ones that were actually ended, not
+  // whatever happened to be on the list when the button was pressed.
+  const [dropped, setDropped] = React.useState<string[]>([])
 
-  const skus = rows.map((row) => row.ebay_sku || row.sku).join("\n")
+  const chosen = rows.filter((row) => !dropped.includes(row.item_id))
+  const skus = chosen.map((row) => row.ebay_sku || row.sku).join("\n")
 
   const end = useMutation({
-    mutationFn: () => endListingsCall(rows.map((row) => row.item_id)),
-    onSuccess: onEnded,
+    mutationFn: () => endListingsCall(chosen.map((row) => row.item_id)),
+    onSuccess: () => {
+      setDropped([])
+      onEnded()
+    },
     onError: (err) =>
       setError(refusalOrFallback(err, "Those did not clear. Try again.")),
   })
@@ -198,6 +257,8 @@ function EndListings({ rows, onEnded }: { rows: EndListingRow[]; onEnded: () => 
     }
   }
 
+  if (loading) return <SkeletonText lines={3} className="max-w-[40rem]" />
+
   if (rows.length === 0) {
     return (
       <p className="text-[15px] text-muted-foreground-2">
@@ -211,25 +272,40 @@ function EndListings({ rows, onEnded }: { rows: EndListingRow[]; onEnded: () => 
       <p className="mb-6 max-w-[64ch] text-[15px] leading-[1.5] text-muted-foreground">
         {rows.length} {rows.length === 1 ? "item" : "items"} sold in the shop
         {rows.length === 1 ? " is" : " are"} still listed on eBay. Copy the SKUs,
-        end the listings in Seller Hub, then clear them here.
+        end the listings in Seller Hub, then clear the ones you ended.
       </p>
       <ul data-testid="end-listings">
-        {rows.map((row) => (
-          <li
-            key={row.item_id}
-            className="flex min-h-12 items-center justify-between gap-4 border-b border-hairline-soft py-3 first:border-t"
-          >
-            <span className="flex min-w-0 flex-col gap-1">
-              <span className="truncate text-[15px] text-foreground">{row.title}</span>
-              <span className="tnum truncate font-mono text-[13px] text-muted-foreground-2">
-                {row.ebay_sku || row.sku}
+        {rows.map((row) => {
+          const ticked = !dropped.includes(row.item_id)
+          return (
+            <li
+              key={row.item_id}
+              className="flex min-h-12 items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
+            >
+              <RowCheck
+                id={`end-${row.item_id}`}
+                checked={ticked}
+                label={`Ended ${row.title} on eBay`}
+                onChange={(next) =>
+                  setDropped((current) =>
+                    next
+                      ? current.filter((id) => id !== row.item_id)
+                      : [...current, row.item_id]
+                  )
+                }
+              />
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="truncate text-[15px] text-foreground">{row.title}</span>
+                <span className="tnum truncate font-mono text-[13px] text-muted-foreground-2">
+                  {row.ebay_sku || row.sku}
+                </span>
               </span>
-            </span>
-            <span className="shrink-0 text-[13px] text-muted-foreground-2">
-              {row.sold_at ? formatDay(row.sold_at.slice(0, 10)) : ""}
-            </span>
-          </li>
-        ))}
+              <span className="shrink-0 text-[13px] text-muted-foreground-2">
+                {row.sold_at ? formatDay(row.sold_at.slice(0, 10)) : ""}
+              </span>
+            </li>
+          )
+        })}
       </ul>
       {error ? (
         <p role="alert" className="mt-6 text-[13px] text-destructive">
@@ -237,12 +313,17 @@ function EndListings({ rows, onEnded }: { rows: EndListingRow[]; onEnded: () => 
         </p>
       ) : null}
       <div className="mt-6 flex flex-wrap items-center gap-8">
-        <Button variant="text" onClick={copy}>
+        <Button variant="text" onClick={copy} disabled={chosen.length === 0}>
           <CopyIcon aria-hidden="true" />
           {copied ? "Copied" : "Copy the SKUs"}
         </Button>
-        <Button variant="text" onClick={() => end.mutate()} loading={end.isPending}>
-          Ended them on eBay
+        <Button
+          variant="text"
+          onClick={() => end.mutate()}
+          loading={end.isPending}
+          disabled={chosen.length === 0}
+        >
+          {`Ended ${chosen.length} on eBay`}
         </Button>
       </div>
     </>

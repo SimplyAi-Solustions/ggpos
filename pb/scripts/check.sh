@@ -3849,5 +3849,30 @@ LINK_AUDIT_COUNT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200
 [ "${LINK_AUDIT_COUNT:-0}" -ge 3 ] || fail "linking and skipping wrote fewer than 3 import_link audit rows: $LINK_AUDIT_COUNT"
 ok "linking and skipping a review row is audited as import_link"
 
+# --- 22j. csv_imports and sumup_transactions can no longer be rewritten
+#     wholesale by a staff token through the collection API - the counter
+#     screen's manual SumUp match is the one field-level exception left.
+CSVIMPORT_PATCH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/csv_imports/records/$LINK_IMPORT_ID" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"errors":[]}')"
+[ "$CSVIMPORT_PATCH_STATUS" = "404" ] || fail "a staff PATCH of csv_imports.errors returned $CSVIMPORT_PATCH_STATUS, expected 404"
+ok "a staff member cannot update csv_imports directly; every write goes through the import routes"
+
+SUMUP_UNMATCHED_TXN_ID="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-outside-window-0004%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$SUMUP_UNMATCHED_TXN_ID" ] || fail "could not find txn-outside-window-0004 to test the sumup_transactions write rules against"
+
+SUMUP_MATCH_PATCH_STATUS="$(curl -s -o "$TMP_DIR/sumup-match-patch.json" -w '%{http_code}' -X PATCH "$BASE/api/collections/sumup_transactions/records/$SUMUP_UNMATCHED_TXN_ID" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"matched_sale\":\"$SUMUP_UNMATCHED_SALE_ID\"}")"
+[ "$SUMUP_MATCH_PATCH_STATUS" = "200" ] || fail "a staff PATCH of sumup_transactions.matched_sale returned $SUMUP_MATCH_PATCH_STATUS, expected 200: $(cat "$TMP_DIR/sumup-match-patch.json")"
+[ "$(jval matched_sale <"$TMP_DIR/sumup-match-patch.json")" = "$SUMUP_UNMATCHED_SALE_ID" ] || fail "the manual match PATCH did not actually set matched_sale: $(cat "$TMP_DIR/sumup-match-patch.json")"
+ok "a staff member can set sumup_transactions.matched_sale directly, for the counter screen's manual match"
+
+SUMUP_AMOUNT_PATCH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/sumup_transactions/records/$SUMUP_UNMATCHED_TXN_ID" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"amount":999999}')"
+[ "$SUMUP_AMOUNT_PATCH_STATUS" = "404" ] || fail "a staff PATCH of sumup_transactions.amount returned $SUMUP_AMOUNT_PATCH_STATUS, expected 404"
+ok "a staff member cannot rewrite sumup_transactions.amount, or any field but matched_sale, directly"
+
 echo
 echo "All checks passed ($PASS_COUNT)."
