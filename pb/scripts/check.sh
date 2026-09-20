@@ -4244,7 +4244,7 @@ P5_QUOTE_AFTER_COMPLETE="$(curl -s "$BASE/api/collections/quotes/records/$P5_QUO
 ok "completing the trade-in a quote became marks that quote completed"
 
 # the expiry cron itself, and the day-before warning
-P5_CRON_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+P5_CRON_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
 curl -s -o /dev/null -X POST "$BASE/api/vault/quotes/$P5_CRON_QUOTE_ID/offer" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"lines":[{"title":"Cron test","qty":1,"market_price":100,"offer_price":50}]}'
 curl -s -o /dev/null -X PATCH "$BASE/api/collections/quotes/records/$P5_CRON_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"offer_expires_at":"2020-06-15 00:00:00.000Z"}'
 P5_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/quotes_expire" -H "Authorization: $SUPER_TOKEN")"
@@ -4255,6 +4255,21 @@ P5_CRON_QUOTE_AFTER="$(curl -s "$BASE/api/collections/quotes/records/$P5_CRON_QU
 P5_EXPIRE_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_expired%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
 [ "${P5_EXPIRE_NOTIF:-0}" -ge 1 ] || fail "the quotes_expire cron did not notify the customer"
 ok "the quotes_expire cron expires a past-due offer and notifies the customer"
+
+# the day-before warning: an offer due within 24h (but not yet past) gets a
+# quote_expiring notification and is left offered, not expired
+P5_WARN_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+curl -s -o /dev/null -X POST "$BASE/api/vault/quotes/$P5_WARN_QUOTE_ID/offer" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"lines":[{"title":"Warn test","qty":1,"market_price":100,"offer_price":50}]}'
+P5_WARN_EXPIRES_AT="$(node -e 'console.log(new Date(Date.now() + 12 * 3600000).toISOString().replace("T"," "))')"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/quotes/records/$P5_WARN_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"offer_expires_at\":\"$P5_WARN_EXPIRES_AT\"}"
+P5_WARN_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/quotes_expire" -H "Authorization: $SUPER_TOKEN")"
+[ "$P5_WARN_CRON_STATUS" = "204" ] || fail "POST /api/crons/quotes_expire (day-before pass) returned $P5_WARN_CRON_STATUS, expected 204"
+sleep 1
+P5_WARN_QUOTE_AFTER="$(curl -s "$BASE/api/collections/quotes/records/$P5_WARN_QUOTE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_WARN_QUOTE_AFTER" | jval status)" = "offered" ] || fail "a quote due within 24h is '$(echo "$P5_WARN_QUOTE_AFTER" | jval status)' after quotes_expire, expected still offered"
+P5_WARN_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_expiring%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_WARN_NOTIF:-0}" -ge 1 ] || fail "the quotes_expire cron did not send a quote_expiring day-before warning"
+ok "the quotes_expire cron warns the day before expiry without expiring the offer"
 
 # --- 23n/23o. Want lists: match on creation with the hold and the
 #     notification, then selling the held item to its customer fulfils
