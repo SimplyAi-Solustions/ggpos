@@ -587,7 +587,8 @@ export function demoCreateQuote(input: NewQuoteInput): QuoteRecord {
 }
 
 export function demoQuoteMessage(id: string, body: string): QuoteMessage {
-  const quote = findQuote(id)
+  // The customer's own quote only, the way the route 404s anyone else's.
+  const quote = findOwnQuote(id)
   const message: QuoteMessage = {
     id: randomId("msg"),
     author: "customer",

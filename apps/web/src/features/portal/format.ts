@@ -7,52 +7,8 @@
  */
 import type { IdStatus, QuoteDropOff, QuoteStatus } from "@/lib/api/types"
 
-/**
- * The month names, written out rather than taken from `toLocaleDateString`.
- *
- * `{ month: "short" }` in en-GB gives "Sept" for September on current ICU,
- * which is four characters where every other month is three and is not the
- * house date. These are.
- */
-const SHORT_MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const
-
-function parse(iso: string | null | undefined): Date | null {
-  if (!iso) return null
-  const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-/** 19 Sep 2026, the house short date. */
-export function formatDate(iso: string | null | undefined): string {
-  const date = parse(iso)
-  if (!date) return ""
-  return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]} ${date.getFullYear()}`
-}
-
-/** 22 Sep, 14:00, for a hold that runs out this week. */
-export function formatDateTime(iso: string | null | undefined): string {
-  const date = parse(iso)
-  if (!date) return ""
-  const time = date.toLocaleTimeString("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-  return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}, ${time}`
-}
+/** The two house date shapes, shared with the counter through `lib/dates`. */
+export { formatDate, formatDateTime } from "@/lib/dates"
 
 const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   submitted: "Sent",
