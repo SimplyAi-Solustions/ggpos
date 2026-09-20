@@ -18,7 +18,7 @@
  * **A row in a final state never changes again.** `paid`, `failed`,
  * `cancelled` and `expired` are all terminal: the callback, the counter's
  * own poll, the cancel route and the expiry cron all go through
- * `applyTransaction` below, which re-reads the row inside its own
+ * `applyOutcome` below, which re-reads the row inside its own
  * transaction and leaves anything that is no longer `pending` exactly as
  * it is. That is what makes a lost callback, a duplicated callback and a
  * poll landing at the same instant all safe.
