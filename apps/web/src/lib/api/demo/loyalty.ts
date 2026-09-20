@@ -26,7 +26,11 @@ import {
   walletFromPerks,
 } from "@/features/loyalty/perks"
 import { pointsNote } from "@/features/loyalty/ledger"
-import { perkAllowance, tierWindowPoints } from "@/features/loyalty/window"
+import {
+  perkAllowance,
+  pointsToNextTier,
+  tierWindowPoints,
+} from "@/features/loyalty/window"
 import { findDemoCustomer, demoCustomers } from "@/lib/api/demo/customers"
 import { DEMO_PROGRAMME, DEMO_TIERS, usedVoucherIds } from "@/lib/api/demo/store"
 import type {
@@ -43,8 +47,10 @@ import type {
   MembershipRecord,
   MembershipRenewal,
   MembershipStatus,
+  PerkWallet,
   PerkWalletEntry,
   PointsAdjustment,
+  PointsLedgerPage,
   PointsLedgerRow,
   ReferralSummary,
   RewardType,
@@ -388,6 +394,12 @@ export function demoPointsLedger(customerId: string): PointsLedgerRow[] {
     }))
 }
 
+/** The same page the route serves, and whether it is the whole history. */
+export function demoPointsLedgerPage(customerId: string): PointsLedgerPage {
+  const rows = demoPointsLedger(customerId)
+  return { rows: rows.slice(0, 100), complete: rows.length <= 100 }
+}
+
 /** The tiers in the shared evaluator's shape, perks parsed. */
 function evaluatorTiers(): LoyaltyTier[] {
   return tiers.map((tier) => ({
@@ -622,6 +634,20 @@ function tierFor(customerId: string): LoyaltyTier | null {
   return evaluatorTiers().find((tier) => tier.id === tierId) ?? null
 }
 
+/**
+ * `GET /api/vault/customers/:id/perks`: the tier the demo shop holds for
+ * this customer, recomputed first the way the server recomputes it, and the
+ * wallet that tier gives them this month.
+ */
+export function demoPerksWallet(customerId: string): PerkWallet {
+  recomputeTier(customerId)
+  const tier = tierFor(customerId)
+  return {
+    tier: tier ? { id: tier.id, name: tier.name } : null,
+    perks: demoPerks(customerId),
+  }
+}
+
 export function demoPerks(customerId: string): PerkWalletEntry[] {
   const tier = tierFor(customerId)
   if (!tier) return []
@@ -847,25 +873,20 @@ export function demoGuild(customerId: string): CustomerGuild {
   const entry = findDemoCustomer(customerId)
   if (!entry) refuse("That customer is not in the demo shop.")
   // The server re-evaluates a tier after every points row and every
-  // membership change; the demo shop does it as the profile is read, which
+  // membership change; the demo shop does it as the wallet is read, which
   // is what makes a seeded plan pin a seeded customer's tier.
-  const tierId = recomputeTier(customerId)
-  const windowPoints = windowPointsFor(customerId)
-  const all = evaluatorTiers()
-  const membership = demoMembershipFor(customerId)
-  const tier = tierId ? (all.find((row) => row.id === tierId) ?? null) : null
-  const next = all
-    .filter((row) => !row.paidPlan && row.thresholdPoints > windowPoints)
-    .sort((a, b) => a.thresholdPoints - b.thresholdPoints)[0]
+  const wallet = demoPerksWallet(customerId)
+  const page = demoPointsLedgerPage(customerId)
+  const windowPoints = page.complete ? windowPointsFor(customerId) : null
+  const next =
+    windowPoints === null ? null : pointsToNextTier(evaluatorTiers(), windowPoints)
   return {
-    tier: tier ? { id: tier.id, name: tier.name } : null,
+    tier: wallet.tier,
     windowPoints,
     pointsBalance: entry.private.points_balance ?? 0,
-    next: next
-      ? { name: next.name, points: next.thresholdPoints - windowPoints }
-      : null,
-    perks: demoPerks(customerId),
-    membership,
+    next: next ? { name: next.tier.name, points: next.points } : null,
+    perks: wallet.perks,
+    membership: demoMembershipFor(customerId),
     referral: demoReferrals(customerId),
     vouchers: demoOpenVouchers(customerId),
   }

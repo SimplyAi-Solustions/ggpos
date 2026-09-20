@@ -2066,6 +2066,15 @@ export interface PerkWalletEntry {
   period?: string
 }
 
+/**
+ * `GET /api/vault/customers/:id/perks`: the tier the server holds for this
+ * customer and what it gives them this month.
+ */
+export interface PerkWallet {
+  tier: { id: string; name: string } | null
+  perks: PerkWalletEntry[]
+}
+
 /** One `points_ledger` row, with the sentence the counter shows for it. */
 export interface PointsLedgerRow {
   id: string
@@ -2075,6 +2084,16 @@ export interface PointsLedgerRow {
   created: string
   ref?: string
   note?: string
+}
+
+/**
+ * One page of the points ledger. `complete` is false when the customer has
+ * more rows than the page holds, which is when a window total taken over it
+ * would be wrong.
+ */
+export interface PointsLedgerPage {
+  rows: PointsLedgerRow[]
+  complete: boolean
 }
 
 /** A referral as the profile counts them. */
@@ -2087,9 +2106,14 @@ export interface ReferralSummary {
 
 /** Everything the Guild section of a customer profile shows. */
 export interface CustomerGuild {
+  /** The server's own answer (`customer_private.tier`), not a guess. */
   tier: { id: string; name: string } | null
-  /** Points earned inside the programme's rolling tier window. */
-  windowPoints: number
+  /**
+   * Points earned inside the programme's rolling tier window, or null when
+   * the customer has more ledger rows than one page holds and the counter
+   * cannot work it out without them.
+   */
+  windowPoints: number | null
   pointsBalance: number
   next: { name: string; points: number } | null
   perks: PerkWalletEntry[]
