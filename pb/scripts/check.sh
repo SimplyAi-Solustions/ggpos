@@ -4135,6 +4135,12 @@ node -e '
 ' "$TMP_DIR/p5-photo1.png"
 cp "$TMP_DIR/p5-photo1.png" "$TMP_DIR/p5-photo2.png"
 echo "not a photo" >"$TMP_DIR/p5-notaphoto.txt"
+# A real PNG header (so the sniff itself would pass) padded past 10 MB -
+# the size cap is checked from the multipart part's own declared size
+# before any byte is read or sniffed, so the padding's own content is
+# never inspected.
+cat "$TMP_DIR/p5-photo1.png" >"$TMP_DIR/p5-huge.png"
+dd if=/dev/zero bs=1M count=11 >>"$TMP_DIR/p5-huge.png" 2>/dev/null
 
 P5_QUOTE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN" \
   -F "photos=@$TMP_DIR/p5-photo1.png;type=image/png" \
@@ -4160,6 +4166,21 @@ P5_BAD_PHOTO_STATUS="$(curl -s -o "$TMP_DIR/p5-bad-photo.json" -w '%{http_code}'
   -F "message=bad upload")"
 [ "$P5_BAD_PHOTO_STATUS" = "400" ] || fail "submitting a non-image photo returned $P5_BAD_PHOTO_STATUS, expected 400: $(cat "$TMP_DIR/p5-bad-photo.json")"
 ok "a non-image upload on a quote is refused with 400"
+
+P5_HUGE_PHOTO_STATUS="$(curl -s -o "$TMP_DIR/p5-huge-photo.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN" \
+  -F "photos=@$TMP_DIR/p5-huge.png;type=image/png" \
+  -F "message=too big")"
+[ "$P5_HUGE_PHOTO_STATUS" = "400" ] || fail "submitting an over-size photo (>10MB) returned $P5_HUGE_PHOTO_STATUS, expected 400: $(cat "$TMP_DIR/p5-huge-photo.json")"
+ok "a photo over 10MB is refused with 400"
+
+P5_MANY_PHOTOS_ARGS=()
+for _ in $(seq 1 21); do
+  P5_MANY_PHOTOS_ARGS+=(-F "photos=@$TMP_DIR/p5-photo1.png;type=image/png")
+done
+P5_MANY_PHOTOS_STATUS="$(curl -s -o "$TMP_DIR/p5-many-photos.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN" \
+  "${P5_MANY_PHOTOS_ARGS[@]}" -F "message=too many photos")"
+[ "$P5_MANY_PHOTOS_STATUS" = "400" ] || fail "submitting 21 photos returned $P5_MANY_PHOTOS_STATUS, expected 400: $(cat "$TMP_DIR/p5-many-photos.json")"
+ok "a 21st photo on one quote is refused with 400 (the 20-photo cap)"
 
 P5_SUBMIT_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22quote_submit%22%26%26record%3D%22$P5_QUOTE_ID%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
 [ "${P5_SUBMIT_AUDIT:-0}" -ge 1 ] || fail "quote submission was not audited"
@@ -4191,7 +4212,18 @@ P5_STAFF_ANY_MSG_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?p
 [ "$(echo "$P5_STAFF_ANY_MSG_NOTIF" | jval totalItems)" -ge 2 ] || fail "expected a notification row for both the customer's and staff's message: $P5_STAFF_ANY_MSG_NOTIF"
 ok "a quote message notifies the other side, with an in-app link"
 
-# offer, with the total recomputed server-side from two lines
+# POST /:id/reviewing: submitted -> reviewing (someone has picked it up),
+# and only from submitted
+P5_REVIEWING_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/reviewing" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_REVIEWING_JSON" | tail -n1)" = "200" ] || fail "POST /:id/reviewing on a submitted quote returned $(echo "$P5_REVIEWING_JSON" | tail -n1)"
+[ "$(echo "$P5_REVIEWING_JSON" | head -n -1 | jval "quote.status")" = "reviewing" ] || fail "the quote is not status reviewing after POST /:id/reviewing"
+P5_REVIEWING_AGAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/reviewing" -H "Authorization: $STAFF_TOKEN")"
+[ "$P5_REVIEWING_AGAIN_STATUS" = "409" ] || fail "POST /:id/reviewing on an already-reviewing quote returned $P5_REVIEWING_AGAIN_STATUS, expected 409"
+ok "POST /api/vault/quotes/:id/reviewing moves submitted to reviewing, and only from submitted"
+
+# offer, with the total recomputed server-side from two lines - the offer
+# route itself allows submitted or reviewing, so the quote above still
+# takes an offer even though it is reviewing rather than submitted now
 P5_CARD_A="$(p5_make_card "Phase 5 Card A" "6")"
 P5_OFFER_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
@@ -4225,6 +4257,16 @@ P5_OFFER_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&f
 P5_OFFER_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_offered%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
 [ "${P5_OFFER_NOTIF:-0}" -ge 1 ] || fail "the offer did not notify the customer"
 ok "the offer is audited and notifies the customer"
+
+# notify_email:false suppresses the send, not merely the log line (fix
+# round, finding 14): section 23c above turned email off for
+# P5_CUSTOMER_ID before this offer was made, so its own subject
+# ("would email \"Your quote offer, £28.00\"") must never appear in the
+# test-mode mail log, even though the notification row itself (just
+# asserted above) is always written regardless of the preference.
+P5_OFFER_EMAIL_LOG_COUNT="$(grep -c 'would email "Your quote offer, £28.00"' "$TMP_DIR/server.log" || true)"
+[ "${P5_OFFER_EMAIL_LOG_COUNT:-0}" = "0" ] || fail "an email was attempted for a customer with notify_email off ($P5_OFFER_EMAIL_LOG_COUNT log line(s) found)"
+ok "a customer with notify_email off never has an email attempted, even though their notification row is still written"
 
 # accept before expiry works; a second, expired quote is refused after
 P5_ACCEPT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/accept" \
@@ -4280,6 +4322,33 @@ P5_QUOTE_AFTER_COMPLETE="$(curl -s "$BASE/api/collections/quotes/records/$P5_QUO
 [ "$(echo "$P5_QUOTE_AFTER_COMPLETE" | jval status)" = "completed" ] || fail "the quote is '$(echo "$P5_QUOTE_AFTER_COMPLETE" | jval status)' after its trade-in completed, expected completed"
 [ -n "$(echo "$P5_QUOTE_AFTER_COMPLETE" | jval closed_at)" ] || fail "a completed quote has no closed_at"
 ok "completing the trade-in a quote became marks that quote completed"
+
+# POST /:id/cancel: a note is required, cancels to declined and notifies
+# the customer, and refuses a quote already in a closed status
+P5_CANCEL_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+P5_CANCEL_NO_NOTE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_CANCEL_QUOTE_ID/cancel" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{}')"
+[ "$P5_CANCEL_NO_NOTE_STATUS" = "400" ] || fail "POST /:id/cancel with no note returned $P5_CANCEL_NO_NOTE_STATUS, expected 400"
+P5_CANCEL_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_CANCEL_QUOTE_ID/cancel" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"note":"Items no longer available"}')"
+[ "$(echo "$P5_CANCEL_JSON" | tail -n1)" = "200" ] || fail "POST /:id/cancel with a note returned $(echo "$P5_CANCEL_JSON" | tail -n1)"
+[ "$(echo "$P5_CANCEL_JSON" | head -n -1 | jval "quote.status")" = "declined" ] || fail "a cancelled quote is not status declined"
+P5_CANCEL_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_declined%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "${P5_CANCEL_NOTIF:-0}" -ge 1 ] || fail "cancelling a quote did not notify the customer"
+P5_CANCEL_AGAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/cancel" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"note":"too late"}')"
+[ "$P5_CANCEL_AGAIN_STATUS" = "409" ] || fail "POST /:id/cancel on an already-completed quote returned $P5_CANCEL_AGAIN_STATUS, expected 409"
+ok "POST /api/vault/quotes/:id/cancel requires a note, declines the quote and notifies the customer, and refuses an already-closed one"
+
+# quote_photos_retention: a quote closed more than 90 days ago has its
+# photos cleared; the record itself, and every other field, stays
+P5_RETENTION_CUTOFF="$(node -e 'console.log(new Date(Date.now() - 91 * 86400000).toISOString().replace("T"," "))')"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/quotes/records/$P5_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"closed_at\":\"$P5_RETENTION_CUTOFF\"}"
+[ "$(curl -s "$BASE/api/collections/quotes/records/$P5_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" | jlen photos)" = "2" ] || fail "the retention check's quote does not still have its two photos before the cron runs"
+P5_RETENTION_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/quote_photos_retention" -H "Authorization: $SUPER_TOKEN")"
+[ "$P5_RETENTION_CRON_STATUS" = "204" ] || fail "POST /api/crons/quote_photos_retention returned $P5_RETENTION_CRON_STATUS, expected 204"
+sleep 1
+P5_RETENTION_QUOTE_AFTER="$(curl -s "$BASE/api/collections/quotes/records/$P5_QUOTE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_RETENTION_QUOTE_AFTER" | jlen photos)" = "0" ] || fail "a quote closed 91 days ago still has photos after quote_photos_retention"
+[ "$(echo "$P5_RETENTION_QUOTE_AFTER" | jval status)" = "completed" ] || fail "quote_photos_retention changed the quote's own status"
+ok "quote_photos_retention clears photos 90 days after a quote closes, leaving the record itself alone"
 
 # the expiry cron itself, and the day-before warning
 P5_CRON_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
