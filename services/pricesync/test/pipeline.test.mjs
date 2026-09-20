@@ -573,8 +573,11 @@ describe("pricesync pipeline", () => {
     // Every card's cardmarket_id/tcgplayer_id is blanked, so pokemon is
     // enabled but has nothing wanted - the request-count map itself
     // proves the price file paths were never hit at all, not merely that
-    // they returned nothing useful.
+    // they returned nothing useful. price_snapshots starts empty too:
+    // buildDb()'s own pre-seeded rows are for the same-day-update test,
+    // not relevant here.
     db.cards = db.cards.map((c) => ({ ...c, cardmarket_id: "", tcgplayer_id: "" }));
+    db.price_snapshots = [];
     const { server, requestCounts } = createFakeServer({
       db,
       cachedFiles: {
@@ -597,6 +600,7 @@ describe("pricesync pipeline", () => {
   test("a game that exists but is explicitly disabled (enabled: false) is skipped exactly like one that does not exist", async () => {
     const db = buildDb();
     db.games = [{ id: "game_pokemon", key: "pokemon", enabled: false }];
+    db.price_snapshots = [];
     const { server, requestCounts } = createFakeServer({
       db,
       cachedFiles: {
