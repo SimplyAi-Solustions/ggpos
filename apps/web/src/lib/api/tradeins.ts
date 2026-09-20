@@ -17,6 +17,8 @@ import type {
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
+import { isOffline } from "@/lib/offline/net"
+import { OfflineQueuedError, OFFLINE_BUY_IN_MESSAGE } from "@/lib/offline/errors"
 import {
   DEMO_OFFER_LIMITS,
   DEMO_OFFER_SETTINGS,
@@ -367,11 +369,21 @@ export async function saveTradeInLines(
 // The custom routes
 // ---------------------------------------------------------------------------
 
+/**
+ * A buy-in is never queued.
+ *
+ * Completion writes the seller snapshot, the ID gate, the items, the cash
+ * movement and both ledgers in one transaction on the server
+ * (docs/api-contract.md, "Trade-ins"), so there is nothing sensible for the
+ * counter to do with it on its own. It is refused out loud instead, in the
+ * words `lib/api/offline.ts` keeps for it.
+ */
 export async function completeTradeIn(
   id: string,
   payload: CompleteTradeInPayload
 ): Promise<CompleteTradeInResult> {
   if (isDemo()) return demoCompleteTradeIn(id, payload)
+  if (isOffline()) throw new OfflineQueuedError(OFFLINE_BUY_IN_MESSAGE)
   return pb.send<CompleteTradeInResult>(`/api/vault/trade-ins/${id}/complete`, {
     method: "POST",
     body: payload,

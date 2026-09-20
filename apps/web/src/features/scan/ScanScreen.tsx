@@ -1,20 +1,28 @@
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
+import { Chip, ChipGroup } from "@/components/ui/chip"
 import { FieldError } from "@/components/ui/field"
 import { BarcodeGlyph, Input } from "@/components/ui/input"
 import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
+import { ProductImage } from "@/components/product-image"
+import { Skeleton } from "@/components/ui/skeleton"
 import { registerScanField } from "@/app/focus-registry"
 import { applyScanOutcome, setScanHandler } from "@/app/scan-bus"
 import { CameraSheet } from "@/features/scan/CameraSheet"
+import { PriceCheck } from "@/features/scan/PriceCheck"
 import {
   recordScan,
   useRecentScans,
   type RecentScan,
 } from "@/features/scan/recent-scans"
 import { routeScannedCode } from "@/lib/scanning/route-code"
+import { searchCards } from "@/lib/api/lookup"
+import { LOOKUP_STALE_MS } from "@/lib/api/prices"
+import type { CardHit } from "@/lib/api"
 
 /** The arrow that follows "PRESS ENTER" in the reference. */
 function EnterArrow() {

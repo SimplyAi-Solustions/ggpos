@@ -15,6 +15,7 @@
 import { ClientResponseError } from "pocketbase"
 import { formatGBP } from "@gg/shared"
 
+import { OfflineQueuedError } from "@/lib/offline/errors"
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { itemStore } from "@/lib/api/demo/store"
@@ -51,15 +52,9 @@ export { clearOfflineCaches, RUNTIME_CACHE_NAMES } from "@/lib/offline/caches"
 /** A sale that is still in the queue carries this in place of its number. */
 export const QUEUED_SALE_NUMBER = "Not sent yet"
 
-/**
- * What a buy-in says when there is no connection.
- *
- * A buy-in writes the seller snapshot, the ID gate, the cash movement and
- * the items in one transaction on the server (docs/api-contract.md), so it
- * is never queued. The wizard checks `isOffline()` itself and shows this.
- */
-export const OFFLINE_BUY_IN_MESSAGE =
-  "Buy-ins need the server. Reconnect and try again."
+// The wizard checks `isOffline()` itself and shows OFFLINE_BUY_IN_MESSAGE;
+// `completeTradeIn` refuses with it too, so neither can be forgotten.
+export { OfflineQueuedError, OFFLINE_BUY_IN_MESSAGE } from "@/lib/offline/errors"
 
 const QUEUED_ID = "queued:"
 
@@ -67,12 +62,6 @@ const QUEUED_ID = "queued:"
 export function isQueuedSaleId(id: string): boolean {
   return id.startsWith(QUEUED_ID)
 }
-
-/**
- * Something this app queued rather than sent. The message is written for
- * staff, so `refusalOrFallback` shows it as it stands.
- */
-export class OfflineQueuedError extends Error {}
 
 /** A request that reached nobody, as opposed to one the server refused. */
 function noAnswer(error: unknown): boolean {

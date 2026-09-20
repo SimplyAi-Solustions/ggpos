@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Field } from "@/components/ui/field"
-import { MicroLabel } from "@/components/ui/micro-label"
+import { SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
@@ -75,9 +75,7 @@ function Section({
 }) {
   return (
     <section className={className ?? "mt-24"}>
-      <MicroLabel tone="ink" className="mb-5 block">
-        {title}
-      </MicroLabel>
+      <SectionHeading>{title}</SectionHeading>
       {children}
     </section>
   )
@@ -130,21 +128,24 @@ function Editor({
 
   const save = useMutation({
     mutationFn: async () => {
-      const written = changedRules.length
-        ? await savePricingRules(changedRules.map(formToRuleWrite))
-        : null
+      // The settings record goes first because it is an update and can be
+      // repeated safely; the rules write can create rows, and a row created
+      // twice is a second band nobody asked for. Its ids are folded into
+      // state the moment it resolves, so a failure after it cannot send the
+      // same new rule again.
       const record = await saveSettings(form.id, formToPatch(form))
-      return { written, record }
+      if (!changedRules.length) return { record }
+      const written = await savePricingRules(changedRules.map(formToRuleWrite))
+      return { record, written }
+    },
+    onMutate: () => {
+      setError(null)
     },
     onSuccess: ({ written, record }) => {
       const next = recordToForm(record)
       setForm(next)
       setBaseline(next)
-      if (written) {
-        const nextRules = written.map((row, index) => ruleRowToForm(row, index))
-        setRules(nextRules)
-        setRuleBaseline(nextRules)
-      }
+      if (written) adoptRules(written)
       setError(null)
       setSaved(true)
       // Every counter screen prices through GET /api/vault/config, so the
@@ -188,6 +189,28 @@ function Editor({
   const addRule = React.useCallback(() => {
     setSaved(false)
     setRules((current) => [...current, emptyRuleForm(`new-${Date.now()}`)])
+  }, [])
+
+  /**
+   * A row that was never saved is not a rule yet, so it goes away rather
+   * than being switched off. A saved one never does: the band that priced
+   * last week has to stay readable.
+   */
+  const removeRule = React.useCallback((key: string) => {
+    setSaved(false)
+    setRules((current) =>
+      current.filter((rule) => rule.id !== "" || rule.key !== key)
+    )
+  }, [])
+
+  /**
+   * Take the server's rows as the new truth, ids and all. Called as soon as
+   * the rules write resolves, so a retry updates rather than re-creates.
+   */
+  const adoptRules = React.useCallback((written: PricingRuleRow[]) => {
+    const next = written.map((row, index) => ruleRowToForm(row, index))
+    setRules(next)
+    setRuleBaseline(next)
   }, [])
 
   function setBand(index: number, patch: Partial<MarkupBandForm>) {
@@ -260,7 +283,7 @@ function Editor({
           />
         </div>
 
-        <MicroLabel className="mt-12 mb-4 block">Condition</MicroLabel>
+        <SectionHeading className="mt-12 mb-4">Condition</SectionHeading>
         <p className="mb-6 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
           What each condition is worth against a near-mint copy. The market value
           is adjusted by these before a pricing rule is picked, so the bands
@@ -290,6 +313,7 @@ function Editor({
           errors={shownRules}
           onChange={updateRule}
           onAdd={addRule}
+          onRemove={removeRule}
         />
         {/* Twelve editable columns and a side panel do not both fit the
             1,040px column, and a matrix you have to scroll sideways to read
@@ -353,7 +377,7 @@ function Editor({
             </Button>
           ) : null}
         </div>
-        <MicroLabel className="mt-12 mb-4 block">What that prices at</MicroLabel>
+        <SectionHeading className="mt-12 mb-4">What that prices at</SectionHeading>
         <SellPreview bands={formToMarkupBands(form)} />
       </Section>
 
@@ -612,13 +636,13 @@ export function SettingsScreen() {
 
   if (!admin) return <AdminsOnly />
 
-  if (settings.error || rules.error) {
+  if (settings.error || rules.error || games.error) {
     return (
       <section className="pt-16 sm:pt-24">
         <PageTitle>Settings</PageTitle>
         <Lede>
           {refusalOrFallback(
-            settings.error ?? rules.error,
+            settings.error ?? rules.error ?? games.error,
             "The settings would not load. Check the connection and try again."
           )}
         </Lede>

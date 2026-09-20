@@ -1,13 +1,12 @@
 // Cardmarket's public price guide files
 // (https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_{gameId}.json,
-// docs/PLAN.md "Card images and market prices"). Verified live against the
-// real Magic (1), Yu-Gi-Oh! (3), Pokemon (6), One Piece (18) and Lorcana
-// (19) files on 2026-09-20: each is `{version, createdAt, priceGuides: [
-// {idProduct, idCategory, avg, low, trend, avg1, avg7, avg30, ...} ]}`,
-// with the base fields plus one suffixed variant per game - Pokemon uses
-// "-holo" (avg-holo, low-holo, trend-holo, avg7-holo, ...), the other four
-// games use "-foil". This reads for either suffix on every entry rather
-// than assuming which one a given game uses, since nothing else about the
+// docs/PLAN.md "Card images and market prices"). Verified live on
+// 2026-09-20: each is `{version, createdAt, priceGuides: [{idProduct,
+// idCategory, avg, low, trend, avg1, avg7, avg30, ...}]}`, with the base
+// fields plus one suffixed variant per game - Pokemon uses "-holo"
+// (avg-holo, low-holo, trend-holo, avg7-holo, ...), the other four games
+// use "-foil". This reads for either suffix on every entry rather than
+// assuming which one a given game uses, since nothing else about the
 // shape differs between them.
 import { streamPickedArray } from "./json-stream.mjs";
 import { convertMinorToGbpPence, parseDecimalToMinor } from "./money.mjs";
@@ -18,27 +17,30 @@ import { convertMinorToGbpPence, parseDecimalToMinor } from "./money.mjs";
  * product), so callers never write a row for a finish the card cannot
  * actually be bought in.
  *
- * Existence is judged on low/avg/avg7 only, deliberately ignoring a bare
- * trend of exactly 0: sampled across full or large partial pulls of all
- * five real files (2026-09-20), a suffixed "trend-holo"/"trend-foil" of
- * precisely 0 with low/avg/avg7 all null is Cardmarket's own "no such
- * printing" default - it accounted for 87-97% of every game's entries
- * (12835/13229 for One Piece alone) - while a *non-zero* trend with the
- * other three null is a real signal seen 500-1100 times per game (a
- * product with too little sales volume for an average, but some recent
- * trend). Treating every present trend as "exists", as the task brief's
- * field mapping reads most literally, would have written a spurious
- * all-zero snapshot for the ~90% of products with no holo/foil printing
- * at all; treating only low/avg/avg7 as the signal would have dropped the
- * 500-1100 genuine trend-only ones. This is the one place this module
- * departs from reading "present" as "not null", and only for the
- * existence check - the native_market/native_trend field mapping below
- * still follows the brief exactly, trend included.
+ * Existence and the market value both treat a bare trend of exactly 0
+ * specially, rather than reading "present" as simply "not null" (which is
+ * how the task brief's field mapping reads most literally). Measured
+ * against the committed fixture (test/fixtures/cardmarket-price-guide-19-
+ * lorcana.json, the real Lorcana price guide, 3636 entries): 352 of them
+ * have every "-foil" field null except trend-foil, which is exactly 0 -
+ * Cardmarket's own "no such printing" default, not a real trend of zero.
+ * Treating a present-but-zero trend as "this variant exists" would write
+ * a spurious all-zero foil row on every one of those 352 cards. The same
+ * zero can also show up on a variant that does have real data elsewhere
+ * (low/avg/avg7 non-null) - low/avg/avg7 carry no such sentinel, so this
+ * is judged on those three, and a real-but-zero trend is treated as "no
+ * market signal from trend" rather than a genuine number worth reporting.
+ * This fixture has no entry where trend is the *only* non-null field
+ * (avg/low/avg7 all null) with a genuine non-zero value; that pattern was
+ * observed spot-checking the other four games live while building this
+ * (not persisted as a fixture, so no number from it is claimed here), and
+ * `trendIsRealSignal` covers it exactly the same way should it occur.
  *
  * Field mapping, from the task brief: native_low = low, native_mid = avg,
  * native_market = trend when present else avg7 else avg, native_trend =
- * avg7. Every value is the exact decimal string stream-json produced
- * (numberAsString) - never a float. */
+ * avg7 - with "present" read as "a real signal", not "not null", for
+ * trend specifically, per the above. Every value is the exact decimal
+ * string stream-json produced (numberAsString) - never a float. */
 export function buildCardmarketVariant(entry, suffix) {
   const field = (base) => (suffix ? `${base}-${suffix}` : base);
   const low = entry[field("low")] ?? null;
@@ -48,9 +50,10 @@ export function buildCardmarketVariant(entry, suffix) {
 
   const trendMinor = trend === null ? null : parseDecimalToMinor(trend);
   const trendIsRealSignal = trendMinor !== null && trendMinor !== 0;
+
   if (low === null && avg === null && avg7 === null && !trendIsRealSignal) return null;
 
-  const market = trend ?? avg7 ?? avg;
+  const market = (trendIsRealSignal ? trend : null) ?? avg7 ?? avg;
   return { low, mid: avg, market, trend: avg7 };
 }
 
@@ -125,7 +128,9 @@ export function buildCardmarketRows(entry, cardsByCardmarketId, fx, fetchedAtPb,
  * Returns `{ seen, matched, rows }` - `seen` is every entry the file
  * carried for this game, `matched` is how many had an idProduct present in
  * `cardsByCardmarketId`, `rows` is every price_snapshots row built (a
- * matched entry can yield up to three: normal, holo, foil).
+ * matched entry can yield up to three: normal, holo, foil). Rejects
+ * (rather than crashing the process) on malformed or non-JSON bytes - see
+ * json-stream.mjs.
  */
 export async function ingestCardmarketStream(nodeReadable, { cardsByCardmarketId, fx, fetchedAtPb, warn = () => {} }) {
   let seen = 0;
