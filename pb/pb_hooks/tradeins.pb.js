@@ -36,6 +36,8 @@ routerAdd(
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
     const base64 = require(`${__hooks}/lib/base64.js`);
+    const referralsLib = require(`${__hooks}/lib/referrals.js`);
+    const notifyLib = require(`${__hooks}/lib/notify.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
 
@@ -424,6 +426,7 @@ routerAdd(
     // -----------------------------------------------------------------
     let halt = null;
     let result = null;
+    let referralOutcome = { pending: [] };
 
     try {
       e.app.runInTransaction((txApp) => {
@@ -588,6 +591,15 @@ routerAdd(
           );
         }
 
+        // --- the referral this customer came in on, if any --------------
+        // Phase 6: a pending referral where they are the referee becomes
+        // earned on their first completed buy-in or sale, paying both
+        // sides. One call, in this route's own transaction, so the two
+        // bonus rows are atomic with the buy-in that earned them
+        // (lib/referrals.js). A customer with no pending referral, or one
+        // already earned, is a no-op.
+        referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+
         // --- the trade-in itself, with the seller snapshot -------------
         t.set("number", number);
         t.set("status", "completed");
@@ -662,6 +674,9 @@ routerAdd(
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+
+    // After the transaction has committed, never inside it (lib/notify.js).
+    notifyLib.sendPending(e.app, referralOutcome.pending || []);
 
     return e.json(200, result);
   },

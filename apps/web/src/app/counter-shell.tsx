@@ -167,6 +167,7 @@ function MoreSheet({
 }) {
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
+  const admin = useStaff()?.role === "admin"
 
   const go = (to: string) => {
     onOpenChange(false)
@@ -187,6 +188,9 @@ function MoreSheet({
               { label: "Reports", to: "/counter/reports" },
               { label: "Exports and imports", to: "/counter/exports" },
               { label: "Add stock", to: "/counter/stock/new" },
+              // The Guild is an admin screen and says so to anybody else,
+              // so the sheet does not offer it to a staff member at all.
+              ...(admin ? [{ label: "Loyalty", to: "/counter/loyalty" }] : []),
               { label: "My Vault", to: "/account" },
             ].map((entry) => (
               <li key={entry.to} className="border-b border-hairline-soft">

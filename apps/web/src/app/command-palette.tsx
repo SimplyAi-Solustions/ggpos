@@ -149,7 +149,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     () => [
       { id: "stock-count", label: "Stock count", run: () => go("/counter/stock/count") },
       ...(admin
-        ? [{ id: "settings", label: "Settings", run: () => go("/counter/settings") }]
+        ? [
+            { id: "loyalty", label: "Loyalty", run: () => go("/counter/loyalty") },
+            { id: "settings", label: "Settings", run: () => go("/counter/settings") },
+          ]
         : []),
     ],
     [admin, go]
