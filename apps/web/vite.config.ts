@@ -26,6 +26,12 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  build: {
+    // bwip-js ships every symbology in one 900 kB module and cannot be split
+    // further. It only loads on the Guild card and the label print routes, so
+    // the limit sits just above it; anything else that large still warns.
+    chunkSizeWarningLimit: 950,
+  },
   server: {
     // PocketBase serves the built app in production, so the browser always
     // talks to the same origin. In dev the Vite server stands in for it.

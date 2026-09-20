@@ -1546,6 +1546,21 @@ echo "$KEEP_PRIVATE_JSON" | grep -q "watchlist" || fail "the merge did not union
 echo "$KEEP_PRIVATE_JSON" | grep -q "vintage Pokemon" || fail "the merge did not append the duplicate's notes"
 ok "a merge fills the kept record's gaps and recomputes its balances"
 
+KEEP_PERKS="$(curl -s "$BASE/api/collections/perk_usage/records?perPage=50&sort=perk_type&filter=customer%3D%22$KEEP_ID%22" \
+  -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$KEEP_PERKS" | jval totalItems)" = "2" ] \
+  || fail "the kept customer has $(echo "$KEEP_PERKS" | jval totalItems) perk_usage rows, expected 2"
+[ "$(echo "$KEEP_PERKS" | jval "items.0.perk_type")" = "free_event_entries" ] \
+  || fail "unexpected first perk_usage row: $(echo "$KEEP_PERKS" | jval "items.0.perk_type")"
+[ "$(echo "$KEEP_PERKS" | jval "items.0.used_count")" = "3" ] \
+  || fail "the shared perk month came to '$(echo "$KEEP_PERKS" | jval "items.0.used_count")', expected 1 + 2 = 3"
+[ "$(echo "$KEEP_PERKS" | jval "items.1.used_count")" = "3" ] \
+  || fail "the duplicate's unmatched perk row came over as '$(echo "$KEEP_PERKS" | jval "items.1.used_count")', expected 3"
+ORPHAN_PERKS="$(curl -s "$BASE/api/collections/perk_usage/records?filter=customer%3D%22$DUPE_ID%22" \
+  -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$ORPHAN_PERKS" = "0" ] || fail "the duplicate still has $ORPHAN_PERKS perk_usage rows after the merge"
+ok "a merge sums perk_usage for a shared perk and month and moves the rest across"
+
 # --- 16d. Erasing a customer ---------------------------------------------
 ERASE_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
