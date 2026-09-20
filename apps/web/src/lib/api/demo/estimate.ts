@@ -18,20 +18,29 @@ import type { EstimateCardHit, EstimateResult } from "@/lib/api/types"
  * a random one, so the page reads the same on every run.
  */
 
-/** A deterministic market value per demo card, in integer GBP pence. */
+/**
+ * A deterministic market value per demo card, in integer GBP pence.
+ *
+ * `card_blb_223` is deliberately absent: the real route answers a card with
+ * no cached price with a null market and two null bands rather than a
+ * fabricated zero, and the demo has to be able to show that too.
+ */
 const DEMO_MARKET: Record<string, number> = {
   card_sv151_199: 32000,
   card_sv151_201: 11000,
   card_sv151_205: 6000,
   card_sv151_025: 180,
   card_sv8_113: 4800,
-  card_blb_223: 1400,
 }
 
-/** 18 Sep 2026, the day the demo cache was written. */
-function asOf(): string {
-  return new Date(Date.now() - 86_400_000).toISOString()
-}
+/**
+ * When the demo price cache was written.
+ *
+ * A literal, not "yesterday": a screenshot taken on two different days has
+ * to read the same, and an end-to-end test that asserts the line under the
+ * bands cannot chase a moving date.
+ */
+const DEMO_AS_OF = "2026-09-18T02:40:00.000Z"
 
 export function demoMarketFor(cardId: string): number | null {
   return DEMO_MARKET[cardId] ?? null
@@ -67,12 +76,32 @@ export function demoEstimate(
   finish: string
 ): EstimateResult {
   const card = DEMO_CARDS.find((entry) => entry.id === cardId)
-  if (!card) throw new Error("That card is not in the catalogue.")
+  // The same sentence the live route sends for an unresolved card id.
+  if (!card) {
+    throw new Error("Card not found. Search again or visit the shop for a look in person.")
+  }
   const market = demoMarketFor(cardId)
+  const shape = {
+    name: card.name,
+    set: card.setName,
+    number: card.number,
+    image: card.image,
+  }
+
+  if (market === null) {
+    return {
+      card: shape,
+      market: null,
+      as_of: null,
+      cash: { low: null, high: null },
+      credit: { low: null, high: null },
+      note: "Subject to inspection in the shop.",
+    }
+  }
 
   const at = (grade: CardCondition) =>
     computeOffer(
-      market ?? 0,
+      market,
       { kind: "single", game: card.gameKey, condition: grade, finish },
       DEMO_PRICING_RULES,
       DEMO_OFFER_SETTINGS,
@@ -83,14 +112,9 @@ export function demoEstimate(
   const low = at(GRADE_BELOW[condition])
 
   return {
-    card: {
-      name: card.name,
-      set: card.setName,
-      number: card.number,
-      image: card.image,
-    },
+    card: shape,
     market,
-    as_of: asOf(),
+    as_of: DEMO_AS_OF,
     cash: { low: low.cash, high: high.cash },
     credit: { low: low.credit, high: high.credit },
     note: "Subject to inspection in the shop.",

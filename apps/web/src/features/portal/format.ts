@@ -54,7 +54,7 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}, ${time}`
 }
 
-export const QUOTE_STATUS_LABEL: Record<QuoteStatus, string> = {
+const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   submitted: "Sent",
   reviewing: "Being looked at",
   offered: "Offer made",
@@ -63,6 +63,17 @@ export const QUOTE_STATUS_LABEL: Record<QuoteStatus, string> = {
   received: "Items received",
   completed: "Paid",
   expired: "Expired",
+}
+
+/**
+ * What to call a quote's state.
+ *
+ * A status the server adds later reads as "In progress" rather than as an
+ * empty row: the portal is a read-only view of somebody else's state
+ * machine, and it should never be a blank where a word belongs.
+ */
+export function quoteStatusLabel(status: QuoteStatus | string): string {
+  return QUOTE_STATUS_LABELS[status as QuoteStatus] ?? "In progress"
 }
 
 export const DROP_OFF_LABEL: Record<QuoteDropOff, string> = {

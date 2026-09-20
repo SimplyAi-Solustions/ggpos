@@ -507,7 +507,18 @@ export function ProfileScreen() {
         </SheetContent>
       </Sheet>
 
-      <Sheet open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <Sheet
+        open={deleteOpen}
+        onOpenChange={(next) => {
+          setDeleteOpen(next)
+          // Through the sheet's own close, so the typed word and any refusal
+          // reset with it rather than arming the button next time it opens.
+          if (!next) {
+            setPhrase("")
+            setError(null)
+          }
+        }}
+      >
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
           <SheetHeader className={SHEET_COLUMN}>
             <SheetTitle>Delete my account</SheetTitle>
@@ -533,11 +544,21 @@ export function ProfileScreen() {
                   years, and UK GDPR Article 17(3)(b) lets us.
                 </p>
               </div>
-              {me.balances.credit > 0 ? (
-                <p className="max-w-[56ch] text-[15px] leading-[1.5] text-destructive">
-                  {`You still have ${formatGBP(me.balances.credit)} store credit. Use it or ask the shop to pay it out first.`}
-                </p>
-              ) : null}
+              {/* One live region for the sheet: the standing refusal and a
+                  failed delete are the same news to a screen reader, and two
+                  regions would read both. */}
+              <div role="alert">
+                {me.balances.credit > 0 ? (
+                  <p className="max-w-[56ch] text-[15px] leading-[1.5] text-destructive">
+                    {`You still have ${formatGBP(me.balances.credit)} store credit. Use it or ask the shop to pay it out first.`}
+                  </p>
+                ) : null}
+                {error ? (
+                  <p className="max-w-[56ch] text-[15px] leading-[1.5] text-destructive">
+                    {error}
+                  </p>
+                ) : null}
+              </div>
               <Field
                 layout="stacked"
                 label={`Type ${DELETE_PHRASE} to confirm`}
@@ -551,7 +572,6 @@ export function ProfileScreen() {
                   onChange={(event) => setPhrase(event.target.value.toUpperCase())}
                 />
               </Field>
-              {error ? <FieldError>{error}</FieldError> : null}
             </div>
           </SheetBody>
           <SheetFooter className={SHEET_COLUMN}>

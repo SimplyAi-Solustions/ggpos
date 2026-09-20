@@ -10,7 +10,7 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { StickerOrbit } from "@/components/ui/sticker"
 import { listMyQuotes } from "@/lib/api/quotes"
 import { usePortalDock } from "@/features/portal/dock"
-import { formatDate, QUOTE_STATUS_LABEL } from "@/features/portal/format"
+import { formatDate, quoteStatusLabel } from "@/features/portal/format"
 import { LoadFailed } from "@/features/portal/LoadFailed"
 import { needsAnswer } from "@/features/portal/timeline"
 
@@ -73,7 +73,7 @@ export function QuotesScreen() {
               >
                 <span className="flex min-w-0 flex-col gap-1.5">
                   <MicroLabel tone="ink">
-                    {QUOTE_STATUS_LABEL[quote.status]}
+                    {quoteStatusLabel(quote.status)}
                   </MicroLabel>
                   <span className="text-[15px] leading-[1.4] text-muted-foreground">
                     {quote.number ? (
