@@ -17,7 +17,9 @@ import type {
   CompleteTradeInResult,
   IdCheckResult,
   ItemKind,
+  LoyaltyProgrammeRow,
   OfferLimits,
+  PricingRuleRow,
   ReceiptPayload,
   TradeInLineInput,
   TradeInLineRecord,
@@ -67,84 +69,97 @@ function randomBody(): string {
   ).join("")
 }
 
-/** `pricing_rules` as the seed writes them (pb_migrations/1789819620_seed.js). */
-export const DEMO_PRICING_RULES: PricingRule[] = [
+/**
+ * `pricing_rules` as the seed writes them (pb_migrations/1789819620_seed.js),
+ * in the row shape `/api/vault/config` serves.
+ *
+ * The single bands are condition wildcards, so a played card drops into a
+ * lower band through the condition multiplier rather than matching nothing.
+ */
+export const DEMO_PRICING_RULE_ROWS: PricingRuleRow[] = [
   {
     id: "rule_single_low",
-    game: null,
     kind: "single",
-    condition: "NM",
-    finish: null,
-    rarity: null,
-    bandMin: 0,
-    bandMax: 500,
-    cashPct: 40,
-    creditPct: 55,
+    condition: "",
+    band_min: 0,
+    band_max: 500,
+    cash_pct: 40,
+    credit_pct: 55,
     rounding: 25,
     priority: 10,
     active: true,
   },
   {
     id: "rule_single_mid",
-    game: null,
     kind: "single",
-    condition: "NM",
-    finish: null,
-    rarity: null,
-    bandMin: 500,
-    bandMax: 5000,
-    cashPct: 50,
-    creditPct: 65,
+    condition: "",
+    band_min: 500,
+    band_max: 5000,
+    cash_pct: 50,
+    credit_pct: 65,
     rounding: 50,
     priority: 20,
     active: true,
   },
   {
     id: "rule_single_high",
-    game: null,
     kind: "single",
-    condition: "NM",
-    finish: null,
-    rarity: null,
-    bandMin: 5000,
-    bandMax: null,
-    cashPct: 60,
-    creditPct: 75,
+    condition: "",
+    band_min: 5000,
+    band_max: 0,
+    cash_pct: 60,
+    credit_pct: 75,
     rounding: 50,
     priority: 30,
     active: true,
   },
   {
     id: "rule_retro",
-    game: null,
     kind: "retro",
     condition: "",
-    finish: null,
-    rarity: null,
-    bandMin: 0,
-    bandMax: null,
-    cashPct: 45,
-    creditPct: 60,
+    band_min: 0,
+    band_max: 0,
+    cash_pct: 45,
+    credit_pct: 60,
     rounding: 50,
     priority: 40,
     active: true,
   },
   {
     id: "rule_sealed",
-    game: null,
     kind: "sealed",
     condition: "",
-    finish: null,
-    rarity: null,
-    bandMin: 0,
-    bandMax: null,
-    cashPct: 55,
-    creditPct: 70,
+    band_min: 0,
+    band_max: 0,
+    cash_pct: 55,
+    credit_pct: 70,
     rounding: 50,
     priority: 50,
     active: true,
   },
 ]
+
+/** The same bands in the shared evaluator's shape, for the unit tests. */
+export const DEMO_PRICING_RULES: PricingRule[] = DEMO_PRICING_RULE_ROWS.map(
+  (row) => ({
+    id: row.id,
+    game: null,
+    kind: row.kind ?? null,
+    condition: row.condition || null,
+    finish: null,
+    rarity: null,
+    bandMin: row.band_min ?? 0,
+    bandMax: row.band_max ?? null,
+    cashPct: row.cash_pct ?? 0,
+    creditPct: row.credit_pct ?? 0,
+    rounding: (row.rounding === 50 || row.rounding === 100 ? row.rounding : 25) as
+      | 25
+      | 50
+      | 100,
+    priority: row.priority ?? 0,
+    active: true,
+  })
+)
 
 export const DEMO_OFFER_SETTINGS: OfferSettings = { ...DEFAULT_OFFER_SETTINGS }
 
@@ -164,6 +179,22 @@ export const DEMO_PROGRAMME: LoyaltyProgramme = {
   welcomeBonus: 100,
   referralBonusReferrer: 250,
   referralBonusReferee: 250,
+}
+
+/** `loyalty_programme` in the row shape `/api/vault/config` serves. */
+export const DEMO_PROGRAMME_ROW: LoyaltyProgrammeRow = {
+  id: "loyalty_demo",
+  enabled: true,
+  earn_per_pound_sales: 10,
+  earn_on_trade_in_credit: 5,
+  points_per_pound_redemption: 100,
+  min_redeem_points: 500,
+  max_points_share_of_sale: 50,
+  expiry_months_inactive: 18,
+  tier_window_months: 12,
+  welcome_bonus: 100,
+  referral_bonus_referrer: 250,
+  referral_bonus_referee: 250,
 }
 
 export const DEMO_SHOP = {

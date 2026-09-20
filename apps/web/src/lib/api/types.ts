@@ -479,6 +479,7 @@ import type {
   LoyaltyProgramme,
   LoyaltyRule,
   LoyaltyTier,
+  PricingRule,
   TierPerk,
 } from "@gg/shared"
 
@@ -843,4 +844,184 @@ export interface RecentActivity {
   total: number
   detail: string
   at: string
+}
+
+// ---------------------------------------------------------------------------
+// The shop's own configuration, and the customer routes that need a step-up
+//
+// `GET /api/vault/config` hands every staff member the settings, the offer
+// bands and the loyalty programme in one read, so the counter no longer has
+// to touch the admin-only collections behind them.
+// ---------------------------------------------------------------------------
+
+/** One row of `pricing_rules`, as the config route serves it. */
+export interface PricingRuleRow {
+  id: string
+  game?: string
+  kind?: string
+  condition?: string
+  finish?: string
+  rarity?: string
+  band_min?: number
+  band_max?: number
+  cash_pct?: number
+  credit_pct?: number
+  rounding?: number
+  priority?: number
+  active?: boolean
+}
+
+/** `loyalty_programme`, as the config route serves it. */
+export interface LoyaltyProgrammeRow {
+  id?: string
+  enabled?: boolean
+  earn_per_pound_sales?: number
+  earn_on_trade_in_credit?: number
+  points_per_pound_redemption?: number
+  min_redeem_points?: number
+  max_points_share_of_sale?: number
+  expiry_months_inactive?: number
+  tier_window_months?: number
+  welcome_bonus?: number
+  referral_bonus_referrer?: number
+  referral_bonus_referee?: number
+}
+
+/** One row of `loyalty_rules`. */
+export interface LoyaltyRuleRow {
+  id: string
+  name?: string
+  type?: string
+  conditions?: Record<string, unknown>
+  value?: number
+  active?: boolean
+  priority?: number
+  starts_at?: string
+  ends_at?: string
+}
+
+/** One row of `loyalty_tiers`. */
+export interface LoyaltyTierRow {
+  id: string
+  name?: string
+  threshold_points?: number
+  sort?: number
+  perks?: unknown[]
+  paid_plan?: boolean
+}
+
+/**
+ * The settings the counter may read. Secrets (`api_keys`, the mail and push
+ * keys) never leave the server, so they are not in this shape at all.
+ */
+export interface VaultSettingsRow {
+  cash_cap?: number
+  cash_variance_alert?: number
+  offer?: Partial<{
+    bulkThreshold: number
+    bulkCash: number
+    bulkCredit: number
+    minimumOffer: number
+  }>
+  min_single_offer?: number
+  bulk_rate_pct?: number
+  source_priority?: string[]
+  retro_source_priority?: string[]
+  condition_multipliers?: Record<string, number>
+  markup_bands?: { from: number; multiplier: number }[]
+  sell_rounding?: string
+  label_default_template?: string
+  default_intake_location?: string
+  quote_expiry_days?: number
+  id_photo_retention_months?: number
+  vat_registered?: boolean
+  shop_name?: string
+  shop_address?: string
+  shop_town?: string
+  shop_postcode?: string
+  shop_phone?: string
+  shop_email?: string
+  receipt_terms?: string
+}
+
+export interface VaultConfig {
+  settings: VaultSettingsRow
+  pricing_rules: PricingRuleRow[]
+  loyalty: {
+    programme: LoyaltyProgrammeRow | null
+    rules: LoyaltyRuleRow[]
+    tiers: LoyaltyTierRow[]
+  }
+}
+
+/** The newest ID document whose photo is still on disk, or null. */
+export interface IdDocumentSummary {
+  id: string
+  taken_at: string
+  expires_at: string
+  taken_by: string
+}
+
+/** What a merge moved, by collection, so the counter can say what happened. */
+export interface MergeResult {
+  profile: CustomerProfile
+  moved: Record<string, number>
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/vault/config
+//
+// `settings`, `pricing_rules` and `loyalty_*` are admin-only collections, so
+// an ordinary staff token is refused when it reads them directly. This one
+// staff-readable route carries everything the counter needs from them, with
+// the keys and secrets left behind on the server.
+// ---------------------------------------------------------------------------
+
+/** The shop's own details, for receipts and labels. */
+export interface VaultShop {
+  name: string
+  address: string
+  town: string
+  postcode: string
+  phone: string
+  email: string
+}
+
+/** `settings`, less `api_keys`, the email transport and the push keys. */
+export interface VaultSettings {
+  /** Integer GBP pence. A single cash payout may not exceed it. */
+  cashCap: number
+  /**
+   * Integer GBP pence. A cash session closing over this variance is audited.
+   * Zero means no alert is configured, which is how the close route reads it.
+   */
+  cashVarianceAlert: number
+  minSingleOffer: number
+  bulkRatePct: number
+  sourcePriority: string[]
+  retroSourcePriority: string[]
+  conditionMultipliers: Record<string, number>
+  markupBands: { from: number; multiplier: number }[]
+  sellRounding: string
+  offer: {
+    bulkThreshold: number
+    bulkCash: number
+    bulkCredit: number
+    minimumOffer: number
+  }
+  labelDefaultTemplate: string
+  defaultIntakeLocation: string
+  quoteExpiryDays: number
+  idPhotoRetentionMonths: number
+  vatRegistered: boolean
+  receiptTerms: string
+  shop: VaultShop
+}
+
+/** Everything the counter reads from the admin-only collections, in one call. */
+export interface VaultConfig {
+  settings: VaultSettings
+  /** Active rows only, in the shared evaluator's shape. */
+  pricingRules: PricingRule[]
+  loyalty: LoyaltySetup
 }

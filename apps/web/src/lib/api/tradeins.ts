@@ -8,7 +8,11 @@
  */
 import { ClientResponseError } from "pocketbase"
 import { DEFAULT_OFFER_SETTINGS, type OfferSettings, type PricingRule } from "@gg/shared/pricing"
-import type { LoyaltyProgramme } from "@gg/shared/loyalty"
+import type {
+  LoyaltyProgramme,
+  LoyaltyRule,
+  LoyaltyRuleType,
+} from "@gg/shared/loyalty"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -17,8 +21,11 @@ import { findDemoCustomer } from "@/lib/api/demo/customers"
 import {
   DEMO_OFFER_LIMITS,
   DEMO_OFFER_SETTINGS,
-  DEMO_PRICING_RULES,
+  DEMO_PRICING_RULE_ROWS,
   DEMO_PROGRAMME as SEED_PROGRAMME,
+  DEMO_PROGRAMME_ROW,
+  DEMO_RECEIPT_TERMS,
+  DEMO_SHOP,
   demoCompleteTradeIn,
   demoCreateDraft,
   demoGetLines,
@@ -34,7 +41,10 @@ import type {
   CompleteTradeInResult,
   CustomerRecord,
   IdCheckResult,
+  IdDocumentSummary,
+  MergeResult,
   OfferLimits,
+  PricingRuleRow,
   ReceiptEmailResult,
   ReceiptPayload,
   StaffRecord,
@@ -43,6 +53,7 @@ import type {
   TradeInRecord,
   TradeInSummary,
   TradeInStatus,
+  VaultConfig,
 } from "@/lib/api/types"
 
 function escapeFilter(value: string): string {
@@ -50,26 +61,42 @@ function escapeFilter(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Pricing inputs
+// The shop's own configuration
 // ---------------------------------------------------------------------------
 
-interface PricingRuleRecord {
-  id: string
-  game?: string
-  kind?: string
-  condition?: string
-  finish?: string
-  rarity?: string
-  band_min?: number
-  band_max?: number
-  cash_pct?: number
-  credit_pct?: number
-  rounding?: number
-  priority?: number
-  active?: boolean
+/**
+ * Everything the counter needs to price a buy-in, in one staff-readable read.
+ *
+ * `pricing_rules`, `settings` and the loyalty collections behind it are
+ * admin-only, so the wizard goes through `/api/vault/config` instead of
+ * touching them: ordinary staff get the real offer bands, and no secret ever
+ * leaves the server. Screens read it through one TanStack query for the
+ * session rather than calling the three helpers below separately.
+ */
+export async function getVaultConfig(): Promise<VaultConfig> {
+  if (isDemo()) {
+    return {
+      settings: {
+        cash_cap: DEMO_OFFER_LIMITS.cashCap,
+        offer: { ...DEMO_OFFER_SETTINGS },
+        shop_name: DEMO_SHOP.name,
+        shop_address: DEMO_SHOP.address,
+        shop_town: DEMO_SHOP.town,
+        shop_postcode: DEMO_SHOP.postcode,
+        shop_phone: DEMO_SHOP.phone,
+        shop_email: DEMO_SHOP.email,
+        receipt_terms: DEMO_RECEIPT_TERMS,
+        id_photo_retention_months: 12,
+        vat_registered: false,
+      },
+      pricing_rules: DEMO_PRICING_RULE_ROWS,
+      loyalty: { programme: DEMO_PROGRAMME_ROW, rules: [], tiers: [] },
+    }
+  }
+  return pb.send<VaultConfig>("/api/vault/config", { method: "GET" })
 }
 
-function toRule(record: PricingRuleRecord): PricingRule {
+function toRule(record: PricingRuleRow): PricingRule {
   const step = record.rounding ?? 25
   return {
     id: record.id,
@@ -88,123 +115,99 @@ function toRule(record: PricingRuleRecord): PricingRule {
   }
 }
 
-/**
- * The live offer bands.
- *
- * `pricing_rules` is admin-only in the migrations, so an ordinary staff token
- * is refused. Rather than quietly applying percentages nobody configured,
- * this returns an empty list, `computeOffer` returns nothing to offer, and
- * the Items step says the figure has to be entered by hand.
- */
-export async function getPricingRules(): Promise<PricingRule[]> {
-  if (isDemo()) return DEMO_PRICING_RULES
-
-  try {
-    const rows = await pb.collection("pricing_rules").getFullList<PricingRuleRecord>({
-      filter: "active = true",
-      sort: "-priority",
-    })
-    return rows.map(toRule)
-  } catch (error) {
-    if (
-      error instanceof ClientResponseError &&
-      (error.status === 403 || error.status === 404)
-    ) {
-      return []
-    }
-    throw error
-  }
-}
-
-interface SettingsRecord {
-  id: string
-  cash_cap?: number
-  offer?: Partial<OfferSettings>
+/** The live offer bands, in the shared evaluator's shape. */
+export function rulesFrom(config: VaultConfig): PricingRule[] {
+  return config.pricing_rules.filter((row) => row.active !== false).map(toRule)
 }
 
 /**
  * `settings.offer` plus the cash cap, with the shared defaults filling in
- * anything the shop has not set (or that this token may not read: `settings`
- * is admin-only too).
+ * anything the shop has not set.
  */
-export async function getOfferSettings(): Promise<OfferSettings & OfferLimits> {
-  if (isDemo()) return { ...DEMO_OFFER_SETTINGS, ...DEMO_OFFER_LIMITS }
-
+export function offerSettingsFrom(config: VaultConfig): OfferSettings & OfferLimits {
   const fallback = { ...DEFAULT_OFFER_SETTINGS, cashCap: 800_000 }
-  try {
-    const row = await pb
-      .collection("settings")
-      .getFirstListItem<SettingsRecord>("id != ''")
-    const offer = row.offer ?? {}
-    return {
-      bulkThreshold: offer.bulkThreshold ?? fallback.bulkThreshold,
-      bulkCash: offer.bulkCash ?? fallback.bulkCash,
-      bulkCredit: offer.bulkCredit ?? fallback.bulkCredit,
-      minimumOffer: offer.minimumOffer ?? fallback.minimumOffer,
-      cashCap: row.cash_cap ?? fallback.cashCap,
-    }
-  } catch (error) {
-    if (
-      error instanceof ClientResponseError &&
-      (error.status === 403 || error.status === 404)
-    ) {
-      return fallback
-    }
-    throw error
+  const offer = config.settings.offer ?? {}
+  return {
+    bulkThreshold: offer.bulkThreshold ?? fallback.bulkThreshold,
+    bulkCash: offer.bulkCash ?? fallback.bulkCash,
+    bulkCredit: offer.bulkCredit ?? fallback.bulkCredit,
+    minimumOffer: offer.minimumOffer ?? fallback.minimumOffer,
+    cashCap: config.settings.cash_cap ?? fallback.cashCap,
   }
-}
-
-interface ProgrammeRecord {
-  id: string
-  enabled?: boolean
-  earn_per_pound_sales?: number
-  earn_on_trade_in_credit?: number
-  points_per_pound_redemption?: number
-  min_redeem_points?: number
-  max_points_share_of_sale?: number
-  expiry_months_inactive?: number
-  tier_window_months?: number
-  welcome_bonus?: number
-  referral_bonus_referrer?: number
-  referral_bonus_referee?: number
 }
 
 /**
  * The GG Guild programme in the shared evaluator's shape, so the counter's
  * points preview and the server's `points_ledger` row are computed from the
- * same numbers. `loyalty_programme` is readable by any signed-in account; a
- * server that refuses it falls back to the seed's figures, which is what a
- * fresh shop has anyway (the demo book holds the same seed figures).
+ * same numbers. A shop that has not opened the loyalty editor yet gets the
+ * seed's figures, which are what its database holds anyway.
  */
-export async function getLoyaltyProgramme(): Promise<LoyaltyProgramme> {
-  if (isDemo()) return SEED_PROGRAMME
-
-  try {
-    const row = await pb
-      .collection("loyalty_programme")
-      .getFirstListItem<ProgrammeRecord>("id != ''")
-    return {
-      enabled: row.enabled !== false,
-      earnPerPoundSales: row.earn_per_pound_sales ?? SEED_PROGRAMME.earnPerPoundSales,
-      earnPerPoundTradeInCredit:
-        row.earn_on_trade_in_credit ?? SEED_PROGRAMME.earnPerPoundTradeInCredit,
-      pointsPerPoundRedemption:
-        row.points_per_pound_redemption ?? SEED_PROGRAMME.pointsPerPoundRedemption,
-      minRedeemPoints: row.min_redeem_points ?? SEED_PROGRAMME.minRedeemPoints,
-      maxPointsShareOfSale:
-        row.max_points_share_of_sale ?? SEED_PROGRAMME.maxPointsShareOfSale,
-      expiryMonthsInactive:
-        row.expiry_months_inactive ?? SEED_PROGRAMME.expiryMonthsInactive,
-      tierWindowMonths: row.tier_window_months ?? SEED_PROGRAMME.tierWindowMonths,
-      welcomeBonus: row.welcome_bonus ?? SEED_PROGRAMME.welcomeBonus,
-      referralBonusReferrer:
-        row.referral_bonus_referrer ?? SEED_PROGRAMME.referralBonusReferrer,
-      referralBonusReferee:
-        row.referral_bonus_referee ?? SEED_PROGRAMME.referralBonusReferee,
-    }
-  } catch {
-    return SEED_PROGRAMME
+export function programmeFrom(config: VaultConfig): LoyaltyProgramme {
+  const row = config.loyalty.programme
+  if (!row) return SEED_PROGRAMME
+  return {
+    enabled: row.enabled !== false,
+    earnPerPoundSales: row.earn_per_pound_sales ?? SEED_PROGRAMME.earnPerPoundSales,
+    earnPerPoundTradeInCredit:
+      row.earn_on_trade_in_credit ?? SEED_PROGRAMME.earnPerPoundTradeInCredit,
+    pointsPerPoundRedemption:
+      row.points_per_pound_redemption ?? SEED_PROGRAMME.pointsPerPoundRedemption,
+    minRedeemPoints: row.min_redeem_points ?? SEED_PROGRAMME.minRedeemPoints,
+    maxPointsShareOfSale:
+      row.max_points_share_of_sale ?? SEED_PROGRAMME.maxPointsShareOfSale,
+    expiryMonthsInactive:
+      row.expiry_months_inactive ?? SEED_PROGRAMME.expiryMonthsInactive,
+    tierWindowMonths: row.tier_window_months ?? SEED_PROGRAMME.tierWindowMonths,
+    welcomeBonus: row.welcome_bonus ?? SEED_PROGRAMME.welcomeBonus,
+    referralBonusReferrer:
+      row.referral_bonus_referrer ?? SEED_PROGRAMME.referralBonusReferrer,
+    referralBonusReferee:
+      row.referral_bonus_referee ?? SEED_PROGRAMME.referralBonusReferee,
   }
+}
+
+/**
+ * The live loyalty rules. Only the shapes the shared evaluator understands
+ * survive: a rule whose type it does not know would silently change nobody's
+ * points, and a wrong preview is worse than none.
+ */
+const LOYALTY_RULE_TYPES = new Set<LoyaltyRuleType>([
+  "multiplier",
+  "fixed_bonus",
+  "first_purchase",
+  "birthday_month",
+  "trade_in_credit_bonus",
+  "event_checkin",
+  "day_of_week",
+])
+
+export function loyaltyRulesFrom(config: VaultConfig): LoyaltyRule[] {
+  return config.loyalty.rules
+    .filter((row) => row.active !== false && LOYALTY_RULE_TYPES.has(row.type as LoyaltyRuleType))
+    .map((row) => ({
+      id: row.id,
+      name: row.name ?? "",
+      type: row.type as LoyaltyRuleType,
+      conditions: (row.conditions ?? {}) as LoyaltyRule["conditions"],
+      value: row.value ?? 0,
+      active: true,
+      priority: row.priority ?? 0,
+      startsAt: row.starts_at || null,
+      endsAt: row.ends_at || null,
+    }))
+}
+
+/** For callers that want one of the three on their own. */
+export async function getPricingRules(): Promise<PricingRule[]> {
+  return rulesFrom(await getVaultConfig())
+}
+
+export async function getOfferSettings(): Promise<OfferSettings & OfferLimits> {
+  return offerSettingsFrom(await getVaultConfig())
+}
+
+export async function getLoyaltyProgramme(): Promise<LoyaltyProgramme> {
+  return programmeFrom(await getVaultConfig())
 }
 
 /**
