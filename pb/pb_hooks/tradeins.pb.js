@@ -630,7 +630,17 @@ routerAdd(
     // PocketBase's own SMTP settings (Dashboard > Settings > Mail) carry
     // the transport; settings.email only holds the addressing. There is no
     // generic $mails.send binding in v0.40.4 - see pb/README.md.
-    e.app.newMailClient().send(message);
+    try {
+      e.app.newMailClient().send(message);
+    } catch (err) {
+      // Without this the transport's own error surfaces as a bare
+      // "Something went wrong while processing your request."
+      console.log(`[receipt:send] ${tradeIn.id}: ${err}`);
+      throw e.internalServerError(
+        "The receipt could not be sent. Check the mail settings in the PocketBase dashboard, then try again.",
+        null
+      );
+    }
 
     auditLib.writeAuditLog(e.app, {
       actor: e.auth.id,
