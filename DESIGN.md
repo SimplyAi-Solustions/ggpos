@@ -50,7 +50,7 @@ order. Light is the default; `.dark` on `<html>` is counter night mode.
 | `--silhouette` | ink 4% | paper 6% | Product image placeholder. |
 | `--product-edge` | ink 12% | paper 14% | Box art stroke. |
 | `--product-edge-offset` | ink 20% | paper 22% | The printed-edge offset line. |
-| `--chart-1` to `--chart-5` | ink, `#3d3d3a`, `#73736d`, `#e8e8e2`, volt | inverted, volt unchanged | Charts. |
+| `--chart-1` to `--chart-5` | ink, `#3d3d3a`, `#73736d`, `#e8e8e2`, volt | inverted, volt unchanged | Charts. A series is ink; a comparison series is `--chart-3` (4.6:1 on paper, so it can be seen); at most one series is volt; `--chart-4` is for gridlines and empty heatmap cells only, never a series. |
 
 Two deliberate departures from the brief, both recorded here so nobody
 "corrects" them back:
