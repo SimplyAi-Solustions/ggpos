@@ -117,4 +117,12 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build };
+/** totals keys that are pence, not a plain count - lib/reports/scheduled.js's
+ * emailed totals read this instead of guessing from the field name. */
+var MONEY_FIELDS = { variance_total: true, cash_in: true, cash_out: true };
+
+/** totals keys that are actually a function of params.from/to - every one
+ * here is, all from sessions/movements queried within the range. */
+var PERIOD_SCOPED_TOTALS = { variance_total: true, session_count: true, cash_in: true, cash_out: true, by_day: true };
+
+module.exports = { build: build, MONEY_FIELDS: MONEY_FIELDS, PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS };

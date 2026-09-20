@@ -196,7 +196,7 @@ const FILES: Record<ExportKey, () => string> = {
 
 export function exportFile(key: ExportKey): Blob {
   const text = FILES[key]?.() ?? ""
-  return new Blob([`﻿${text}`], { type: "text/csv;charset=utf-8" })
+  return new Blob([`\ufeff${text}`], { type: "text/csv;charset=utf-8" })
 }
 
 /** How many stock lines SumUp has never seen, in the demo shop. */

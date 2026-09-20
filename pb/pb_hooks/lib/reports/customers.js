@@ -19,12 +19,13 @@ function build(app, util, params) {
 
   var group = params.group;
   var days = dates.eachDay(params.from, params.to);
+  var dayRows = daily.rowsForEachDay(app, params.from, params.to);
   var byLabel = {};
   var labelOrder = [];
   var totalNew = 0;
   var totalReturning = 0;
   for (var d = 0; d < days.length; d++) {
-    var row = daily.rowForDate(app, days[d]);
+    var row = dayRows[d];
     totalNew += row.new_customers;
     totalReturning += row.returning_customers;
     var label = dates.groupLabel(days[d], group);
@@ -53,12 +54,14 @@ function build(app, util, params) {
   } catch (err) {
     sales = [];
   }
+  // Net of that sale's own refunds - the same net-of-refunds rule every
+  // revenue figure in this package follows (docs/api-contract.md, Phase 4).
   var spendByCustomer = {};
   for (var s = 0; s < sales.length; s++) {
     var sale = sales[s];
     if (!sale) continue;
     var cid = sale.getString("customer");
-    spendByCustomer[cid] = (spendByCustomer[cid] || 0) + sale.getInt("total");
+    spendByCustomer[cid] = (spendByCustomer[cid] || 0) + sale.getInt("total") - sale.getInt("refunded_total");
   }
 
   var tradeIns = [];
@@ -113,12 +116,10 @@ function build(app, util, params) {
   }
 
   // --- Want-list demand: open rows grouped by card, joined to stock -------
-  var wantRows = [];
-  try {
-    wantRows = app.findRecordsByFilter("want_list", "status = 'open'", "", 0, 0);
-  } catch (err) {
-    wantRows = [];
-  }
+  // Paged (query.findAllByFilter) rather than one unbounded read: an
+  // open-ended shop-wide want list has no date range to bound it, so it is
+  // the one query in this report that could otherwise grow without limit.
+  var wantRows = query.findAllByFilter(app, "want_list", "status = 'open'", "", {});
   var cardLookup = query.cachedLookup(app, "cards");
   var demand = {};
   var demandOrder = [];
@@ -182,4 +183,28 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build };
+/** totals keys that are pence, not a plain count - lib/reports/scheduled.js's
+ * emailed totals read this instead of guessing from the field name. */
+var MONEY_FIELDS = { credit_liability: true };
+
+/**
+ * totals keys that are actually a function of params.from/to.
+ * credit_liability is a running balance "as of the end of the range" (this
+ * file's own header note) rather than a sum within it, but it genuinely
+ * does move with `to`, so a previous-period figure is a real before/after -
+ * unlike want_list_demand, which is every open row right now with no date
+ * filter at all, so it is left out.
+ */
+var PERIOD_SCOPED_TOTALS = {
+  new: true,
+  returning: true,
+  top_by_spend: true,
+  top_by_trade_in: true,
+  credit_liability: true,
+};
+
+module.exports = {
+  build: build,
+  MONEY_FIELDS: MONEY_FIELDS,
+  PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
+};

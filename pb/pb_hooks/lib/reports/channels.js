@@ -3,22 +3,16 @@
  * and items whose eBay listing has ended (docs/PLAN.md, "Reporting";
  * docs/api-contract.md, Phase 4).
  *
- * sales.channel does not exist as a field yet - the exports/imports package
- * this same phase is adding it in, per this session's own brief. Every sale
- * reads as "counter" until it does, exactly as docs/PLAN.md's channels row
- * asks ("read sales.channel when present, else everything is counter").
+ * sales.channel (the exports/imports package's own field) is "ebay" for a
+ * sale created from an eBay order import, blank for an ordinary counter
+ * sale - docs/PLAN.md's channels row: "read sales.channel when present,
+ * else everything is counter".
  *
  * require() this from inside reports.pb.js's handler - see pb/README.md.
  */
 
 function salesChannel(sale) {
-  var value = "";
-  try {
-    value = sale.getString("channel");
-  } catch (err) {
-    value = "";
-  }
-  return value || "counter";
+  return sale.getString("channel") || "counter";
 }
 
 function build(app, util, params) {
@@ -47,10 +41,13 @@ function build(app, util, params) {
     var sale = sales[i];
     if (!sale) continue;
     var channel = salesChannel(sale);
+    // Net of that sale's own refunds - the same net-of-refunds rule every
+    // revenue figure in this package follows (docs/api-contract.md, Phase 4).
+    var net = sale.getInt("total") - sale.getInt("refunded_total");
     var bucket = groups.get(channel, channel === "ebay" ? "eBay" : "In store");
-    bucket.revenue = (bucket.revenue || 0) + sale.getInt("total");
+    bucket.revenue = (bucket.revenue || 0) + net;
     bucket.count = (bucket.count || 0) + 1;
-    totalRevenue += sale.getInt("total");
+    totalRevenue += net;
     totalCount += 1;
   }
   var rows = groups.rows();
@@ -69,11 +66,17 @@ function build(app, util, params) {
   for (var l = 0; l < listed.length; l++) {
     var item = listed[l];
     if (!item) continue;
+    // listed_at (items.pb.js's own onRecordUpdate hook, set the moment
+    // status most recently became listed_ebay, backfilled by this phase's
+    // migration for every row already listed) is the true listing age;
+    // acquired_at is the fallback for the rare row neither hook nor
+    // backfill has reached.
+    var listedAt = item.getString("listed_at") || item.getString("acquired_at");
     listingAges.push({
       item_id: item.id,
       sku: item.getString("sku"),
       title: item.getString("title"),
-      days_listed: query.daysSince(item.getString("acquired_at"), now),
+      days_listed: query.daysSinceOrNull(listedAt, now),
     });
   }
 
@@ -118,4 +121,15 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build };
+/** totals keys that are pence, not a plain count - lib/reports/scheduled.js's
+ * emailed totals read this instead of guessing from the field name.
+ * by_channel is an object, not a top-level number, so it is already left
+ * out of the emailed totals whatever this says - see scheduled.js. */
+var MONEY_FIELDS = { revenue: true };
+
+/** totals keys that are actually a function of params.from/to.
+ * listing_ages is left out: it lists every item currently listed_ebay, no
+ * date filter at all - "as things stand", not a period figure. */
+var PERIOD_SCOPED_TOTALS = { revenue: true, count: true, by_channel: true, items_ended: true };
+
+module.exports = { build: build, MONEY_FIELDS: MONEY_FIELDS, PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS };

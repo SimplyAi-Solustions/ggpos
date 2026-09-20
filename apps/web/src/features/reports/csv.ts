@@ -67,7 +67,7 @@ export function csvFilename(key: string, from: string, to: string): string {
  */
 export function downloadCsv(filename: string, text: string): void {
   // A BOM, so Excel opens a name with an accent in it as UTF-8.
-  const blob = new Blob([`﻿${text}`], { type: "text/csv;charset=utf-8" })
+  const blob = new Blob([`\ufeff${text}`], { type: "text/csv;charset=utf-8" })
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url

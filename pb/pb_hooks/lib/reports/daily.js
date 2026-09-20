@@ -5,12 +5,16 @@
  *
  * buildDayRow is the pure builder: given an app and a YYYY-MM-DD date, it
  * returns the daily_stats field values for that day and writes nothing
- * itself. upsertDayRow is the only thing that saves one, by date, never a
- * duplicate - crons.pb.js's "stats" job and POST /api/vault/stats/rebuild
- * (stats.pb.js) both call it and nothing else does. rowForDate is the
- * read-through the reports use: the stored row when one exists, else a
- * fresh (unsaved) computation, so a report never reads as all zero just
- * because the nightly cron has not reached that day yet.
+ * itself. upsertDayRow saves one, by date, never a duplicate; upsertDayRows
+ * does the same for several dates at once, sharing one stock valuation scan
+ * and tolerating one bad day without failing the rest - crons.pb.js's
+ * "stats" job (the last 7 UTC days, nightly) and POST
+ * /api/vault/stats/rebuild (stats.pb.js, an admin-chosen range) both call
+ * upsertDayRows and nothing else writes a daily_stats row. rowForDate
+ * (single day) and rowsForEachDay (a whole range, batched - see its own
+ * note) are the read-through the reports use: the stored row when one
+ * exists, else a fresh (unsaved) computation, so a report never reads as
+ * all zero just because the nightly cron has not reached that day yet.
  *
  * require() this from inside each handler/cron that uses it - see
  * pb/README.md on pb_hooks isolation.

@@ -48,8 +48,12 @@ export interface ReportTableProps {
    * rather than a picture, and it keeps the rows on one left rail.
    */
   imagePlatform?: string
-  /** Used to key the table so a change of report resets the sort. */
-  resetKey?: string
+  /**
+   * How many rows to draw. A year of the buy-in register is thousands of
+   * lines, and a page nobody can scroll is no more useful than a page that
+   * says how many there are. The exported CSV always carries the lot.
+   */
+  limit?: number
   testId?: string
 }
 
@@ -58,8 +62,10 @@ export function ReportTable({
   rows,
   empty,
   imagePlatform,
+  limit = 200,
   testId,
 }: ReportTableProps) {
+  const shown = rows.length > limit ? rows.slice(0, limit) : rows
   const defs = React.useMemo(
     () =>
       columns.map((column) => ({
@@ -72,7 +78,7 @@ export function ReportTable({
     [columns]
   )
 
-  const table = useTable({ features, columns: defs, data: rows })
+  const table = useTable({ features, columns: defs, data: shown })
 
   if (rows.length === 0) {
     return (
@@ -178,6 +184,13 @@ export function ReportTable({
           </li>
         ))}
       </ul>
+
+      {rows.length > shown.length ? (
+        <p className="mt-6 text-[13px] text-muted-foreground-2">
+          Showing the first {shown.length} of {rows.length.toLocaleString("en-GB")}{" "}
+          rows. The exported file has them all.
+        </p>
+      ) : null}
     </div>
   )
 }

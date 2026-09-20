@@ -1,7 +1,7 @@
 import { createFileRoute, notFound } from "@tanstack/react-router"
 
 import { ReportScreen } from "@/features/reports/ReportScreen"
-import { isReportKey } from "@/features/reports/specs"
+import { isReportKey } from "@/features/reports/keys"
 
 function Report() {
   const { key } = Route.useParams()

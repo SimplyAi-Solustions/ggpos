@@ -18,14 +18,16 @@ import { Route as LoginRouteImport } from "./routes/login"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
 import { Route as CounterIndexRouteImport } from "./routes/counter.index"
 import { Route as CounterCashRouteImport } from "./routes/counter.cash"
+import { Route as CounterExportsRouteImport } from "./routes/counter.exports"
 import { Route as CounterLabelsRouteImport } from "./routes/counter.labels"
-import { Route as CounterReportsRouteImport } from "./routes/counter.reports"
 import { Route as CounterScanRouteImport } from "./routes/counter.scan"
 import { Route as CounterSellRouteImport } from "./routes/counter.sell"
 import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
 import { Route as CounterCustomersIndexRouteImport } from "./routes/counter.customers.index"
 import { Route as CounterCustomersNewRouteImport } from "./routes/counter.customers.new"
+import { Route as CounterReportsIndexRouteImport } from "./routes/counter.reports.index"
+import { Route as CounterReportsKeyRouteImport } from "./routes/counter.reports.$key"
 import { Route as CounterStockIndexRouteImport } from "./routes/counter.stock.index"
 import { Route as CounterStockSkuRouteImport } from "./routes/counter.stock.$sku"
 import { Route as CounterStockNewRouteImport } from "./routes/counter.stock.new"
@@ -83,14 +85,14 @@ const CounterCashRoute = CounterCashRouteImport.update({
   path: "/cash",
   getParentRoute: () => CounterRoute,
 } as any)
+const CounterExportsRoute = CounterExportsRouteImport.update({
+  id: "/exports",
+  path: "/exports",
+  getParentRoute: () => CounterRoute,
+} as any)
 const CounterLabelsRoute = CounterLabelsRouteImport.update({
   id: "/labels",
   path: "/labels",
-  getParentRoute: () => CounterRoute,
-} as any)
-const CounterReportsRoute = CounterReportsRouteImport.update({
-  id: "/reports",
-  path: "/reports",
   getParentRoute: () => CounterRoute,
 } as any)
 const CounterScanRoute = CounterScanRouteImport.update({
@@ -121,6 +123,16 @@ const CounterCustomersIndexRoute = CounterCustomersIndexRouteImport.update({
 const CounterCustomersNewRoute = CounterCustomersNewRouteImport.update({
   id: "/customers/new",
   path: "/customers/new",
+  getParentRoute: () => CounterRoute,
+} as any)
+const CounterReportsIndexRoute = CounterReportsIndexRouteImport.update({
+  id: "/reports/",
+  path: "/reports/",
+  getParentRoute: () => CounterRoute,
+} as any)
+const CounterReportsKeyRoute = CounterReportsKeyRouteImport.update({
+  id: "/reports/$key",
+  path: "/reports/$key",
   getParentRoute: () => CounterRoute,
 } as any)
 const CounterStockIndexRoute = CounterStockIndexRouteImport.update({
@@ -190,18 +202,20 @@ export interface FileRoutesByFullPath {
   "/login": typeof LoginRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
+  "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
-  "/counter/reports": typeof CounterReportsRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/counter/": typeof CounterIndexRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
+  "/counter/reports/$key": typeof CounterReportsKeyRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/counter/customers/": typeof CounterCustomersIndexRoute
+  "/counter/reports/": typeof CounterReportsIndexRoute
   "/counter/stock/": typeof CounterStockIndexRoute
   "/counter/trade/": typeof CounterTradeIndexRoute
   "/counter/customers/$code/card": typeof CounterCustomersCodeCardRoute
@@ -219,18 +233,20 @@ export interface FileRoutesByTo {
   "/login": typeof LoginRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
+  "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
-  "/counter/reports": typeof CounterReportsRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/counter": typeof CounterIndexRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
+  "/counter/reports/$key": typeof CounterReportsKeyRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/counter/customers": typeof CounterCustomersIndexRoute
+  "/counter/reports": typeof CounterReportsIndexRoute
   "/counter/stock": typeof CounterStockIndexRoute
   "/counter/trade": typeof CounterTradeIndexRoute
   "/counter/customers/$code/card": typeof CounterCustomersCodeCardRoute
@@ -250,18 +266,20 @@ export interface FileRoutesById {
   "/login": typeof LoginRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
+  "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
-  "/counter/reports": typeof CounterReportsRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/counter/": typeof CounterIndexRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
+  "/counter/reports/$key": typeof CounterReportsKeyRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/counter/customers/": typeof CounterCustomersIndexRoute
+  "/counter/reports/": typeof CounterReportsIndexRoute
   "/counter/stock/": typeof CounterStockIndexRoute
   "/counter/trade/": typeof CounterTradeIndexRoute
   "/counter/customers/$code/card": typeof CounterCustomersCodeCardRoute
@@ -282,18 +300,20 @@ export interface FileRouteTypes {
     | "/login"
     | "/c/$token"
     | "/counter/cash"
+    | "/counter/exports"
     | "/counter/labels"
-    | "/counter/reports"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
     | "/labels/print"
     | "/counter/"
     | "/counter/customers/new"
+    | "/counter/reports/$key"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/counter/customers/"
+    | "/counter/reports/"
     | "/counter/stock/"
     | "/counter/trade/"
     | "/counter/customers/$code/card"
@@ -311,18 +331,20 @@ export interface FileRouteTypes {
     | "/login"
     | "/c/$token"
     | "/counter/cash"
+    | "/counter/exports"
     | "/counter/labels"
-    | "/counter/reports"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
     | "/labels/print"
     | "/counter"
     | "/counter/customers/new"
+    | "/counter/reports/$key"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/counter/customers"
+    | "/counter/reports"
     | "/counter/stock"
     | "/counter/trade"
     | "/counter/customers/$code/card"
@@ -341,18 +363,20 @@ export interface FileRouteTypes {
     | "/login"
     | "/c/$token"
     | "/counter/cash"
+    | "/counter/exports"
     | "/counter/labels"
-    | "/counter/reports"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
     | "/labels/print"
     | "/counter/"
     | "/counter/customers/new"
+    | "/counter/reports/$key"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/counter/customers/"
+    | "/counter/reports/"
     | "/counter/stock/"
     | "/counter/trade/"
     | "/counter/customers/$code/card"
@@ -439,18 +463,18 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterCashRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/counter/exports": {
+      id: "/counter/exports"
+      path: "/exports"
+      fullPath: "/counter/exports"
+      preLoaderRoute: typeof CounterExportsRouteImport
+      parentRoute: typeof CounterRoute
+    }
     "/counter/labels": {
       id: "/counter/labels"
       path: "/labels"
       fullPath: "/counter/labels"
       preLoaderRoute: typeof CounterLabelsRouteImport
-      parentRoute: typeof CounterRoute
-    }
-    "/counter/reports": {
-      id: "/counter/reports"
-      path: "/reports"
-      fullPath: "/counter/reports"
-      preLoaderRoute: typeof CounterReportsRouteImport
       parentRoute: typeof CounterRoute
     }
     "/counter/scan": {
@@ -493,6 +517,20 @@ declare module "@tanstack/react-router" {
       path: "/customers/new"
       fullPath: "/counter/customers/new"
       preLoaderRoute: typeof CounterCustomersNewRouteImport
+      parentRoute: typeof CounterRoute
+    }
+    "/counter/reports/": {
+      id: "/counter/reports/"
+      path: "/reports"
+      fullPath: "/counter/reports/"
+      preLoaderRoute: typeof CounterReportsIndexRouteImport
+      parentRoute: typeof CounterRoute
+    }
+    "/counter/reports/$key": {
+      id: "/counter/reports/$key"
+      path: "/reports/$key"
+      fullPath: "/counter/reports/$key"
+      preLoaderRoute: typeof CounterReportsKeyRouteImport
       parentRoute: typeof CounterRoute
     }
     "/counter/stock/": {
@@ -577,17 +615,19 @@ declare module "@tanstack/react-router" {
 
 interface CounterRouteChildren {
   CounterCashRoute: typeof CounterCashRoute
+  CounterExportsRoute: typeof CounterExportsRoute
   CounterLabelsRoute: typeof CounterLabelsRoute
-  CounterReportsRoute: typeof CounterReportsRoute
   CounterScanRoute: typeof CounterScanRoute
   CounterSellRoute: typeof CounterSellRoute
   CounterSettingsRoute: typeof CounterSettingsRoute
   CounterIndexRoute: typeof CounterIndexRoute
   CounterCustomersNewRoute: typeof CounterCustomersNewRoute
+  CounterReportsKeyRoute: typeof CounterReportsKeyRoute
   CounterStockSkuRoute: typeof CounterStockSkuRoute
   CounterStockNewRoute: typeof CounterStockNewRoute
   CounterTradeNewRoute: typeof CounterTradeNewRoute
   CounterCustomersIndexRoute: typeof CounterCustomersIndexRoute
+  CounterReportsIndexRoute: typeof CounterReportsIndexRoute
   CounterStockIndexRoute: typeof CounterStockIndexRoute
   CounterTradeIndexRoute: typeof CounterTradeIndexRoute
   CounterCustomersCodeCardRoute: typeof CounterCustomersCodeCardRoute
@@ -600,17 +640,19 @@ interface CounterRouteChildren {
 
 const CounterRouteChildren: CounterRouteChildren = {
   CounterCashRoute: CounterCashRoute,
+  CounterExportsRoute: CounterExportsRoute,
   CounterLabelsRoute: CounterLabelsRoute,
-  CounterReportsRoute: CounterReportsRoute,
   CounterScanRoute: CounterScanRoute,
   CounterSellRoute: CounterSellRoute,
   CounterSettingsRoute: CounterSettingsRoute,
   CounterIndexRoute: CounterIndexRoute,
   CounterCustomersNewRoute: CounterCustomersNewRoute,
+  CounterReportsKeyRoute: CounterReportsKeyRoute,
   CounterStockSkuRoute: CounterStockSkuRoute,
   CounterStockNewRoute: CounterStockNewRoute,
   CounterTradeNewRoute: CounterTradeNewRoute,
   CounterCustomersIndexRoute: CounterCustomersIndexRoute,
+  CounterReportsIndexRoute: CounterReportsIndexRoute,
   CounterStockIndexRoute: CounterStockIndexRoute,
   CounterTradeIndexRoute: CounterTradeIndexRoute,
   CounterCustomersCodeCardRoute: CounterCustomersCodeCardRoute,

@@ -34,10 +34,11 @@ function send(app, now) {
   var stock = stockReport.build(app, util, params);
 
   var days = dates.eachDay(period.from, period.to);
+  var dayRows = daily.rowsForEachDay(app, period.from, period.to);
   var newCustomers = 0;
   var cashVariance = 0;
   for (var d = 0; d < days.length; d++) {
-    var row = daily.rowForDate(app, days[d]);
+    var row = dayRows[d];
     newCustomers += row.new_customers;
     cashVariance += row.cash_variance;
   }

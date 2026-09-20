@@ -122,6 +122,26 @@ export function percentColumn(
   }
 }
 
+/** A column whose stored value is an enum, shown in the words staff use. */
+function mappedColumn(
+  key: string,
+  label: string,
+  words: Record<string, string>,
+  summary?: ColumnSpec["summary"]
+): ColumnSpec {
+  const say = (row: ReportRow) => {
+    const raw = str(row, key)
+    return words[raw] ?? raw
+  }
+  return { key, label, text: say, sortValue: (row) => say(row).toLowerCase(), summary }
+}
+
+const ID_TYPES: Record<string, string> = {
+  passport: "Passport",
+  driving_licence: "Driving licence",
+  other: "Other",
+}
+
 function dateColumn(key: string, label: string, summary?: ColumnSpec["summary"]): ColumnSpec {
   return {
     key,
@@ -355,7 +375,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
     panels: [
       {
         totalsKey: "ageing_buckets",
-        heading: "How long it has been held",
+        heading: "How long it is held",
         empty: "Nothing is in stock.",
         columns: [
           textColumn("bucket", "Days held", "title"),
@@ -582,7 +602,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
       dateColumn("completed_at", "Completed", "detail"),
       textColumn("seller_name", "Seller"),
       textColumn("seller_address", "Address"),
-      textColumn("id_type", "ID"),
+      mappedColumn("id_type", "ID", ID_TYPES),
       countColumn("items", "Items"),
       moneyColumn("total_offer", "Paid", "figure"),
     ],
@@ -604,7 +624,3 @@ export const REPORT_ORDER: ReportKey[] = [
   "cash",
   "compliance",
 ]
-
-export function isReportKey(value: string): value is ReportKey {
-  return Object.prototype.hasOwnProperty.call(REPORT_SPECS, value)
-}

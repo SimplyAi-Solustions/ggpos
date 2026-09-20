@@ -106,6 +106,8 @@ export const DEMO_SETTINGS = {
   cash_cap: 800000,
   /** £10.00. */
   cash_variance_alert: 1000,
+  /** Not a key or a secret: the merchant code is staff-readable. */
+  sumup_merchant_code: "MDEMO001",
 }
 
 /** The tiers as the config route serves them, straight off `loyalty_tiers`. */

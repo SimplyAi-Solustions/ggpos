@@ -27,7 +27,7 @@ import { Switch } from "@/components/ui/switch"
 import { useCounterDock } from "@/app/counter-dock"
 import { useStaff } from "@/lib/auth"
 import { refusalOrFallback } from "@/lib/api/refusal"
-import { getReport, listSavedReports } from "@/lib/api"
+import { getReport, listSavedReports } from "@/lib/api/reports"
 import { todayIso } from "@/lib/api/dates"
 import type {
   ReportEnvelope,
@@ -57,7 +57,6 @@ import {
 import {
   REPORT_SPECS,
   figureText,
-  num,
   type ColumnSpec,
   type ReportSpec,
 } from "@/features/reports/specs"
@@ -167,12 +166,6 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const [by, setBy] = React.useState<string>(spec.dimensions[0]?.key ?? "")
   const [compare, setCompare] = React.useState(true)
   const [saveOpen, setSaveOpen] = React.useState(false)
-
-  // A different report has different dimensions, so the breakdown resets to
-  // that report's own default rather than carrying a key it does not know.
-  React.useEffect(() => {
-    setBy(REPORT_SPECS[reportKey].dimensions[0]?.key ?? "")
-  }, [reportKey])
 
   const invalid = rangeError(range)
   const previous = React.useMemo(() => previousPeriod(range), [range])
@@ -322,6 +315,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
         dimensions={spec.dimensions}
         by={by}
         onByChange={setBy}
+        showGroup={spec.chart !== null}
         error={invalid}
       />
 
@@ -457,6 +451,3 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
     </section>
   )
 }
-
-/** Exported for the report page's own unit test. */
-export { hasData as reportHasData, num as reportNum }

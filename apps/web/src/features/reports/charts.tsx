@@ -69,11 +69,6 @@ function toneVar(tone: ChartTone): string {
   return `var(--chart-${tone})`
 }
 
-/** At most eight ticks, whatever the range: 400 days will not fit under a chart. */
-function tickInterval(count: number): number {
-  return count <= 8 ? 0 : Math.ceil(count / 8) - 1
-}
-
 export function SeriesChart({
   kind,
   data,
@@ -102,8 +97,10 @@ export function SeriesChart({
         tickLine={false}
         axisLine={{ stroke: "var(--hairline)" }}
         tickMargin={10}
-        minTickGap={8}
-        interval={tickInterval(data.length)}
+        // Thinned by the width actually available rather than by a count:
+        // eight ticks fit at 1440px and collide at 390px.
+        minTickGap={36}
+        interval="preserveStartEnd"
         tickFormatter={tickFormatter}
       />
       <YAxis
@@ -184,7 +181,7 @@ function stepFor(value: number, max: number): number {
 }
 
 export interface HeatmapProps {
-  /** Seven rows of twenty-four counts. Index 0 is Monday, hours are UTC. */
+  /** Seven rows of twenty-four counts. Index 0 is Monday, in shop time. */
   rows: number[][]
   summary: string
   className?: string

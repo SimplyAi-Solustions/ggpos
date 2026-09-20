@@ -185,4 +185,29 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build, VALID_BY: VALID_BY };
+/** totals keys that are pence, not a plain count or an array -
+ * lib/reports/scheduled.js's emailed totals read this instead of guessing
+ * from the field name. */
+var MONEY_FIELDS = { value_cost: true, value_market: true, unrealised_gain: true };
+
+/**
+ * totals keys that are actually a function of params.from/to. Almost
+ * nothing in this report is: value_cost, value_market, unrealised_gain,
+ * ageing_buckets, dead_stock and price_movers_count are every one of them
+ * "as stock stands right now" (this file's own header note), read off
+ * every held item with no date filter at all - asking for a "previous
+ * period" of any of those would just repeat today's figure after a second,
+ * wasted full scan of the stock table, not show a real before/after
+ * change. Only sell_through (keyed off items *acquired* in the range) is
+ * genuinely period-scoped. reports.pb.js skips the second build() call
+ * entirely for a report (like this one) whose declared list would leave
+ * nothing to show.
+ */
+var PERIOD_SCOPED_TOTALS = { sell_through: true };
+
+module.exports = {
+  build: build,
+  VALID_BY: VALID_BY,
+  MONEY_FIELDS: MONEY_FIELDS,
+  PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
+};

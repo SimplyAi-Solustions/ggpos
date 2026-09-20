@@ -145,6 +145,7 @@ function MoreSheet({
             {[
               { label: "Customers", to: "/counter/customers" },
               { label: "Reports", to: "/counter/reports" },
+              { label: "Exports and imports", to: "/counter/exports" },
               { label: "Add stock", to: "/counter/stock/new" },
               { label: "My Vault", to: "/account" },
             ].map((entry) => (

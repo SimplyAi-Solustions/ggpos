@@ -201,20 +201,34 @@ cronAdd("retention", "30 3 * * *", () => {
   );
 });
 
-// Nightly daily_stats build for yesterday (UTC), straight from the ledgers
-// and rows - never a cached balance (CLAUDE.md; docs/PLAN.md's Phase 4
-// "Reporting" brief). 00:30 UTC, comfortably clear of midnight so
-// "yesterday" is unambiguous. POST /api/vault/stats/rebuild (stats.pb.js)
-// is the on-demand, admin-facing equivalent for a backfill or a
-// correction; both call pb_hooks/lib/reports/daily.js's upsertDayRow, so
-// neither can ever produce two rows for the same date.
+// Nightly daily_stats build for the last 7 UTC days, straight from the
+// ledgers and rows - never a cached balance (CLAUDE.md; docs/PLAN.md's
+// Phase 4 "Reporting" brief). 00:30 UTC, comfortably clear of midnight so
+// "yesterday" is unambiguous. Not just yesterday: a day's own row can still
+// be missing something the night it happens - a late eBay orders import
+// landing after 00:30, a refund processed the next morning against a sale
+// from days before - so every night re-walks the past week, not only its
+// most recent day, and self-heals a day's row once the data it was missing
+// actually exists. "Today" itself is never included; it is still in
+// progress at 00:30. upsertDayRows shares one stock valuation scan across
+// all 7 days rather than one per day (see its own note), and tries each
+// day on its own so one bad day cannot stop the other six from rebuilding.
+// POST /api/vault/stats/rebuild (stats.pb.js) is the on-demand,
+// admin-facing equivalent for a longer backfill or a correction; both call
+// pb_hooks/lib/reports/daily.js's upsertDayRows, so neither can ever
+// produce two rows for the same date.
 cronAdd("stats", "30 0 * * *", () => {
   const dates = require(`${__hooks}/lib/reports/dates.js`);
   const daily = require(`${__hooks}/lib/reports/daily.js`);
   try {
-    const yesterday = dates.addDays(dates.todayUtc(), -1);
-    daily.upsertDayRow($app, yesterday);
-    console.log(`[cron:stats] built daily_stats for ${yesterday}`);
+    const today = dates.todayUtc();
+    const days = [];
+    for (let i = 7; i >= 1; i--) days.push(dates.addDays(today, -i));
+    const result = daily.upsertDayRows($app, days);
+    const failedNote = result.failed.length > 0 ? `, ${result.failed.length} failed` : "";
+    console.log(
+      `[cron:stats] built daily_stats for ${result.ok.length} of ${days.length} day(s) (${days[0]} to ${days[days.length - 1]})${failedNote}`
+    );
   } catch (err) {
     console.log(`[cron:stats] failed: ${err}`);
   }

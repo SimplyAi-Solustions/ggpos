@@ -62,6 +62,10 @@ async function wireConfig(): Promise<VaultConfig> {
       ...config.settings,
       cash_cap: config.settings.cash_cap ?? DEMO_SETTINGS.cash_cap,
       cash_variance_alert: DEMO_SETTINGS.cash_variance_alert,
+      // A merchant code, so the demo Cash screen shows the SumUp comparison
+      // rather than the line telling you to go and set a key up. The key
+      // itself never reaches a browser, in demo mode or out of it.
+      sumup: { merchant_code: DEMO_SETTINGS.sumup_merchant_code },
     },
     loyalty: {
       ...config.loyalty,

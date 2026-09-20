@@ -14,6 +14,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { MicroLabel } from "@/components/ui/micro-label"
 import {
   Select,
   SelectContent,
@@ -31,23 +32,14 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { refusalOrFallback } from "@/lib/api/refusal"
-import { deleteSavedReport, saveSavedReport } from "@/lib/api"
+import { deleteSavedReport, saveSavedReport } from "@/lib/api/reports"
+import { SCHEDULES, scheduleLabel } from "@/features/reports/schedules"
 import type {
   ReportGroup,
   ReportKey,
   ReportSchedule,
   SavedReportRecord,
 } from "@/lib/api/types"
-
-const SCHEDULES: { key: ReportSchedule; label: string }[] = [
-  { key: "none", label: "Do not send" },
-  { key: "weekly", label: "Every Monday" },
-  { key: "monthly", label: "On the 1st" },
-]
-
-export function scheduleLabel(schedule?: ReportSchedule): string {
-  return SCHEDULES.find((entry) => entry.key === (schedule ?? "none"))?.label ?? ""
-}
 
 /** The line of saved views under the title. Each one loads on a tap. */
 export function SavedViewsRow({
@@ -59,15 +51,17 @@ export function SavedViewsRow({
 }) {
   if (views.length === 0) return null
   return (
-    <div
-      data-testid="saved-views"
-      className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3"
-    >
-      {views.map((view) => (
-        <Button key={view.id} variant="text" onClick={() => onLoad(view)}>
-          {view.name || "Unnamed view"}
-        </Button>
-      ))}
+    <div data-testid="saved-views" className="mt-8">
+      {/* Named so a saved view does not read as a second subtitle under the
+          Anton line, which is what it looked like without it. */}
+      <MicroLabel className="mb-3">Saved views</MicroLabel>
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        {views.map((view) => (
+          <Button key={view.id} variant="text" onClick={() => onLoad(view)}>
+            {view.name || "Unnamed view"}
+          </Button>
+        ))}
+      </div>
     </div>
   )
 }

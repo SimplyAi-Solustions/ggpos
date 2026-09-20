@@ -101,6 +101,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       { id: "customers", label: "Customers", run: () => go("/counter/customers") },
       { id: "reports", label: "Reports", run: () => go("/counter/reports") },
       {
+        id: "exports",
+        label: "Exports and imports",
+        run: () => go("/counter/exports"),
+      },
+      {
         id: "night",
         label: "Toggle night mode",
         run: () => {

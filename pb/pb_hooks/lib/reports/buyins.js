@@ -24,6 +24,7 @@ function build(app, util, params) {
 
   // --- Series and headline totals from daily_stats -------------------------
   var days = dates.eachDay(params.from, params.to);
+  var dayRows = daily.rowsForEachDay(app, params.from, params.to);
   var byLabel = {};
   var labelOrder = [];
   var totalSpend = 0;
@@ -31,7 +32,7 @@ function build(app, util, params) {
   var totalCash = 0;
   var totalCredit = 0;
   for (var d = 0; d < days.length; d++) {
-    var row = daily.rowForDate(app, days[d]);
+    var row = dayRows[d];
     var payout = row.buy_in_total_by_payout || {};
     var spend = (payout.cash || 0) + (payout.credit || 0);
     totalSpend += spend;
@@ -97,32 +98,16 @@ function build(app, util, params) {
     }
   }
 
-  // Lines carry the game and the offer-vs-market percent, one pass.
-  var lines = [];
-  for (var ti = 0; ti < tradeInIds.length; ti++) {
-    try {
-      var found = app.findRecordsByFilter(
-        "trade_in_lines",
-        "trade_in = {:id} && accepted = true",
-        "",
-        0,
-        0,
-        { id: tradeInIds[ti] }
-      );
-      for (var f = 0; f < found.length; f++) lines.push(found[f]);
-    } catch (err) {
-      // no lines for this trade-in
-    }
-  }
+  // Lines carry the game and the offer-vs-market percent, one batched
+  // query for every trade-in in range rather than one per id (query.queryByIds).
+  var lines = query.queryByIds(app, "trade_in_lines", "trade_in", tradeInIds, "accepted = true", {}, "");
 
-  var itemsBought = 0;
   var offerPctSum = 0;
   var offerPctCount = 0;
   for (var ln = 0; ln < lines.length; ln++) {
     var line = lines[ln];
     if (!line) continue;
     var qty = Math.max(1, line.getInt("qty"));
-    itemsBought += qty;
 
     var marketPrice = line.getInt("market_price");
     var offerPrice = line.getInt("offer_price");
@@ -146,29 +131,33 @@ function build(app, util, params) {
     }
   }
 
-  // Items bought that have since sold - not bounded to this range, since
+  // Items bought and items bought that have since sold - both row counts
+  // (items.trade_in_line -> trade_in_lines.trade_in, two-level relation
+  // dot-notation, the same as items_sold's own filter below), not a sum of
+  // line quantities: stock.js's sell-through figure is the same row-level
+  // proxy for the same reason (a multi-unit stock row only ever flips to
+  // "sold" once, when the whole row sells out), and items_bought has to
+  // count in the same unit as items_sold or "vs" and sell_through_ratio
+  // both compare two different scales. Not bounded to this range, since
   // "items bought vs sold" (docs/PLAN.md) reads as a running conversion
-  // rate for stock the shop has taken in, not a same-day coincidence.
-  var itemsSold = 0;
-  for (var it = 0; it < tradeInIds.length; it++) {
-    try {
-      itemsSold += app.findRecordsByFilter(
-        "items",
-        "trade_in_line.trade_in = {:id} && status = 'sold'",
-        "",
-        0,
-        0,
-        { id: tradeInIds[it] }
-      ).length;
-    } catch (err) {
-      // ignore
-    }
-  }
+  // rate for stock the shop has taken in, not a same-day coincidence. Each
+  // is one batched query for every trade-in in range (query.queryByIds),
+  // not one per id.
+  var itemsBought = query.queryByIds(app, "items", "trade_in_line.trade_in", tradeInIds, "", {}, "").length;
+  var itemsSold = query.queryByIds(
+    app,
+    "items",
+    "trade_in_line.trade_in",
+    tradeInIds,
+    "status = 'sold'",
+    {},
+    ""
+  ).length;
 
   var table = groups.rows();
   for (var g = 0; g < table.length; g++) {
     var row2 = table[g];
-    row2.avg_offer_pct = row2._offerPctCount > 0 ? Math.round((row2._offerPctSum / row2._offerPctCount) * 10) / 10 : 0;
+    row2.avg_offer_pct = row2._offerPctCount > 0 ? query.roundPct(row2._offerPctSum / row2._offerPctCount) : 0;
     delete row2._offerPctSum;
     delete row2._offerPctCount;
   }
@@ -192,12 +181,12 @@ function build(app, util, params) {
   var totals = {
     spend: totalSpend,
     count: totalCount,
-    avg_offer_pct: offerPctCount > 0 ? Math.round((offerPctSum / offerPctCount) * 10) / 10 : 0,
+    avg_offer_pct: offerPctCount > 0 ? query.roundPct(offerPctSum / offerPctCount) : 0,
     cash: totalCash,
     credit: totalCredit,
     items_bought: itemsBought,
     items_sold: itemsSold,
-    sell_through_ratio: itemsBought > 0 ? Math.round((itemsSold / itemsBought) * 1000) / 1000 : 0,
+    sell_through_ratio: itemsBought > 0 ? query.roundRatio(itemsSold / itemsBought) : 0,
     top_sellers: topSellersOut,
   };
 
@@ -214,4 +203,33 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build, VALID_BY: VALID_BY };
+/** totals keys that are pence, not a plain count, percent or ratio -
+ * lib/reports/scheduled.js's emailed totals read this instead of guessing
+ * from the field name. */
+var MONEY_FIELDS = { spend: true, cash: true, credit: true };
+
+/**
+ * totals keys that are actually a function of params.from/to.
+ * items_bought/items_sold/sell_through_ratio are left out on purpose: both
+ * counts are checked against items' *current* status regardless of when
+ * that happened (this file's own comment above, "not bounded to this
+ * range"), so a "previous period" version of them would not be a clean
+ * before/after comparison - it would restate today's conversion rate
+ * against a different, older population of trade-ins, not measure change
+ * over time the way the other figures do.
+ */
+var PERIOD_SCOPED_TOTALS = {
+  spend: true,
+  count: true,
+  avg_offer_pct: true,
+  cash: true,
+  credit: true,
+  top_sellers: true,
+};
+
+module.exports = {
+  build: build,
+  VALID_BY: VALID_BY,
+  MONEY_FIELDS: MONEY_FIELDS,
+  PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
+};

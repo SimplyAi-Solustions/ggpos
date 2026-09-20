@@ -10,39 +10,37 @@
 
 function build(app, util, params) {
   var dates = require(`${__hooks}/lib/reports/dates.js`);
+  var query = require(`${__hooks}/lib/reports/query.js`);
   var bounds = dates.rangeParams(params.from, params.to);
 
-  var tradeIns = [];
-  try {
-    tradeIns = app.findRecordsByFilter(
-      "trade_ins",
-      "status = 'completed' && completed_at >= {:start} && completed_at <= {:end}",
-      "completed_at",
-      0,
-      0,
-      bounds
-    );
-  } catch (err) {
-    tradeIns = [];
+  // Paged (query.findAllByFilter) rather than one unbounded read: a long
+  // compliance range (a year of trade-ins, for an audit) is the one load
+  // in this report with no small natural cap.
+  var tradeIns = query.findAllByFilter(
+    app,
+    "trade_ins",
+    "status = 'completed' && completed_at >= {:start} && completed_at <= {:end}",
+    "completed_at",
+    bounds
+  );
+
+  var tradeInIds = [];
+  for (var ti = 0; ti < tradeIns.length; ti++) {
+    if (tradeIns[ti]) tradeInIds.push(tradeIns[ti].id);
+  }
+  // One batched query for every accepted line across every trade-in in
+  // range, not one findRecordsByFilter per trade-in (query.queryByIds).
+  var lines = query.queryByIds(app, "trade_in_lines", "trade_in", tradeInIds, "accepted = true", {}, "");
+  var lineCountByTradeIn = {};
+  for (var ln = 0; ln < lines.length; ln++) {
+    var tid = lines[ln].getString("trade_in");
+    lineCountByTradeIn[tid] = (lineCountByTradeIn[tid] || 0) + 1;
   }
 
   var table = [];
   for (var i = 0; i < tradeIns.length; i++) {
     var tradeIn = tradeIns[i];
     if (!tradeIn) continue;
-    var lineCount = 0;
-    try {
-      lineCount = app.findRecordsByFilter(
-        "trade_in_lines",
-        "trade_in = {:id} && accepted = true",
-        "",
-        0,
-        0,
-        { id: tradeIn.id }
-      ).length;
-    } catch (err) {
-      lineCount = 0;
-    }
     table.push({
       id: tradeIn.id,
       number: tradeIn.getString("number"),
@@ -50,7 +48,7 @@ function build(app, util, params) {
       seller_name: tradeIn.getString("seller_name"),
       seller_address: tradeIn.getString("seller_address"),
       id_type: tradeIn.getString("seller_id_type"),
-      items: lineCount,
+      items: lineCountByTradeIn[tradeIn.id] || 0,
       total_offer: tradeIn.getInt("total_offer"),
     });
   }
@@ -92,7 +90,7 @@ function auditCsvRows(app, util, params) {
     if (!row) continue;
     var meta = "";
     try {
-      meta = JSON.stringify(JSON.parse(JSON.stringify(row)).meta || {});
+      meta = JSON.stringify(util.jsonField(row, "meta", {}) || {});
     } catch (err) {
       meta = "";
     }
@@ -119,4 +117,20 @@ var AUDIT_CSV_COLUMNS = [
   { key: "ip", label: "IP" },
 ];
 
-module.exports = { build: build, auditCsvRows: auditCsvRows, AUDIT_CSV_COLUMNS: AUDIT_CSV_COLUMNS };
+/** No totals key here is money in pence (total_offer is a per-row table
+ * figure, not a totals one) - declared anyway so scheduled.js never has to
+ * guess from a field name. */
+var MONEY_FIELDS = {};
+
+/** totals keys that are actually a function of params.from/to - both are:
+ * count from the range-bound trade-ins query, stock_book_url built from
+ * params.from/to directly. */
+var PERIOD_SCOPED_TOTALS = { count: true, stock_book_url: true };
+
+module.exports = {
+  build: build,
+  auditCsvRows: auditCsvRows,
+  AUDIT_CSV_COLUMNS: AUDIT_CSV_COLUMNS,
+  MONEY_FIELDS: MONEY_FIELDS,
+  PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
+};

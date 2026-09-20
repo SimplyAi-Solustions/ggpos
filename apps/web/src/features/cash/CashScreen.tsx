@@ -43,6 +43,8 @@ import { useCounterDock } from "@/app/counter-dock"
 import { MoneyInput } from "@/features/sell/money-input"
 import { useCounterConfig } from "@/lib/api/config"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { todayIso } from "@/lib/api/dates"
+import { SumUpSection } from "@/features/cash/SumUpSection"
 import {
   addCashMovement,
   closeCashSession,
@@ -244,6 +246,11 @@ export function CashScreen() {
   const [error, setError] = React.useState<string | null>(null)
   const [sheet, setSheet] = React.useState<"bank_drop" | "adjustment" | null>(null)
   const [closed, setClosed] = React.useState<CashCloseResult | null>(null)
+  // Today by default, and a past session's own day once one is picked out of
+  // the history below, so a drawer that was closed yesterday can still be
+  // compared against SumUp.
+  const today = React.useMemo(() => todayIso(), [])
+  const [sumupDate, setSumupDate] = React.useState(today)
 
   const current = useQuery({
     queryKey: ["cash-current"],
@@ -446,6 +453,12 @@ export function CashScreen() {
             )}
           </div>
 
+          <SumUpSection
+            date={sumupDate}
+            onDateChange={setSumupDate}
+            maxDate={today}
+          />
+
           <div className="mt-16">
             <MicroLabel tone="ink" className="mb-5">
               Close
@@ -549,6 +562,10 @@ export function CashScreen() {
                 <TableHead numeric>Expected</TableHead>
                 <TableHead numeric>Counted</TableHead>
                 <TableHead numeric>Variance</TableHead>
+                {/* A seventh column pushes this table off a phone, so the
+                    shortcut is a desktop one; the day field in the SumUp
+                    section reaches any closed day at either width. */}
+                <TableHead className="hidden min-[900px]:table-cell">SumUp</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -564,6 +581,16 @@ export function CashScreen() {
                     <TableCell numeric>{formatGBP(row.expected ?? 0)}</TableCell>
                     <TableCell numeric>{formatGBP(row.counted ?? 0)}</TableCell>
                     <TableCell numeric>{formatGBP(row.variance ?? 0)}</TableCell>
+                    <TableCell className="hidden min-[900px]:table-cell">
+                      <Button
+                        variant="text"
+                        onClick={() =>
+                          setSumupDate((row.closed_at ?? row.opened_at ?? today).slice(0, 10))
+                        }
+                      >
+                        Compare
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
             </TableBody>

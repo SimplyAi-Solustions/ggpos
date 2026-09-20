@@ -15,17 +15,23 @@ function build(app, util, params) {
 
   var group = params.group;
   var days = dates.eachDay(params.from, params.to);
+  var dayRows = daily.rowsForEachDay(app, params.from, params.to);
   var byLabel = {};
   var labelOrder = [];
   var totalEarned = 0;
   var totalRedeemed = 0;
   var totalRevenue = 0;
   for (var d = 0; d < days.length; d++) {
-    var row = daily.rowForDate(app, days[d]);
+    var row = dayRows[d];
     totalEarned += row.points_earned;
     totalRedeemed += row.points_redeemed;
     var methods = Object.keys(row.sales_total_by_payment || {});
-    for (var m = 0; m < methods.length; m++) totalRevenue += row.sales_total_by_payment[methods[m]] || 0;
+    var grossRevenue = 0;
+    for (var m = 0; m < methods.length; m++) grossRevenue += row.sales_total_by_payment[methods[m]] || 0;
+    // Net of refunds, the same rule every revenue figure here follows -
+    // programme cost is a percent of what was actually kept, not of the
+    // gross amount taken before any of it was handed back.
+    totalRevenue += grossRevenue - (row.sales_refunded || 0);
 
     var label = dates.groupLabel(days[d], group);
     if (!byLabel[label]) {
@@ -165,7 +171,7 @@ function build(app, util, params) {
   var programme = util.programme(app);
   var pointsValue =
     programme.pointsPerPoundRedemption > 0 ? loyalty.pointsToPence(totalRedeemed, programme) : 0;
-  var programmeCostPct = totalRevenue > 0 ? Math.round((pointsValue / totalRevenue) * 1000) / 10 : 0;
+  var programmeCostPct = totalRevenue > 0 ? query.roundPct((pointsValue / totalRevenue) * 100) : 0;
 
   var totals = {
     points_earned: totalEarned,
@@ -188,4 +194,25 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build };
+/** No totals key here is money in pence - points are their own unit, and
+ * programme_cost_pct is a percent - so this stays empty; declared anyway
+ * so scheduled.js never has to guess from a field name. */
+var MONEY_FIELDS = {};
+
+/** totals keys that are actually a function of params.from/to.
+ * tier_distribution is left out: it is every customer's *current* tier,
+ * no date filter at all. */
+var PERIOD_SCOPED_TOTALS = {
+  points_earned: true,
+  points_redeemed: true,
+  perk_usage: true,
+  reward_take_up: true,
+  referrals: true,
+  programme_cost_pct: true,
+};
+
+module.exports = {
+  build: build,
+  MONEY_FIELDS: MONEY_FIELDS,
+  PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
+};

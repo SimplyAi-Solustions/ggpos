@@ -2412,12 +2412,14 @@ EXPECTED_JSON="$(node -e '
 
   const byPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0, none: 0 };
   let salesTotal = 0;
+  let salesRefunded = 0;
   for (const s of sales) {
     // Blank payment (an eBay-import sale: eBay took the money) is its own
     // "none" bucket, never folded into "mixed" - see lib/reports/daily.js.
     const m = s.payment === "" ? "none" : Object.prototype.hasOwnProperty.call(byPayment, s.payment) ? s.payment : "mixed";
     byPayment[m] += s.total;
     salesTotal += s.total;
+    salesRefunded += s.refunded_total;
   }
 
   let itemsOut = 0;
@@ -2436,6 +2438,7 @@ EXPECTED_JSON="$(node -e '
   process.stdout.write(JSON.stringify({
     salesCount: sales.length,
     salesTotal,
+    salesRefunded,
     byPayment,
     itemsOut,
     buyInCount: tradeIns.length,
@@ -2445,6 +2448,8 @@ EXPECTED_JSON="$(node -e '
 ' "$TMP_DIR/stats-today-sales.json" "$TMP_DIR/stats-today-lines.json" "$TMP_DIR/stats-today-tradeins.json")"
 
 EXPECTED_SALES_TOTAL="$(echo "$EXPECTED_JSON" | jval salesTotal)"
+EXPECTED_SALES_REFUNDED="$(echo "$EXPECTED_JSON" | jval salesRefunded)"
+EXPECTED_SALES_NET=$((EXPECTED_SALES_TOTAL - EXPECTED_SALES_REFUNDED))
 EXPECTED_SALES_COUNT="$(echo "$EXPECTED_JSON" | jval salesCount)"
 EXPECTED_ITEMS_OUT="$(echo "$EXPECTED_JSON" | jval itemsOut)"
 EXPECTED_BUYIN_CASH="$(echo "$EXPECTED_JSON" | jval buyInCash)"
@@ -2470,10 +2475,28 @@ DAILY_BUYIN_CREDIT="$(echo "$DAILY_ROW_JSON" | jval "items.0.buy_in_total_by_pay
 [ "$DAILY_BUYIN_CREDIT" = "$EXPECTED_BUYIN_CREDIT" ] || fail "daily_stats buy_in_total_by_payout.credit is '$DAILY_BUYIN_CREDIT', expected $EXPECTED_BUYIN_CREDIT"
 ok "the daily row for today carries the expected sales_total, buy_in_total and items_out net of refunds"
 
-# --- 21d. reports/sales and reports/buyins agree with the same numbers --
+# --- 21c2. daily_stats.sales_refunded: gross, refunded and net all agree,
+#     independently of the daily row's own arithmetic - the 21a scenario's
+#     full-line refund guarantees this is never a vacuous (zero-refund)
+#     check ---------------------------------------------------------------
+[ "$EXPECTED_SALES_REFUNDED" -gt 0 ] \
+  || fail "the 21a stats-check refund did not leave a positive refunded_total across today's sales - the net-of-refunds checks below would be vacuous"
+DAILY_SALES_REFUNDED="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_refunded")"
+[ "$DAILY_SALES_REFUNDED" = "$EXPECTED_SALES_REFUNDED" ] \
+  || fail "daily_stats.sales_refunded is '$DAILY_SALES_REFUNDED', expected $EXPECTED_SALES_REFUNDED from the raw sales rows"
+[ "$((DAILY_SALES_TOTAL - DAILY_SALES_REFUNDED))" = "$EXPECTED_SALES_NET" ] \
+  || fail "daily_stats sales_total_by_payment ($DAILY_SALES_TOTAL) minus sales_refunded ($DAILY_SALES_REFUNDED) does not equal the independently computed net $EXPECTED_SALES_NET"
+ok "daily_stats.sales_refunded matches the raw sales rows, and gross minus refunded equals the independently computed net"
+
+# --- 21d. reports/sales and reports/buyins agree with the same numbers.
+#     reports/sales totals.revenue is NET of refunds (gross minus
+#     sales_refunded); sales_total_by_payment itself (checked above) stays
+#     gross - see docs/api-contract.md's Phase 4 section and daily.js's own
+#     note. Comparing against $EXPECTED_SALES_TOTAL (gross) here would be
+#     wrong now that a refund is seeded into today's numbers. -------------
 REPORT_SALES_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY")"
-[ "$(echo "$REPORT_SALES_JSON" | jval "totals.revenue")" = "$EXPECTED_SALES_TOTAL" ] \
-  || fail "reports/sales totals.revenue is '$(echo "$REPORT_SALES_JSON" | jval "totals.revenue")', expected $EXPECTED_SALES_TOTAL"
+[ "$(echo "$REPORT_SALES_JSON" | jval "totals.revenue")" = "$EXPECTED_SALES_NET" ] \
+  || fail "reports/sales totals.revenue is '$(echo "$REPORT_SALES_JSON" | jval "totals.revenue")', expected $EXPECTED_SALES_NET (net of refunds)"
 [ "$(echo "$REPORT_SALES_JSON" | jval "totals.count")" = "$EXPECTED_SALES_COUNT" ] \
   || fail "reports/sales totals.count is '$(echo "$REPORT_SALES_JSON" | jval "totals.count")', expected $EXPECTED_SALES_COUNT"
 

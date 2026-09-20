@@ -27,17 +27,67 @@ function periodFor(schedule, now) {
   return dates.lastWeekRange(now);
 }
 
-/** A report's totals as plain-text lines, money through the shared formatGBP. */
-function totalsText(totals, money) {
+/**
+ * A report's totals as plain-text lines, money through the shared
+ * formatGBP. `moneyFields` is the sending builder's own MONEY_FIELDS
+ * export - an explicit, per-report declaration of which totals keys are
+ * pence, not a guess at what a field name might mean (a name like
+ * "points_earned" or "sell_through_ratio" would have matched an earlier
+ * regex heuristic here on "earned"/"through" and printed a point count or
+ * a ratio as if it were a sum of pence).
+ */
+function totalsText(totals, money, moneyFields) {
   var lines = [];
   var names = Object.keys(totals);
   for (var i = 0; i < names.length; i++) {
     var value = totals[names[i]];
     if (typeof value !== "number") continue;
-    var looksLikeMoney = /revenue|spend|cost|margin|cash|credit|value|variance|liability|estimate/i.test(names[i]);
-    lines.push(names[i] + ": " + (looksLikeMoney ? money.formatGBP(value) : value));
+    var isMoney = !!(moneyFields && moneyFields[names[i]]);
+    lines.push(names[i] + ": " + (isMoney ? money.formatGBP(value) : value));
   }
   return lines;
+}
+
+/** A plausible email shape - enough to catch a typo or stray non-address
+ * string before it reaches a MailerMessage, not exhaustive RFC 5322. */
+var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** A saved report emails at most this many addresses in one send. */
+var MAX_RECIPIENTS = 10;
+
+/**
+ * `raw` (saved_reports.recipients, or the owner's own address as a
+ * fallback) kept to well-formed-looking, de-duplicated addresses and
+ * capped at MAX_RECIPIENTS. saved_reports' own rules (this phase's
+ * migration) already restrict who can set `recipients` at all, but the
+ * cron re-checks what it reads back off a stored row rather than trusting
+ * it unseen - a row saved before that rule existed, or written directly
+ * against the database, is not assumed to be well formed.
+ */
+function validRecipients(raw) {
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < raw.length && out.length < MAX_RECIPIENTS; i++) {
+    var address = String(raw[i] || "").trim();
+    if (!address || !EMAIL_RE.test(address) || seen[address]) continue;
+    seen[address] = true;
+    out.push(address);
+  }
+  return out;
+}
+
+/** True when `ownerId` resolves to a staff row that is an admin right now -
+ * checked again here, not assumed from the row's own history: an owner
+ * demoted from admin after saving an admin-only report (report_key =
+ * "compliance", registryLib.ADMIN_ONLY_KEYS) must stop receiving it. */
+function ownerIsActiveAdmin(app, ownerId) {
+  if (!ownerId) return false;
+  try {
+    var owner = app.findRecordById("staff", ownerId);
+    return owner.getString("role") === "admin" && owner.getBool("active");
+  } catch (err) {
+    return false;
+  }
 }
 
 /**
@@ -78,6 +128,31 @@ function sendBySchedule(app, schedule, now) {
       continue;
     }
 
+    // Admin-only report keys (registryLib.ADMIN_ONLY_KEYS - "compliance"
+    // today) may only ever be sent while the row's own owner is a current
+    // admin - the same rule the live report route enforces (reports.pb.js)
+    // and saved_reports' own rules enforce on *setting* recipients/schedule
+    // in the first place (this phase's migration). The cron runs as the
+    // superuser and bypasses collection rules entirely, so it checks this
+    // again itself rather than trusting either of those layers alone -
+    // defence in depth: an owner demoted after saving the row, or a row
+    // written straight against the database, still cannot leak a
+    // compliance report to whoever is listed.
+    if (registryLib.ADMIN_ONLY_KEYS[key] && !ownerIsActiveAdmin(app, saved.getString("owner"))) {
+      console.log(
+        `[scheduled_reports] saved report ${saved.id} names admin-only key '${key}' but its owner is not a current admin, skipped`
+      );
+      auditLib.writeAuditLog(app, {
+        actor: "system",
+        action: "saved_report_skipped",
+        collection: "saved_reports",
+        record: saved.id,
+        meta: { reason: "admin_only" },
+        ip: "",
+      });
+      continue;
+    }
+
     var filters = util.jsonField(saved, "filters", {}) || {};
     var params = { from: period.from, to: period.to, group: filters.group || "day", by: filters.by || "" };
 
@@ -89,23 +164,26 @@ function sendBySchedule(app, schedule, now) {
       continue;
     }
 
-    var recipients = util.jsonField(saved, "recipients", []) || [];
-    if ((!recipients || recipients.length === 0) && saved.getString("owner")) {
+    // Recipients are re-validated here, not trusted as saved: well-formed
+    // email shape, de-duplicated, capped at MAX_RECIPIENTS - see
+    // validRecipients.
+    var recipients = validRecipients(util.jsonField(saved, "recipients", []) || []);
+    if (recipients.length === 0 && saved.getString("owner")) {
       try {
         var owner = app.findRecordById("staff", saved.getString("owner"));
-        if (owner.getString("email")) recipients = [owner.getString("email")];
+        if (owner.getString("email")) recipients = validRecipients([owner.getString("email")]);
       } catch (err) {
         recipients = [];
       }
     }
-    if (!recipients || recipients.length === 0) {
-      console.log(`[scheduled_reports] saved report ${saved.id} has no recipients, skipped`);
+    if (recipients.length === 0) {
+      console.log(`[scheduled_reports] saved report ${saved.id} has no valid recipients, skipped`);
       continue;
     }
 
     var name = saved.getString("name") || key;
     var subject = `GG Vault report: ${name} (${period.from} to ${period.to})`;
-    var lines = [subject, ""].concat(totalsText(result.totals, money));
+    var lines = [subject, ""].concat(totalsText(result.totals, money, builder.MONEY_FIELDS || {}));
     var text = lines.join("\n");
     var csvText = csv.renderTable(util, result.csvColumns, result.table);
     var filename = `${key}-${period.from}-to-${period.to}.csv`;

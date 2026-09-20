@@ -131,6 +131,132 @@ function roundRatio(value) {
   return (sign * Math.round(Math.abs(value) * 1000)) / 1000;
 }
 
+/** ids are batched into groups of this size - see queryByIds. */
+var ID_CHUNK_SIZE = 200;
+
+/**
+ * Every row of `collection` whose `field` is one of `ids`, fetched in as
+ * few queries as possible rather than one query per id - the N+1 pattern
+ * this replaces in buyins.js, margin.js and compliance.js (a trade-in's
+ * lines, a sale's lines, an item sold from a trade-in, all looked up once
+ * per parent id in a loop). `extraFilter` (its own {:name} params in
+ * `extraParams`) is ANDed onto every chunk's own id-clause - still every
+ * value through a {:param}, never an id or a filter fragment interpolated
+ * into the filter text itself.
+ *
+ * ids are batched in groups of ID_CHUNK_SIZE so a very large id list still
+ * produces a handful of queries, not one filter string of unbounded length.
+ * A chunk whose query fails is skipped rather than failing the whole call.
+ */
+function queryByIds(app, collection, field, ids, extraFilter, extraParams, sort) {
+  var out = [];
+  if (!ids || ids.length === 0) return out;
+  for (var start = 0; start < ids.length; start += ID_CHUNK_SIZE) {
+    var chunk = ids.slice(start, start + ID_CHUNK_SIZE);
+    var clauses = [];
+    var params = {};
+    for (var i = 0; i < chunk.length; i++) {
+      var name = "v" + i;
+      clauses.push(field + " = {:" + name + "}");
+      params[name] = chunk[i];
+    }
+    var filter = "(" + clauses.join(" || ") + ")";
+    if (extraFilter) {
+      filter += " && (" + extraFilter + ")";
+      var extraKeys = Object.keys(extraParams || {});
+      for (var k = 0; k < extraKeys.length; k++) params[extraKeys[k]] = extraParams[extraKeys[k]];
+    }
+    try {
+      var rows = app.findRecordsByFilter(collection, filter, sort || "", 0, 0, params);
+      for (var r = 0; r < rows.length; r++) out.push(rows[r]);
+    } catch (err) {
+      // this chunk failed - skip it rather than losing every other chunk
+    }
+  }
+  return out;
+}
+
+/** Rows are read in pages of this size - see findAllByFilter. */
+var PAGE_SIZE = 500;
+
+/**
+ * Every row matching `filter`, read in fixed-size pages rather than one
+ * unbounded (limit 0) call - a plain list load with no natural upper bound
+ * (an open-ended want list, a compliance report over a long range) stays a
+ * handful of bounded reads instead of one call trying to hold everything in
+ * memory at once. Order is only meaningful within this call, not across a
+ * later one - pass `sort` when the caller needs a stable order (it is
+ * applied within PocketBase's own paging, so the result as a whole still
+ * comes back in that order).
+ */
+function findAllByFilter(app, collection, filter, sort, params) {
+  var out = [];
+  var offset = 0;
+  for (;;) {
+    var page = [];
+    try {
+      page = app.findRecordsByFilter(collection, filter, sort || "", PAGE_SIZE, offset, params || {});
+    } catch (err) {
+      break;
+    }
+    for (var i = 0; i < page.length; i++) out.push(page[i]);
+    if (page.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return out;
+}
+
+/**
+ * Every sale referenced by `lines` (sale_lines records, in "created,id"
+ * order - see lib/shared/saleline.js's own note on why that order matters
+ * to its discount-rounding remainder), grouped by sale and turned into one
+ * saleline.breakdown() per sale. The sales themselves are fetched in one
+ * batched query (queryByIds) rather than one findRecordById per sale, and
+ * each sale's lines come from `lines` as already fetched rather than a
+ * fresh per-sale query - the N+1 pattern this replaces in margin.js and
+ * sales.js, both of which read the whole range's sale_lines once up front
+ * and used to re-fetch every sale (and its lines all over again) one at a
+ * time after that.
+ *
+ * @returns {[saleId]: {sale, breakdown}} - a sale whose own record could
+ *   not be read (gone between the two reads, or inaccessible) is left out
+ *   of the map, the same as a failed findRecordById would have been
+ *   skipped one at a time before.
+ */
+function saleBreakdownsByLine(app, util, lines) {
+  var saleline = require(`${__hooks}/lib/shared/saleline.js`);
+
+  var linesBySale = {};
+  var saleOrder = [];
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line) continue;
+    var saleId = line.getString("sale");
+    if (!saleId) continue;
+    if (!Object.prototype.hasOwnProperty.call(linesBySale, saleId)) {
+      linesBySale[saleId] = [];
+      saleOrder.push(saleId);
+    }
+    linesBySale[saleId].push(line);
+  }
+
+  var sales = queryByIds(app, "sales", "id", saleOrder, "", {}, "");
+  var saleById = {};
+  for (var s = 0; s < sales.length; s++) saleById[sales[s].id] = sales[s];
+
+  var out = {};
+  for (var o = 0; o < saleOrder.length; o++) {
+    var id = saleOrder[o];
+    var saleRecord = saleById[id];
+    if (!saleRecord) continue;
+    out[id] = {
+      sale: saleRecord,
+      breakdown: saleline.breakdown(util.asSoldLines(linesBySale[id]), saleRecord.getInt("discount")),
+    };
+  }
+  return out;
+}
+
 /**
  * A small accumulator for a by=<dimension> table: get(key, label) returns
  * (creating on first use) a plain {key, label} object a caller adds its own
@@ -166,5 +292,8 @@ module.exports = {
   daysSinceOrNull: daysSinceOrNull,
   roundPct: roundPct,
   roundRatio: roundRatio,
+  queryByIds: queryByIds,
+  findAllByFilter: findAllByFilter,
+  saleBreakdownsByLine: saleBreakdownsByLine,
   grouper: grouper,
 };

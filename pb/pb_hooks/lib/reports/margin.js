@@ -48,23 +48,10 @@ function build(app, util, params) {
   var itemLookup = query.cachedLookup(app, "items");
   var staffLookup = query.cachedLookup(app, "staff");
   var gameLookup = query.cachedLookup(app, "games");
-  var saleCache = {};
-  function saleBreakdown(saleId) {
-    if (Object.prototype.hasOwnProperty.call(saleCache, saleId)) return saleCache[saleId];
-    var result = null;
-    try {
-      var saleRecord = app.findRecordById("sales", saleId);
-      var rows = util.saleLineRows(app, saleId);
-      result = {
-        sale: saleRecord,
-        breakdown: saleline.breakdown(util.asSoldLines(rows), saleRecord.getInt("discount")),
-      };
-    } catch (err) {
-      result = null;
-    }
-    saleCache[saleId] = result;
-    return result;
-  }
+  // One batched sales fetch for every sale referenced in linesInRange,
+  // grouping the lines already in hand rather than a findRecordById plus a
+  // fresh sale_lines re-query per sale - see query.saleBreakdownsByLine.
+  var breakdownsBySale = query.saleBreakdownsByLine(app, util, linesInRange);
 
   var byDay = {};
   var groups = query.grouper();
@@ -75,7 +62,7 @@ function build(app, util, params) {
   for (var i = 0; i < linesInRange.length; i++) {
     var line = linesInRange[i];
     if (!line) continue;
-    var held = saleBreakdown(line.getString("sale"));
+    var held = breakdownsBySale[line.getString("sale")];
     if (!held) continue;
     var entry = held.breakdown.byId[line.id];
     if (!entry) continue;
@@ -141,7 +128,7 @@ function build(app, util, params) {
 
   var table = groups.rows();
   for (var g = 0; g < table.length; g++) {
-    table[g].margin_pct = table[g].revenue > 0 ? Math.round((table[g].margin / table[g].revenue) * 1000) / 10 : 0;
+    table[g].margin_pct = table[g].revenue > 0 ? query.roundPct((table[g].margin / table[g].revenue) * 100) : 0;
   }
 
   var settingsRow = util.settings(app);
@@ -171,7 +158,7 @@ function build(app, util, params) {
     revenue: totalRevenue,
     cost: totalCost,
     margin: totalMargin,
-    margin_pct: totalRevenue > 0 ? Math.round((totalMargin / totalRevenue) * 1000) / 10 : 0,
+    margin_pct: totalRevenue > 0 ? query.roundPct((totalMargin / totalRevenue) * 100) : 0,
     vat_estimate: vatEstimate,
     markdown_count: markdownItems.length,
     markdown_value: markdownValue,
@@ -191,4 +178,30 @@ function build(app, util, params) {
   };
 }
 
-module.exports = { build: build, VALID_BY: VALID_BY };
+/** totals keys that are pence, not a plain count or percent -
+ * lib/reports/scheduled.js's emailed totals read this instead of guessing
+ * from the field name. */
+var MONEY_FIELDS = { revenue: true, cost: true, margin: true, vat_estimate: true, markdown_value: true };
+
+/**
+ * totals keys that are actually a function of params.from/to.
+ * markdown_count/markdown_value are left out: they come from every item
+ * currently priced below its market_at_intake, with no date filter at all
+ * (this file's own "Markdowns" note above) - a snapshot of stock as it
+ * stands, not something a "previous period" figure could meaningfully
+ * differ on.
+ */
+var PERIOD_SCOPED_TOTALS = {
+  revenue: true,
+  cost: true,
+  margin: true,
+  margin_pct: true,
+  vat_estimate: true,
+};
+
+module.exports = {
+  build: build,
+  VALID_BY: VALID_BY,
+  MONEY_FIELDS: MONEY_FIELDS,
+  PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
+};

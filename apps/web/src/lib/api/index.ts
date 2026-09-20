@@ -398,15 +398,14 @@ export {
 // ---------------------------------------------------------------------------
 // Reports, exports, imports and SumUp (Phase 4)
 //
-// `lib/api/reports.ts` never imports Recharts or the chart component: the
-// chart code belongs to the report routes alone, so nothing that reaches
-// this barrel can drag it into the entry chunk.
+// Deliberately NOT re-exported here. This barrel is imported by the counter
+// shell, so it travels in the entry chunk, and everything it re-exports
+// travels with it. The Phase 4 modules belong to three routes and nothing
+// else, so those screens import `@/lib/api/reports`, `@/lib/api/exports`,
+// `@/lib/api/imports`, `@/lib/api/sumup` and `@/lib/api/csv-parse`
+// directly - the same reasoning that already keeps `lib/api/lookup` out of
+// this file's `export *` list.
 // ---------------------------------------------------------------------------
-export * from "@/lib/api/reports"
-export * from "@/lib/api/exports"
-export * from "@/lib/api/imports"
-export * from "@/lib/api/sumup"
-export * from "@/lib/api/csv-parse"
 
 export {
   createManualCard,

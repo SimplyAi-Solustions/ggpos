@@ -12,8 +12,10 @@ import { formatGBP } from "@gg/shared"
 import { Button } from "@/components/ui/button"
 import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
+import { Sparkline } from "@/components/ui/sparkline"
 import { getCurrentCashSession, getTodayStats } from "@/lib/api"
-import type { TodayStats } from "@/lib/api/types"
+import { getSparklines } from "@/lib/api/reports"
+import type { SparklineSeries, TodayStats } from "@/lib/api/types"
 
 const QUICK_ACTIONS = [
   { to: "/counter/scan", label: "Scan" },
@@ -27,6 +29,8 @@ interface Tile {
   label: string
   hint: string
   value: (stats: TodayStats) => string
+  /** Which of the last thirty days' figures the line under it draws. */
+  trend: keyof Omit<SparklineSeries, "dates">
 }
 
 const TILES: Tile[] = [
@@ -34,21 +38,25 @@ const TILES: Tile[] = [
     label: "Sales",
     hint: "Taken today",
     value: (stats) => formatGBP(stats.salesTotal),
+    trend: "sales",
   },
   {
     label: "Buy-ins",
     hint: "Paid out today",
     value: (stats) => formatGBP(stats.buyInTotal),
+    trend: "buyIns",
   },
   {
     label: "Cash out",
     hint: "From the drawer",
     value: (stats) => formatGBP(stats.cashOut),
+    trend: "cashOut",
   },
   {
     label: "Credit issued",
     hint: "On to accounts",
     value: (stats) => formatGBP(stats.creditIssued),
+    trend: "creditIssued",
   },
 ]
 
@@ -70,6 +78,13 @@ export function HomeScreen() {
     queryKey: ["cash-current"],
     queryFn: getCurrentCashSession,
     staleTime: 15_000,
+  })
+  // The last thirty days under each tile. A day old at the most, so it is
+  // read once and left alone for the session.
+  const { data: trend } = useQuery({
+    queryKey: ["sparklines", 30],
+    queryFn: () => getSparklines(30),
+    staleTime: 30 * 60_000,
   })
 
   const session = cash?.session ?? null
@@ -102,6 +117,19 @@ export function HomeScreen() {
               <span className="mt-2 block text-[13px] text-muted-foreground-2">
                 {tile.hint}
               </span>
+              {trend ? (
+                <>
+                  <Sparkline
+                    values={trend[tile.trend]}
+                    height={40}
+                    className="mt-3"
+                  />
+                  <span className="sr-only">
+                    Over the last 30 days, the highest was{" "}
+                    {formatGBP(Math.max(0, ...trend[tile.trend]))}.
+                  </span>
+                </>
+              ) : null}
             </dd>
           </div>
         ))}

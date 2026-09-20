@@ -44,6 +44,11 @@ export interface DateRangeControlProps {
   dimensions: { key: string; label: string }[]
   by: string
   onByChange: (by: string) => void
+  /**
+   * False on a report with no series of its own (stock, channels and
+   * compliance): grouping would change nothing anybody can see.
+   */
+  showGroup: boolean
   /** Said under the fields when the range is one the routes will refuse. */
   error?: string | null
 }
@@ -57,6 +62,7 @@ export function DateRangeControl({
   dimensions,
   by,
   onByChange,
+  showGroup,
   error,
 }: DateRangeControlProps) {
   const matched = presetFor(range, today)
@@ -122,28 +128,41 @@ export function DateRangeControl({
         </p>
       ) : null}
 
-      <div className="mt-8 flex flex-col gap-8 min-[560px]:flex-row min-[560px]:gap-10">
-        <Field label="Group" htmlFor="range-group" layout="stacked" className="min-[560px]:w-52">
-          <Select
-            value={group}
-            onValueChange={(next) => onGroupChange((next as ReportGroup) ?? "day")}
+      <div
+        className={
+          showGroup || dimensions.length > 1
+            ? "mt-8 flex flex-col gap-8 min-[560px]:flex-row min-[560px]:gap-10"
+            : "hidden"
+        }
+      >
+        {showGroup ? (
+          <Field
+            label="Group"
+            htmlFor="range-group"
+            layout="stacked"
+            className="min-[560px]:w-52"
           >
-            <SelectTrigger id="range-group">
-              <SelectValue>
-                {(value: string) =>
-                  GROUPS.find((entry) => entry.key === value)?.label ?? "By day"
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {GROUPS.map((entry) => (
-                <SelectItem key={entry.key} value={entry.key}>
-                  {entry.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
+            <Select
+              value={group}
+              onValueChange={(next) => onGroupChange((next as ReportGroup) ?? "day")}
+            >
+              <SelectTrigger id="range-group">
+                <SelectValue>
+                  {(value: string) =>
+                    GROUPS.find((entry) => entry.key === value)?.label ?? "By day"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {GROUPS.map((entry) => (
+                  <SelectItem key={entry.key} value={entry.key}>
+                    {entry.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        ) : null}
 
         {dimensions.length > 1 ? (
           <Field label="Break down by" htmlFor="range-by" layout="stacked" className="min-[560px]:w-52">
