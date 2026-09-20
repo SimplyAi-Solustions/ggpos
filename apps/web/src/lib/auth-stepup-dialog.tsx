@@ -1,12 +1,12 @@
 /**
  * The step-up prompt: "Confirm your password to continue."
  *
- * It mounts its own React root on demand rather than living in the counter
- * shell, so any screen (a refund here, an ID photo on the customers screen)
- * can await one line and get the same paper dialog with protected focus.
+ * A dialog rather than a sheet because it is the one kind of task DESIGN.md
+ * says needs protected focus. `stepUp()` in `auth-stepup.ts` mounts it on
+ * demand, so any screen (a refund here, an ID photo on the customers screen)
+ * can await one line and get the same paper panel.
  */
 import * as React from "react"
-import { createRoot, type Root } from "react-dom/client"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -20,11 +20,12 @@ import {
 import { Field } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 
-function PasswordDialog({
-  onDone,
-}: {
+export interface StepUpDialogProps {
+  /** Called with the typed password, or null when the dialog is dismissed. */
   onDone: (password: string | null) => void
-}) {
+}
+
+export function StepUpDialog({ onDone }: StepUpDialogProps) {
   const [open, setOpen] = React.useState(true)
   const [password, setPassword] = React.useState("")
 
@@ -78,31 +79,4 @@ function PasswordDialog({
       </DialogContent>
     </Dialog>
   )
-}
-
-let host: HTMLDivElement | null = null
-let root: Root | null = null
-
-/** Resolves with the typed password, or null when the dialog is dismissed. */
-export function askForPassword(): Promise<string | null> {
-  if (typeof document === "undefined") return Promise.resolve(null)
-
-  if (!host) {
-    host = document.createElement("div")
-    host.setAttribute("data-slot", "step-up-host")
-    document.body.appendChild(host)
-    root = createRoot(host)
-  }
-
-  return new Promise((resolve) => {
-    root?.render(
-      <PasswordDialog
-        onDone={(password) => {
-          // Let the dialog play its 200ms exit before it is torn down.
-          window.setTimeout(() => root?.render(null), 250)
-          resolve(password)
-        }}
-      />
-    )
-  })
 }

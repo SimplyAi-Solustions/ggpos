@@ -14,6 +14,11 @@ export interface MoneyFieldProps {
   className?: string
 }
 
+/** Pence as the plain "12.50" a staff member types, with no group commas. */
+function pounds(pence: number): string {
+  return pence ? formatGBP(pence).replace("£", "").replace(/,/g, "") : ""
+}
+
 /**
  * An amount in pounds and pence with the pound sign as its leading glyph.
  *
@@ -30,18 +35,17 @@ export function MoneyField({
   placeholder = "0.00",
   className,
 }: MoneyFieldProps) {
-  const [draft, setDraft] = React.useState(() =>
-    value ? formatGBP(value).replace("£", "").replace(/,/g, "") : ""
-  )
-  const lastValue = React.useRef(value)
-
+  const [draft, setDraft] = React.useState(() => pounds(value))
   // A figure changed from outside (an override, a prefill) replaces what is
-  // in the box; a figure this field itself reported does not.
-  React.useEffect(() => {
-    if (value === lastValue.current) return
-    lastValue.current = value
-    setDraft(value ? formatGBP(value).replace("£", "").replace(/,/g, "") : "")
-  }, [value])
+  // in the box; a figure this field itself just reported does not. Adjusted
+  // during render rather than in an effect, so the box never paints once
+  // with the old number first.
+  const [seen, setSeen] = React.useState(value)
+  const reported = React.useRef(value)
+  if (value !== seen) {
+    setSeen(value)
+    if (value !== reported.current) setDraft(pounds(value))
+  }
 
   return (
     <Input
@@ -63,17 +67,18 @@ export function MoneyField({
         setDraft(next)
         const pence = parseDecimalToMinor(next)
         if (pence !== null) {
-          lastValue.current = pence
+          reported.current = pence
+          setSeen(pence)
           onChange(pence)
         } else if (next.trim() === "") {
-          lastValue.current = 0
+          reported.current = 0
+          setSeen(0)
           onChange(0)
         }
       }}
       onBlur={() => {
         const pence = parseDecimalToMinor(draft)
-        if (pence !== null) setDraft(formatGBP(pence).replace("£", "").replace(/,/g, ""))
-        else if (draft.trim() === "") setDraft("")
+        if (pence !== null) setDraft(pounds(pence))
       }}
     />
   )

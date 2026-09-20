@@ -10,6 +10,9 @@
  * The prompt is a `Dialog` rather than a sheet because it is the one kind of
  * task DESIGN.md says needs protected focus.
  */
+import { createElement } from "react"
+import type { Root } from "react-dom/client"
+
 import { getStepUp } from "@/lib/api/sales"
 import type { StepUpToken } from "@/lib/api/types"
 
@@ -35,12 +38,42 @@ export function setStepUpPrompt(next: StepUpPrompt | null): () => void {
   }
 }
 
+let host: HTMLDivElement | null = null
+let root: Root | null = null
+
+/**
+ * Mounts the dialog on its own root beside the app, so a caller awaits one
+ * promise and no screen has to carry the prompt in its tree. Loaded on
+ * demand: a counter that never refunds anything never pays for the dialog,
+ * and a unit test that swaps the prompt never needs a DOM for it.
+ */
 async function ask(): Promise<string | null> {
   if (prompt) return prompt()
-  // Loaded on demand: a counter that never refunds anything never pays for
-  // the dialog, and unit tests never need a DOM for it.
-  const { askForPassword } = await import("@/lib/auth-stepup-dialog")
-  return askForPassword()
+  if (typeof document === "undefined") return null
+
+  const [{ StepUpDialog }, { createRoot }] = await Promise.all([
+    import("@/lib/auth-stepup-dialog"),
+    import("react-dom/client"),
+  ])
+
+  if (!host) {
+    host = document.createElement("div")
+    host.setAttribute("data-slot", "step-up-host")
+    document.body.appendChild(host)
+    root = createRoot(host)
+  }
+
+  return new Promise((resolve) => {
+    root?.render(
+      createElement(StepUpDialog, {
+        onDone: (password: string | null) => {
+          // Let the dialog play its 200ms exit before it is torn down.
+          window.setTimeout(() => root?.render(null), 250)
+          resolve(password)
+        },
+      })
+    )
+  })
 }
 
 /** True while a confirmation from the last ten minutes still stands. */

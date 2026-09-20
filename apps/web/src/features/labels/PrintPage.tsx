@@ -137,9 +137,9 @@ export function PrintPage({ jobs, autoPrint = true }: PrintPageProps) {
     enabled: ids.length > 0,
   })
 
-  const mark = useMutation({ mutationFn: markLabelJobsPrinted })
-  const markRef = React.useRef(mark.mutate)
-  markRef.current = mark.mutate
+  // `mutate` is stable across renders, so the print effect can depend on it
+  // without re-running every time the page re-renders.
+  const { mutate: markPrinted } = useMutation({ mutationFn: markLabelJobsPrinted })
 
   // One label per page, sized by the first job's template. A queue of mixed
   // templates is printed in one go and the driver follows the stock loaded,
@@ -153,11 +153,12 @@ export function PrintPage({ jobs, autoPrint = true }: PrintPageProps) {
   React.useEffect(() => {
     if (!autoPrint || printed.current || isPending || data.length === 0) return
     printed.current = true
-    const done = () => markRef.current(data.map((job) => job.id))
+    const ids = data.map((job) => job.id)
+    const done = () => markPrinted(ids)
     window.addEventListener("afterprint", done, { once: true })
     window.print()
     return () => window.removeEventListener("afterprint", done)
-  }, [autoPrint, data, isPending])
+  }, [autoPrint, data, isPending, markPrinted])
 
   if (ids.length === 0) {
     return (

@@ -48,18 +48,41 @@ export function OverrideSheet({
   onClear,
   overridden = false,
 }: OverrideSheetProps) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="bottom">
+        {/* Mounted only while open, so every open starts from the line's own
+            figures rather than whatever the last line left behind. */}
+        {open ? (
+          <OverrideBody
+            title={title}
+            initial={initial}
+            onSave={onSave}
+            onClear={onClear}
+            overridden={overridden}
+            onClose={() => onOpenChange(false)}
+          />
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function OverrideBody({
+  title,
+  initial,
+  onSave,
+  onClear,
+  overridden,
+  onClose,
+}: Omit<OverrideSheetProps, "open" | "onOpenChange"> & {
+  overridden: boolean
+  onClose: () => void
+}) {
   const [cash, setCash] = React.useState(initial.cash)
   const [credit, setCredit] = React.useState(initial.credit)
   const [reason, setReason] = React.useState(initial.reason)
   const [error, setError] = React.useState<string | null>(null)
-
-  React.useEffect(() => {
-    if (!open) return
-    setCash(initial.cash)
-    setCredit(initial.credit)
-    setReason(initial.reason)
-    setError(null)
-  }, [open, initial.cash, initial.credit, initial.reason])
 
   function save() {
     if (reason.trim().length < 3) {
@@ -67,70 +90,72 @@ export function OverrideSheet({
       return
     }
     onSave({ cash, credit, reason: reason.trim() })
-    onOpenChange(false)
+    onClose()
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom">
-        <SheetHeader>
-          <SheetTitle>Override the offer</SheetTitle>
-          <SheetDescription>{title}</SheetDescription>
-        </SheetHeader>
-        <SheetBody>
-          <div className="flex flex-col gap-8">
-            <Field label="Cash" htmlFor="override-cash" layout="stacked">
-              <MoneyField
-                id="override-cash"
-                label="Cash offer for this line"
-                value={cash}
-                onChange={setCash}
-              />
-            </Field>
-            <Field label="Store credit" htmlFor="override-credit" layout="stacked">
-              <MoneyField
-                id="override-credit"
-                label="Store credit offer for this line"
-                value={credit}
-                onChange={setCredit}
-              />
-            </Field>
-            <Field
-              label="Reason"
-              htmlFor="override-reason"
-              layout="stacked"
-              error={error ?? undefined}
-            >
-              <Textarea
-                id="override-reason"
-                maxLength={200}
-                aria-invalid={!!error}
-                placeholder="Edge wear the photo does not show"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                trailingHint={`${reason.length} / 200`}
-              />
-            </Field>
-          </div>
-        </SheetBody>
-        <SheetFooter>
-          <Button type="button" trailingArrow onClick={save}>
-            Save override
+    <>
+      <SheetHeader>
+        <SheetTitle>Override the offer</SheetTitle>
+        <SheetDescription>{title}</SheetDescription>
+      </SheetHeader>
+      <SheetBody>
+        <div className="flex flex-col gap-8">
+          <Field label="Cash" htmlFor="override-cash" layout="stacked">
+            <MoneyField
+              id="override-cash"
+              label="Cash offer for this line"
+              value={cash}
+              onChange={setCash}
+            />
+          </Field>
+          <Field
+            label="Store credit"
+            htmlFor="override-credit"
+            layout="stacked"
+          >
+            <MoneyField
+              id="override-credit"
+              label="Store credit offer for this line"
+              value={credit}
+              onChange={setCredit}
+            />
+          </Field>
+          <Field
+            label="Reason"
+            htmlFor="override-reason"
+            layout="stacked"
+            error={error ?? undefined}
+          >
+            <Textarea
+              id="override-reason"
+              maxLength={200}
+              aria-invalid={!!error}
+              placeholder="Edge wear the photo does not show"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              trailingHint={`${reason.length} / 200`}
+            />
+          </Field>
+        </div>
+      </SheetBody>
+      <SheetFooter>
+        <Button type="button" trailingArrow onClick={save}>
+          Save override
+        </Button>
+        {overridden && onClear ? (
+          <Button
+            variant="text"
+            type="button"
+            onClick={() => {
+              onClear()
+              onClose()
+            }}
+          >
+            Back to the rule
           </Button>
-          {overridden && onClear ? (
-            <Button
-              variant="text"
-              type="button"
-              onClick={() => {
-                onClear()
-                onOpenChange(false)
-              }}
-            >
-              Back to the rule
-            </Button>
-          ) : null}
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        ) : null}
+      </SheetFooter>
+    </>
   )
 }

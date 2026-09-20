@@ -143,7 +143,7 @@ export async function getCustomer(idOrCode: string): Promise<CustomerProfile | n
   if (isDemo()) return demoGetCustomer(idOrCode)
 
   const needle = idOrCode.trim()
-  let customer: CustomerRecord | null = null
+  let customer: CustomerRecord
   try {
     customer = await pb.collection("customers").getOne<CustomerRecord>(needle)
   } catch (error) {
