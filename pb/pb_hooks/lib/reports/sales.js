@@ -61,6 +61,9 @@ function build(app, util, params) {
   }
 
   // --- Hour-of-day heatmap: every sale in range, by weekday and hour ------
+  // sales.occurred_at, not created - see daily.js's own header note: an
+  // eBay-import sale is booked on the order's own date, not the day the
+  // import happened to run.
   var heatmap = [];
   for (var wd = 0; wd < 7; wd++) heatmap.push([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   var bounds = dates.rangeParams(params.from, params.to);
@@ -68,7 +71,7 @@ function build(app, util, params) {
   try {
     salesInRange = app.findRecordsByFilter(
       "sales",
-      "created >= {:start} && created <= {:end}",
+      "occurred_at >= {:start} && occurred_at <= {:end}",
       "",
       0,
       0,
@@ -80,9 +83,9 @@ function build(app, util, params) {
   for (var s = 0; s < salesInRange.length; s++) {
     var sale = salesInRange[s];
     if (!sale) continue;
-    var created = new Date(sale.getString("created"));
-    if (isNaN(created.getTime())) continue;
-    heatmap[dates.isoWeekday(created)][created.getUTCHours()] += 1;
+    var occurredAt = new Date(sale.getString("occurred_at"));
+    if (isNaN(occurredAt.getTime())) continue;
+    heatmap[dates.isoWeekday(occurredAt)][occurredAt.getUTCHours()] += 1;
   }
 
   // --- by=<dimension> table: net-of-discount, net-of-refund per line -----
@@ -112,7 +115,7 @@ function build(app, util, params) {
   try {
     linesInRange = app.findRecordsByFilter(
       "sale_lines",
-      "created >= {:start} && created <= {:end}",
+      "sale.occurred_at >= {:start} && sale.occurred_at <= {:end}",
       "",
       0,
       0,

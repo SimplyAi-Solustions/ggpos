@@ -238,7 +238,7 @@ function buildDayRow(app, dateStr) {
       hadEarlierSale =
         app.findRecordsByFilter(
           "sales",
-          "customer = {:id} && created < {:start}",
+          "customer = {:id} && occurred_at < {:start}",
           "",
           1,
           0,

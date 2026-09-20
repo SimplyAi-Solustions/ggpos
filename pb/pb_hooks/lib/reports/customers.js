@@ -44,7 +44,7 @@ function build(app, util, params) {
   try {
     sales = app.findRecordsByFilter(
       "sales",
-      "customer != '' && created >= {:start} && created <= {:end}",
+      "customer != '' && occurred_at >= {:start} && occurred_at <= {:end}",
       "",
       0,
       0,

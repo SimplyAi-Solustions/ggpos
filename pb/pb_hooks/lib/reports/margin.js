@@ -35,7 +35,7 @@ function build(app, util, params) {
   try {
     linesInRange = app.findRecordsByFilter(
       "sale_lines",
-      "created >= {:start} && created <= {:end}",
+      "sale.occurred_at >= {:start} && sale.occurred_at <= {:end}",
       "created,id",
       0,
       0,
@@ -92,7 +92,7 @@ function build(app, util, params) {
     totalCost += cost;
     if (line.getString("tax_scheme") === "margin" && margin > 0) vatableMargin += margin;
 
-    var dayKey = (line.getString("created") || "").slice(0, 10);
+    var dayKey = (held.sale.getString("occurred_at") || "").slice(0, 10);
     if (dayKey) {
       if (!byDay[dayKey]) byDay[dayKey] = { revenue: 0, cost: 0 };
       byDay[dayKey].revenue += soldNet;

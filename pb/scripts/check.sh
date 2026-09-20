@@ -2385,12 +2385,16 @@ ok "the stats rebuild route is admin only and idempotent: two rebuilds leave one
 # --- 21c. The daily row against numbers computed independently from the
 #     raw collections - never the daily row's own arithmetic checking
 #     itself ------------------------------------------------------------
+# sales.occurred_at (not created) is what every sales figure groups,
+# filters and ranges on - see lib/reports/daily.js's own note - so the
+# independent check reads the same field, including through the relation
+# for sale_lines.
 curl -s -G -H "Authorization: $SUPER_TOKEN" \
-  --data-urlencode "filter=created>='${TODAY} 00:00:00.000Z'" \
+  --data-urlencode "filter=occurred_at>='${TODAY} 00:00:00.000Z'" \
   --data-urlencode "perPage=500" \
   "$BASE/api/collections/sales/records" >"$TMP_DIR/stats-today-sales.json"
 curl -s -G -H "Authorization: $SUPER_TOKEN" \
-  --data-urlencode "filter=created>='${TODAY} 00:00:00.000Z'" \
+  --data-urlencode "filter=sale.occurred_at>='${TODAY} 00:00:00.000Z'" \
   --data-urlencode "perPage=500" \
   "$BASE/api/collections/sale_lines/records" >"$TMP_DIR/stats-today-lines.json"
 curl -s -G -H "Authorization: $SUPER_TOKEN" \
@@ -2704,10 +2708,15 @@ ok "the weekly digest names the three biggest price movers"
 #     the shop itself split a payment across methods - see
 #     lib/reports/daily.js. Created directly against the collection (the
 #     eBay orders import route itself belongs to that other package). ----
+# occurred_at set explicitly to today: this sale is created directly
+# against the collection rather than through the eBay orders import route
+# (that route, and the hook that sets occurred_at from the order's own
+# date, belong to the exports/imports package), and every figure this
+# check reads groups, filters and ranges on occurred_at, not created.
 EBAY_SALE_NUMBER="GG-S-EBAYCHECK1"
 EBAY_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/sales/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"number\":\"$EBAY_SALE_NUMBER\",\"channel\":\"ebay\",\"external_ref\":\"EBAY-ORDER-99\",\"subtotal\":1234,\"discount\":0,\"total\":1234,\"payment\":\"\",\"status\":\"complete\"}")"
+  -d "{\"number\":\"$EBAY_SALE_NUMBER\",\"channel\":\"ebay\",\"external_ref\":\"EBAY-ORDER-99\",\"subtotal\":1234,\"discount\":0,\"total\":1234,\"payment\":\"\",\"status\":\"complete\",\"occurred_at\":\"$TODAY 12:00:00.000Z\"}")"
 EBAY_SALE_STATUS="$(echo "$EBAY_SALE_JSON" | tail -n1)"
 EBAY_SALE_BODY="$(echo "$EBAY_SALE_JSON" | head -n -1)"
 [ "$EBAY_SALE_STATUS" = "200" ] || fail "creating an eBay-channel sale with blank payment returned $EBAY_SALE_STATUS: $EBAY_SALE_BODY"

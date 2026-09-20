@@ -30,7 +30,7 @@ function build(app, util, params) {
   try {
     sales = app.findRecordsByFilter(
       "sales",
-      "created >= {:start} && created <= {:end}",
+      "occurred_at >= {:start} && occurred_at <= {:end}",
       "",
       0,
       0,
