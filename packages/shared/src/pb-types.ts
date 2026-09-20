@@ -20,6 +20,7 @@ export const Collections = {
 	CustomerPrivate: "customer_private",
 	Customers: "customers",
 	DailyStats: "daily_stats",
+	DisplayState: "display_state",
 	FxRates: "fx_rates",
 	Games: "games",
 	IdDocuments: "id_documents",
@@ -323,6 +324,7 @@ export type CustomerPrivateRecord = {
 	id_verified_by?: RecordIdString
 	notes?: HTMLString
 	points_balance?: number
+	points_expiry_warned_at?: IsoDateString
 	tier?: RecordIdString
 	updated: IsoAutoDateString
 }
@@ -374,6 +376,24 @@ export type DailyStatsRecord<Tbuy_in_total_by_payout = unknown, Tsales_total_by_
 	stock_value_cost?: number
 	stock_value_market?: number
 	updated: IsoAutoDateString
+}
+
+export const DisplayStateModeOptions = {
+	"idle": "idle",
+	"sale": "sale",
+	"buy_in": "buy_in",
+} as const
+export type DisplayStateModeOptions = typeof DisplayStateModeOptions[keyof typeof DisplayStateModeOptions]
+export type DisplayStateRecord<Tpayload = unknown> = {
+	created: IsoAutoDateString
+	customer_accepted_at?: IsoDateString
+	expires_at?: IsoDateString
+	id: string
+	mode?: DisplayStateModeOptions
+	payload?: null | Tpayload
+	token?: string
+	updated: IsoAutoDateString
+	updated_by?: RecordIdString
 }
 
 export type FxRatesRecord<Tquotes = unknown> = {
@@ -1016,7 +1036,7 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
+export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
@@ -1024,6 +1044,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	condition_multipliers?: null | Tcondition_multipliers
 	created: IsoAutoDateString
 	default_intake_location?: RecordIdString
+	display?: null | Tdisplay
 	email?: null | Temail
 	email_api_key?: string
 	email_provider?: SettingsEmailProviderOptions
@@ -1039,6 +1060,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	quote_expiry_days?: number
 	receipt_terms?: string
 	retro_source_priority?: null | Tretro_source_priority
+	rewards?: null | Trewards
 	sell_rounding?: SettingsSellRoundingOptions
 	shop_address?: string
 	shop_email?: string
@@ -1283,6 +1305,7 @@ export type CsvImportsResponse<Terrors = unknown, Tresolved_rows = unknown, Texp
 export type CustomerPrivateResponse<Texpand = unknown> = Required<CustomerPrivateRecord> & BaseSystemFields<Texpand>
 export type CustomersResponse<Texpand = unknown> = Required<CustomersRecord> & AuthSystemFields<Texpand>
 export type DailyStatsResponse<Tbuy_in_total_by_payout = unknown, Tsales_total_by_payment = unknown, Texpand = unknown> = Required<DailyStatsRecord<Tbuy_in_total_by_payout, Tsales_total_by_payment>> & BaseSystemFields<Texpand>
+export type DisplayStateResponse<Tpayload = unknown, Texpand = unknown> = Required<DisplayStateRecord<Tpayload>> & BaseSystemFields<Texpand>
 export type FxRatesResponse<Tquotes = unknown, Texpand = unknown> = Required<FxRatesRecord<Tquotes>> & BaseSystemFields<Texpand>
 export type GamesResponse<Texpand = unknown> = Required<GamesRecord> & BaseSystemFields<Texpand>
 export type IdDocumentsResponse<Texpand = unknown> = Required<IdDocumentsRecord> & BaseSystemFields<Texpand>
@@ -1311,7 +1334,7 @@ export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemp
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Temail, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
@@ -1341,6 +1364,7 @@ export type CollectionRecords = {
 	customer_private: CustomerPrivateRecord
 	customers: CustomersRecord
 	daily_stats: DailyStatsRecord
+	display_state: DisplayStateRecord
 	fx_rates: FxRatesRecord
 	games: GamesRecord
 	id_documents: IdDocumentsRecord
@@ -1398,6 +1422,7 @@ export type CollectionResponses = {
 	customer_private: CustomerPrivateResponse
 	customers: CustomersResponse
 	daily_stats: DailyStatsResponse
+	display_state: DisplayStateResponse
 	fx_rates: FxRatesResponse
 	games: GamesResponse
 	id_documents: IdDocumentsResponse

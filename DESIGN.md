@@ -144,6 +144,18 @@ Rules:
   `--gg-portal-dock-h`, and the column pads by exactly that). From 900px the
   same five become text links under the header with the nav's volt underline,
   the button returns to the flow, and the micro-copy footer comes back.
+- The customer display (`/display`, a tablet on the counter signed in as
+  staff) is the one screen a customer reads from a distance. Idle: the logo
+  lockup, one Anton line, the sign-up QR, and the shop's ticker as a single
+  slow band in volt with `◆` separators along the bottom edge, the one place
+  the site's ticker appears in the app (it stops under
+  `prefers-reduced-motion`). During a sale: the basket lines with product
+  images, the discount line, the total in Anton, "Earns N points". During a
+  buy-in: the offer lines, what they sell for, the offer in Anton, the
+  payout sentence, and one Accept block button at 72px, the only button on
+  the screen, followed by the done seal. The customer's name is shortened
+  to a first name and an initial; no balance, code, phone or email ever
+  reaches this screen. No navigation and no idle lock. Both colour modes.
 
 ---
 
