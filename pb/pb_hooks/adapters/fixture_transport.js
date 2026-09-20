@@ -205,7 +205,19 @@ function respond(call) {
   //        moment this transport actually serves it - the file itself is
   //        still the full, real SumUp response shape; only the one field a
   //        static file structurally cannot supply is a placeholder.
+  //    `changes_since` is checked here for real ISO 8601 (a "T", never a
+  //    space) on every call, not just once in a unit test: this is what
+  //    makes the fixture-driven pull in pb/scripts/check.sh itself prove
+  //    lib/sumup.js never regresses to sending PocketBase's own
+  //    space-separated date shape, on the second pull as much as the first.
   if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("/transactions/history") >= 0) {
+    var sinceMatch = /changes_since=([^&]+)/.exec(url);
+    if (sinceMatch) {
+      var sinceValue = decodeURIComponent(sinceMatch[1]);
+      if (sinceValue.indexOf(" ") >= 0 || !/^\d{4}-\d{2}-\d{2}T/.test(sinceValue)) {
+        return refuse(call, "changes_since is not ISO 8601: " + sinceValue);
+      }
+    }
     return ok(resolveNowPlaceholders(loadFixture("sumup_HANDWRITTEN_transactions_history.json")));
   }
   if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-sku-0001") >= 0) {
@@ -213,6 +225,15 @@ function respond(call) {
   }
   if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-amount-0002") >= 0) {
     return ok(resolveNowPlaceholders(loadFixture("sumup_HANDWRITTEN_transaction_amount.json")));
+  }
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-failed-0003") >= 0) {
+    return ok(loadFixture("sumup_HANDWRITTEN_transaction_failed.json"));
+  }
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-outside-window-0004") >= 0) {
+    return ok(loadFixture("sumup_HANDWRITTEN_transaction_outside_window.json"));
+  }
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-mixed-0005") >= 0) {
+    return ok(resolveNowPlaceholders(loadFixture("sumup_HANDWRITTEN_transaction_mixed.json")));
   }
 
   return refuse(call, "");

@@ -68,6 +68,7 @@ routerAdd(
   "POST",
   "/api/vault/imports/card-uploader",
   (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
     const csvLib = require(`${__hooks}/lib/csv.js`);
     const importsLib = require(`${__hooks}/lib/imports.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
@@ -105,7 +106,9 @@ routerAdd(
         record.set("file", $filesystem.fileFromBytes(upload.bytes, `card-uploader-${Date.now()}.csv`));
         txApp.save(record);
 
-        const outcome = importsLib.processCardUploaderRows(txApp, staff.id, mapped.records);
+        const settingsRow = util.settings(txApp);
+        const defaultLocation = settingsRow ? settingsRow.getString("default_intake_location") : "";
+        const outcome = importsLib.processCardUploaderRows(txApp, staff.id, mapped.records, defaultLocation);
 
         record.set("rows_ok", outcome.matched + outcome.review);
         record.set("errors", outcome.errors);

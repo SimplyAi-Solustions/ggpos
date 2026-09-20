@@ -342,6 +342,7 @@ function processCardUploaderRows(txApp, staffId, records, defaultLocation) {
       record.set("acquired_at", nowIso);
       record.set("tax_scheme", "margin");
       if (staffId) record.set("created_by", staffId);
+      if (defaultLocation) record.set("location", defaultLocation);
       txApp.save(record);
       matched += 1;
       errors.push({
