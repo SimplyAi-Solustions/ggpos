@@ -46,6 +46,7 @@ import type {
 } from "@/lib/api/types"
 
 export { isOffline, isSimulatedOffline, setSimulatedOffline } from "@/lib/offline/net"
+export { clearOfflineCaches, RUNTIME_CACHE_NAMES } from "@/lib/offline/caches"
 
 /** A sale that is still in the queue carries this in place of its number. */
 export const QUEUED_SALE_NUMBER = "Not sent yet"

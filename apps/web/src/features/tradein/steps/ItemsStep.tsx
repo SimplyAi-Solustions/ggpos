@@ -585,22 +585,34 @@ export function ItemsStep({
               layout="stacked"
               className="sm:flex-1"
             >
-              <Input
-                id="buyin-title"
-                autoComplete="off"
-                placeholder={
-                  kind === "retro"
-                    ? "Mario Kart 64, boxed"
-                    : "Surging Sparks Elite Trainer Box"
-                }
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return
-                  event.preventDefault()
-                  addFreeText()
-                }}
-              />
+              {kind === "retro" ? (
+                // The retro lookup, so the line can carry a `retro_titles`
+                // id and price itself. A title nobody recognises still goes
+                // on with "Add line" and a market value by hand.
+                <RetroSearchField
+                  id="buyin-title"
+                  platformKey={platformKey}
+                  onPlatformChange={setPlatformKey}
+                  value={title}
+                  onChange={setTitle}
+                  onChoose={addRetroTitle}
+                  placeholder="Mario Kart 64, boxed"
+                  inputRef={searchRef}
+                />
+              ) : (
+                <Input
+                  id="buyin-title"
+                  autoComplete="off"
+                  placeholder="Surging Sparks Elite Trainer Box"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return
+                    event.preventDefault()
+                    addFreeText()
+                  }}
+                />
+              )}
             </Field>
             {kind === "sealed" && games.length > 0 ? (
               <Field

@@ -8,6 +8,7 @@ import { Lede, PageTitle } from "@/components/ui/page-title"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { confirmPassword, initials, useStaff } from "@/lib/auth"
 import { clearStepUp } from "@/lib/auth-stepup"
+import { clearOfflineCaches } from "@/lib/offline/caches"
 
 /** Ten minutes without a keystroke, a tap or a scan. */
 export const IDLE_TIMEOUT_MS = 10 * 60 * 1000
@@ -44,9 +45,12 @@ export function IdleLock() {
     if (locked || !staff) return undefined
 
     // Locking drops any step-up confirmation: whoever unlocks the counter
-    // confirms again before a refund or an ID photo.
+    // confirms again before a refund or an ID photo. It empties the service
+    // worker's caches too, so a locked counter is not holding customer
+    // names and stock for whoever walks past it.
     const lock = () => {
       clearStepUp()
+      void clearOfflineCaches()
       setLocked(true)
     }
 

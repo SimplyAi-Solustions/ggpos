@@ -2,6 +2,7 @@ import * as React from "react"
 
 import { pb } from "@/lib/pb"
 import { clearStepUp } from "@/lib/auth-stepup"
+import { clearOfflineCaches } from "@/lib/offline/caches"
 import {
   isDemo,
   login as apiLogin,
@@ -108,8 +109,11 @@ export async function login(email: string, password: string): Promise<StaffRecor
 
 export function logout() {
   // A step-up confirmation is good for ten minutes, and this counter is
-  // shared: it must not outlive the session that earned it.
+  // shared: it must not outlive the session that earned it. Neither do the
+  // service worker's read-through caches, which hold stock and customer
+  // names fetched under this session.
   clearStepUp()
+  void clearOfflineCaches()
   if (isDemo()) {
     try {
       localStorage.removeItem(DEMO_SESSION_KEY)

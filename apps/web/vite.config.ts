@@ -5,6 +5,8 @@ import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 import { VitePWA } from "vite-plugin-pwa"
 
+import { RUNTIME_CACHES } from "./src/lib/offline/caches"
+
 /**
  * What the service worker is allowed to keep, and for how long.
  *
@@ -20,15 +22,18 @@ import { VitePWA } from "vite-plugin-pwa"
 const READ_THROUGH = [
   // GET /api/vault/config: pricing rules, offer bands, loyalty and the
   // non-secret settings. Every counter screen loads it.
-  { name: "gg-config", pattern: /\/api\/vault\/config(\?|$)/ },
+  { name: RUNTIME_CACHES.config, pattern: /\/api\/vault\/config(\?|$)/ },
   // The stock list and item lookups.
-  { name: "gg-stock", pattern: /\/api\/collections\/(items|locations|games)\/records/ },
+  {
+    name: RUNTIME_CACHES.stock,
+    pattern: /\/api\/collections\/(items|locations|games)\/records/,
+  },
   // Customer lookups at the counter: the `customers` record only, which is
   // the name, code and contact details. `customer_private` carries the
   // address, the date of birth and the ID fields, and none of that belongs
   // in a browser cache for a day (docs/dpia.md, docs/retention-schedule.md),
   // so it is deliberately absent and a lookup that needs it fails offline.
-  { name: "gg-customers", pattern: /\/api\/collections\/customers\/records/ },
+  { name: RUNTIME_CACHES.customers, pattern: /\/api\/collections\/customers\/records/ },
 ].map(({ name, pattern }) => ({
   urlPattern: pattern,
   handler: "NetworkFirst" as const,

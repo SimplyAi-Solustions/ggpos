@@ -9,7 +9,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { ProductImage } from "@/components/product-image"
 import { useTheme } from "@/components/theme-provider"
-import { logout } from "@/lib/auth"
+import { logout, useStaff } from "@/lib/auth"
 import { searchCards, type CardHit } from "@/lib/api"
 
 type PaletteAction = {
@@ -65,6 +65,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   const [query, setQuery] = React.useState("")
+  const admin = useStaff()?.role === "admin"
 
   // Reset on the way out rather than in an effect, so the query never lags a
   // frame behind the panel it belongs to.
@@ -132,15 +133,20 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   )
   // --- end Customers and trade ---
 
-  // --- Settings and counts ---
-  const adminActions = React.useMemo<PaletteAction[]>(
+  // --- Stock counts and settings ---
+  // Settings is an admin screen and says so to anybody else, so the palette
+  // does not offer it to a staff member in the first place. Counts are for
+  // everybody: staff run them, an admin closes them.
+  const countActions = React.useMemo<PaletteAction[]>(
     () => [
-      { id: "settings", label: "Settings", run: () => go("/counter/settings") },
       { id: "stock-count", label: "Stock count", run: () => go("/counter/stock/count") },
+      ...(admin
+        ? [{ id: "settings", label: "Settings", run: () => go("/counter/settings") }]
+        : []),
     ],
-    [go]
+    [admin, go]
   )
-  // --- end Settings and counts ---
+  // --- end Stock counts and settings ---
 
   const needle = query.trim().toLowerCase()
   const visibleActions = needle
@@ -149,9 +155,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const visibleCustomerActions = needle
     ? customerActions.filter((action) => action.label.toLowerCase().includes(needle))
     : customerActions
-  const visibleAdminActions = needle
-    ? adminActions.filter((action) => action.label.toLowerCase().includes(needle))
-    : adminActions
+  const visibleCountActions = needle
+    ? countActions.filter((action) => action.label.toLowerCase().includes(needle))
+    : countActions
 
   const deferred = React.useDeferredValue(query)
   const { data: cards = [], isFetching } = useQuery({
@@ -236,13 +242,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             ) : null}
             {/* --- end Customers and trade --- */}
 
-            {/* --- Settings and counts --- */}
-            {visibleAdminActions.length > 0 ? (
+            {/* --- Stock counts and settings --- */}
+            {visibleCountActions.length > 0 ? (
               <Command.Group
-                heading="Settings and counts"
+                heading={admin ? "Counts and settings" : "Counts"}
                 className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pt-4 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:tracking-[0.16em] [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:uppercase"
               >
-                {visibleAdminActions.map((action) => (
+                {visibleCountActions.map((action) => (
                   <Command.Item
                     key={action.id}
                     value={action.id}
@@ -255,7 +261,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 ))}
               </Command.Group>
             ) : null}
-            {/* --- end Settings and counts --- */}
+            {/* --- end Stock counts and settings --- */}
 
             {cards.length > 0 ? (
               <Command.Group
