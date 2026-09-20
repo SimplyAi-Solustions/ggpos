@@ -84,11 +84,9 @@ function fakePrinter({ hold = false, fail = false } = {}) {
       },
       async claimInterface() {},
       async transferOut(_endpoint, data) {
-        if (failIt) {
-          const error = new Error("The device was disconnected.")
-          error.name = "NetworkError"
-          throw error
-        }
+        // A stall is a label that did not come out with the printer still
+        // there, which is the failure the queue counts attempts against.
+        if (failIt) return { status: "stall", bytesWritten: 0 }
         while (holdIt) await new Promise((resolve) => setTimeout(resolve, 60))
         return { status: "ok", bytesWritten: data.byteLength }
       },
