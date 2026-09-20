@@ -124,3 +124,21 @@ onRecordCreate((e) => {
     }
   }
 }, "items");
+
+/**
+ * items.listed_at: when status most recently became "listed_ebay", cleared
+ * the moment it leaves that status again. The channels report's listing
+ * age reads this (falling back to acquired_at when blank) - see
+ * docs/api-contract.md's Phase 4 section. Kept to the one thing this hook
+ * does; e.next() exactly once, per pb/README.md.
+ */
+onRecordUpdate((e) => {
+  const wasListed = e.record.original().getString("status") === "listed_ebay";
+  const isListed = e.record.getString("status") === "listed_ebay";
+  if (isListed && !wasListed) {
+    e.record.set("listed_at", new Date().toISOString());
+  } else if (!isListed && wasListed) {
+    e.record.set("listed_at", "");
+  }
+  e.next();
+}, "items");

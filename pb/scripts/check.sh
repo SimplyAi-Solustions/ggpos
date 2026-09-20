@@ -130,6 +130,7 @@ ok "superuser created"
 GG_ID_PHOTO_KEY="$ID_PHOTO_KEY" GG_ADAPTER_TRANSPORT_MODE="fixture" "$PB" serve \
   --dir "$TMP_DIR" \
   --hooksDir "$HOOKS_DIR" \
+  --hooksWatch=false \
   --migrationsDir "$MIGRATIONS_DIR" \
   --publicDir "$PUBLIC_DIR" \
   --http "127.0.0.1:$PORT" \
@@ -1358,6 +1359,7 @@ KEYLESS_BASE="http://127.0.0.1:$KEYLESS_PORT"
 "$PB" serve \
   --dir "$KEYLESS_DIR" \
   --hooksDir "$HOOKS_DIR" \
+  --hooksWatch=false \
   --migrationsDir "$MIGRATIONS_DIR" \
   --publicDir "$PUBLIC_DIR" \
   --http "127.0.0.1:$KEYLESS_PORT" \
@@ -3105,8 +3107,8 @@ EO_TWOROW_LINES="$(curl -s "$BASE/api/collections/sale_lines/records?filter=sale
 [ "$EO_TWOROW_LINES" = "2" ] || fail "the two-row-order sale does not have exactly two sale_lines: $EO_TWOROW_LINES"
 ok "the two-row order's sale carries two sale_lines, one per row"
 
-# An ordinary counter sale (sales.pb.js, untouched this round) still gets
-# channel defaulted to "counter" by imports.pb.js's own onRecordCreate hook.
+# An ordinary counter sale (through the completion route) still gets
+# channel defaulted to "counter" by the onRecordCreate hook in sales.pb.js.
 CHANNEL_ITEM_ID="$(make_item "Channel Default Item" 1 200 650)"
 CHANNEL_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \

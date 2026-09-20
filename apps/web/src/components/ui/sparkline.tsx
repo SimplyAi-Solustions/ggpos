@@ -10,7 +10,7 @@ import { cn } from "cn"
  * maximum, so a quiet month is not a flat line at the bottom of the box, and
  * a run of zeroes draws along the baseline rather than dividing by nothing.
  */
-export interface SparklineProps extends React.ComponentProps<"svg"> {
+export interface SparklineProps extends Omit<React.ComponentProps<"svg">, "values"> {
   values: number[]
   /** Drawn height in CSS pixels. DESIGN.md's tiles use 40. */
   height?: number

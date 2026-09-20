@@ -115,12 +115,16 @@ export async function getSparklines(days = 30): Promise<SparklineSeries> {
 
   return {
     dates,
-    sales: dates.map((date) =>
-      Object.values(byDate.get(date)?.sales_total_by_payment ?? {}).reduce(
+    // Net of refunds: the payment split is gross, so the day's own
+    // `sales_refunded` comes off it, exactly as the sales report does.
+    sales: dates.map((date) => {
+      const row = byDate.get(date)
+      const gross = Object.values(row?.sales_total_by_payment ?? {}).reduce(
         (carry, amount) => carry + amount,
         0
       )
-    ),
+      return gross - (row?.sales_refunded ?? 0)
+    }),
     buyIns: dates.map((date) => {
       const payout = byDate.get(date)?.buy_in_total_by_payout ?? {}
       return (payout.cash ?? 0) + (payout.credit ?? 0)

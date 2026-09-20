@@ -5,7 +5,7 @@
  * which is only when the database row was written.
  *
  * For a counter sale the two are the same instant: the hook on `sales` in
- * `pb_hooks/imports.pb.js` fills `occurred_at` with now when a create leaves
+ * `pb_hooks/sales.pb.js` fills `occurred_at` with now when a create leaves
  * it blank. For an eBay orders import they differ, and that is the point:
  * a file imported on a Friday covering a week of orders books each sale on
  * the order's own date, not on the Friday the import ran. Every report and

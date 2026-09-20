@@ -30,6 +30,24 @@
 // ---------------------------------------------------------------------
 // POST /api/vault/sales/complete
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Defaults for a sale created without them. `channel` is "counter" unless
+// the eBay orders import (imports.pb.js) has already said "ebay", and
+// `occurred_at` is now unless that import carries the order's own date.
+// Both fields arrived in Phase 4 (migrations 1789820280 and 1789820340),
+// after the completion route below was written, and a record hook is the
+// one place every create path passes through, the import's included.
+// ---------------------------------------------------------------------
+onRecordCreate((e) => {
+  if (!e.record.getString("channel")) {
+    e.record.set("channel", "counter");
+  }
+  if (!e.record.getString("occurred_at")) {
+    e.record.set("occurred_at", new Date().toISOString());
+  }
+  e.next();
+}, "sales");
+
 routerAdd(
   "POST",
   "/api/vault/sales/complete",

@@ -39,29 +39,6 @@
  */
 
 // ---------------------------------------------------------------------
-// sales.channel defaults to "counter", and sales.occurred_at to now, when
-// a sale is created with either left empty. This lives here, not in
-// sales.pb.js (another package's file this round - see the Phase 4
-// brief), because imports.pb.js is what actually needs both fields: an
-// eBay-orders-imported sale sets channel: "ebay" and occurred_at from the
-// file's own sale date itself (lib/imports.js), but an ordinary counter
-// sale sales.pb.js creates has never heard of either field, and each
-// needs a sensible default somewhere. onRecordCreate hooks from separate
-// files both fire normally - see items.pb.js and customers.pb.js for two
-// more that already coexist with other files' hooks on collections they
-// do not otherwise own.
-// ---------------------------------------------------------------------
-onRecordCreate((e) => {
-  if (!e.record.getString("channel")) {
-    e.record.set("channel", "counter");
-  }
-  if (!e.record.getString("occurred_at")) {
-    e.record.set("occurred_at", new Date().toISOString());
-  }
-  e.next();
-}, "sales");
-
-// ---------------------------------------------------------------------
 // POST /api/vault/imports/card-uploader
 // ---------------------------------------------------------------------
 routerAdd(

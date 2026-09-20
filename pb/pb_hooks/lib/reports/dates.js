@@ -118,6 +118,57 @@ function isoWeekday(date) {
   return (date.getUTCDay() + 6) % 7;
 }
 
+/**
+ * The UK civil clock (Europe/London: GMT, or BST from 01:00 UTC on the
+ * last Sunday of March to 01:00 UTC on the last Sunday of October), for
+ * the staffing heatmap only - every day bucket (`groupLabel`, `eachDay`,
+ * `rangeParams`) stays plain UTC, so a Monday is the same calendar day
+ * everywhere in this package except the heatmap's own hour and weekday.
+ *
+ * goja has no reliable Intl (no time zone database), so the rule is
+ * reproduced by hand here rather than trusted to Intl.DateTimeFormat -
+ * the same reasoning as this file's own PocketBase-stored-date note
+ * above, applied to a different platform gap.
+ */
+
+/** The last Sunday of `monthIndex` (0-based) in `year`, at UTC midnight. */
+function lastSundayUtc(year, monthIndex) {
+  var d = new Date(Date.UTC(year, monthIndex + 1, 0)); // last day of the month
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay()); // back to the Sunday on or before it
+  return d;
+}
+
+/** True when `date` falls in British Summer Time. */
+function isBst(date) {
+  var year = date.getUTCFullYear();
+  var marchLastSunday = lastSundayUtc(year, 2); // March
+  var octLastSunday = lastSundayUtc(year, 9); // October
+  var bstStart = Date.UTC(
+    marchLastSunday.getUTCFullYear(),
+    marchLastSunday.getUTCMonth(),
+    marchLastSunday.getUTCDate(),
+    1
+  );
+  var bstEnd = Date.UTC(
+    octLastSunday.getUTCFullYear(),
+    octLastSunday.getUTCMonth(),
+    octLastSunday.getUTCDate(),
+    1
+  );
+  var t = date.getTime();
+  return t >= bstStart && t < bstEnd;
+}
+
+/**
+ * `date` shifted so its own UTC-getter fields (getUTCDay, getUTCHours, ...)
+ * read as the UK civil clock would at that instant - GMT is +0, BST +60
+ * minutes. Only ever used for the sales report's hour-of-day heatmap.
+ */
+function toLondon(date) {
+  var offsetMinutes = isBst(date) ? 60 : 0;
+  return new Date(date.getTime() + offsetMinutes * 60000);
+}
+
 /** {from, to} covering the last full Monday-to-Sunday week before `now`. */
 function lastWeekRange(now) {
   var today = now.toISOString().slice(0, 10);

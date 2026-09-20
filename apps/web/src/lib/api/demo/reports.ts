@@ -139,6 +139,7 @@ const SETS = [
 const ZERO_DAY: Omit<DailyStatRow, "date"> = {
   sales_count: 0,
   sales_total_by_payment: {},
+  sales_refunded: 0,
   buy_in_count: 0,
   buy_in_total_by_payout: { cash: 0, credit: 0 },
   items_in: 0,
@@ -179,9 +180,11 @@ export function dayStat(iso: string, now: Date = new Date()): DailyStatRow {
   return {
     date: iso,
     sales_count: salesCount,
+    // Gross, by method. Refunds are counted apart, on `sales_refunded`.
     sales_total_by_payment: Object.fromEntries(
       PAYMENTS.map((entry, index) => [entry.key || "none", payments[index] ?? 0])
     ),
+    sales_refunded: unit(iso, "refund") > 0.72 ? Math.round(salesTotal * 0.06) : 0,
     buy_in_count: buyInCount,
     buy_in_total_by_payout: { cash: buyInCash, credit: buyInCredit },
     items_in: pick(iso, "itemsin", 0, 26),
@@ -203,11 +206,17 @@ function daysIn(from: string, to: string, now?: Date): DailyStatRow[] {
   return eachDay(from, to).map((iso) => dayStat(iso, now))
 }
 
-function salesTotalOf(row: DailyStatRow): number {
+/** The day's takings by method, before refunds: the split is always gross. */
+function grossSalesOf(row: DailyStatRow): number {
   return Object.values(row.sales_total_by_payment ?? {}).reduce(
     (carry, amount) => carry + amount,
     0
   )
+}
+
+/** Revenue, net of every refund on file against the day's own sales. */
+function salesTotalOf(row: DailyStatRow): number {
+  return grossSalesOf(row) - (row.sales_refunded ?? 0)
 }
 
 function buyInTotalOf(row: DailyStatRow): number {
@@ -277,10 +286,13 @@ function salesReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Partia
   const count = sum(rows.map((row) => row.sales_count ?? 0))
   const dimension = dimensionFor("sales", query.by)
   const weights = skew(query.from, dimension, "sales")
-  const revenues = split(revenue, weights)
+  // A payment split is gross: a refund is not paid back through the method
+  // it came in on, so netting it off one bucket would be a guess.
+  const splittable = query.by === "payment" ? sum(rows.map(grossSalesOf)) : revenue
+  const revenues = split(splittable, weights)
   const counts = split(count, weights)
 
-  // Seven rows of twenty-four, Monday first, hours in UTC.
+  // Seven rows of twenty-four, Monday first, in the shop's own hours.
   const heatmap = Array.from({ length: 7 }, (_, day) =>
     Array.from({ length: 24 }, (_, hour) => {
       if (hour < 9 || hour > 17) return 0
@@ -359,7 +371,7 @@ function buyinsReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Parti
       items_bought: itemsBought,
       items_sold: itemsSold,
       sell_through_ratio:
-        itemsBought === 0 ? 0 : Math.round((itemsSold / itemsBought) * 100) / 100,
+        itemsBought === 0 ? 0 : Math.round((itemsSold / itemsBought) * 1000) / 1000,
       top_sellers: sellers.map((entry, index) => ({
         customer: entry.customer,
         name: entry.name,
@@ -470,13 +482,9 @@ function stockReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Partia
   }))
 
   return {
-    series: series(rows, query.group, (days) => {
-      const last = days[days.length - 1]
-      return {
-        value_cost: last?.stock_value_cost ?? 0,
-        value_market: last?.stock_value_market ?? 0,
-      }
-    }),
+    // Stock is a point in time, not a period, so the route serves no series
+    // and the screen draws no chart: figures and tables only.
+    series: [],
     table: movers.sort((a, b) => Math.abs(b.pct_change) - Math.abs(a.pct_change)),
     totals: {
       value_cost: valueCost,
@@ -498,7 +506,7 @@ function stockReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Partia
         rate:
           (acquired[index] ?? 0) === 0
             ? 0
-            : Math.round(((sold[index] ?? 0) / (acquired[index] ?? 1)) * 100) / 100,
+            : Math.round(((sold[index] ?? 0) / (acquired[index] ?? 1)) * 1000) / 1000,
       })),
       dead_stock: dead,
       price_movers_count: movers.length,
@@ -523,11 +531,8 @@ function channelsReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Par
   }))
 
   return {
-    series: series(rows, query.group, (days) => {
-      const bucketRevenue = sum(days.map(salesTotalOf))
-      const ebay = Math.round(bucketRevenue * 0.22)
-      return { counter: bucketRevenue - ebay, ebay }
-    }),
+    // No series by design: the report answers "which channel", not "when".
+    series: [],
     table,
     totals: {
       revenue,
@@ -553,7 +558,14 @@ function customersReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Pa
     { customer: "cust_demo_3", name: "Misty Waterflower", weight: 24 },
     { customer: "cust_demo_4", name: "Gary Oaks", weight: 18 },
   ]
-  const spends = split(Math.round(revenue * 0.42), skew(query.from, people, "spender"))
+  const spends = split(
+    Math.round(revenue * 0.42),
+    skew(
+      query.from,
+      people.map((entry) => ({ key: entry.customer, label: entry.name, weight: entry.weight })),
+      "spender"
+    )
+  )
   const trades = split(
     Math.round(sum(rows.map(buyInTotalOf)) * 0.6),
     people.map((entry) => entry.weight)
@@ -708,9 +720,8 @@ function complianceReport(query: Required<ReportQuery>, rows: DailyStatRow[]): P
   }
 
   return {
-    series: series(rows, query.group, (days) => ({
-      count: sum(days.map((row) => row.buy_in_count ?? 0)),
-    })),
+    // The register is a list, not a trend: no series, no chart.
+    series: [],
     table,
     totals: {
       count: table.length,
@@ -740,6 +751,30 @@ export function previousRange(from: string, to: string): { from: string; to: str
   return { from: addDays(from, -length), to: addDays(from, -1) }
 }
 
+/**
+ * Which of a report's totals mean anything over a past period.
+ *
+ * Stock is read as it stands when the report runs, so nothing on it can be
+ * compared with a fortnight ago; channels can compare what it sold, but not
+ * how long its live listings have been up. A key that is missing here is a
+ * key the screen shows no delta for.
+ */
+const PERIOD_SCOPED: Partial<Record<ReportKey, string[]>> = {
+  stock: [],
+  channels: ["revenue", "count", "items_ended"],
+}
+
+function periodScoped(
+  key: ReportKey,
+  totals: Record<string, unknown>
+): Record<string, unknown> {
+  const allowed = PERIOD_SCOPED[key]
+  if (!allowed) return totals
+  return Object.fromEntries(
+    Object.entries(totals).filter(([name]) => allowed.includes(name))
+  )
+}
+
 /** One report, the same envelope the route answers with. */
 export function demoReport(key: ReportKey, query: ReportQuery, now?: Date): ReportEnvelope {
   const filled: Required<ReportQuery> = {
@@ -758,7 +793,11 @@ export function demoReport(key: ReportKey, query: ReportQuery, now?: Date): Repo
       { ...filled, ...range, compare: "none" },
       daysIn(range.from, range.to, now)
     )
-    compare = { totals: before.totals ?? {}, from: range.from, to: range.to }
+    compare = {
+      totals: periodScoped(key, before.totals ?? {}),
+      from: range.from,
+      to: range.to,
+    }
   }
 
   return {
@@ -785,6 +824,7 @@ export function demoSparklines(days: number, now: Date = new Date()): SparklineS
   const rows = daysIn(from, to, now)
   return {
     dates: rows.map((row) => row.date),
+    // Net of refunds, the same figure the sales report headlines.
     sales: rows.map(salesTotalOf),
     buyIns: rows.map(buyInTotalOf),
     cashOut: rows.map((row) => row.buy_in_total_by_payout?.cash ?? 0),

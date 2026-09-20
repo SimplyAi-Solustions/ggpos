@@ -12,11 +12,10 @@
  *    (text): an eBay-orders import creates its own sale with
  *    `channel: "ebay"` and the order reference in `external_ref`, so a
  *    counter sale and an eBay sale can be told apart later (reports,
- *    the sales export). An ordinary counter sale never sets `channel`
- *    itself - `sales.pb.js` is another phase's file, not touched this
- *    round - so `imports.pb.js` carries a small `onRecordCreate` hook of
- *    its own that defaults an empty `channel` to `"counter"`; see that
- *    file's own comment for why it lives there.
+ *    the sales export). A small `onRecordCreate` hook on `sales` in
+ *    `sales.pb.js` defaults an empty `channel` to `"counter"`, so an
+ *    ordinary counter sale carries it without the completion route
+ *    knowing about the field.
  *  - `settings.import_mappings`: the header-name mapping config each CSV
  *    importer reads instead of hard-coded headers (the real Card Uploader
  *    per-card headers are only visible inside a logged-in account -
