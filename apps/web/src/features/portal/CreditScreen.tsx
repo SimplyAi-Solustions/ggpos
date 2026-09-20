@@ -6,6 +6,7 @@ import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { StickerRing } from "@/components/ui/sticker"
 import { getMe, getMyCredit } from "@/lib/api/portal"
+import { LoadFailed } from "@/features/portal/LoadFailed"
 import { formatDate } from "@/features/portal/format"
 import { Note } from "@/features/portal/Note"
 import type { CreditLedgerRecord } from "@/lib/api/types"
@@ -27,6 +28,22 @@ const REASON_LABEL: Record<CreditLedgerRecord["reason"], string> = {
 export function CreditScreen() {
   const me = useQuery({ queryKey: ["portal", "me"], queryFn: getMe })
   const ledger = useQuery({ queryKey: ["portal", "credit"], queryFn: getMyCredit })
+
+  // A dropped connection must never read as "£0.00" and "no credit yet":
+  // both are statements about somebody's money that would not be true.
+  if (me.isError || ledger.isError) {
+    return (
+      <LoadFailed
+        title="Store credit"
+        error={me.error ?? ledger.error}
+        fallback="We could not read your balance just now. Check your connection and try again."
+        onRetry={() => {
+          void me.refetch()
+          void ledger.refetch()
+        }}
+      />
+    )
+  }
 
   const balance = me.data?.balances.credit ?? 0
   const rows = ledger.data ?? []

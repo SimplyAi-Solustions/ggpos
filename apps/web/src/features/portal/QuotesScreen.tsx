@@ -11,6 +11,7 @@ import { StickerOrbit } from "@/components/ui/sticker"
 import { listMyQuotes } from "@/lib/api/quotes"
 import { usePortalDock } from "@/features/portal/dock"
 import { formatDate, QUOTE_STATUS_LABEL } from "@/features/portal/format"
+import { LoadFailed } from "@/features/portal/LoadFailed"
 import { needsAnswer } from "@/features/portal/timeline"
 
 /**
@@ -22,10 +23,21 @@ import { needsAnswer } from "@/features/portal/timeline"
  */
 export function QuotesScreen() {
   const dock = usePortalDock()
-  const { data: quotes, isPending } = useQuery({
+  const { data: quotes, isPending, isError, error, refetch } = useQuery({
     queryKey: ["portal", "quotes"],
     queryFn: listMyQuotes,
   })
+
+  if (isError) {
+    return (
+      <LoadFailed
+        title="Quotes"
+        error={error}
+        fallback="We could not read your quotes just now. Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
+    )
+  }
 
   const primary = (
     <Button render={<Link to="/account/quotes/new" />} trailingArrow>

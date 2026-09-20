@@ -4258,6 +4258,16 @@ P5_WANT_ID="$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.id")"
 [ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.card.name")" = "Phase 5 Card B" ] || fail "the want-list row does not expand the card's name: $(echo "$P5_WANT_JSON" | head -n -1)"
 [ -n "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.card.set")" ] || fail "the want-list row does not expand the card's set"
 [ "$(echo "$P5_WANT_JSON" | head -n -1 | jval "row.card.number")" = "7" ] || fail "the want-list row does not expand the card's number"
+echo "$P5_WANT_JSON" | head -n -1 | grep -q '"image"' || fail "the want-list row's card does not carry an image key"
+
+# a second want-list row for the same customer, on a card nothing will ever
+# match, created a moment later so GET /api/vault/want-list's newest-first
+# order is unambiguous - this is the "open" row that must read back
+# hold: null, contrasted below against the first row once it is matched
+P5_CARD_B_OPEN="$(p5_make_card "Phase 5 Card B Open" "70")"
+P5_WANT_OPEN_ID="$(curl -s -X POST "$BASE/api/vault/want-list" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"card\":\"$P5_CARD_B_OPEN\",\"max_price\":3000}" | jval "row.id")"
+[ -n "$P5_WANT_OPEN_ID" ] || fail "could not create the second, never-matched want-list row"
+sleep 1
 
 P5_WANT_ITEM_JSON="$(curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$P5_CARD_B\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":2500}")"
@@ -4276,7 +4286,24 @@ P5_MATCH_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=2
 [ "$(echo "$P5_MATCH_NOTIF" | jval totalItems)" -ge 1 ] || fail "the want-list match did not notify the customer"
 echo "$P5_MATCH_NOTIF" | grep -qF "Phase 5 Card B" || fail "the want-match notification does not name the item: $P5_MATCH_NOTIF"
 echo "$P5_MATCH_NOTIF" | grep -qF "Held for you until" || fail "the want-match notification does not say when the hold ends: $P5_MATCH_NOTIF"
+[ "$(echo "$P5_MATCH_NOTIF" | jval "items.0.link")" = "/account/wants" ] || fail "a want-match notification's link is '$(echo "$P5_MATCH_NOTIF" | jval "items.0.link")', expected /account/wants"
 ok "creating an item matches the oldest open want-list row, holds it, and notifies the customer"
+
+# GET /api/vault/want-list: the customer's own rows, newest first, each
+# with its card and a hold that only exists on the matched one - the
+# collection read (filtered by customer) stays allowed too, this route
+# just adds what that read cannot: matched_item expanded off the
+# staff-only items collection.
+P5_WANT_LIST_JSON="$(curl -s -w '\n%{http_code}' "$BASE/api/vault/want-list" -H "Authorization: $P5_WANT_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_WANT_LIST_JSON" | tail -n1)" = "200" ] || fail "GET /api/vault/want-list returned $(echo "$P5_WANT_LIST_JSON" | tail -n1)"
+P5_WANT_LIST_BODY="$(echo "$P5_WANT_LIST_JSON" | head -n -1)"
+[ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.0.id")" = "$P5_WANT_OPEN_ID" ] || fail "GET /api/vault/want-list is not newest first"
+[ -z "$(echo "$P5_WANT_LIST_BODY" | jval "rows.0.hold")" ] || fail "an open want-list row's hold is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.0.hold")', expected null"
+[ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.id")" = "$P5_WANT_ID" ] || fail "GET /api/vault/want-list did not return the matched row second"
+[ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.price")" = "2500" ] || fail "a matched want-list row's hold.price is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.price")', expected 2500"
+[ "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.title")" = "Phase 5 Card B" ] || fail "a matched want-list row's hold.title is '$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.title")', expected Phase 5 Card B"
+[ -n "$(echo "$P5_WANT_LIST_BODY" | jval "rows.1.hold.until")" ] || fail "a matched want-list row's hold has no until"
+ok "GET /api/vault/want-list returns the customer's own rows newest first, with hold set only on the matched row"
 
 P5_WANT_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/complete" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"lines\":[{\"item\":\"$P5_WANT_ITEM_ID\",\"qty\":1,\"unit_price\":2500,\"discount\":0}],\"customer\":\"$P5_WANT_CUSTOMER_ID\",\"payment\":\"sumup_card\"}")"
@@ -4305,8 +4332,9 @@ P5_HOLD_ITEM_AFTER="$(curl -s "$BASE/api/collections/items/records/$P5_HOLD_ITEM
 [ "$(echo "$P5_HOLD_ITEM_AFTER" | jval reserved_for)" = "" ] || fail "a released item still carries reserved_for"
 P5_HOLD_WANT_AFTER="$(curl -s "$BASE/api/collections/want_list/records/$P5_HOLD_WANT_ID" -H "Authorization: $STAFF_TOKEN")"
 [ "$(echo "$P5_HOLD_WANT_AFTER" | jval status)" = "closed" ] || fail "the released want-list row is '$(echo "$P5_HOLD_WANT_AFTER" | jval status)', expected closed"
-P5_RELEASE_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22hold_released%22%26%26customer%3D%22$P5_HOLD_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
-[ "${P5_RELEASE_NOTIF:-0}" -ge 1 ] || fail "the holds_release cron did not notify the customer"
+P5_RELEASE_NOTIF_JSON="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22hold_released%22%26%26customer%3D%22$P5_HOLD_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_RELEASE_NOTIF_JSON" | jval totalItems)" -ge 1 ] || fail "the holds_release cron did not notify the customer"
+[ "$(echo "$P5_RELEASE_NOTIF_JSON" | jval "items.0.link")" = "/account/wants" ] || fail "a hold-released notification's link is '$(echo "$P5_RELEASE_NOTIF_JSON" | jval "items.0.link")', expected /account/wants"
 ok "the holds_release cron puts an expired hold back in stock, closes its want-list row and notifies the customer"
 
 # --- 23q. Public estimate: no token, real bands, never an adapter call --

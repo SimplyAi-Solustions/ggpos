@@ -9,6 +9,7 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { StickerOrbit } from "@/components/ui/sticker"
 import { getMyTradeIn, getMyTradeIns } from "@/lib/api/portal"
 import { formatDate } from "@/features/portal/format"
+import { LoadFailed } from "@/features/portal/LoadFailed"
 import { Note } from "@/features/portal/Note"
 
 const PAYOUT_LABEL: Record<string, string> = {
@@ -19,10 +20,21 @@ const PAYOUT_LABEL: Record<string, string> = {
 
 /** Everything this customer has sold us, newest first. */
 export function TradeInsScreen() {
-  const { data: rows, isPending } = useQuery({
+  const { data: rows, isPending, isError, error, refetch } = useQuery({
     queryKey: ["portal", "trade-ins"],
     queryFn: getMyTradeIns,
   })
+
+  if (isError) {
+    return (
+      <LoadFailed
+        title="My trade-ins"
+        error={error}
+        fallback="We could not read your trade-ins just now. Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
+    )
+  }
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -74,10 +86,21 @@ export function TradeInsScreen() {
 
 /** One trade-in: the lines, the payout and the date. */
 export function TradeInDetailScreen({ id }: { id: string }) {
-  const { data, isPending } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ["portal", "trade-in", id],
     queryFn: () => getMyTradeIn(id),
   })
+
+  if (isError) {
+    return (
+      <LoadFailed
+        title="Trade-in"
+        error={error}
+        fallback="We could not read that trade-in just now. Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
+    )
+  }
 
   if (isPending) {
     return (

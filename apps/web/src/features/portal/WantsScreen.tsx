@@ -22,6 +22,7 @@ import { addWant, closeWant, listMyWants } from "@/lib/api/wants"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { usePortalDock } from "@/features/portal/dock"
 import { formatDateTime } from "@/features/portal/format"
+import { LoadFailed } from "@/features/portal/LoadFailed"
 import { Note } from "@/features/portal/Note"
 import { SHEET_COLUMN } from "@/features/portal/sheet"
 import { CardSearch } from "@/features/estimate/CardSearch"
@@ -44,7 +45,7 @@ export function WantsScreen() {
   const [maxPrice, setMaxPrice] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
 
-  const { data: rows, isPending } = useQuery({
+  const { data: rows, isPending, isError, error: readError, refetch } = useQuery({
     queryKey: ["portal", "wants"],
     queryFn: listMyWants,
   })
@@ -55,6 +56,14 @@ export function WantsScreen() {
     setMaxPrice("")
     setError(null)
   }
+
+  /** One place the sheet opens and closes, so the form always resets with it. */
+  function onSheetOpenChange(next: boolean) {
+    setAdding(next)
+    if (!next) reset()
+  }
+
+  const closeSheet = () => onSheetOpenChange(false)
 
   const add = useMutation({
     mutationFn: () => {
@@ -75,9 +84,8 @@ export function WantsScreen() {
       )
     },
     onSuccess: async () => {
-      setAdding(false)
-      reset()
-      await queryClient.invalidateQueries({ queryKey: ["portal", "wants"] })
+      closeSheet()
+      await queryClient.invalidateQueries({ queryKey: ["portal"] })
     },
     onError: (cause) =>
       setError(
@@ -97,6 +105,19 @@ export function WantsScreen() {
       Add a card
     </Button>
   )
+
+  // "Nothing on your list" after a failed read would be a lie about what the
+  // shop is holding for somebody, so the failure is said out loud instead.
+  if (isError) {
+    return (
+      <LoadFailed
+        title="Want list"
+        error={readError}
+        fallback="We could not read your want list just now. Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
+    )
+  }
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -133,10 +154,10 @@ export function WantsScreen() {
                     ? `Up to ${formatGBP(row.maxPrice)}`
                     : "Any price"}
                 </Note>
-                {row.status === "matched" && row.heldUntil ? (
+                {row.hold ? (
                   <span className="mt-1 text-[15px] leading-[1.45] text-foreground">
-                    {`Held for you until ${formatDateTime(row.heldUntil)}`}
-                    {row.heldPrice !== null ? `, ${formatGBP(row.heldPrice)}` : ""}
+                    {`Held for you until ${formatDateTime(row.hold.until)}`}
+                    {row.hold.price > 0 ? `, ${formatGBP(row.hold.price)}` : ""}
                   </span>
                 ) : null}
               </span>
@@ -165,13 +186,7 @@ export function WantsScreen() {
           )
         : null}
 
-      <Sheet
-        open={adding}
-        onOpenChange={(next) => {
-          setAdding(next)
-          if (!next) reset()
-        }}
-      >
+      <Sheet open={adding} onOpenChange={onSheetOpenChange}>
         <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
           <SheetHeader className={SHEET_COLUMN}>
             <SheetTitle>Add a card</SheetTitle>
@@ -236,7 +251,8 @@ export function WantsScreen() {
             >
               Add to my list
             </Button>
-            <Button type="button" variant="text" onClick={() => setAdding(false)}>
+            {/* Through the sheet's own close, so the form resets with it. */}
+            <Button type="button" variant="text" onClick={() => closeSheet()}>
               Cancel
             </Button>
           </SheetFooter>
