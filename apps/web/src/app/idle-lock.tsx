@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { confirmPassword, initials, useStaff } from "@/lib/auth"
+import { clearStepUp } from "@/lib/auth-stepup"
 
 /** Ten minutes without a keystroke, a tap or a scan. */
 export const IDLE_TIMEOUT_MS = 10 * 60 * 1000
@@ -42,10 +43,17 @@ export function IdleLock() {
   React.useEffect(() => {
     if (locked || !staff) return undefined
 
-    let timer = window.setTimeout(() => setLocked(true), IDLE_TIMEOUT_MS)
+    // Locking drops any step-up confirmation: whoever unlocks the counter
+    // confirms again before a refund or an ID photo.
+    const lock = () => {
+      clearStepUp()
+      setLocked(true)
+    }
+
+    let timer = window.setTimeout(lock, IDLE_TIMEOUT_MS)
     const reset = () => {
       window.clearTimeout(timer)
-      timer = window.setTimeout(() => setLocked(true), IDLE_TIMEOUT_MS)
+      timer = window.setTimeout(lock, IDLE_TIMEOUT_MS)
     }
 
     for (const event of ACTIVITY) {

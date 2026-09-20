@@ -300,9 +300,11 @@ test.describe("the customers area", () => {
 
     await confirmPassword(page)
 
-    await expect(page.getByRole("status")).toContainText(
+    // The refusal stays inside the dialog, which still owns the screen.
+    await expect(dialog).toContainText(
       "This customer still has £45.00 store credit."
     )
+    await dialog.getByRole("button", { name: "Cancel" }).click()
     await expect(page.getByRole("heading", { name: "Jasmine Okafor" })).toBeVisible()
   })
 

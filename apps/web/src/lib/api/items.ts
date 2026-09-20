@@ -72,6 +72,7 @@ function toSummary(item: ExpandedItem): ItemSummary {
     image: imageFor(item),
     platform: platformForItem(item),
     qty: item.qty ?? 1,
+    game: item.game ?? null,
   }
 }
 

@@ -143,6 +143,8 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [cardNote, setCardNote] = React.useState<string | null>(null)
   const [actionNote, setActionNote] = React.useState<string | null>(null)
+  const [mergeError, setMergeError] = React.useState<string | null>(null)
+  const [eraseError, setEraseError] = React.useState<string | null>(null)
 
   const profileQuery = useQuery({
     queryKey: ["customer", code],
@@ -181,10 +183,22 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
       ),
   })
 
-  /** Cancelling the password prompt is a decision, not a failure. */
-  function noteFailure(error: unknown, fallback: string) {
-    if (error instanceof StepUpCancelled) return
-    setActionNote(refusalOrFallback(error, fallback))
+  /**
+   * Where a refusal goes: a dialog that is still open owns the screen, and
+   * Base UI hides the rest of the page from the accessibility tree while it
+   * is, so the sentence has to be inside it. Cancelling the password prompt
+   * is a decision rather than a failure, so it closes quietly.
+   */
+  function refuse(
+    error: unknown,
+    fallback: string,
+    inDialog: (message: string | null) => void
+  ) {
+    if (error instanceof StepUpCancelled) {
+      inDialog(null)
+      return
+    }
+    inDialog(refusalOrFallback(error, fallback))
   }
 
   const photo = useMutation({
@@ -203,30 +217,35 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
       setPhotoUrl(url)
       setPhotoOpen(true)
     },
-    onError: (error) => noteFailure(error, "That photo could not be opened."),
+    onError: (error) =>
+      refuse(error, "That photo could not be opened.", setActionNote),
   })
 
   const merge = useMutation({
     mutationFn: async (mergeId: string) =>
       mergeCustomers(customerId, mergeId, await stepUp()),
     onSuccess: (result) => {
+      setMergeError(null)
       setMergeTarget(null)
       apply(result.profile)
       void queryClient.invalidateQueries({ queryKey: ["customer-credit"] })
       void queryClient.invalidateQueries({ queryKey: ["customer-trade-ins"] })
       setActionNote(movedSentence(result.moved))
     },
-    onError: (error) => noteFailure(error, "That merge did not go through."),
+    onError: (error) =>
+      refuse(error, "That merge did not go through.", setMergeError),
   })
 
   const erase = useMutation({
     mutationFn: async () => eraseCustomer(customerId, await stepUp()),
     onSuccess: (next) => {
+      setEraseError(null)
       setEraseOpen(false)
       apply(next)
       setActionNote("That customer has been erased. The numbered records are kept.")
     },
-    onError: (error) => noteFailure(error, "That erasure did not go through."),
+    onError: (error) =>
+      refuse(error, "That erasure did not go through.", setEraseError),
   })
 
   if (profileQuery.isPending) {
@@ -606,12 +625,16 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
       <ConfirmDialog
         open={mergeTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setMergeTarget(null)
+          if (!open) {
+            setMergeTarget(null)
+            setMergeError(null)
+          }
         }}
         title="Merge customers"
         description={`Everything on the other card moves to ${customer.name}, and the other card is removed. This cannot be undone, and it asks for your password.`}
         confirmLabel="Merge"
         busy={merge.isPending}
+        error={mergeError}
         onConfirm={() => {
           if (mergeTarget) merge.mutate(mergeTarget)
         }}
@@ -619,11 +642,15 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
 
       <ConfirmDialog
         open={eraseOpen}
-        onOpenChange={setEraseOpen}
+        onOpenChange={(open) => {
+          setEraseOpen(open)
+          if (!open) setEraseError(null)
+        }}
         title="Erase this customer"
         description="The name, phone, email, address and notes are replaced with nothing, the ID photo is deleted, open rewards are cancelled, and the want list, quotes and notifications go. Numbered trade-ins and sales keep their seller details, because tax law requires the shop to hold them for six years. It asks for your password."
         confirmLabel="Erase"
         busy={erase.isPending}
+        error={eraseError}
         onConfirm={() => erase.mutate()}
       />
     </section>

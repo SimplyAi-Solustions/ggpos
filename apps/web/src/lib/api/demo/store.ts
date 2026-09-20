@@ -306,7 +306,9 @@ export function ensureSeeded() {
           item: soldCharizard.id,
           qty: 1,
           unit_price: 4995,
-          discount: 250,
+          // The Regular tier's 5 percent came off the whole sale, so it is
+          // recorded once, on the sale. A line discount would count it twice.
+          discount: 0,
           tax_scheme: "standard",
           status: "sold",
           sku: soldCharizard.sku,

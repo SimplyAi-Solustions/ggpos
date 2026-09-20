@@ -4,7 +4,16 @@
  * docs/api-contract.md, so the demo refuses a sale for the same reasons the
  * server does and Home counts the same things.
  */
-import { evaluateSalePoints, penceToPoints, type SaleLineForPoints } from "@gg/shared"
+import {
+  breakdown,
+  evaluateSalePoints,
+  penceToPoints,
+  pointsCum,
+  refundAmount,
+  remainingQty,
+  spread,
+  type SaleLineForPoints,
+} from "@gg/shared"
 
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import { addMovement, openSession } from "@/lib/api/demo/cash"
@@ -169,16 +178,14 @@ export function completeSale(payload: CompleteSalePayload): CompleteSaleResult {
   const saleId = demoId("sale")
   const now = new Date().toISOString()
 
-  const pointsLines: SaleLineForPoints[] = lines.map(({ line, item }) => ({
+  // The same pro rata spread the server uses, with the last line absorbing
+  // the remainder, so the evaluator sees exactly what was charged.
+  const grosses = lines.map(({ line }) => line.unit_price * line.qty - line.discount)
+  const nets = spread(grosses, payload.discount)
+  const pointsLines: SaleLineForPoints[] = lines.map(({ item }, index) => ({
     game: item.game ?? null,
     kind: item.kind,
-    total:
-      subtotal > 0
-        ? Math.round(
-            (line.unit_price * line.qty) -
-              (payload.discount * (line.unit_price * line.qty)) / subtotal
-          )
-        : 0,
+    total: nets[index] ?? 0,
   }))
   const earned = customer
     ? evaluateSalePoints(DEMO_PROGRAMME, DEMO_RULES, {
@@ -265,16 +272,29 @@ export function refundSale(
 
   // `qty` and `discount` on a line are never rewritten: a refund counts up
   // `refunded_qty` and only marks the line refunded once it reaches `qty`.
+  // What each unit is worth comes from the shared sale-line helper, so the
+  // figure in the refund sheet is the figure the drawer moves by.
+  const sold = breakdown(
+    sale.lines.map((line) => ({
+      id: line.id,
+      qty: line.qty ?? 1,
+      unitPrice: line.unit_price ?? 0,
+      discount: line.discount ?? 0,
+      refundedQty: line.refunded_qty ?? 0,
+    })),
+    sale.discount ?? 0
+  )
+
   let refunded = 0
   for (const request of payload.lines) {
     const line = sale.lines.find((row) => row.id === request.sale_line)
-    if (!line) continue
+    const row = line ? sold.byId[request.sale_line] : undefined
+    if (!line || !row) continue
     const already = line.refunded_qty ?? 0
-    const remaining = (line.qty ?? 1) - already
-    const qty = Math.min(request.qty, remaining)
+    const qty = Math.min(request.qty, remainingQty(row))
     if (qty <= 0) continue
 
-    refunded += (line.unit_price ?? 0) * qty
+    refunded += refundAmount(row, qty)
     line.refunded_qty = already + qty
     if (line.refunded_qty >= (line.qty ?? 1)) line.status = "refunded"
 
@@ -295,7 +315,19 @@ export function refundSale(
   const customer = DEMO_SALE_CUSTOMERS.find((row) => row.id === sale.customer)
   if (customer) {
     if (payload.refund_method === "store_credit") customer.creditBalance += refunded
-    if (allRefunded) customer.pointsBalance -= sale.points_earned ?? 0
+    // Cumulative, so a run of partial refunds reverses the sale's points
+    // once and no more.
+    const reversedBefore = pointsCum(
+      sale.points_earned ?? 0,
+      sale.total ?? 0,
+      (sale.refunded_total ?? 0) - refunded
+    )
+    const reversedNow = pointsCum(
+      sale.points_earned ?? 0,
+      sale.total ?? 0,
+      sale.refunded_total ?? 0
+    )
+    customer.pointsBalance -= reversedNow - reversedBefore
   }
 
   const session = openSession()

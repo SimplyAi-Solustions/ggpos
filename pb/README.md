@@ -54,6 +54,8 @@ concern per file:
 | `..._ops_collections.js` | `pricing_rules`, `label_templates`, `label_jobs`, `sumup_transactions`, `csv_imports`, `daily_stats`, `saved_reports`, `notifications`, `push_subscriptions`, `audit_log`, `settings` |
 | `..._seed.js` | Row data: `games`, `platforms`, `locations`, `label_templates`, `pricing_rules`, `loyalty_programme`, `loyalty_tiers`, `settings`, `counters`, and the first admin `staff` account (see below) |
 | `..._phase2_fields.js` | Appends what the custom routes need: `id_documents.mime`; `settings.cash_variance_alert`, `.offer`, `.default_intake_location`, `.email`, `.receipt_terms` (and their defaults on the seeded row); `trade_in_lines.kind`, `.game`, `.completeness`; and it makes `trade_ins.number` optional with a partial unique index (see below) |
+| `..._phase2_refunds_and_protection.js` | `sale_lines.refunded_qty`, `sales.refunded_total` and `trade_ins.id_document`; makes `trade_ins.signature` and `quotes.photos` `protected`; and adds the partial unique index that allows only one open `cash_sessions` row (`WHERE closed_at = ''`) |
+| `..._single_bands_any_condition.js` | Data fix: the seeded single `pricing_rules` bands were NM-only, so every other condition matched no rule. Condition is applied by `adjustForCondition` before a rule is chosen, so the bands are condition wildcards |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -135,8 +137,9 @@ retrying `e.next()` on a unique-constraint failure.
 | `lib/balances.js` | `recompute(app, customerId)`, `creditBalance`, `pointsBalance` - the cached `customer_private.credit_balance` / `.points_balance` recomputed by **summing the ledgers**, never by adding a delta, so a cache that has drifted repairs itself on the next write. |
 | `lib/vaultutil.js` | Route plumbing: request body and query reading (`body`, `asInt`, `asStr`, `asBool`, `jsonField`), `requireAdmin`, the `settings` / `offerSettings` / `emailSettings` / `programme` / `loyaltyRules` / `tier` loaders in the shapes `packages/shared`'s evaluators expect, `openCashSession` / `sessionMovements` / `sessionExpected`, date helpers (`addMonths`, `ageAt`, `isPast`) and CSV escaping. |
 | `lib/stepup.js` | `issue(staff)` and `requireStepUp(e)` - see "Step-up" below. |
-| `lib/base64.js` | `encode`, `decode`, `fromDataUrl`. goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, so the ID photo and signature routes carry their own codec. |
-| `lib/receipts.js` | `build(app, tradeIn, settings)` (the receipt JSON) and `render(receipt)` (the plain-text and HTML email bodies), so the print page and the email can never drift. |
+| `lib/base64.js` | `encode`, `decode`, `fromDataUrl`. goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, so the signature data URL carries its own codec. Both directions are linear (accumulate into an array, join once). ID photos no longer come through here at all - see "ID photos" below. |
+| `lib/saleline.js` | `breakdown(app, sale)`, `cumNet`, `pointsCum`, `spread` - what each sale line was actually paid, from the as-sold `unit_price`, `qty` and `discount` plus the line's pro rata share of `sales.discount`. The refund route and the stock book both price from it, so they agree to the penny. |
+| `lib/receipts.js` | `build(app, tradeIn, settings, fileToken)` (the receipt JSON) and `render(receipt)` (the plain-text and HTML email bodies), so the print page and the email can never drift. |
 | `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
 | `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
@@ -148,6 +151,8 @@ retrying `e.next()` on a unique-constraint failure.
 | `stepup.pb.js` | `POST /api/vault/step-up` - see "Custom API routes" below. |
 | `tradeins.pb.js` | Buy-in completion and receipts. |
 | `idphotos.pb.js` | The ID check and the ID photo view. |
+| `config.pb.js` | `GET /api/vault/config`: the read-only staff window onto the admin-only `settings`, `pricing_rules` and `loyalty_*` rows, with every secret-looking settings field stripped. |
+| `customerops.pb.js` | The latest ID document lookup, the duplicate-customer merge and the GDPR erasure. |
 | `sales.pb.js` | Sale completion and refunds. |
 | `cash.pb.js` | Cash sessions. |
 | `exports.pb.js` | The stock book CSV. |
@@ -174,7 +179,11 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `POST /api/vault/cash-sessions/open` | 409 when one is already open. |
 | `GET /api/vault/cash-sessions/current` | `{ session, expected, movements }`, `null` session when none is open. |
 | `POST /api/vault/cash-sessions/{id}/close` | Expected, counted, variance; audited as `cash_session_variance` when the variance is over `settings.cash_variance_alert`. |
-| `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. |
+| `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. One row per sale line for what is still sold, plus one for what is still on the shelf. |
+| `GET /api/vault/config` | The read-only window onto `settings`, `pricing_rules` and the `loyalty_*` rows, which are admin-only collections an ordinary staff member still has to price against. Every settings field named `api_keys`, `email`, or containing "key" or "secret", is dropped. No audit row: every counter screen loads it. |
+| `GET /api/vault/customers/{id}/id-document` | The newest `id_documents` row for that customer whose photo file is still present, as ids and timestamps only. `id_documents` has every rule null, so this is the app's only way to know whether the cash ID gate will pass. |
+| `POST /api/vault/customers/{id}/merge` | **step-up**. Folds a duplicate customer into the one being kept: every relation re-pointed, `customer_private` gaps filled, balances recomputed from the moved ledgers, the duplicate deleted. |
+| `POST /api/vault/customers/{id}/erase` | **admin**, **step-up**. The Article 17 erasure. Refuses with 422 while the customer still holds store credit. Trade-ins, sales and the ledgers stay, seller snapshot included (Article 17(3)(b)). |
 
 Three patterns run through all of them.
 
@@ -384,6 +393,52 @@ routes over HTTP, exactly as the counter app will:
   `{ sent: false, test_mode: true }` while `settings.email.test_mode` is
   on.
 
+Section 15 is the money and security round, added after the Phase 2
+review:
+
+- a 320 KB ID photo through the ID check and back out of the admin view
+  route, byte-for-byte and in well under three seconds (the base64 photo
+  path it replaced took about 15 seconds for 200 KB);
+- an HTML file named `photo.jpg` refused with 400, and a 9 MB photo too;
+- the receipt's signature URL served with its file token and refused
+  without one;
+- a seller called `=HYPERLINK("x")` coming out of the stock book prefixed
+  and quoted;
+- a trade-in completed twice (409), a payout that does not match its
+  lines (400), a completion with no `terms_accepted` (422), a signature
+  that is not a PNG and an over-long `id_ref_last4` (400);
+- `no_cash` and `under_18` flags, an expired stored `id_expiry`, and
+  verified ID fields with no photo behind them, each refusing a cash
+  payout with 422, then the same buy-in going through once a photo exists,
+  recording it on `trade_ins.id_document` and pushing its expiry out;
+- a two-line sale with a line discount and a sale-level discount refunded
+  one unit at a time, whose five refunds sum to exactly what was charged,
+  with `qty` and `discount` unmoved and a second refund of a finished line
+  refused with 409;
+- the refund reason landing in `notes` with only its id in `audit_log`;
+- a cash sale writing a positive `cash_movements` row and its cash refund
+  a negative one;
+- a sale part-paid with points, and points refused when they would cover
+  more than their share;
+- the reward code rules: no customer, another customer's voucher, the
+  wrong discount source, a discount that does not match, a reward that is
+  not money off, then the happy path marking the redemption `used`;
+- `settings.cash_cap` of 0 switching cash sales and cash payouts off;
+- a non-admin staff account refused the stock book and the ID photo, and
+  a step-up token minted for one staff member refused for another;
+- the ID check refusing with 500 and storing nothing on a second,
+  throwaway server started with no `GG_ID_PHOTO_KEY`;
+- the stock book writing one row per sale line plus one for the remaining
+  stock, and no sold row at all for a fully refunded line.
+
+Section 16 covers the routes the counter packages asked for: the config
+window (an ordinary staff token gets the pricing rules and no key or
+secret), the ID document lookup, a customer merge (its refusals, the
+re-pointed relations, the filled gaps and the recomputed balances) and an
+erasure (refused while credit is outstanding, then anonymising the record,
+deleting the ID photo and leaving the buy-in register's seller snapshot
+alone).
+
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),
 even if a check fails.
@@ -454,12 +509,6 @@ of the workspace, the same way `pnpm-lock.yaml` is committed).
   `test_mode`) holds the addressing either way, and seeds with
   `test_mode: true` so a fresh install cannot email a customer by
   accident.
-- **A partial refund reduces `sale_lines.qty` rather than recording a
-  refunded quantity.** There is no `refunded_qty` field, and `qty` has
-  `min: 1`, so a full-line refund sets `status = "refunded"` and leaves
-  `qty` alone, while a partial one leaves the line `sold` with `qty`
-  reduced to what is still sold. Add a `refunded_qty` field if a report
-  ever needs to tell "sold 3, refunded 1" from "sold 2".
 - **A refund pays out by the method the staff member picks**, not by
   unwinding the original payment split. That matches the contract, but it
   means a sale paid half on card and half on credit can be refunded

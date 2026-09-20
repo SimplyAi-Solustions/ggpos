@@ -9,7 +9,7 @@ const buttonVariants = cva(
   [
     "group/button relative inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none outline-none",
     "transition-[background-color,color,opacity,transform] duration-150 ease-gg",
-    "active:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-busy:pointer-events-none",
+    "active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
     "[&_svg]:pointer-events-none [&_svg]:shrink-0",
   ].join(" "),
   {
@@ -37,7 +37,11 @@ const buttonVariants = cva(
 
 type ButtonProps = ButtonPrimitive.Props &
   VariantProps<typeof buttonVariants> & {
-    /** Swaps the arrow for a thin ring and blocks further presses. */
+    /**
+     * Swaps the arrow for a thin ring and disables the control. Blocking
+     * pointer events alone let a keyboard submit the form twice, so a
+     * loading button is a disabled button.
+     */
     loading?: boolean
     /** `block` only. `circle` always carries one. */
     trailingArrow?: boolean
@@ -48,6 +52,7 @@ function Button({
   variant = "block",
   loading = false,
   trailingArrow = false,
+  disabled,
   children,
   ...props
 }: ButtonProps) {
@@ -60,6 +65,7 @@ function Button({
       data-variant={variant}
       data-loading={loading || undefined}
       aria-busy={loading || undefined}
+      disabled={disabled || loading || undefined}
       className={cn(buttonVariants({ variant, className }))}
       {...props}
     >

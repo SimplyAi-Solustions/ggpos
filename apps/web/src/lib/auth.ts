@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { pb } from "@/lib/pb"
+import { clearStepUp } from "@/lib/auth-stepup"
 import {
   isDemo,
   login as apiLogin,
@@ -106,6 +107,9 @@ export async function login(email: string, password: string): Promise<StaffRecor
 }
 
 export function logout() {
+  // A step-up confirmation is good for ten minutes, and this counter is
+  // shared: it must not outlive the session that earned it.
+  clearStepUp()
   if (isDemo()) {
     try {
       localStorage.removeItem(DEMO_SESSION_KEY)

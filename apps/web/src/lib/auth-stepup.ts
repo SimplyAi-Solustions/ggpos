@@ -13,6 +13,8 @@
 import { createElement } from "react"
 import type { Root } from "react-dom/client"
 
+import { pb } from "@/lib/pb"
+import { isDemo } from "@/lib/api/mode"
 import { getStepUp } from "@/lib/api/sales"
 import type { StepUpToken } from "@/lib/api/types"
 
@@ -20,6 +22,8 @@ import type { StepUpToken } from "@/lib/api/types"
 const SAFETY_MS = 30_000
 
 let cached: StepUpToken | null = null
+/** Whose confirmation it is. A shared counter must never inherit one. */
+let cachedFor: string | null = null
 
 /**
  * Asks the person for their password and resolves with it, or with null when
@@ -76,20 +80,40 @@ async function ask(): Promise<string | null> {
   })
 }
 
-/** True while a confirmation from the last ten minutes still stands. */
+/** Who is signed in, in whichever mode the app is running. */
+function currentStaffId(): string | null {
+  if (isDemo()) {
+    try {
+      const raw = localStorage.getItem("gg-demo-staff")
+      return raw ? ((JSON.parse(raw) as { id?: string }).id ?? null) : null
+    } catch {
+      return null
+    }
+  }
+  return pb.authStore.record?.id ?? null
+}
+
+/**
+ * True while a confirmation from the last ten minutes still stands, and it
+ * belongs to whoever is signed in now. Switching staff on a shared counter
+ * never inherits the last person's confirmation.
+ */
 export function hasStepUp(now: number = Date.now()): boolean {
   if (!cached) return false
+  if (cachedFor !== currentStaffId()) return false
   return new Date(cached.expiresAt).getTime() - SAFETY_MS > now
 }
 
-/** Exported for the tests and for sign-out. */
+/** Called on sign-out and by the idle lock, so nothing outlives a session. */
 export function clearStepUp() {
   cached = null
+  cachedFor = null
 }
 
 /** Exported for the tests: seeds the cache without a round trip. */
 export function setStepUpToken(token: StepUpToken | null) {
   cached = token
+  cachedFor = token ? currentStaffId() : null
 }
 
 export class StepUpCancelled extends Error {
@@ -113,5 +137,6 @@ export async function stepUp(): Promise<string> {
 
   const token = await getStepUp(password)
   cached = token
+  cachedFor = currentStaffId()
   return token.token
 }

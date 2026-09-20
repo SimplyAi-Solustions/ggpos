@@ -47,6 +47,7 @@ export function toSummary(item: StockItemRecord): ItemSummary {
     image: demoCardImage(item.card),
     platform: platformForItem(item),
     qty: item.qty ?? 1,
+    game: item.game ?? null,
   }
 }
 

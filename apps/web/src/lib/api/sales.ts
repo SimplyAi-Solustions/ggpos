@@ -6,6 +6,7 @@
  * Live mode uses the transactional routes in docs/api-contract.md ("Sales",
  * "Step-up"); demo mode answers the same shapes from memory.
  */
+import { ClientResponseError } from "pocketbase"
 import { parseTierPerk, type TierPerk } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
@@ -57,7 +58,12 @@ function startOfToday(): string {
 export async function getStepUp(password: string): Promise<StepUpToken> {
   if (isDemo()) {
     if (password !== demo.DEMO_STEP_UP_PASSWORD) {
-      throw new Error("That password is not right. Try again.")
+      // The same shape the route sends, so `refusalMessage` reads the demo
+      // and the server alike and the sentence on screen is the real one.
+      throw new ClientResponseError({
+        status: 400,
+        response: { code: 400, message: "That password is not right. Try again.", data: {} },
+      })
     }
     const expires = new Date()
     expires.setMinutes(expires.getMinutes() + 10)
@@ -303,11 +309,13 @@ export async function getTodayStats(): Promise<TodayStats> {
     }>({ filter: `created >= "${since}"` }),
   ])
 
+  // A refund never rewrites the sale's total or a line's quantity: it counts
+  // up `refunded_total` and `refunded_qty`, so the day nets them off here.
   const salesByPayment: TodayStats["salesByPayment"] = {}
   let salesTotal = 0
   for (const sale of sales) {
     if (sale.status === "refunded") continue
-    salesTotal += sale.total ?? 0
+    salesTotal += (sale.total ?? 0) - (sale.refunded_total ?? 0)
     for (const [method, amount] of Object.entries(sale.payment_split ?? {})) {
       const key = method as keyof TodayStats["salesByPayment"]
       salesByPayment[key] = (salesByPayment[key] ?? 0) + (amount ?? 0)
@@ -316,7 +324,7 @@ export async function getTodayStats(): Promise<TodayStats> {
 
   const soldLines = await pb
     .collection("sale_lines")
-    .getFullList<SaleLineRecord>({ filter: `created >= "${since}" && status = "sold"` })
+    .getFullList<SaleLineRecord>({ filter: `created >= "${since}"` })
     .catch(() => [] as SaleLineRecord[])
 
   const cashOut = movements
@@ -346,7 +354,10 @@ export async function getTodayStats(): Promise<TodayStats> {
     cashOut,
     creditIssued: tradeIns.reduce((total, row) => total + (row.payout_credit ?? 0), 0),
     itemsIn,
-    itemsOut: soldLines.reduce((count, line) => count + (line.qty ?? 0), 0),
+    itemsOut: soldLines.reduce(
+      (count, line) => count + ((line.qty ?? 0) - (line.refunded_qty ?? 0)),
+      0
+    ),
     recent: [
       ...sales.map((sale) => ({
         id: sale.id,

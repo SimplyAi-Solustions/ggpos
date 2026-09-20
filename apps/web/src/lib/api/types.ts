@@ -748,6 +748,8 @@ export interface ItemSummary {
   /** A `PlatformKey` from src/design/platforms.ts. */
   platform: string
   qty: number
+  /** The `games` id, which the points preview needs on a basket line. */
+  game: string | null
 }
 
 export type ItemEventKind =
