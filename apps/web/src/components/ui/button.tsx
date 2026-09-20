@@ -21,11 +21,16 @@ const buttonVariants = cva(
         /** The same action as a 56px circle, used beside a MicroLabel. */
         circle:
           "size-14 rounded-full bg-primary text-primary-foreground hover:bg-primary-hover [&_svg]:size-5 [&_svg]:stroke-[1.5]",
-        /** Secondary actions: tracked micro-text with an underline on hover. */
-        text: "h-auto gap-2 rounded-none bg-transparent p-0 font-mono text-[11px] font-bold tracking-[0.16em] text-foreground uppercase after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150 after:ease-gg hover:after:scale-x-100 [&_svg]:size-4 [&_svg]:stroke-[1.25]",
+        /**
+         * Secondary actions: tracked micro-text with an underline on hover.
+         * `max-sm:min-h-12` is baked in rather than left to call sites, so
+         * every one of them clears the 48px target DESIGN.md asks for in the
+         * thumb zone; the underline still sits under the text.
+         */
+        text: "h-auto max-sm:min-h-12 gap-2 rounded-none bg-transparent p-0 font-mono text-[11px] font-bold tracking-[0.16em] text-foreground uppercase after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-150 after:ease-gg hover:after:scale-x-100 [&_svg]:size-4 [&_svg]:stroke-[1.25]",
         /** Destroying something: the same link in the error colour. */
         "text-destructive":
-          "h-auto gap-2 rounded-none bg-transparent p-0 font-mono text-[11px] font-bold tracking-[0.16em] text-destructive uppercase after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-destructive after:transition-transform after:duration-150 after:ease-gg hover:after:scale-x-100 [&_svg]:size-4 [&_svg]:stroke-[1.25]",
+          "h-auto max-sm:min-h-12 gap-2 rounded-none bg-transparent p-0 font-mono text-[11px] font-bold tracking-[0.16em] text-destructive uppercase after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-destructive after:transition-transform after:duration-150 after:ease-gg hover:after:scale-x-100 [&_svg]:size-4 [&_svg]:stroke-[1.25]",
         /** A bare 40px icon target: close, more, back. */
         "ghost-icon":
           "size-10 rounded-[var(--radius)] bg-transparent text-foreground hover:bg-secondary [&_svg]:size-5 [&_svg]:stroke-[1.25]",

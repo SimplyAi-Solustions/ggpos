@@ -125,7 +125,9 @@ export function sourceDetail(
   }
 
   if (row.source === "ebay_uk_asking") {
-    return `eBay UK asking, after the ${haircutPct}% haircut`
+    const when = shortDate(row.fetched_at)
+    const head = `eBay UK asking, after the ${haircutPct}% haircut`
+    return when ? `${head}, ${when}` : head
   }
 
   if (row.native_currency !== "GBP") {

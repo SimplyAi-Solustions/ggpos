@@ -13,8 +13,13 @@ import { ClientResponseError } from "pocketbase"
  * it, so `refusalMessage` returns null and the screen shows its own line.
  */
 
-/** Status codes whose `message` is written to be shown as-is. */
-const SPOKEN = new Set([400, 403, 404, 409, 422])
+/**
+ * Status codes whose `message` is written to be shown as-is. 502 is here
+ * because a third-party lookup that does not answer is something staff can
+ * act on ("IGDB did not answer. Try again, or add the title manually."),
+ * unlike a 500, which never has staff-readable words in it.
+ */
+const SPOKEN = new Set([400, 403, 404, 409, 422, 502])
 
 /** The server's own sentence for this failure, or null when it has none. */
 export function refusalMessage(error: unknown): string | null {

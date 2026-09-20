@@ -260,12 +260,7 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
               ? "Scan a card code or type a set and number. Nothing is added to stock."
               : "Scan a barcode or enter an item code to continue."}
           </p>
-          {/* At least a 48px target in the thumb zone on a phone. */}
-          <Button
-            variant="text"
-            onClick={() => setCameraOpen(true)}
-            className="max-sm:min-h-12"
-          >
+          <Button variant="text" onClick={() => setCameraOpen(true)}>
             Use camera
           </Button>
         </div>

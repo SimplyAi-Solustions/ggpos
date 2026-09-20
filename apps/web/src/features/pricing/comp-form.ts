@@ -22,6 +22,14 @@ export type CompErrors = Partial<Record<keyof CompFormValues, string>>
 
 export const EBAY_ITEM_URL = /^https:\/\/(www\.)?ebay\.co\.uk\/itm\//i
 
+/** The route's own ceiling, so a figure typed in pounds is caught here. */
+export const MAX_COMP_PENCE = 5_000_000
+
+/** Midnight today, UTC, which is what the route measures the window from. */
+function midnightUtc(now: Date): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+}
+
 /** The comp as the route takes it, or the messages to show under the fields. */
 export function validateComp(
   values: CompFormValues,
@@ -32,6 +40,10 @@ export function validateComp(
   const pence = parseDecimalToMinor(values.price.trim())
   if (pence === null || pence <= 0) {
     errors.price = "Enter the price it sold for, in pounds and pence, like 45.00."
+  } else if (pence > MAX_COMP_PENCE) {
+    // The route's words, so the counter hears the same thing either way.
+    errors.price =
+      "That price looks too high. Check it is in pence, not pounds, and try again."
   }
 
   if (!EBAY_ITEM_URL.test(values.url.trim())) {
@@ -46,11 +58,18 @@ export function validateComp(
     const sold = new Date(`${soldAt}T00:00:00.000Z`)
     if (Number.isNaN(sold.getTime())) {
       errors.soldAt = "Enter the date it sold, as YYYY-MM-DD."
-    } else if (sold.getTime() > now.getTime()) {
-      errors.soldAt = "That sale date is in the future."
-    } else if ((now.getTime() - sold.getTime()) / 864e5 > 30) {
-      errors.soldAt =
-        "That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days."
+    } else {
+      // Whole calendar days from midnight today, exactly as the route counts
+      // them: measuring from "now" would refuse a comp sold 30 days ago for
+      // anyone checking after midnight, and accept it for the early shift.
+      const today = midnightUtc(now)
+      const days = Math.round((today - sold.getTime()) / 864e5)
+      if (sold.getTime() > today) {
+        errors.soldAt = "That sale date is in the future."
+      } else if (days > 30) {
+        errors.soldAt =
+          "That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days."
+      }
     }
   }
 
