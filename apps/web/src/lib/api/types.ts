@@ -2,12 +2,13 @@
  * Hand-written mirrors of the PocketBase collections this phase touches.
  *
  * TEMPORARY. `packages/shared/src/pb-types.ts` is the generated truth
- * (`pnpm typegen`, which needs a built pb_data), and these interfaces are
- * replaced by its `GamesRecord`, `CardsRecord`, `LocationsRecord`,
- * `ItemsRecord`, `LabelJobsRecord` and `StaffRecord` the moment the backend
- * agent's migrations settle. Field names and select values below were read
- * off pb/pb_migrations/, not off docs/PLAN.md, so they match what the server
- * will actually accept.
+ * (`pnpm typegen`), and these interfaces are replaced by its `GamesRecord`,
+ * `CardsRecord`, `LocationsRecord`, `ItemsRecord`, `LabelJobsRecord` and
+ * `StaffRecord` as soon as the backend agent's migrations settle: the
+ * generated file already exists, but it is regenerated on every migration
+ * change, so Phase 1 does not pin itself to a moving target. Field names and
+ * select values below were read off pb/pb_migrations/, not off docs/PLAN.md,
+ * so they match what the server will actually accept.
  */
 
 /** Every PocketBase record carries these. */

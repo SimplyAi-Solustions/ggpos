@@ -165,12 +165,9 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
   return (
     <section className="pt-16 sm:pt-24">
       <PageTitle>Scan</PageTitle>
-      <Lede>Point the gun, or type a code and press enter.</Lede>
+      <Lede>Item codes, customer cards and barcodes all land here.</Lede>
 
       <div className="mt-14">
-        <MicroLabel tone="ink" className="mb-5" id="scan-field-label">
-          Scan item
-        </MicroLabel>
         <Input
           ref={inputRef}
           size="scan"
@@ -183,7 +180,7 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
             </span>
           }
           placeholder="Scan barcode or type here"
-          aria-labelledby="scan-field-label"
+          aria-label="Scan a barcode or type an item code"
           aria-describedby="scan-help"
           aria-invalid={error ? true : undefined}
           autoComplete="off"
@@ -200,7 +197,12 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
           >
             Scan a barcode or enter an item code to continue.
           </p>
-          <Button variant="text" onClick={() => setCameraOpen(true)}>
+          {/* At least a 48px target in the thumb zone on a phone. */}
+          <Button
+            variant="text"
+            onClick={() => setCameraOpen(true)}
+            className="max-sm:min-h-12"
+          >
             Use camera
           </Button>
         </div>

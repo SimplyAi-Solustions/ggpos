@@ -27,9 +27,19 @@ export default defineConfig({
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } } },
-    { name: "phone", use: { ...devices["Pixel 7"], defaultBrowserType: "chromium" } },
+    {
+      name: "phone",
+      use: {
+        ...devices["Pixel 7"],
+        defaultBrowserType: "chromium",
+        // The two widths DESIGN.md is judged at.
+        viewport: { width: 390, height: 844 },
+      },
+    },
   ],
   webServer: {
+    // The suite drives the built app into demo mode with `?demo=1`, so an
+    // ordinary build is enough; `VITE_DEMO=1 pnpm --filter web build` pins it.
     command: `pnpm --filter web exec vite preview --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,

@@ -32,9 +32,13 @@ export interface CameraSheetProps {
 export function CameraSheet({ open, onOpenChange, onResult }: CameraSheetProps) {
   const videoRef = React.useRef<HTMLVideoElement>(null)
   const scannerRef = React.useRef<CameraScanner | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
+  // Read once, at first render: whether this device has a camera at all is
+  // not something that changes while the sheet is open.
+  const [support] = React.useState(cameraSupport)
+  const [runtimeError, setRuntimeError] = React.useState<string | null>(null)
   const [torch, setTorch] = React.useState(false)
   const [torchReady, setTorchReady] = React.useState(false)
+  const error = support.camera ? runtimeError : CAMERA_UNAVAILABLE
 
   const handleResult = React.useCallback(
     (value: string) => {
@@ -45,17 +49,12 @@ export function CameraSheet({ open, onOpenChange, onResult }: CameraSheetProps) 
   )
 
   React.useEffect(() => {
-    if (!open) return undefined
-
-    if (!cameraSupport().camera) {
-      setError(CAMERA_UNAVAILABLE)
-      return undefined
-    }
+    if (!open || !support.camera) return undefined
 
     let cancelled = false
     const scanner = createCameraScanner({
       onResult: handleResult,
-      onError: (message) => setError(message),
+      onError: (message) => setRuntimeError(message),
     })
     scannerRef.current = scanner
 
@@ -75,9 +74,9 @@ export function CameraSheet({ open, onOpenChange, onResult }: CameraSheetProps) 
       scannerRef.current = null
       setTorch(false)
       setTorchReady(false)
-      setError(null)
+      setRuntimeError(null)
     }
-  }, [open, handleResult])
+  }, [open, support.camera, handleResult])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
