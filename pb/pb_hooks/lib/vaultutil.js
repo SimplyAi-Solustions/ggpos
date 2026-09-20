@@ -271,6 +271,54 @@ function sessionExpected(app, session) {
 }
 
 // ---------------------------------------------------------------------
+// Sale lines
+//
+// The arithmetic itself lives in packages/shared/src/saleline.ts and reaches
+// the hooks through lib/shared/saleline.js, so the refund route, the stock
+// book and the counter's refund sheet cannot drift. What is here is the
+// PocketBase glue that feeds it.
+// ---------------------------------------------------------------------
+
+/**
+ * Every sale_line on a sale, in the one order the sale-level discount
+ * allocation may be worked out in.
+ *
+ * "created,id", not "created" alone: lines written in one transaction share
+ * a `created` timestamp to the millisecond, and the remainder the last line
+ * absorbs has to land on the same line every time it is recomputed, in the
+ * refund route and in the stock book alike. Every caller of the shared
+ * breakdown goes through here so that ordering is stated once.
+ */
+function saleLineRows(app, saleId) {
+  try {
+    return app.findRecordsByFilter("sale_lines", "sale = {:sale}", "created,id", 0, 0, {
+      sale: saleId,
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * PocketBase sale_lines records as the shared evaluator's SaleLineAsSold[]
+ * (camelCase, and only the as-sold figures it reads). Order is preserved.
+ */
+function asSoldLines(rows) {
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (!rows[i]) continue;
+    out.push({
+      id: rows[i].id,
+      qty: Math.max(1, rows[i].getInt("qty")),
+      unitPrice: rows[i].getInt("unit_price"),
+      discount: rows[i].getInt("discount"),
+      refundedQty: Math.max(0, rows[i].getInt("refunded_qty")),
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------
 // Dates
 // ---------------------------------------------------------------------
 
@@ -370,6 +418,8 @@ module.exports = {
   openCashSession: openCashSession,
   sessionMovements: sessionMovements,
   sessionExpected: sessionExpected,
+  saleLineRows: saleLineRows,
+  asSoldLines: asSoldLines,
   nowIso: nowIso,
   addMonths: addMonths,
   ageAt: ageAt,

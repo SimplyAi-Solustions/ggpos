@@ -31,7 +31,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
-    const saleline = require(`${__hooks}/lib/saleline.js`);
+    const saleline = require(`${__hooks}/lib/shared/saleline.js`);
 
     const staff = util.requireAdmin(e);
 
@@ -76,7 +76,11 @@ routerAdd(
       let entry = null;
       try {
         const sale = e.app.findRecordById("sales", saleId);
-        entry = { sale: sale, breakdown: saleline.breakdown(e.app, sale) };
+        const rows = util.saleLineRows(e.app, sale.id);
+        entry = {
+          sale: sale,
+          breakdown: saleline.breakdown(util.asSoldLines(rows), sale.getInt("discount")),
+        };
       } catch (err) {
         entry = null;
       }
@@ -175,22 +179,17 @@ routerAdd(
         const saleLine = saleLines[n];
         if (!saleLine) continue;
 
-        const soldQty =
-          Math.max(1, saleLine.getInt("qty")) - Math.max(0, saleLine.getInt("refunded_qty"));
-        if (soldQty <= 0) continue; // refunded in full: nothing was sold
-
         const held = saleFor(saleLine.getString("sale"));
         if (!held) continue;
         const entry = held.breakdown.byId[saleLine.id];
         if (!entry) continue;
 
+        const soldQty = saleline.remainingQty(entry);
+        if (soldQty <= 0) continue; // refunded in full: nothing was sold
+
         // What is still paid on the line: its net less whatever the refunds
         // have already handed back, which is how sales.pb.js priced them.
-        const refundedAmount = saleline.cumNet(
-          entry.net,
-          entry.qty,
-          Math.max(0, saleLine.getInt("refunded_qty"))
-        );
+        const refundedAmount = saleline.cumNet(entry.net, entry.qty, entry.refundedQty);
         const salePrice = entry.net - refundedAmount;
         const rowCost = unitCost * soldQty;
 

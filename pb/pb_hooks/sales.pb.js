@@ -33,7 +33,7 @@ routerAdd(
     const counters = require(`${__hooks}/lib/counters.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
-    const saleline = require(`${__hooks}/lib/saleline.js`);
+    const saleline = require(`${__hooks}/lib/shared/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
 
@@ -588,7 +588,16 @@ routerAdd(
     const stepup = require(`${__hooks}/lib/stepup.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
-    const saleline = require(`${__hooks}/lib/saleline.js`);
+    const saleline = require(`${__hooks}/lib/shared/saleline.js`);
+
+    /** The sale's line records by id, beside the shared breakdown of them. */
+    function recordsById(rows) {
+      const map = {};
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i]) map[rows[i].id] = rows[i];
+      }
+      return map;
+    }
 
     stepup.requireStepUp(e);
 
@@ -621,8 +630,12 @@ routerAdd(
     }
 
     // The as-sold breakdown: unit_price, qty and discount as they were at
-    // completion, plus this line's share of the sale-level discount.
-    const asSold = saleline.breakdown(e.app, sale);
+    // completion, plus this line's share of the sale-level discount. The rows
+    // come back in "created,id" order, which is the order the allocation's
+    // rounding remainder is assigned in (lib/vaultutil.js).
+    const soldRows = util.saleLineRows(e.app, sale.id);
+    const soldRecords = recordsById(soldRows);
+    const asSold = saleline.breakdown(util.asSoldLines(soldRows), sale.getInt("discount"));
 
     const requested = {};
     const order = [];
@@ -632,10 +645,10 @@ routerAdd(
       if (!entry) {
         throw e.badRequestError("One of those lines is not on this sale.", null);
       }
-      if (entry.line.getString("status") === "refunded") {
+      if (soldRecords[lineId].getString("status") === "refunded") {
         throw e.error(409, "One of those lines has already been refunded.", null);
       }
-      const remaining = entry.qty - entry.line.getInt("refunded_qty");
+      const remaining = saleline.remainingQty(entry);
       const want = Math.max(1, util.asInt(rawLines[i].qty, remaining));
       if (requested[lineId] === undefined) {
         requested[lineId] = 0;
@@ -676,7 +689,10 @@ routerAdd(
 
         // Re-read every line and price from the live refunded_qty, so two
         // refunds open at once cannot pay the same unit back twice.
-        const live = saleline.breakdown(txApp, liveSale);
+        const liveRows = util.saleLineRows(txApp, liveSale.id);
+        const liveRecords = recordsById(liveRows);
+        const live = saleline.breakdown(util.asSoldLines(liveRows), liveSale.getInt("discount"));
+
         const plans = [];
         let refunded = 0;
         for (let i = 0; i < order.length; i++) {
@@ -688,20 +704,22 @@ routerAdd(
             };
             throw new Error(halt.message);
           }
-          const already = entry.line.getInt("refunded_qty");
+          const record = liveRecords[order[i]];
           const want = requested[order[i]];
-          if (entry.line.getString("status") === "refunded" || entry.qty - already < want) {
+          if (record.getString("status") === "refunded" || saleline.remainingQty(entry) < want) {
             halt = {
               status: 409,
               message: "That line was refunded while this refund was open. Reload the sale and try again.",
             };
             throw new Error(halt.message);
           }
-          const amount =
-            saleline.cumNet(entry.net, entry.qty, already + want) -
-            saleline.cumNet(entry.net, entry.qty, already);
-          refunded += amount;
-          plans.push({ line: entry.line, qty: entry.qty, already: already, want: want });
+          refunded += saleline.refundAmount(entry, want);
+          plans.push({
+            line: record,
+            qty: entry.qty,
+            already: entry.refundedQty,
+            want: want,
+          });
         }
 
         for (let i = 0; i < plans.length; i++) {
@@ -729,7 +747,7 @@ routerAdd(
         }
 
         let allRefunded = true;
-        const after = saleline.linesForSale(txApp, liveSale.id);
+        const after = util.saleLineRows(txApp, liveSale.id);
         for (let i = 0; i < after.length; i++) {
           if (after[i] && after[i].getString("status") !== "refunded") allRefunded = false;
         }
