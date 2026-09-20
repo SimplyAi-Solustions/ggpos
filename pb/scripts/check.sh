@@ -715,6 +715,12 @@ RECEIPT_STATUS="$(curl -s -o "$TMP_DIR/receipt.json" -w '%{http_code}' \
 [ "$RECEIPT_STATUS" = "200" ] || fail "the receipt route returned $RECEIPT_STATUS: $(cat "$TMP_DIR/receipt.json")"
 [ "$(jval "trade_in.number" <"$TMP_DIR/receipt.json")" = "$TRADE_NUMBER" ] || fail "the receipt carries the wrong trade-in number"
 [ "$(jval "seller.name" <"$TMP_DIR/receipt.json")" = "Seller Check" ] || fail "the receipt has no seller snapshot name"
+# The address, ID type and last four digits can only have reached the
+# snapshot through the ID check, so this also proves the multipart text
+# fields were read, not just the photo.
+[ "$(jval "seller.address" <"$TMP_DIR/receipt.json")" = "1 High Street, Bolsover, S44 6AA" ] || fail "the receipt's seller address is '$(jval "seller.address" <"$TMP_DIR/receipt.json")'"
+[ "$(jval "seller.id_type" <"$TMP_DIR/receipt.json")" = "passport" ] || fail "the receipt's seller id_type is '$(jval "seller.id_type" <"$TMP_DIR/receipt.json")'"
+[ "$(jval "seller.id_last4" <"$TMP_DIR/receipt.json")" = "1234" ] || fail "the receipt's seller id_last4 is '$(jval "seller.id_last4" <"$TMP_DIR/receipt.json")'"
 RECEIPT_LINES="$(node -e '
   let d = "";
   process.stdin.on("data", (c) => (d += c));
