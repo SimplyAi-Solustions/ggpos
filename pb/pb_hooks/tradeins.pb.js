@@ -452,6 +452,16 @@ routerAdd(
           txApp.save(livePriv);
         }
 
+        // --- the ID photo behind a cash payout ------------------------
+        // Its retention clock restarts here, so the photo lives twelve
+        // months from the last cash buy-in rather than from the day it was
+        // taken (docs/PLAN.md, "Security, GDPR and record keeping").
+        if (idDocument) {
+          const liveDoc = txApp.findRecordById("id_documents", idDocument.id);
+          liveDoc.set("expires_at", util.addMonths(now, retentionMonths).toISOString());
+          txApp.save(liveDoc);
+        }
+
         // --- items, one or more per accepted line ---------------------
         const itemsCollection = txApp.findCollectionByNameOrId("items");
         const labelJobsCollection = txApp.findCollectionByNameOrId("label_jobs");
@@ -584,6 +594,7 @@ routerAdd(
           t.set("id_checked", true);
           t.set("id_checked_by", staff.id);
         }
+        if (idDocument) t.set("id_document", idDocument.id);
         if (signature) {
           t.set(
             "signature",
@@ -606,6 +617,8 @@ routerAdd(
             payout_cash: payoutCash,
             payout_credit: payoutCredit,
             cash_session: session ? session.id : "",
+            // The id alone, never a field off the document.
+            id_document: idDocument ? idDocument.id : "",
           },
           ip: e.realIP(),
         });
@@ -643,6 +656,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const receipts = require(`${__hooks}/lib/receipts.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
 
     let tradeIn = null;
     try {
@@ -651,7 +665,29 @@ routerAdd(
       throw e.notFoundError("Trade-in not found. Check the link and try again.", null);
     }
 
-    return e.json(200, receipts.build(e.app, tradeIn, util.settings(e.app)));
+    // trade_ins.signature is a protected file, so the URL in the payload
+    // carries a file token minted for the staff member who asked for it.
+    // It has to come from the auth record: newFileToken() on an ordinary
+    // record throws "not an auth collection record".
+    let fileToken = "";
+    try {
+      fileToken = e.auth.newFileToken();
+    } catch (err) {
+      fileToken = "";
+    }
+
+    const receipt = receipts.build(e.app, tradeIn, util.settings(e.app), fileToken);
+
+    auditLib.writeAuditLog(e.app, {
+      actor: e.auth.id,
+      action: "trade_in_receipt_view",
+      collection: "trade_ins",
+      record: tradeIn.id,
+      meta: { number: receipt.trade_in.number },
+      ip: e.realIP(),
+    });
+
+    return e.json(200, receipt);
   },
   $apis.requireAuth("staff")
 );
@@ -687,7 +723,9 @@ routerAdd(
 
     const settings = util.settings(e.app);
     const emailSettings = util.emailSettings(e.app, settings);
-    const receipt = receipts.build(e.app, tradeIn, settings);
+    // No file token: the email body carries no signature link, and a token
+    // in an email would outlive the request that made it.
+    const receipt = receipts.build(e.app, tradeIn, settings, "");
     const bodies = receipts.render(receipt);
 
     const shopName = receipt.shop.name || "GG Entertainment";

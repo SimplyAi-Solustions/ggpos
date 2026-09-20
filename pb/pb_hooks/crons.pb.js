@@ -39,8 +39,16 @@ cronAdd("prices", "0 3 * * 1", () => {
 // job; that needs a "closed at" on quotes, which does not exist yet.
 cronAdd("retention", "30 3 * * *", () => {
   const audit = require(`${__hooks}/lib/audit.js`);
+
+  // PocketBase stores a date as "2026-09-20 12:00:00.000Z", with a space
+  // rather than the ISO "T", and a filter compares it as text. An
+  // ISO-with-T parameter therefore sorts wrong against stored values (every
+  // "T" is above every digit), so cutoffs are written in the stored form,
+  // the same way exports.pb.js builds its range.
+  const pbDate = (d) => d.toISOString().replace("T", " ");
+
   const now = new Date();
-  const nowIso = now.toISOString();
+  const nowCutoff = pbDate(now);
   const twelveMonthsAgo = new Date(now.getTime());
   twelveMonthsAgo.setUTCMonth(twelveMonthsAgo.getUTCMonth() - 12);
 
@@ -53,7 +61,7 @@ cronAdd("retention", "30 3 * * *", () => {
       "expires_at",
       0,
       0,
-      { now: nowIso }
+      { now: nowCutoff }
     );
   } catch (err) {
     expired = [];
@@ -88,7 +96,7 @@ cronAdd("retention", "30 3 * * *", () => {
       "created",
       0,
       0,
-      { cutoff: twelveMonthsAgo.toISOString() }
+      { cutoff: pbDate(twelveMonthsAgo) }
     );
   } catch (err) {
     stale = [];

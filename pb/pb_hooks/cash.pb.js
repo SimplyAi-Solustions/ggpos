@@ -35,40 +35,65 @@ routerAdd(
       throw e.badRequestError("The float cannot be negative. Count it again.", null);
     }
 
-    const existing = util.openCashSession(e.app);
-    if (existing) {
-      throw e.error(
-        409,
-        "A cash session is already open. Close it before opening another.",
-        null
-      );
+    const ALREADY_OPEN = "A cash session is already open. Close it before opening another.";
+
+    /** A unique-index collision, whichever shape PocketBase reports it in. */
+    function isUniqueViolation(err) {
+      const text = String((err && err.message) || err || "");
+      return /value must be unique/i.test(text) || /unique constraint/i.test(text);
     }
 
-    const session = new Record(e.app.findCollectionByNameOrId("cash_sessions"), {
-      opened_by: staff.id,
-      float: float,
-    });
-    e.app.save(session);
+    const existing = util.openCashSession(e.app);
+    if (existing) {
+      throw e.error(409, ALREADY_OPEN, null);
+    }
 
-    auditLib.writeAuditLog(e.app, {
-      actor: staff.id,
-      action: "cash_session_open",
-      collection: "cash_sessions",
-      record: session.id,
-      meta: { float: float },
-      ip: e.realIP(),
-    });
+    // The read above is only the friendly refusal. The write goes in a
+    // transaction, and cash_sessions carries a partial unique index over an
+    // empty closed_at, so two staff members opening a session at the same
+    // moment collide on the index instead of both winning.
+    let halt = null;
+    let result = null;
+    try {
+      e.app.runInTransaction((txApp) => {
+        if (util.openCashSession(txApp)) {
+          halt = { status: 409, message: ALREADY_OPEN };
+          throw new Error(halt.message);
+        }
 
-    return e.json(200, {
-      session: {
-        id: session.id,
-        opened_by: session.getString("opened_by"),
-        opened_at: session.getString("opened_at"),
-        float: float,
-      },
-      expected: float,
-      movements: [],
-    });
+        const session = new Record(txApp.findCollectionByNameOrId("cash_sessions"), {
+          opened_by: staff.id,
+          float: float,
+        });
+        txApp.save(session);
+
+        auditLib.writeAuditLog(txApp, {
+          actor: staff.id,
+          action: "cash_session_open",
+          collection: "cash_sessions",
+          record: session.id,
+          meta: { float: float },
+          ip: e.realIP(),
+        });
+
+        result = {
+          session: {
+            id: session.id,
+            opened_by: session.getString("opened_by"),
+            opened_at: session.getString("opened_at"),
+            float: float,
+          },
+          expected: float,
+          movements: [],
+        };
+      });
+    } catch (err) {
+      if (halt) throw e.error(halt.status, halt.message, null);
+      if (isUniqueViolation(err)) throw e.error(409, ALREADY_OPEN, null);
+      throw err;
+    }
+
+    return e.json(200, result);
   },
   $apis.requireAuth("staff")
 );
