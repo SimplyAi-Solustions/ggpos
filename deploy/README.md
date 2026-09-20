@@ -236,7 +236,86 @@ any hard failure. Two exit codes mean something specific:
 Rehearse a full restore before go-live and every quarter after that -
 see `deploy/restore.md`.
 
-## 8. Updating
+## 8. Push notifications (the notify service)
+
+Unlike pricesync, `notify` is a persistent container, not a cron-scheduled
+one-off: `docker compose up -d` starts it once and it stays running,
+polling PocketBase for unpushed `notifications` rows every 60 seconds (see
+the comment on the `notify` service in `docker-compose.yml`). There is no
+cron line to add for it.
+
+**One-time setup, before the first `docker compose up`:**
+
+1. Generate a VAPID keypair:
+
+   ```bash
+   npx web-push generate-vapid-keys
+   ```
+
+   This prints a public key and a private key. Neither is secret in the
+   way `RESTIC_PASSWORD` or `GG_ID_PHOTO_KEY` are - the public key is
+   handed to every visitor's browser on purpose - but the private key
+   should still not be pasted anywhere outside `.env` and a password
+   manager, since anyone holding it could send push messages that appear
+   to come from this shop's own installation.
+
+2. Put the private key, and the subject, into `.env` (see the "notify"
+   section of `.env.example`): `GG_VAPID_PRIVATE_KEY` and
+   `GG_VAPID_SUBJECT` (a `mailto:` address the push services can contact
+   about this VAPID identity if they ever need to, for example
+   `mailto:admin@ggentertainment.co.uk`).
+
+3. Put the **public** key into `settings.push.vapid_public_key` - this is
+   an application record, not an environment variable, because
+   `GET /api/vault/config` (read by both the counter app and the customer
+   portal) serves it from there to whichever browser is about to
+   subscribe. Set it once, from `/_/`:
+
+   ```
+   Collections > settings > (the one row) > push > { "vapid_public_key": "PASTE_THE_PUBLIC_KEY_HERE" }
+   ```
+
+   or with a single authenticated API call if you would rather script it
+   (replace `SUPERUSER_TOKEN` with a fresh token from
+   `POST /api/collections/_superusers/auth-with-password`):
+
+   ```bash
+   curl -X PATCH https://vault.ggentertainment.co.uk/api/collections/settings/records/SETTINGS_ROW_ID \
+     -H "Authorization: SUPERUSER_TOKEN" -H "Content-Type: application/json" \
+     -d '{"push":{"vapid_public_key":"PASTE_THE_PUBLIC_KEY_HERE"}}'
+   ```
+
+4. `notify` also needs a PocketBase superuser to authenticate as
+   (`PB_SUPERUSER_EMAIL`/`PB_SUPERUSER_PASSWORD`) - the same two variables
+   `.env.example`'s "pricesync and notify" section already covers; reuse
+   the same account pricesync uses, or point it at a different superuser,
+   either is fine.
+
+Rotating the keypair later (if the private key is ever exposed) means
+generating a new one, updating both halves as above, and accepting that
+every browser subscription created under the old public key stops
+working - `services/notify` deletes each one the next time it tries to
+push to it and gets a 404/410 back, and the portal re-subscribes on its
+next visit; there is no bulk migration step to run.
+
+**Checking it is working:**
+
+```bash
+docker compose ps notify              # should show "running", not "Exited"
+docker compose logs -f notify         # one summary line per pass, e.g.
+                                       # "[notify] pass complete: 2 unpushed, 2 marked pushed, 0 dead subscription(s) removed, 0 skipped (no subscription yet)"
+```
+
+A notification stuck with an empty `pushed_at` for longer than a couple of
+minutes, with `push_subscriptions` rows on file, usually means the VAPID
+keys in `.env` do not match the public key in `settings.push` any more
+(mismatched keypairs fail every send) - check both were updated together
+in step 2 and 3 above. `services/notify` never logs a subscription's own
+endpoint or keys, by design (see `services/notify/src/lib/push.mjs`'s own
+doc comment), so a "pushed failed" log line names only the notification
+id, not which device or browser it was.
+
+## 9. Updating
 
 **Automatic** (the normal way, once this is set up): pushing to `main`
 runs `.github/workflows/deploy.yml`, which builds the web app, copies it
@@ -280,7 +359,7 @@ fixtures. With the flag on, anyone who pastes `?demo=1` into the address bar
 gets in-memory demo data on a real till or on a customer's own portal, which
 looks exactly like the shop's own and saves nothing.
 
-## 9. Logs
+## 10. Logs
 
 ```bash
 docker compose logs -f pocketbase   # the app and API
@@ -295,7 +374,7 @@ removing that container yourself - the cron-scheduled run always uses
 it exits. `deploy/logs/pricesync.log` is what the cron line itself
 redirects to, so it is the one place that log survives.
 
-## 10. Health checks
+## 11. Health checks
 
 ```bash
 curl https://vault.ggentertainment.co.uk/api/health
@@ -307,7 +386,7 @@ second shows `healthy`/`unhealthy` for the `pocketbase` container - see
 the comment on its `healthcheck` in `docker-compose.yml` if it never goes
 healthy (it assumes the PocketBase image has `wget` available).
 
-## 11. Counter PC setup
+## 12. Counter PC setup
 
 This is the shared till PC. It needs: the label printer driver, a Chrome
 shortcut that prints without a dialog, the barcode scanner configured,
@@ -355,7 +434,7 @@ An optional tablet running `/display` in Chrome's kiosk mode
 on the counter facing the customer; it is not required for the shop to
 trade.
 
-## 12. Phones
+## 13. Phones
 
 Staff phones and the shop's own phone/tablet for the customer portal
 need only the PWA installed from the browser, the same as any website
