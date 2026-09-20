@@ -79,9 +79,13 @@ export function RewardsScreen() {
     )
   }
 
-  const points = me.data?.balances.points ?? 0
+  // Null while `/me` is still in flight, never zero: the refusal under a row
+  // is about the customer's own points, and "you have 0" would be a claim
+  // this screen cannot make yet.
+  const points = me.data ? me.data.balances.points : null
   const rows = rewards.data ?? []
   const myVouchers = vouchers.data ?? []
+  const catalogueLoading = rewards.isPending || me.isPending
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -90,7 +94,7 @@ export function RewardsScreen() {
 
       <div className="mt-12 flex flex-col gap-1.5">
         <MicroLabel>Your points</MicroLabel>
-        {me.isPending ? (
+        {points === null ? (
           <SkeletonText lines={1} />
         ) : (
           <span
@@ -102,7 +106,7 @@ export function RewardsScreen() {
         )}
       </div>
 
-      {rewards.isPending ? (
+      {catalogueLoading ? (
         <div className="mt-12">
           <SkeletonText lines={5} />
         </div>

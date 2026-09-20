@@ -244,6 +244,21 @@ describe("rewardReasonSentence", () => {
     ).toBe("You need 500 points and have 320.")
   })
 
+  it("drops the balance clause while the balance is unknown", () => {
+    // `/me` still in flight: what it costs is known, what they hold is not,
+    // and "and have 0" would be a claim about somebody's own points.
+    expect(
+      rewardReasonSentence(
+        reward({ can_redeem: false, reason: "insufficient", cost_points: 500 }),
+        null
+      )
+    ).toBe("You need 500 points for this.")
+    expect(
+      rewardReasonSentence(reward({ can_redeem: false, reason: "sold_out" }), null)
+    ).toBe("None left at the moment.")
+    expect(rewardReasonSentence(reward(), null)).toBeNull()
+  })
+
   it("says why in words for every other refusal", () => {
     expect(
       rewardReasonSentence(reward({ can_redeem: false, reason: "sold_out" }), 900)

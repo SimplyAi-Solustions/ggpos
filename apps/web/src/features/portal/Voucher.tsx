@@ -25,6 +25,7 @@ import type { PortalVoucher } from "@/lib/api/guild"
 export function VoucherBody({ voucher }: { voucher: PortalVoucher }) {
   const live = voucherIsLive(voucher)
   const status = voucherStatusWord(voucher)
+  const worth = rewardWorth(voucher.reward.type, voucher.reward.value)
 
   if (voucher.reward.type === "store_credit") {
     return (
@@ -33,7 +34,11 @@ export function VoucherBody({ voucher }: { voucher: PortalVoucher }) {
         <p className="max-w-[48ch] text-base leading-[1.5] text-foreground">
           {`This one paid ${formatGBP(voucher.reward.value)} of store credit onto your account. There is nothing to show at the counter.`}
         </p>
-        <Note>{`Voucher ${voucher.number}`}</Note>
+        {/* The number is a code, so it is set in mono like every other
+            reference in My Vault, never in Jost. */}
+        <span className="tnum font-mono text-[13px] text-muted-foreground-2">
+          {voucher.number}
+        </span>
         <Button variant="text" render={<Link to="/account/credit" />}>
           See my credit
         </Button>
@@ -58,9 +63,8 @@ export function VoucherBody({ voucher }: { voucher: PortalVoucher }) {
           {displayCode(voucher.code)}
         </span>
         <Note>
-          {[voucher.number, rewardWorth(voucher.reward.type, voucher.reward.value)]
-            .filter(Boolean)
-            .join(" · ")}
+          <span className="tnum font-mono text-[13px]">{voucher.number}</span>
+          {worth ? ` · ${worth}` : null}
         </Note>
       </div>
 

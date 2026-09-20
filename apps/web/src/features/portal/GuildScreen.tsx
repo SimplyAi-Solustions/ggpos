@@ -6,7 +6,7 @@ import { displayCode } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Hint, SectionHeading } from "@/components/ui/micro-label"
+import { SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { getGuild } from "@/lib/api/guild"
@@ -129,15 +129,11 @@ export function GuildScreen() {
           </Badge>
         ) : null}
 
+        {/* The rail carries no label of its own: the sentence under it says
+            the same two things in words, and a figure glued to a tier name
+            ("10,000 Legend") is not how anybody says it. */}
         <div className="w-full">
           <TierRail position={rail.position} />
-          <div className="mt-2 flex justify-end">
-            <Hint>
-              {rail.atTop
-                ? "Top tier"
-                : `${formatPoints(rail.target ?? 0)} ${rail.targetName ?? ""}`}
-            </Hint>
-          </div>
         </div>
 
         <p
@@ -147,7 +143,7 @@ export function GuildScreen() {
           {tierProgressSentence(summary)}
         </p>
         <Note>
-          {`${formatPoints(summary.window_points)} of your points count towards your tier. Spending them does not take that back.`}
+          {`${formatPoints(summary.window_points)} points count towards your tier. Spending points does not take that back.`}
         </Note>
         {summary.membership ? (
           <Note data-testid="guild-membership">

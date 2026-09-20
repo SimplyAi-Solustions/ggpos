@@ -1,4 +1,4 @@
-import { buildCode } from "@gg/shared"
+import { buildCode, pointsToNextTier, resolveTier } from "@gg/shared"
 
 import { boxArt } from "@/kit/placeholder-art"
 import {
@@ -6,7 +6,10 @@ import {
   demoCreditLedger,
   findDemoCustomer,
 } from "@/lib/api/demo/customers"
-import { demoPortalCustomerId } from "@/lib/api/demo/portal-seed"
+import {
+  DEMO_PORTAL_CUSTOMER_ID,
+  demoPortalCustomerId,
+} from "@/lib/api/demo/portal-seed"
 import { DEMO_TIERS } from "@/lib/api/demo/store"
 import type {
   GuildSummary,
@@ -69,22 +72,18 @@ const REWARD_ART = boxArt([200, 150])
 // ---------------------------------------------------------------------------
 
 /**
- * The counted perks the demo shop hands out on top of the seed's own.
+ * The paid plan the headline demo card holds.
  *
- * `DEMO_TIERS` in `store.ts` is the demo shop's one tier table, the seed's
- * figures in the shared evaluator's shapes, and it stays the source for
- * every perk a sale actually applies. Free event entries and lounge hours
- * are not applied by a sale at all: staff mark one used at the counter. So
- * the demo adds them here, where the only thing they change is that the
- * portal's wallet shows a monthly counter, rather than editing a table the
- * Sell screen prices against.
+ * `DEMO_TIERS` in `store.ts` is the demo shop's one tier table and the only
+ * source of a perk here: the wallet shows what that row says the tier is
+ * worth, never something the portal made up. `tier_pass` is the table's one
+ * `paidPlan` entry, which is why a membership exists to show at all: the
+ * route pins the tier through `resolveTier` while the plan runs.
  */
-const EXTRA_COUNTED: Record<string, { type: CountedPerkType; allowed: number }[]> = {
-  tier_regular: [
-    { type: "free_event_entries", allowed: 2 },
-    { type: "lounge_hours", allowed: 12 },
-  ],
-}
+const DEMO_MEMBERSHIP_TIER_ID = "tier_pass"
+
+/** How far the demo card's plan is through its six months. */
+const MEMBERSHIP_RENEWS_IN_DAYS = 152
 
 /** What the headline demo card has used of this month's allowances. */
 const USED_THIS_MONTH: Record<CountedPerkType, number> = {
@@ -158,7 +157,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 1240,
     reason: "earn_sale",
-    ref: "GG-S-000118",
     note: "Earned on a £124.00 sale",
     balance_after: 1340,
     created: daysAgo(300),
@@ -177,7 +175,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 680,
     reason: "earn_sale",
-    ref: "GG-S-000143",
     note: "Earned on a £68.00 sale",
     balance_after: 2270,
     created: daysAgo(160),
@@ -187,7 +184,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: -1200,
     reason: "redeem",
-    ref: "GG-V-000004",
     note: "Redeemed for Tournament entry",
     balance_after: 1070,
     created: daysAgo(140),
@@ -197,7 +193,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 920,
     reason: "earn_sale",
-    ref: "GG-S-000176",
     note: "Earned on a £92.00 sale",
     balance_after: 1990,
     created: daysAgo(96),
@@ -207,7 +202,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: -300,
     reason: "redeem",
-    ref: "GG-V-000006",
     note: "Redeemed for GG lanyard",
     balance_after: 1690,
     created: daysAgo(60),
@@ -217,7 +211,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 210,
     reason: "earn_trade_in",
-    ref: "GG-BI-000061",
     note: "Earned on £42.00 taken as credit",
     balance_after: 1900,
     created: daysAgo(38),
@@ -227,7 +220,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 300,
     reason: "earn_sale",
-    ref: "GG-S-000201",
     note: "Earned on a £30.00 sale",
     balance_after: 2200,
     created: daysAgo(16),
@@ -237,7 +229,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 150,
     reason: "rule_bonus",
-    ref: "GG-S-000201",
     note: "Weekend bonus on a £30.00 sale",
     balance_after: 2350,
     created: daysAgo(16),
@@ -247,7 +238,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: -500,
     reason: "redeem",
-    ref: "GG-V-000007",
     note: "Redeemed for Free booster pack",
     balance_after: 1850,
     created: daysAgo(9),
@@ -257,7 +247,6 @@ const demoPointsRows: DemoPointsRow[] = [
     customer: "cust_demo_1",
     delta: 330,
     reason: "earn_sale",
-    ref: "GG-S-000212",
     note: "Earned on a £33.00 sale",
     balance_after: 2180,
     created: daysAgo(2),
@@ -297,6 +286,15 @@ interface DemoRewardSeed {
   redeemed_elsewhere: number
   /** Set in the future for a reward whose window has not opened yet. */
   starts_at?: string
+  /**
+   * The last one goes between the catalogue read and the press.
+   *
+   * The route re-checks everything against live rows inside its own
+   * transaction, so a row that said `can_redeem` a second ago can still be
+   * refused. This is the demo's way of making that race happen on purpose,
+   * which is the only way to see the refusal in front of the customer.
+   */
+  gone_on_redeem?: boolean
 }
 
 const DEMO_REWARDS: DemoRewardSeed[] = [
@@ -384,6 +382,21 @@ const DEMO_REWARDS: DemoRewardSeed[] = [
     redeemed_elsewhere: 3,
   },
   {
+    id: "reward_playmat",
+    name: "Shop playmat",
+    description_html:
+      "<p>A GG Entertainment playmat, stitched edge, from behind the counter.</p><p>One per person while they last.</p>",
+    cost_points: 1500,
+    type: "free_item",
+    value: 0,
+    stock_limit: 6,
+    per_customer_limit: 1,
+    // One left on the shelf when the catalogue was read, and gone by the
+    // time the customer presses Redeem.
+    redeemed_elsewhere: 5,
+    gone_on_redeem: true,
+  },
+  {
     id: "reward_xmas",
     name: "Christmas mystery box",
     description_html: "<p>A mixed box of singles, sealed and one retro title.</p>",
@@ -466,18 +479,34 @@ function pointsBalanceFor(customerId: string): number {
   return findDemoCustomer(customerId)?.private.points_balance ?? 0
 }
 
-function tierFor(customerId: string): LoyaltyTier | null {
-  const held = findDemoCustomer(customerId)?.private.tier
-  return DEMO_TIERS.find((tier) => tier.id === held) ?? null
+/**
+ * The plan this card holds, or null.
+ *
+ * Only the headline demo card has one, so both the screen with a membership
+ * line and the screen without it are reachable in the demo.
+ */
+function membershipFor(
+  customerId: string
+): { tier: LoyaltyTier; renews_at: string } | null {
+  if (customerId !== DEMO_PORTAL_CUSTOMER_ID) return null
+  const tier = DEMO_TIERS.find((row) => row.id === DEMO_MEMBERSHIP_TIER_ID)
+  return tier
+    ? { tier, renews_at: daysAhead(MEMBERSHIP_RENEWS_IN_DAYS) }
+    : null
 }
 
-/** The next tier up from where the window points stand, or null at the top. */
-function nextTierFor(windowPoints: number): LoyaltyTier | null {
-  return (
-    [...DEMO_TIERS]
-      .sort((a, b) => a.thresholdPoints - b.thresholdPoints)
-      .find((tier) => tier.thresholdPoints > windowPoints) ?? null
-  )
+/**
+ * The tier a live plan pins for this card, for the `/me` card to print.
+ *
+ * The badge on the card and the badge on the Guild screen are the same
+ * thing, and `resolveTier` is what settles it on the server, so the demo
+ * cannot show a paid plan on one screen and the earned tier on the other.
+ */
+export function demoMembershipTier(
+  customerId: string
+): { id: string; name: string } | null {
+  const tier = membershipFor(customerId)?.tier
+  return tier ? { id: tier.id, name: tier.name } : null
 }
 
 function wallet(tier: LoyaltyTier | null, headline: boolean): PerkWalletEntry[] {
@@ -486,18 +515,9 @@ function wallet(tier: LoyaltyTier | null, headline: boolean): PerkWalletEntry[] 
   const used = headline
     ? USED_THIS_MONTH
     : { free_event_entries: 0, lounge_hours: 0 }
-  const entries = tier.perks.map((perk) => toWalletEntry(perk, period, used))
-  for (const extra of EXTRA_COUNTED[tier.id] ?? []) {
-    if (entries.some((entry) => entry.type === extra.type)) continue
-    entries.push({
-      type: extra.type,
-      value: extra.allowed,
-      allowed: extra.allowed,
-      used: used[extra.type] ?? 0,
-      period,
-    })
-  }
-  return entries
+  // Straight off the tier's own row: the wallet says what the table says
+  // the tier is worth, and nothing the portal added to it.
+  return tier.perks.map((perk) => toWalletEntry(perk, period, used))
 }
 
 function liveVouchersFor(customerId: string): DemoVoucher[] {
@@ -514,21 +534,20 @@ export function demoGuild(): GuildSummary {
   const entry = me()
   const customerId = entry.customer.id
   const windowPoints = windowPointsFor(customerId)
-  const tier = tierFor(customerId)
-  const next = nextTierFor(windowPoints)
-  const headline = customerId === "cust_demo_1"
+  const membership = membershipFor(customerId)
+  // The same two calls the route makes: the plan pins the tier while it
+  // runs, and the next tier up the ladder is an earned one, never a plan.
+  const tier = resolveTier(DEMO_TIERS, windowPoints, membership?.tier.id ?? null)
+  const next = pointsToNextTier(DEMO_TIERS, windowPoints)
+  const headline = customerId === DEMO_PORTAL_CUSTOMER_ID
 
   return {
     points_name: POINTS_NAME,
     tier: tier ? { id: tier.id, name: tier.name } : null,
     window_points: windowPoints,
-    next: next
-      ? { name: next.name, points_needed: next.thresholdPoints - windowPoints }
-      : null,
-    // Only the headline demo card holds a paid plan, so both the membership
-    // line and the screen without one are reachable in the demo.
-    membership: headline
-      ? { tier_name: tier?.name ?? "Regular", renews_at: daysAhead(152) }
+    next: next ? { name: next.tier.name, points_needed: next.points } : null,
+    membership: membership
+      ? { tier_name: membership.tier.name, renews_at: membership.renews_at }
       : null,
     perks: wallet(tier, headline),
     referral: {
@@ -562,7 +581,7 @@ export function demoVouchers(): PortalVoucher[] {
       void rewardId
       return { ...voucher }
     })
-    .sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""))
+    .sort((a, b) => b.created.localeCompare(a.created))
 }
 
 /** Stock left on a reward, counting every voucher the demo shop has issued. */
@@ -656,7 +675,11 @@ export function demoRedeem(id: string): PortalVoucher {
   if (!seed) throw new Error("That reward is not in the catalogue any more.")
 
   const balance = pointsBalanceFor(customerId)
-  const reason = reasonFor(seed, customerId, balance)
+  // The live re-check the route makes inside its transaction, which can
+  // refuse a row the catalogue offered a moment ago.
+  const reason = seed.gone_on_redeem
+    ? "sold_out"
+    : reasonFor(seed, customerId, balance)
   if (reason !== "ok") throw new Error(refusal(reason, seed, balance))
 
   const number = `GG-V-${String(nextRedemption).padStart(6, "0")}`
@@ -680,7 +703,6 @@ export function demoRedeem(id: string): PortalVoucher {
     customer: customerId,
     delta: -seed.cost_points,
     reason: "redeem",
-    ref: number,
     note: `Redeemed for ${seed.name}`,
     balance_after: after,
     created: new Date().toISOString(),

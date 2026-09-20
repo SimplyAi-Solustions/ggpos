@@ -84,15 +84,11 @@ export function PointsScreen() {
                 <span className="text-[15px] leading-[1.35] text-foreground">
                   {pointsNote(row)}
                 </span>
-                <Note>
-                  {formatDate(row.created)}
-                  {row.ref ? (
-                    <>
-                      {" · "}
-                      <span className="tnum font-mono">{row.ref}</span>
-                    </>
-                  ) : null}
-                </Note>
+                {/* The date and nothing else: `/me/points` sends the
+                    sentence and the figures, and the reference a row was
+                    written against is the shop's own id, not the
+                    customer's. */}
+                <Note>{formatDate(row.created)}</Note>
               </span>
               <span className="flex shrink-0 flex-col items-end gap-1">
                 <span className="tnum text-[15px] font-medium">

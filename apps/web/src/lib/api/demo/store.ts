@@ -90,6 +90,24 @@ export const DEMO_TIERS: LoyaltyTier[] = [
     ],
     paidPlan: false,
   },
+  // The one paid plan, so a membership is a state the demo can actually be
+  // in: `resolveTier` pins this tier while the plan runs, which is what the
+  // portal's Guild screen and the counter's memberships both read.
+  {
+    id: "tier_pass",
+    name: "Guild Pass",
+    thresholdPoints: 0,
+    sort: 40,
+    perks: [
+      { type: "percent_off", value: 10, scope: ["sealed"] },
+      { type: "points_multiplier", value: 1.5 },
+      { type: "free_event_entries", value: 2, perMonth: true },
+      { type: "lounge_hours", value: 12, perMonth: true },
+      { type: "priority_release_booking" },
+      { type: "member_event_pricing" },
+    ],
+    paidPlan: true,
+  },
 ]
 
 /** No live rules in the demo, so the points preview is plain base earning. */

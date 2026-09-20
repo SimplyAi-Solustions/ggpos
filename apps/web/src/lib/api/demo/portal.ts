@@ -27,6 +27,7 @@ import {
   demoPortalCustomerId,
   setDemoPortalCustomer,
 } from "@/lib/api/demo/portal-seed"
+import { demoMembershipTier } from "@/lib/api/demo/portal-guild"
 import type { GuildNotificationType } from "@/lib/api/guild"
 import type {
   CardLanding,
@@ -150,11 +151,13 @@ function preferencesFor(id: string) {
 }
 
 /**
- * The tier the counter's own demo book holds for this card.
+ * The tier this card prints.
  *
  * `store.ts`'s `DEMO_TIERS` is the demo shop's single tier table, so the
  * badge on My Vault's card and the tier the Sell screen prices against are
- * the same row rather than two spellings of one.
+ * the same row rather than two spellings of one. A live paid plan comes
+ * first, the way `resolveTier` pins one on the server: otherwise the card
+ * would say "Regular" while the Guild screen said "Guild Pass".
  */
 function demoTier(tierId: string | undefined): { id: string; name: string } | null {
   const tier = DEMO_TIERS.find((row) => row.id === tierId)
@@ -182,7 +185,8 @@ export function demoMe(): VaultMe {
       notifications: { ...preferencesFor(entry.customer.id) },
     },
     balances: { credit, points: entry.private.points_balance ?? 0 },
-    tier: demoTier(entry.private.tier),
+    tier:
+      demoMembershipTier(entry.customer.id) ?? demoTier(entry.private.tier),
     id_status: entry.private.id_status ?? "none",
     counts: {
       trade_ins: demoMyTradeIns().length,

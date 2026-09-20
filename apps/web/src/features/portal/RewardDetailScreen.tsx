@@ -80,7 +80,11 @@ export function RewardDetailScreen({ id }: { id: string }) {
     )
   }
 
-  if (rewards.isPending) {
+  // The balance decides what this screen says and what it offers, so it is
+  // part of the read rather than something the page fills in later: a
+  // refusal quoting "and have 0", or a sheet promising "0 left", would be
+  // wrong about somebody's own points for as long as `/me` takes.
+  if (rewards.isPending || me.isPending) {
     return (
       <section className="pt-12 sm:pt-20">
         <SkeletonText lines={6} />
@@ -116,11 +120,11 @@ export function RewardDetailScreen({ id }: { id: string }) {
     )
   }
 
-  const points = me.data?.balances.points ?? 0
+  const points = me.data ? me.data.balances.points : null
   const refusal = rewardReasonSentence(reward, points)
   const worth = rewardWorth(reward.type, reward.value)
   const paragraphs = descriptionParagraphs(reward.description_html)
-  const left = points - reward.cost_points
+  const left = points === null ? null : points - reward.cost_points
 
   function closeSheet() {
     setConfirming(false)
@@ -234,7 +238,9 @@ export function RewardDetailScreen({ id }: { id: string }) {
             <SheetTitle>{issued ? "Your voucher" : "Redeem this reward"}</SheetTitle>
             {issued ? null : (
               <SheetDescription>
-                {`${reward.name} costs ${formatPoints(reward.cost_points)} points. You would have ${formatPoints(Math.max(0, left))} left.`}
+                {left === null
+                  ? `${reward.name} costs ${formatPoints(reward.cost_points)} points.`
+                  : `${reward.name} costs ${formatPoints(reward.cost_points)} points. You would have ${formatPoints(Math.max(0, left))} left.`}
               </SheetDescription>
             )}
           </SheetHeader>
