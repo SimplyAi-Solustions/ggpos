@@ -144,6 +144,17 @@ function findOpenWant(app, item) {
  * itself is sent only once that transaction has actually committed (fix
  * round, finding 7: sending mail while a write lock is held risks holding
  * it open for as long as the outbound send takes).
+ *
+ * Saves `item` and `want` themselves through `txApp`, rather than
+ * re-fetching fresh copies by id inside the transaction: this is called
+ * from an `items` `onRecordCreate`/`onRecordUpdate` hook, whose own
+ * caller (PocketBase's own record-create/update response) serialises
+ * whatever `item`'s own in-memory fields are once this call returns - a
+ * re-fetched copy's own writes would reach the database correctly but
+ * leave this same `item` reference looking unmatched in the very
+ * response reporting it, which is exactly the regression an earlier
+ * version of this fix round shipped and check.sh's own "was not reserved
+ * on creation" assertion caught.
  */
 function matchOnStock(app, item) {
   try {
@@ -157,27 +168,22 @@ function matchOnStock(app, item) {
     var now = new Date();
     var until = new Date(now.getTime() + holdHours(app, settingsRow) * 3600 * 1000);
     var untilIso = until.toISOString();
-    var itemId = item.id;
-    var wantId = want.id;
 
     var pending = [];
     app.runInTransaction(function (txApp) {
-      var txItem = txApp.findRecordById("items", itemId);
-      var txWant = txApp.findRecordById("want_list", wantId);
+      item.set("status", "reserved");
+      item.set("reserved_for", want.getString("customer"));
+      item.set("reserved_until", untilIso);
+      txApp.save(item);
 
-      txItem.set("status", "reserved");
-      txItem.set("reserved_for", txWant.getString("customer"));
-      txItem.set("reserved_until", untilIso);
-      txApp.save(txItem);
+      want.set("status", "matched");
+      want.set("matched_item", item.id);
+      want.set("notified_at", now.toISOString());
+      txApp.save(want);
 
-      txWant.set("status", "matched");
-      txWant.set("matched_item", txItem.id);
-      txWant.set("notified_at", now.toISOString());
-      txApp.save(txWant);
-
-      var title = txItem.getString("title") || "An item on your want list";
+      var title = item.getString("title") || "An item on your want list";
       var n = notifyLib.notify(txApp, {
-        customer: txWant.getString("customer"),
+        customer: want.getString("customer"),
         type: "want_match",
         title: "It is in and held for you",
         body: `${title} is in. Held for you until ${ukDateTime(untilIso)}.`,

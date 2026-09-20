@@ -69,7 +69,34 @@ describe("toQuoteLines", () => {
       market_source: "cardmarket",
       // 50 percent of £100, which is the cash band, not the 65 percent credit one.
       offer_price: 5000,
+      kind: "single",
+      game: "game_pokemon",
     })
+  })
+
+  it("carries a kind and a game on every line, so it can be received", () => {
+    // The received route can only infer these for a card or a retro line.
+    // A sealed box, a graded slab and a typed-in title cannot be received
+    // without them, whatever the customer has accepted.
+    const sent = convert([
+      line({ key: "sealed", kind: "sealed", title: "Surging Sparks ETB", cardId: undefined }),
+      line({ key: "graded", kind: "graded" }),
+      line({
+        key: "typed",
+        kind: "retro",
+        title: "Mario Kart 64",
+        cardId: undefined,
+        retroTitleId: undefined,
+        gameId: "game_retro",
+        condition: "cib",
+      }),
+    ])
+    expect(sent.map((entry) => entry.kind)).toEqual(["sealed", "graded", "retro"])
+    expect(sent.map((entry) => entry.game)).toEqual([
+      "game_pokemon",
+      "game_pokemon",
+      "game_retro",
+    ])
   })
 
   it("keeps the quantity, so the route's own total multiplies once", () => {
@@ -96,6 +123,9 @@ describe("toQuoteLines", () => {
       qty: 1,
       offer_price: 2000,
       market_source: BULK_SOURCE,
+      // `trade_in_lines.kind` has no "bulk": a lot is one row on the shelf.
+      kind: "other",
+      game: "game_pokemon",
     })
     // £20 for the lot, never £20 x 400.
     expect(quoteOfferTotal(sent)).toBe(2000)
@@ -167,5 +197,30 @@ describe("offerProblem", () => {
 
   it("is happy with a priced offer", () => {
     expect(offerProblem(convert([line()]))).toBeNull()
+  })
+
+  it("names a line that could never be received, before it is offered", () => {
+    const lines = convert([
+      line({
+        kind: "sealed",
+        title: "Surging Sparks ETB",
+        cardId: undefined,
+        gameId: "",
+        // Priced by hand, so it is the missing game and nothing else that
+        // holds the offer back.
+        overrideCash: 3000,
+        overrideCredit: 3600,
+        overrideReason: "Sealed, priced against the shelf",
+      }),
+    ])
+    expect(offerProblem(lines)).toBe(
+      "Line 1 has no game on it. Pick the game and try again."
+    )
+  })
+
+  it("lets a card line through without a game of its own", () => {
+    // The received route reads the card's game for it.
+    const lines = convert([line({ gameId: "" })])
+    expect(offerProblem(lines)).toBeNull()
   })
 })

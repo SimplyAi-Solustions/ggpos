@@ -2,6 +2,7 @@ import { displayCode, formatGBP } from "@gg/shared"
 
 import { boxArt, cardArt } from "@/kit/placeholder-art"
 import { PLATFORMS } from "@/design/platforms"
+import { DEMO_CARDS, DEMO_GAMES } from "@/lib/api/fixtures"
 import {
   DEMO_CUSTOMERS,
   demoCreditLedgerFor,
@@ -38,6 +39,7 @@ import type {
   QuoteQueueRow,
   QuoteRecord,
   StaffQuoteDetail,
+  TradeInLineInput,
   VaultMe,
   VaultMePatch,
   VaultTradeIn,
@@ -427,6 +429,10 @@ export const demoQuotes: DemoQuote[] = [
         market_price: 12000,
         market_source: "cardmarket",
         offer_price: 6000,
+        // No card row behind it, so the offer carried its own kind and
+        // game, exactly as the counter now sends them.
+        kind: "graded",
+        game: "game_pokemon",
       },
       {
         title: "Sonic the Hedgehog 2, boxed",
@@ -435,6 +441,8 @@ export const demoQuotes: DemoQuote[] = [
         market_price: 6000,
         market_source: "pricecharting_pal",
         offer_price: 3000,
+        kind: "retro",
+        game: "game_retro",
       },
     ],
     messages: [
@@ -879,13 +887,27 @@ export function demoQuoteReceived(id: string): {
   if (quote.status !== "accepted") {
     throw new Error(`This quote is ${quote.status}, not ready to receive.`)
   }
-  const draft = demoCreateDraft(quote.customer)
-  const entry = demoTradeIns.find((row) => row.record.id === draft.id)
-  if (entry) entry.record.channel = "remote"
-  demoSaveLines(
-    draft.id,
-    (quote.lines ?? []).map((line) => ({
-      kind: line.retro_title || line.condition === "cib" ? "retro" : "single",
+
+  // The route's own rules, to the letter: a line's kind is what the offer
+  // set, or `single` for a card, `retro` for a retro title, `other` for
+  // anything else; its game is what the offer set, or the card's own game,
+  // or the retro game. A line with none of the three is refused here rather
+  // than written as a draft line the completion route could never price.
+  const retroGameId = DEMO_GAMES.find((game) => game.key === "retro")?.id ?? ""
+  const lines = (quote.lines ?? []).map((line, at) => {
+    const card = line.card ? DEMO_CARDS.find((row) => row.id === line.card) : undefined
+    const kind =
+      line.kind || (line.card ? "single" : line.retro_title ? "retro" : "other")
+    const gameId =
+      line.game || card?.gameId || (kind === "retro" ? retroGameId : "")
+    if (!gameId) {
+      throw new Error(
+        `Line ${at + 1} has no game set. Add a game to the offer line and try again.`
+      )
+    }
+    return {
+      kind: kind as TradeInLineInput["kind"],
+      gameId,
       title: line.title,
       cardId: line.card,
       retroTitleId: line.retro_title,
@@ -896,8 +918,13 @@ export function demoQuoteReceived(id: string): {
       marketSource: line.market_source ?? "",
       offerPrice: line.offer_price,
       accepted: true,
-    }))
-  )
+    }
+  })
+
+  const draft = demoCreateDraft(quote.customer)
+  const entry = demoTradeIns.find((row) => row.record.id === draft.id)
+  if (entry) entry.record.channel = "remote"
+  demoSaveLines(draft.id, lines)
   quote.status = "received"
   quote.trade_in = draft.id
   return { trade_in_id: draft.id, number: draft.number }
