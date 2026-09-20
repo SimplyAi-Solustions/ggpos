@@ -12,6 +12,12 @@
  * through txApp, with a `halt` object carrying any in-transaction refusal
  * back out past the Go boundary.
  *
+ * A refund never rewrites what was sold. `sale_lines.qty` and `.discount`
+ * are the as-sold figures for good; a refund moves
+ * `sale_lines.refunded_qty` and `sales.refunded_total` only, and prices
+ * itself from the immutable numbers through lib/saleline.js, so any
+ * sequence of partial refunds adds back up to exactly what was taken.
+ *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
@@ -27,6 +33,7 @@ routerAdd(
     const counters = require(`${__hooks}/lib/counters.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
+    const saleline = require(`${__hooks}/lib/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
 
@@ -182,7 +189,11 @@ routerAdd(
       if (session.getString("closed_at")) {
         throw e.error(422, "That cash session is closed. Open a new one before taking cash.", null);
       }
-      if (cashCap > 0 && split.cash > cashCap) {
+      // A cap of zero means no cash at all, not "no limit".
+      if (cashCap <= 0) {
+        throw e.error(422, "Cash sales are switched off in settings.", null);
+      }
+      if (split.cash > cashCap) {
         throw e.error(
           422,
           `Cash is capped at ${money.formatGBP(cashCap)} a sale. Take the rest by card.`,
@@ -200,12 +211,30 @@ routerAdd(
     const creditBalance = customerId ? balances.creditBalance(e.app, customerId) : 0;
     const pointsBalance = customerId ? balances.pointsBalance(e.app, customerId) : 0;
 
+    /** The one wording for "this customer cannot cover that much store credit". */
+    function creditRefusal(balance) {
+      return `This customer has ${money.formatGBP(balance)} in store credit. Lower the amount.`;
+    }
+
+    /** The one wording for every checkPointsRedemption refusal. */
+    function pointsRefusal(check, balance) {
+      if (check.reason === "disabled") {
+        return "The GG Guild is switched off, so points cannot be used.";
+      }
+      if (check.reason === "below_minimum") {
+        return `Points start at ${programme.minRedeemPoints} points. Take this one another way.`;
+      }
+      if (check.reason === "insufficient") {
+        return `This customer has ${balance} points. Lower the amount.`;
+      }
+      if (check.reason === "over_share") {
+        return `Points can cover at most ${money.formatGBP(loyalty.pointsToPence(check.maxPointsForSale, programme))} of this sale.`;
+      }
+      return "Those points cannot be used on this sale.";
+    }
+
     if (split.store_credit > creditBalance) {
-      throw e.error(
-        422,
-        `This customer has ${money.formatGBP(creditBalance)} in store credit. Lower the amount.`,
-        null
-      );
+      throw e.error(422, creditRefusal(creditBalance), null);
     }
 
     let pointsSpent = 0;
@@ -213,23 +242,20 @@ routerAdd(
       pointsSpent = loyalty.penceToPoints(split.points, programme);
       const check = loyalty.checkPointsRedemption(programme, pointsBalance, pointsSpent, total);
       if (!check.ok) {
-        let message = "Those points cannot be used on this sale.";
-        if (check.reason === "disabled") {
-          message = "The GG Guild is switched off, so points cannot be used.";
-        } else if (check.reason === "below_minimum") {
-          message = `Points start at ${programme.minRedeemPoints} points. Take this one another way.`;
-        } else if (check.reason === "insufficient") {
-          message = `This customer has ${pointsBalance} points. Lower the amount.`;
-        } else if (check.reason === "over_share") {
-          message = `Points can cover at most ${money.formatGBP(loyalty.pointsToPence(check.maxPointsForSale, programme))} of this sale.`;
-        }
-        throw e.error(422, message, null);
+        throw e.error(422, pointsRefusal(check, pointsBalance), null);
       }
     }
 
+    const discountSource = util.asStr(body.discount_source);
     const rewardCode = util.asStr(body.reward_code);
     let redemption = null;
+    let reward = null;
     if (rewardCode) {
+      // A voucher belongs to one customer, so it cannot be spent on a sale
+      // that has nobody on it.
+      if (!customerId) {
+        throw e.error(422, "Add the customer to the sale before using their reward.", null);
+      }
       try {
         redemption = e.app.findFirstRecordByFilter(
           "reward_redemptions",
@@ -239,7 +265,7 @@ routerAdd(
       } catch (err) {
         throw e.error(422, "That reward code was not found. Check the voucher.", null);
       }
-      if (customerId && redemption.getString("customer") !== customerId) {
+      if (redemption.getString("customer") !== customerId) {
         throw e.error(422, "That reward belongs to a different customer.", null);
       }
       if (redemption.getString("status") !== "issued") {
@@ -248,17 +274,56 @@ routerAdd(
       if (util.isPast(redemption.getString("expires_at"), now)) {
         throw e.error(422, "That reward has expired.", null);
       }
+      if (discountSource !== "reward") {
+        throw e.error(
+          422,
+          "A reward code needs the discount marked as coming from the reward. Change the discount source and try again.",
+          null
+        );
+      }
+      try {
+        reward = e.app.findRecordById("loyalty_rewards", redemption.getString("reward"));
+      } catch (err) {
+        throw e.error(
+          422,
+          "That reward is no longer in the rewards list. Discount this sale another way.",
+          null
+        );
+      }
+      if (reward.getString("type") !== "money_off") {
+        throw e.error(
+          422,
+          "This reward is not money off, so it cannot be used on a sale yet.",
+          null
+        );
+      }
+      const rewardValue = reward.getInt("value");
+      if (saleDiscount !== rewardValue) {
+        throw e.error(
+          422,
+          `The discount of ${money.formatGBP(saleDiscount)} does not match this reward, which is ${money.formatGBP(rewardValue)} off. Change the discount.`,
+          null
+        );
+      }
     }
 
     // -----------------------------------------------------------------
     // Points earned (never on the part paid with points)
+    //
+    // The sale-level discount comes off the lines pro rata first, so the
+    // gross the evaluator sees is the amount actually charged rather than
+    // the pre-discount subtotal.
     // -----------------------------------------------------------------
+    const grosses = [];
+    for (let i = 0; i < planned.length; i++) grosses.push(planned[i].lineTotal);
+    const earnNets = saleline.spread(grosses, saleDiscount);
+
     const earnLines = [];
     for (let i = 0; i < planned.length; i++) {
       earnLines.push({
         game: planned[i].item.getString("game") || null,
         kind: planned[i].item.getString("kind"),
-        total: planned[i].lineTotal,
+        total: earnNets[i],
       });
     }
 
@@ -289,6 +354,8 @@ routerAdd(
       tier: priv ? util.tier(e.app, priv.getString("tier")) : null,
       paidWithPoints: split.points,
     });
+    // Points belong to a customer. A walk-in sale earns none.
+    const pointsEarned = customerId ? earn.total : 0;
 
     // -----------------------------------------------------------------
     // Write
@@ -298,6 +365,32 @@ routerAdd(
 
     try {
       e.app.runInTransaction((txApp) => {
+        // Balances are read before the transaction for the staff-facing
+        // refusals; re-read them here so two tills spending the same credit
+        // or the same points cannot both succeed.
+        if (customerId && (split.store_credit > 0 || split.points > 0)) {
+          if (split.store_credit > 0) {
+            const liveCredit = balances.creditBalance(txApp, customerId);
+            if (split.store_credit > liveCredit) {
+              halt = { status: 422, message: creditRefusal(liveCredit) };
+              throw new Error(halt.message);
+            }
+          }
+          if (split.points > 0) {
+            const livePoints = balances.pointsBalance(txApp, customerId);
+            const liveCheck = loyalty.checkPointsRedemption(
+              programme,
+              livePoints,
+              pointsSpent,
+              total
+            );
+            if (!liveCheck.ok) {
+              halt = { status: 422, message: pointsRefusal(liveCheck, livePoints) };
+              throw new Error(halt.message);
+            }
+          }
+        }
+
         for (let i = 0; i < planned.length; i++) {
           const live = txApp.findRecordById("items", planned[i].item.id);
           const status = live.getString("status");
@@ -323,12 +416,12 @@ routerAdd(
           payment: payment,
           payment_split: split,
           sumup_ref: util.asStr(body.sumup_ref),
-          points_earned: earn.total,
+          points_earned: pointsEarned,
+          refunded_total: 0,
           status: "complete",
         });
         if (customerId) sale.set("customer", customerId);
         if (session) sale.set("cash_session", session.id);
-        const discountSource = util.asStr(body.discount_source);
         if (discountSource) sale.set("discount_source", discountSource);
         txApp.save(sale);
 
@@ -345,6 +438,7 @@ routerAdd(
               qty: plan.qty,
               unit_price: plan.unitPrice,
               discount: plan.discount,
+              refunded_qty: 0,
               // Margin scheme lines carry no line VAT (the VAT sits on the
               // margin and is worked out in the stock book); a standard
               // line only carries VAT once the shop is registered.
@@ -404,11 +498,11 @@ routerAdd(
           );
         }
 
-        if (customerId && earn.total > 0) {
+        if (customerId && pointsEarned > 0) {
           txApp.save(
             new Record(txApp.findCollectionByNameOrId("points_ledger"), {
               customer: customerId,
-              delta: earn.total,
+              delta: pointsEarned,
               reason: "earn_sale",
               ref: number,
               staff: staff.id,
@@ -444,25 +538,31 @@ routerAdd(
           ? balances.recompute(txApp, customerId)
           : { credit: 0, points: 0 };
 
+        const meta = {
+          number: number,
+          lines: planned.length,
+          total: total,
+          payment: payment,
+          cash_session: session ? session.id : "",
+        };
+        if (redemption) {
+          meta.reward_redemption = redemption.id;
+          meta.reward = redemption.getString("reward");
+          meta.discount = saleDiscount;
+        }
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
           action: "sale_complete",
           collection: "sales",
           record: sale.id,
-          meta: {
-            number: number,
-            lines: planned.length,
-            total: total,
-            payment: payment,
-            cash_session: session ? session.id : "",
-          },
+          meta: meta,
           ip: e.realIP(),
         });
 
         result = {
           sale: { id: sale.id, number: number, total: total, status: "complete" },
           sumup_amount: split.sumup_card,
-          points_earned: earn.total,
+          points_earned: pointsEarned,
           credit_balance: fresh.credit,
           points_balance: fresh.points,
         };
@@ -488,13 +588,12 @@ routerAdd(
     const stepup = require(`${__hooks}/lib/stepup.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
-    const money = require(`${__hooks}/lib/shared/money.js`);
+    const saleline = require(`${__hooks}/lib/saleline.js`);
 
     stepup.requireStepUp(e);
 
     const staff = e.auth;
     const body = util.body(e);
-    const now = new Date();
 
     let sale = null;
     try {
@@ -521,57 +620,34 @@ routerAdd(
       throw e.badRequestError("Pick at least one line to refund.", null);
     }
 
-    const allLines = e.app.findRecordsByFilter(
-      "sale_lines",
-      "sale = {:sale}",
-      "created",
-      0,
-      0,
-      { sale: sale.id }
-    );
-    const byId = {};
-    let soldSubtotal = 0;
-    for (let i = 0; i < allLines.length; i++) {
-      if (!allLines[i]) continue;
-      byId[allLines[i].id] = allLines[i];
-      soldSubtotal +=
-        allLines[i].getInt("unit_price") * Math.max(1, allLines[i].getInt("qty")) -
-        allLines[i].getInt("discount");
-    }
+    // The as-sold breakdown: unit_price, qty and discount as they were at
+    // completion, plus this line's share of the sale-level discount.
+    const asSold = saleline.breakdown(e.app, sale);
 
-    const saleDiscount = sale.getInt("discount");
-    const planned = [];
-    let refunded = 0;
+    const requested = {};
+    const order = [];
     for (let i = 0; i < rawLines.length; i++) {
       const lineId = util.asStr(rawLines[i].sale_line);
-      const line = byId[lineId];
-      if (!line) {
+      const entry = asSold.byId[lineId];
+      if (!entry) {
         throw e.badRequestError("One of those lines is not on this sale.", null);
       }
-      if (line.getString("status") === "refunded") {
+      if (entry.line.getString("status") === "refunded") {
         throw e.error(409, "One of those lines has already been refunded.", null);
       }
-      const lineQty = Math.max(1, line.getInt("qty"));
-      const qty = Math.max(1, util.asInt(rawLines[i].qty, lineQty));
-      if (qty > lineQty) {
+      const remaining = entry.qty - entry.line.getInt("refunded_qty");
+      const want = Math.max(1, util.asInt(rawLines[i].qty, remaining));
+      if (requested[lineId] === undefined) {
+        requested[lineId] = 0;
+        order.push(lineId);
+      }
+      requested[lineId] += want;
+      if (requested[lineId] > remaining) {
         throw e.badRequestError(
-          `Only ${lineQty} of that line was sold. Lower the quantity.`,
+          `Only ${remaining} of that line is still sold. Lower the quantity.`,
           null
         );
       }
-
-      const lineGross = line.getInt("unit_price") * lineQty - line.getInt("discount");
-      const share = money.roundHalfUp((lineGross * qty) / lineQty);
-      // The sale-level discount comes off pro rata, so refunding every line
-      // of a sale returns exactly what was taken for it.
-      const discountShare =
-        saleDiscount > 0 && soldSubtotal > 0
-          ? money.roundHalfUp((saleDiscount * share) / soldSubtotal)
-          : 0;
-      const amount = Math.max(0, share - discountShare);
-      refunded += amount;
-
-      planned.push({ line: line, qty: qty, lineQty: lineQty, amount: amount });
     }
 
     const customerId = sale.getString("customer");
@@ -587,13 +663,6 @@ routerAdd(
       }
     }
 
-    const saleTotal = sale.getInt("total");
-    const pointsEarned = sale.getInt("points_earned");
-    const pointsToReverse =
-      pointsEarned > 0 && saleTotal > 0
-        ? money.roundHalfUp((pointsEarned * refunded) / saleTotal)
-        : 0;
-
     let halt = null;
     let result = null;
 
@@ -605,33 +674,80 @@ routerAdd(
           throw new Error(halt.message);
         }
 
-        for (let i = 0; i < planned.length; i++) {
-          const plan = planned[i];
-          const line = txApp.findRecordById("sale_lines", plan.line.id);
+        // Re-read every line and price from the live refunded_qty, so two
+        // refunds open at once cannot pay the same unit back twice.
+        const live = saleline.breakdown(txApp, liveSale);
+        const plans = [];
+        let refunded = 0;
+        for (let i = 0; i < order.length; i++) {
+          const entry = live.byId[order[i]];
+          if (!entry) {
+            halt = {
+              status: 409,
+              message: "That line is no longer on this sale. Reload it and try again.",
+            };
+            throw new Error(halt.message);
+          }
+          const already = entry.line.getInt("refunded_qty");
+          const want = requested[order[i]];
+          if (entry.line.getString("status") === "refunded" || entry.qty - already < want) {
+            halt = {
+              status: 409,
+              message: "That line was refunded while this refund was open. Reload the sale and try again.",
+            };
+            throw new Error(halt.message);
+          }
+          const amount =
+            saleline.cumNet(entry.net, entry.qty, already + want) -
+            saleline.cumNet(entry.net, entry.qty, already);
+          refunded += amount;
+          plans.push({ line: entry.line, qty: entry.qty, already: already, want: want });
+        }
 
-          const item = txApp.findRecordById("items", line.getString("item"));
-          item.set("qty", item.getInt("qty") + plan.qty);
+        for (let i = 0; i < plans.length; i++) {
+          const plan = plans[i];
+
+          let item = null;
+          try {
+            item = txApp.findRecordById("items", plan.line.getString("item"));
+          } catch (err) {
+            halt = {
+              status: 409,
+              message: "That item has been deleted, so it cannot go back into stock.",
+            };
+            throw new Error(halt.message);
+          }
+          item.set("qty", item.getInt("qty") + plan.want);
           item.set("status", "in_stock");
           txApp.save(item);
 
-          if (plan.qty >= plan.lineQty) {
-            line.set("status", "refunded");
-          } else {
-            // A part-refunded line keeps recording what is still sold.
-            line.set("qty", plan.lineQty - plan.qty);
-          }
-          txApp.save(line);
+          // qty and discount stay as sold for ever; only refunded_qty moves.
+          const after = plan.already + plan.want;
+          plan.line.set("refunded_qty", after);
+          if (after >= plan.qty) plan.line.set("status", "refunded");
+          txApp.save(plan.line);
         }
 
         let allRefunded = true;
-        const after = txApp.findRecordsByFilter("sale_lines", "sale = {:sale}", "", 0, 0, {
-          sale: liveSale.id,
-        });
+        const after = saleline.linesForSale(txApp, liveSale.id);
         for (let i = 0; i < after.length; i++) {
           if (after[i] && after[i].getString("status") !== "refunded") allRefunded = false;
         }
+
+        const refundedBefore = liveSale.getInt("refunded_total");
+        const refundedAfter = refundedBefore + refunded;
+        liveSale.set("refunded_total", refundedAfter);
         liveSale.set("status", allRefunded ? "refunded" : "part_refunded");
         txApp.save(liveSale);
+
+        // Cumulative, from the sale's own earn figure: whatever order the
+        // lines go back in, the points reversed total exactly what the sale
+        // earned once it is fully refunded.
+        const pointsEarned = liveSale.getInt("points_earned");
+        const saleTotal = liveSale.getInt("total");
+        const pointsToReverse =
+          saleline.pointsCum(pointsEarned, saleTotal, refundedAfter) -
+          saleline.pointsCum(pointsEarned, saleTotal, refundedBefore);
 
         if (refundMethod === "store_credit" && refunded > 0) {
           txApp.save(
@@ -658,7 +774,10 @@ routerAdd(
           );
         }
 
-        if (customerId && pointsToReverse > 0) {
+        if (customerId && pointsToReverse !== 0) {
+          // The points ledger is allowed to go negative here: a customer who
+          // has already spent what a refunded sale earned owes those points
+          // back, and the ledger is the record of that.
           txApp.save(
             new Record(txApp.findCollectionByNameOrId("points_ledger"), {
               customer: customerId,
@@ -669,6 +788,17 @@ routerAdd(
             })
           );
         }
+
+        // The reason is a staff note against the sale, not audit meta:
+        // audit_log is permanent and superuser-only, and a refund reason is
+        // free text a staff member typed about a named customer.
+        const note = new Record(txApp.findCollectionByNameOrId("notes"), {
+          target_collection: "sales",
+          target_record: liveSale.id,
+          body: reason,
+          author: staff.id,
+        });
+        txApp.save(note);
 
         const fresh = customerId
           ? balances.recompute(txApp, customerId)
@@ -681,11 +811,12 @@ routerAdd(
           record: liveSale.id,
           meta: {
             number: liveSale.getString("number"),
-            lines: planned.length,
+            lines: plans.length,
             refunded: refunded,
+            refunded_total: refundedAfter,
             refund_method: refundMethod,
             points_reversed: pointsToReverse,
-            reason: reason,
+            note: note.id,
           },
           ip: e.realIP(),
         });
@@ -693,6 +824,7 @@ routerAdd(
         result = {
           sale: { id: liveSale.id, status: liveSale.getString("status") },
           refunded: refunded,
+          refunded_total: refundedAfter,
           points_reversed: pointsToReverse,
           credit_balance: fresh.credit,
           points_balance: fresh.points,
