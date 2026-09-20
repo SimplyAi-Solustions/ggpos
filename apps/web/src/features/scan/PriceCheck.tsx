@@ -6,9 +6,11 @@
  * docs/PLAN.md, Screens 2: "Price-check mode shows market value, our offer
  * band and our stock for any card without creating anything."
  */
+import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { computeOffer, displayCode, formatGBP, type CardCondition } from "@gg/shared"
 
+import { Chip, ChipGroup } from "@/components/ui/chip"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -21,6 +23,7 @@ import {
 } from "@/components/ui/table"
 import { ProductImage } from "@/components/product-image"
 import { PriceSources } from "@/features/pricing"
+import { finishWords } from "@/features/pricing/sources"
 import { offerSettingsFrom, rulesFrom, type CardHit } from "@/lib/api"
 import { useVaultConfig } from "@/lib/api/config"
 import { stockForCard } from "@/lib/api/lookup"
@@ -31,7 +34,14 @@ const CONDITIONS: CardCondition[] = ["NM", "LP", "MP", "HP", "DMG"]
 export function PriceCheck({ card }: { card: CardHit }) {
   const pricing = usePricingSettings()
   const { data: config } = useVaultConfig()
-  const prices = useCardPrices(card.id, card.finishes[0] ?? "", "NM")
+  // The price routes match a finish exactly, so a check always names one:
+  // the card's own first printing until somebody taps another chip.
+  const finishes = card.finishes.length > 0 ? card.finishes : ["normal"]
+  const [chosenFinish, setChosenFinish] = React.useState<string | null>(null)
+  const finish = chosenFinish && finishes.includes(chosenFinish)
+    ? chosenFinish
+    : (finishes[0] as string)
+  const prices = useCardPrices(card.id, finish, "NM")
   const { data: stock = [], isPending: stockPending } = useQuery({
     queryKey: ["stock-for-card", card.id],
     queryFn: () => stockForCard(card.id),
@@ -77,11 +87,27 @@ export function PriceCheck({ card }: { card: CardHit }) {
         <MicroLabel tone="ink" className="mb-5">
           Sources
         </MicroLabel>
+        {finishes.length > 1 ? (
+          <ChipGroup
+            aria-label="Finish"
+            className="mb-6"
+            value={[finish]}
+            onValueChange={(next) => {
+              if (next[0]) setChosenFinish(next[0])
+            }}
+          >
+            {finishes.map((option) => (
+              <Chip key={option} value={option}>
+                {finishWords(option)}
+              </Chip>
+            ))}
+          </ChipGroup>
+        ) : null}
         <PriceSources
           subject={{
             kind: "card",
             id: card.id,
-            finish: card.finishes[0] ?? "",
+            finish,
             condition: "NM",
             gameKey: card.gameKey,
             title: card.name,
@@ -116,7 +142,7 @@ export function PriceCheck({ card }: { card: CardHit }) {
                     game: card.gameId,
                     kind: "single",
                     condition,
-                    finish: card.finishes[0] ?? null,
+                    finish,
                     rarity: card.rarity ?? null,
                   },
                   rules,

@@ -118,9 +118,8 @@ function LineRow({
       // source a moment ago has to let that figure go with it: leaving the
       // old finish's market on the line while the note says there is no
       // price would offer the customer money for the wrong card.
-      if (waiting || line.marketSource !== MANUAL_SOURCE) {
-        onUpdate(line.key, { marketPence: 0, marketSource: MANUAL_SOURCE })
-      }
+      // A figure typed by hand never reaches here: `typed` returns above.
+      onUpdate(line.key, { marketPence: 0, marketSource: MANUAL_SOURCE })
       return
     }
     if (chosen.gbp_market === line.marketPence && chosen.source === line.marketSource) {
@@ -134,7 +133,6 @@ function LineRow({
     priced,
     typed,
     held,
-    waiting,
     view,
     line.key,
     line.marketPence,

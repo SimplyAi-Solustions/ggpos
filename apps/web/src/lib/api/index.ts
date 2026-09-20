@@ -176,6 +176,7 @@ export async function createItem(input: NewItemInput): Promise<ItemRecord> {
     completeness: input.completeness || undefined,
     qty: input.qty,
     cost: input.cost,
+    market_at_intake: input.marketAtIntake,
     price: input.price,
     location: input.locationId || undefined,
     ean: input.ean || undefined,

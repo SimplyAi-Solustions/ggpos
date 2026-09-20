@@ -283,6 +283,7 @@ export function AddStockScreen({
     setValue("gameId", prefilledCard.gameId)
     setValue("setCode", prefilledCard.setCode)
     setValue("number", prefilledCard.number)
+    setValue("finish", prefilledCard.finishes[0] ?? "normal")
   }, [prefilledCard, setValue])
 
   function chooseCard(next: CardHit | null) {
@@ -295,7 +296,12 @@ export function AddStockScreen({
       setValue("gameId", next.gameId)
       const allowed: string[] = finishesFor(next.finishes).map((finish) => finish.value)
       const current = form.getValues("finish")
-      if (current && !allowed.includes(current)) setValue("finish", undefined)
+      // `price_snapshots.finish` is matched exactly, so a card looked up with
+      // no finish at all finds nothing: the card's own first printing is the
+      // honest default, and the chips are right there to change it.
+      if (!current || !allowed.includes(current)) {
+        setValue("finish", next.finishes[0] ?? allowed[0] ?? "normal")
+      }
     }
   }
 
@@ -317,6 +323,7 @@ export function AddStockScreen({
         locationId: values.locationId,
         ean: values.ean,
         notes: values.notes,
+        marketAtIntake: adjustedMarket ?? undefined,
       }),
     onSuccess: (item, values) => {
       setLabelNote(null)
