@@ -9,6 +9,19 @@
  * plain pounds with two decimals, no symbol, so a spreadsheet reads it as a
  * number (docs/PLAN.md, "Currency: GBP everywhere").
  *
+ * An item can leave in more than one piece - a box of three sold one at a
+ * time, or sold and then partly refunded - so the register is one row per
+ * sale line for the quantity that is still sold, plus one row for whatever
+ * is still on the shelf. The purchase columns repeat on every row of an
+ * item, which is how a margin scheme stock book is meant to read: each row
+ * is one purchase and one disposal, and the margin on that row is that
+ * disposal's price less that quantity's share of the cost.
+ *
+ * The sale price on a row is the line's net (its share of the sale-level
+ * discount already taken off, see lib/saleline.js) less whatever has
+ * already been refunded off it, so the register and the refunds agree to
+ * the penny. A fully refunded line is left out: nothing was sold.
+ *
  * The handler runs in its own isolated goja context, so every require()
  * lives inside the handler body - see pb/README.md.
  */
@@ -18,6 +31,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
+    const saleline = require(`${__hooks}/lib/saleline.js`);
 
     const staff = util.requireAdmin(e);
 
@@ -53,6 +67,23 @@ routerAdd(
       throw e.badRequestError("The from date is after the to date. Swap them over.", null);
     }
 
+    // One breakdown per sale, however many of its lines turn up: the
+    // sale-level discount allocation has to be worked out over all of a
+    // sale's lines, not just the ones in this range.
+    const saleCache = {};
+    function saleFor(saleId) {
+      if (saleCache[saleId] !== undefined) return saleCache[saleId];
+      let entry = null;
+      try {
+        const sale = e.app.findRecordById("sales", saleId);
+        entry = { sale: sale, breakdown: saleline.breakdown(e.app, sale) };
+      } catch (err) {
+        entry = null;
+      }
+      saleCache[saleId] = entry;
+      return entry;
+    }
+
     // acquired_at is a timestamp, so the range runs to the end of the `to`
     // day rather than to midnight at its start.
     const items = e.app.findRecordsByFilter(
@@ -77,6 +108,7 @@ routerAdd(
       "Sale price",
       "Margin",
     ]);
+    let rows = 0;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -101,26 +133,7 @@ routerAdd(
       }
       if (!purchaseRef) purchaseRef = item.getString("supplier_ref");
 
-      let saleDate = "";
-      let saleRef = "";
-      let salePrice = null;
-      try {
-        const saleLine = e.app.findFirstRecordByFilter(
-          "sale_lines",
-          'item = {:item} && status = "sold"',
-          { item: item.id }
-        );
-        const sale = e.app.findRecordById("sales", saleLine.getString("sale"));
-        saleDate = (sale.getString("created") || "").slice(0, 10);
-        saleRef = sale.getString("number");
-        salePrice =
-          saleLine.getInt("unit_price") * Math.max(1, saleLine.getInt("qty")) -
-          saleLine.getInt("discount");
-      } catch (err) {
-        salePrice = null;
-      }
-
-      const cost = item.getInt("cost");
+      const unitCost = item.getInt("cost");
       const description = [
         item.getString("title"),
         item.getString("set_code"),
@@ -131,19 +144,79 @@ routerAdd(
         })
         .join(" ");
 
-      csv += util.csvRow([
-        item.getString("sku"),
-        (item.getString("acquired_at") || "").slice(0, 10),
-        purchaseRef,
-        sellerName,
-        sellerAddress,
-        description,
-        util.poundsCell(cost),
-        saleDate,
-        saleRef,
-        salePrice === null ? "" : util.poundsCell(salePrice),
-        salePrice === null ? "" : util.poundsCell(salePrice - cost),
-      ]);
+      /** Purchase columns, repeated on every row this item produces. */
+      function purchaseCells() {
+        return [
+          item.getString("sku"),
+          (item.getString("acquired_at") || "").slice(0, 10),
+          purchaseRef,
+          sellerName,
+          sellerAddress,
+          description,
+        ];
+      }
+
+      let saleLines = [];
+      try {
+        saleLines = e.app.findRecordsByFilter(
+          "sale_lines",
+          "item = {:item}",
+          "created,id",
+          0,
+          0,
+          { item: item.id }
+        );
+      } catch (err) {
+        saleLines = [];
+      }
+
+      let soldRows = 0;
+      for (let n = 0; n < saleLines.length; n++) {
+        const saleLine = saleLines[n];
+        if (!saleLine) continue;
+
+        const soldQty =
+          Math.max(1, saleLine.getInt("qty")) - Math.max(0, saleLine.getInt("refunded_qty"));
+        if (soldQty <= 0) continue; // refunded in full: nothing was sold
+
+        const held = saleFor(saleLine.getString("sale"));
+        if (!held) continue;
+        const entry = held.breakdown.byId[saleLine.id];
+        if (!entry) continue;
+
+        // What is still paid on the line: its net less whatever the refunds
+        // have already handed back, which is how sales.pb.js priced them.
+        const refundedAmount = saleline.cumNet(
+          entry.net,
+          entry.qty,
+          Math.max(0, saleLine.getInt("refunded_qty"))
+        );
+        const salePrice = entry.net - refundedAmount;
+        const rowCost = unitCost * soldQty;
+
+        csv += util.csvRow(
+          purchaseCells().concat([
+            util.poundsCell(rowCost),
+            (held.sale.getString("created") || "").slice(0, 10),
+            held.sale.getString("number"),
+            util.poundsCell(salePrice),
+            util.poundsCell(salePrice - rowCost),
+          ])
+        );
+        rows += 1;
+        soldRows += 1;
+      }
+
+      // Whatever is still on the shelf, with the sale columns blank. An item
+      // that never sold at all still gets its row, so nothing drops out of
+      // the register.
+      const remaining = Math.max(0, item.getInt("qty"));
+      if (remaining > 0 || soldRows === 0) {
+        csv += util.csvRow(
+          purchaseCells().concat([util.poundsCell(unitCost * remaining), "", "", "", ""])
+        );
+        rows += 1;
+      }
     }
 
     auditLib.writeAuditLog(e.app, {
@@ -151,7 +224,7 @@ routerAdd(
       action: "export_stock_book",
       collection: "items",
       record: "",
-      meta: { from: from, to: to, rows: items.length },
+      meta: { from: from, to: to, items: items.length, rows: rows },
       ip: e.realIP(),
     });
 

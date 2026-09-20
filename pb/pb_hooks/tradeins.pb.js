@@ -39,6 +39,37 @@ routerAdd(
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
 
+    // trade_ins.signature is a 2 MB file field; the pad sends a PNG data URL.
+    const MAX_SIGNATURE_BYTES = 2 * 1024 * 1024;
+
+    /** customer_private.flags as a plain array of strings. */
+    function flagsOf(record) {
+      if (!record) return [];
+      let raw = null;
+      try {
+        raw = record.get("flags");
+      } catch (err) {
+        return [];
+      }
+      if (!raw) return [];
+      if (typeof raw === "string") return [raw];
+      const out = [];
+      for (let i = 0; i < raw.length; i++) out.push(String(raw[i]));
+      return out;
+    }
+
+    /** True when the bytes open with the PNG signature. */
+    function isPng(bytes) {
+      return (
+        !!bytes &&
+        bytes.length > 8 &&
+        (bytes[0] & 0xff) === 0x89 &&
+        (bytes[1] & 0xff) === 0x50 &&
+        (bytes[2] & 0xff) === 0x4e &&
+        (bytes[3] & 0xff) === 0x47
+      );
+    }
+
     /** Which label template a finished item wants. */
     function templateKeyFor(kind, completeness) {
       if (kind === "single" || kind === "graded") return "toploader_40x20";
@@ -156,7 +187,19 @@ routerAdd(
     const checkDob = idCheck ? util.asStr(idCheck.dob) : "";
     const hasFullIdCheck = !!(checkIdType && checkIdExpiry);
 
+    if (idCheck && idCheck.id_ref_last4 !== undefined && idCheck.id_ref_last4 !== null) {
+      if (checkIdLast4.length < 1 || checkIdLast4.length > 4) {
+        throw e.badRequestError("Enter only the last four characters of the ID number.", null);
+      }
+    }
+
+    const retentionMonths = settings ? settings.getInt("id_photo_retention_months") || 12 : 12;
+
     let session = null;
+    // The id_documents row that satisfies the ID gate. Its retention clock
+    // restarts on every cash buy-in (docs/PLAN.md: twelve months after the
+    // last cash buy-in), and its id goes on the trade-in.
+    let idDocument = null;
     if (payoutCash > 0) {
       const sessionId = util.asStr(body.cash_session);
       if (!sessionId) {
@@ -170,7 +213,11 @@ routerAdd(
       if (session.getString("closed_at")) {
         throw e.error(422, "That cash session is closed. Open a new one before paying out cash.", null);
       }
-      if (cashCap > 0 && payoutCash > cashCap) {
+      // A cap of zero means no cash at all, not "no limit".
+      if (cashCap <= 0) {
+        throw e.error(422, "Cash payouts are switched off in settings.", null);
+      }
+      if (payoutCash > cashCap) {
         throw e.error(
           422,
           `Cash payouts are capped at ${money.formatGBP(cashCap)}. Pay the rest as store credit.`,
@@ -179,6 +226,19 @@ routerAdd(
       }
       if (!sellerAddress) {
         throw e.error(422, "Add the seller's address before paying cash.", null);
+      }
+
+      // Staff-set flags on the customer come before anything the form says.
+      const flags = flagsOf(priv);
+      if (flags.indexOf("no_cash") >= 0) {
+        throw e.error(422, "This customer is marked no cash. Pay as store credit.", null);
+      }
+      if (flags.indexOf("under_18") >= 0) {
+        throw e.error(
+          422,
+          "This customer is recorded as under 18, so we cannot buy for cash.",
+          null
+        );
       }
 
       const idStatus = priv ? priv.getString("id_status") : "";
@@ -200,6 +260,41 @@ routerAdd(
       const age = util.ageAt(dob, now);
       if (age !== null && age < 18) {
         throw e.error(422, "We cannot buy for cash from anyone under 18.", null);
+      }
+
+      // Verified ID fields are not enough on their own: there has to be a
+      // photo behind them that the retention cron has not purged yet, or one
+      // supplied by id, taken for this customer in the same visit.
+      const suppliedDocId = idCheck ? util.asStr(idCheck.id_document) : "";
+      if (suppliedDocId) {
+        try {
+          const supplied = e.app.findRecordById("id_documents", suppliedDocId);
+          if (
+            supplied.getString("customer") === customerId &&
+            supplied.getString("photo")
+          ) {
+            idDocument = supplied;
+          }
+        } catch (err) {
+          idDocument = null;
+        }
+      } else {
+        try {
+          const found = e.app.findRecordsByFilter(
+            "id_documents",
+            "customer = {:customer} && photo != ''",
+            "-created",
+            1,
+            0,
+            { customer: customerId }
+          );
+          idDocument = found && found.length ? found[0] : null;
+        } catch (err) {
+          idDocument = null;
+        }
+      }
+      if (!idDocument) {
+        throw e.error(422, "Take a photo of the customer's ID before paying cash.", null);
       }
     }
 
@@ -290,7 +385,19 @@ routerAdd(
     // -----------------------------------------------------------------
     // Signature (a data URL from the pad) and the label templates
     // -----------------------------------------------------------------
-    const signature = base64.fromDataUrl(util.asStr(body.signature));
+    const rawSignature = util.asStr(body.signature);
+    const signature = rawSignature ? base64.fromDataUrl(rawSignature) : null;
+    if (rawSignature) {
+      if (!signature || !isPng(signature.bytes)) {
+        throw e.badRequestError(
+          "The signature did not come through as a PNG. Sign again on the pad.",
+          null
+        );
+      }
+      if (signature.bytes.length > MAX_SIGNATURE_BYTES) {
+        throw e.badRequestError("The signature is over 2 MB. Sign again on the pad.", null);
+      }
+    }
 
     const templates = {};
     const templateRows = e.app.findRecordsByFilter("label_templates", "id != ''", "", 0, 0);

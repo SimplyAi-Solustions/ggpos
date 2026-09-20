@@ -92,9 +92,10 @@ function primary(page, name) {
 
 async function sign(page) {
   const pad = page.getByTestId("signature-pad")
-  // The mouse works in viewport coordinates, so scroll the pad in first.
-  await pad.scrollIntoViewIfNeeded()
-  await page.waitForTimeout(150)
+  // Centre it: the mouse works in viewport coordinates, and a pad at the
+  // bottom edge on a phone sits under the fixed dock.
+  await pad.evaluate((el) => el.scrollIntoView({ block: "center" }))
+  await page.waitForTimeout(200)
   const box = await pad.boundingBox()
   if (!box) return
   const y = box.y + box.height / 2

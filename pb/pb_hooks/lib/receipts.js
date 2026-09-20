@@ -45,8 +45,18 @@ function esc(value) {
     .replace(/"/g, "&quot;");
 }
 
-/** Everything the receipt page and the receipt email need. */
-function build(app, tradeIn, settingsRecord) {
+/**
+ * Everything the receipt page and the receipt email need.
+ *
+ * `fileToken` is a PocketBase file token minted by the caller for the staff
+ * member making the request (`e.auth.newFileToken()`); it is appended to the
+ * signature URL. trade_ins.signature is a protected file, so without a token
+ * that URL is refused. It has to be minted from the auth record rather than
+ * from the trade-in: `record.newFileToken()` throws "not an auth collection
+ * record" on an ordinary record, which is how the URL came to be served bare.
+ * Pass "" when nothing will follow the link, as the email body does.
+ */
+function build(app, tradeIn, settingsRecord, fileToken) {
   var money = require(`${__hooks}/lib/shared/money.js`);
 
   var settings = settingsRecord;
@@ -120,18 +130,13 @@ function build(app, tradeIn, settingsRecord) {
     }
   }
 
-  // The signature is a protected-by-convention file on a staff-only
-  // collection, so it is served with one of PocketBase's own short-lived
-  // record file tokens rather than a base64 copy in the payload.
+  // trade_ins.signature is a protected file, so it is served with one of
+  // PocketBase's own short-lived file tokens rather than a base64 copy in
+  // the payload.
   var signature = null;
   var signatureFile = tradeIn.getString("signature");
   if (signatureFile) {
-    var token = "";
-    try {
-      token = tradeIn.newFileToken();
-    } catch (err) {
-      token = "";
-    }
+    var token = fileToken || "";
     signature = {
       file: signatureFile,
       url:
