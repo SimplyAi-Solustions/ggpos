@@ -1036,8 +1036,6 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	min_single_offer?: number
 	offer?: null | Toffer
 	push?: null | Tpush
-	push_vapid_private_key?: string
-	push_vapid_public_key?: string
 	quote_expiry_days?: number
 	receipt_terms?: string
 	retro_source_priority?: null | Tretro_source_priority
