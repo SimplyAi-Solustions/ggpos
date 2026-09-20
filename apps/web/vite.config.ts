@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 import { VitePWA } from "vite-plugin-pwa"
 
-import { RUNTIME_CACHES } from "./src/lib/offline/caches"
+import { RUNTIME_CACHES } from "./src/lib/offline/caches.ts"
 
 /**
  * What the service worker is allowed to keep, and for how long.
