@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Field, FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { MicroLabel } from "@/components/ui/micro-label"
 import {
   Sheet,
   SheetBody,
@@ -145,7 +146,7 @@ function TierFormBody({
                 className="tnum"
                 inputMode="numeric"
                 autoComplete="off"
-                maxLength={7}
+                maxLength={6}
                 trailingHint="points"
                 value={draft.thresholdPoints}
                 aria-invalid={Boolean(shown.thresholdPoints) || undefined}
@@ -171,9 +172,9 @@ function TierFormBody({
           </Field>
 
           <div>
-            <p className="mb-3 font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-foreground uppercase">
+            <MicroLabel tone="ink" className="mb-3">
               Perks
-            </p>
+            </MicroLabel>
             <PerkRow
               id="tier-percent-off"
               label={PERK_LABEL.percent_off}

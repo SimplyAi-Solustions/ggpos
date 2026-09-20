@@ -693,6 +693,8 @@ interface DemoVoucher {
   number: string
   code: string
   customer: string
+  /** The `loyalty_rewards` row it came from, as the real redemption has. */
+  reward: string
   rewardName: string
   type: RewardType
   value: number
@@ -712,6 +714,7 @@ export const vouchers: DemoVoucher[] = [
     number: "GG-V-000012",
     code: buildCode("voucher", "3H7K9").encoded,
     customer: "cust_demo_1",
+    reward: "reward_five_off",
     rewardName: "£5 off a single",
     type: "money_off",
     value: 500,
@@ -724,6 +727,7 @@ export const vouchers: DemoVoucher[] = [
     number: "GG-V-000013",
     code: buildCode("voucher", "8P2RT").encoded,
     customer: "cust_demo_2",
+    reward: "reward_sleeve_pack",
     rewardName: "Sleeve pack",
     type: "free_item",
     value: 0,
@@ -809,7 +813,9 @@ export function demoCancelVoucher(code: string): VoucherDetail {
     refuse("Only an open voucher can be cancelled.")
   }
   row.status = "cancelled"
-  const spent = row.type === "money_off" ? 500 : 800
+  // What the customer actually paid for it, off the reward it came from,
+  // never a figure this store made up.
+  const spent = rewards.find((reward) => reward.id === row.reward)?.cost_points ?? 0
   postPoints(row.customer, spent, "adjust", `Cancelled voucher ${row.number}`)
   return toDetail(row)
 }

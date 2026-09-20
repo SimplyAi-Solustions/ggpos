@@ -517,7 +517,8 @@ export function validateTier(form: TierForm, others: TierForm[]): Errors {
   if (!form.name.trim()) errors.name = "Name the tier. The badge shows this name."
   const threshold = parseCount(form.thresholdPoints)
   if (threshold === null) {
-    errors.thresholdPoints = "A threshold is a whole number of points."
+    errors.thresholdPoints =
+      "A threshold is a whole number of points, up to 999,999."
   } else if (!form.paidPlan) {
     const clash = others.find(
       (other) =>
@@ -669,7 +670,7 @@ export function validateReward(form: RewardForm): Errors {
   const errors: Errors = {}
   if (!form.name.trim()) errors.name = "Name the reward. The customer sees this."
   if (parseCount(form.costPoints) === null) {
-    errors.costPoints = "A cost is a whole number of points."
+    errors.costPoints = "A cost is a whole number of points, up to 999,999."
   }
   if (rewardValueIsMoney(form.type)) {
     const pence = poundsToPence(form.value)

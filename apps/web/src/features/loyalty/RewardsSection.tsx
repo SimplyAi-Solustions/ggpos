@@ -144,7 +144,7 @@ function RewardFormBody({
               className="tnum"
               inputMode="numeric"
               autoComplete="off"
-              maxLength={7}
+              maxLength={6}
               trailingHint="points"
               value={draft.costPoints}
               aria-invalid={Boolean(shown.costPoints) || undefined}

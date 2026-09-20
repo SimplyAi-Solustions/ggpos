@@ -34,11 +34,10 @@ export function Ticker({ text, seconds = 48 }: TickerProps) {
   )
 
   return (
-    <div
-      data-testid="display-ticker"
-      className="w-full overflow-hidden bg-volt py-3"
-      aria-label={line}
-    >
+    <div data-testid="display-ticker" className="w-full overflow-hidden bg-volt py-3">
+      {/* The rail moves and repeats, so it is hidden from a screen reader
+          and the line is read once from here instead. */}
+      <span className="sr-only">{line}</span>
       <style>{`
         @keyframes gg-ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
         @media (prefers-reduced-motion: reduce) {

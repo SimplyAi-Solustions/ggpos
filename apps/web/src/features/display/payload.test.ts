@@ -9,6 +9,7 @@ import {
   shortName,
   scrubPayload,
 } from "@/features/display/payload"
+import { payoutFor } from "@/features/tradein/machine"
 
 /**
  * The display faces the shop, so the promise this module makes is about
@@ -169,6 +170,62 @@ describe("buyInPayload", () => {
     })
     expect("credit_bonus_points" in payload).toBe(false)
     expect(payload.customer_name).toBe("")
+  })
+
+  it("shows the resolved payout, so a mixed offer with no cash adds up", () => {
+    // The two rates the bands give for the same items.
+    const sums = { cash: 8200, credit: 10300 }
+    const lines = [
+      { title: "Charizard ex", qty: 1, cash: 6000, credit: 7500 },
+      { title: "Mario Kart 64, boxed", qty: 1, cash: 2200, credit: 2800 },
+    ]
+
+    // Nothing in the cash box is not a mixed payout: it resolves to credit,
+    // at the credit rate.
+    const payout = payoutFor("mixed", sums, 0)
+    expect(payout).toEqual({ type: "credit", cash: 0, credit: 10300 })
+
+    const payload = buyInPayload({
+      lines: lines.map((line) => ({
+        title: line.title,
+        qty: line.qty,
+        offerPrice: payout.type === "credit" ? line.credit : line.cash,
+      })),
+      totalMarket: 32499,
+      totalOffer: payout.cash + payout.credit,
+      payoutType: payout.type,
+      customerName: "Jasmine Okafor",
+    })
+
+    expect(payload.payout_type).toBe("credit")
+    expect(payload.total_offer).toBe(10300)
+    // The lines the customer reads add up to the total they are accepting.
+    expect(
+      payload.lines.reduce((sum, line) => sum + line.offer_price * line.qty, 0)
+    ).toBe(payload.total_offer)
+  })
+
+  it("keeps the cash rate when a mixed offer really is mixed", () => {
+    const sums = { cash: 8200, credit: 10300 }
+    const payout = payoutFor("mixed", sums, 4000)
+    expect(payout).toEqual({ type: "mixed", cash: 4000, credit: 4200 })
+
+    const payload = buyInPayload({
+      lines: [
+        { title: "Charizard ex", qty: 1, offerPrice: 6000 },
+        { title: "Mario Kart 64, boxed", qty: 1, offerPrice: 2200 },
+      ],
+      totalMarket: 32499,
+      totalOffer: payout.cash + payout.credit,
+      payoutType: payout.type,
+      customerName: "Jasmine Okafor",
+    })
+
+    expect(payload.payout_type).toBe("mixed")
+    expect(payload.total_offer).toBe(8200)
+    expect(
+      payload.lines.reduce((sum, line) => sum + line.offer_price * line.qty, 0)
+    ).toBe(payload.total_offer)
   })
 
   it("holds an offer line to whole pence", () => {
