@@ -171,7 +171,7 @@ export function OfferStep({
           </div>
           <div className="w-40">
             <MicroLabel className="mb-2">Store credit</MicroLabel>
-            <p className="tnum pt-1 pb-3.5 font-mono text-[20px] leading-none text-foreground">
+            <p className="tnum pt-1 pb-3.5 text-[20px] leading-none font-medium text-foreground">
               {formatGBP(payout.credit)}
             </p>
           </div>

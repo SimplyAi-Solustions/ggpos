@@ -465,13 +465,13 @@ export function ItemsStep({
 
                 <div>
                   <MicroLabel className="mb-2">Cash</MicroLabel>
-                  <p className="tnum font-mono text-[20px] leading-none text-foreground">
+                  <p className="tnum text-[20px] leading-none font-medium text-foreground">
                     {formatGBP(offer.cashTotal)}
                   </p>
                 </div>
                 <div>
                   <MicroLabel className="mb-2">Credit</MicroLabel>
-                  <p className="tnum font-mono text-[20px] leading-none text-foreground">
+                  <p className="tnum text-[20px] leading-none font-medium text-foreground">
                     {formatGBP(offer.creditTotal)}
                   </p>
                 </div>

@@ -68,7 +68,7 @@ export function DoneStep({
       <PageTitle className="mt-10">Bought in</PageTitle>
       <p
         data-testid="buyin-number"
-        className="tnum mt-4 font-mono text-[28px] leading-none text-foreground"
+        className="tnum mt-4 font-mono text-[20px] leading-none text-foreground"
       >
         {number}
       </p>
@@ -77,7 +77,7 @@ export function DoneStep({
         {payout.cash > 0 ? (
           <div>
             <MicroLabel className="mb-2">Cash out</MicroLabel>
-            <p className="tnum font-mono text-[20px] leading-none text-foreground">
+            <p className="tnum text-[20px] leading-none font-medium text-foreground">
               {formatGBP(payout.cash)}
             </p>
           </div>
@@ -85,7 +85,7 @@ export function DoneStep({
         {payout.credit > 0 ? (
           <div>
             <MicroLabel className="mb-2">Credit added</MicroLabel>
-            <p className="tnum font-mono text-[20px] leading-none text-foreground">
+            <p className="tnum text-[20px] leading-none font-medium text-foreground">
               {formatGBP(payout.credit)}
             </p>
           </div>
@@ -93,7 +93,7 @@ export function DoneStep({
         {points > 0 ? (
           <div>
             <MicroLabel className="mb-2">Points earned</MicroLabel>
-            <p className="tnum font-mono text-[20px] leading-none text-foreground">
+            <p className="tnum text-[20px] leading-none font-medium text-foreground">
               {points.toLocaleString("en-GB")}
             </p>
           </div>

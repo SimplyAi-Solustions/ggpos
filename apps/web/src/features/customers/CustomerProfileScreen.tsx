@@ -311,13 +311,13 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         </div>
         <div>
           <MicroLabel className="mb-2">Guild points</MicroLabel>
-          <p className="tnum font-mono text-[20px] leading-none text-foreground">
+          <p className="tnum text-[20px] leading-none font-medium text-foreground">
             {(priv?.points_balance ?? 0).toLocaleString("en-GB")}
           </p>
         </div>
         <div>
           <MicroLabel className="mb-2">Last visit</MicroLabel>
-          <p className="tnum font-mono text-[20px] leading-none text-foreground">
+          <p className="tnum text-[20px] leading-none font-medium text-foreground">
             {formatShortDate(profile.lastVisit) || "None yet"}
           </p>
         </div>

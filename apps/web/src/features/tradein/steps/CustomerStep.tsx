@@ -160,7 +160,7 @@ export function CustomerStep({
         <div className="mt-8 flex flex-wrap items-end gap-x-14 gap-y-6">
           <div>
             <MicroLabel className="mb-2">Store credit</MicroLabel>
-            <p className="tnum font-mono text-[20px] leading-none text-foreground">
+            <p className="tnum text-[20px] leading-none font-medium text-foreground">
               {formatGBP(customer.creditBalance)}
             </p>
           </div>
