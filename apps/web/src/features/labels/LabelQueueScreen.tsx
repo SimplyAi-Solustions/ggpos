@@ -364,17 +364,41 @@ export function LabelQueueScreen() {
               </TableHeader>
               <TableBody>
                 {jobs.map((job) => (
-                  <TableRow key={job.id} data-testid="label-row">
-                    <TableCell>
-                      <span className="block text-foreground">
-                        {job.title || "Untitled item"}
-                      </span>
-                      {jobNote(job) ? (
-                        <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
-                          <span className="text-[13px] text-muted-foreground-2">
+                  <React.Fragment key={job.id}>
+                    <TableRow
+                      data-testid="label-row"
+                      className={job.status === "failed" ? "border-b-0" : undefined}
+                    >
+                      <TableCell>
+                        <span className="block text-foreground">
+                          {job.title || "Untitled item"}
+                        </span>
+                        {job.status === "printing" ? (
+                          <span className="mt-1 block text-[13px] whitespace-nowrap text-muted-foreground-2">
                             {jobNote(job)}
                           </span>
-                          {job.status === "failed" ? (
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="tnum font-mono text-[13px] whitespace-nowrap">
+                        {job.code ? displayCode(job.code) : ""}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground-2">
+                        {templateName(job.template)}
+                      </TableCell>
+                      <TableCell numeric className="whitespace-nowrap">
+                        {formatGBP(job.price)}
+                      </TableCell>
+                    </TableRow>
+                    {/* Why it stopped, and the way back, across the whole
+                        row: a sentence in the first column would squeeze
+                        the code and the price off a phone. */}
+                    {job.status === "failed" ? (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={4} className="pt-0">
+                          <span className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                            <span className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+                              {jobNote(job)}
+                            </span>
                             <Button
                               variant="text"
                               loading={again.isPending}
@@ -382,18 +406,11 @@ export function LabelQueueScreen() {
                             >
                               Queue again
                             </Button>
-                          ) : null}
-                        </span>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="tnum font-mono text-[13px]">
-                      {job.code ? displayCode(job.code) : ""}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground-2">
-                      {templateName(job.template)}
-                    </TableCell>
-                    <TableCell numeric>{formatGBP(job.price)}</TableCell>
-                  </TableRow>
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </React.Fragment>
                 ))}
               </TableBody>
             </Table>
