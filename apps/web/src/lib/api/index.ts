@@ -16,10 +16,10 @@ import { isDemo } from "@/lib/api/mode"
 import {
   DEMO_CARDS,
   DEMO_GAMES,
-  DEMO_ITEMS,
   DEMO_LOCATIONS,
   DEMO_STAFF,
 } from "@/lib/api/fixtures"
+import { demoItems } from "@/lib/api/demo/items-store"
 import { cardMatches, parseCardQuery, numberMatches } from "@/lib/api/query"
 import type {
   CardHit,
@@ -37,9 +37,6 @@ export * from "@/lib/api/types"
 export { isDemo, isServerUnreachable, resolveDataMode, setDataMode } from "@/lib/api/mode"
 export { parseCardQuery } from "@/lib/api/query"
 export { DEMO_STAFF, DEMO_SCAN_SKU } from "@/lib/api/fixtures"
-
-/** Items created during a demo session, newest first. Never persisted. */
-const demoItems: ItemRecord[] = [...DEMO_ITEMS]
 
 
 type ExpandedCard = CardRecord & {
@@ -350,10 +347,9 @@ export { isNotFound, refusalMessage, refusalOrFallback } from "@/lib/api/refusal
 // ---------------------------------------------------------------------------
 // Selling, cash, labels and the item page (Phase 2)
 //
-// The demo item store is exported so the Sell, Stock, Home and label screens
-// read the very array `createItem` above appends to: an item added on Add
-// stock is sellable on the next screen without a server. Nothing outside
-// `lib/api/demo/` should touch it.
+// The demo item store lives in `lib/api/demo/items-store.ts`, which every
+// demo module imports directly; it is re-exported here for the screens that
+// already ask this barrel for it. Nothing outside `lib/api/` should touch it.
 // ---------------------------------------------------------------------------
 export { demoItems as demoItemStore }
 export * from "@/lib/api/config"

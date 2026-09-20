@@ -123,7 +123,7 @@ test.describe("the Guild at the counter", () => {
     await sheet.getByLabel("Customer").fill("Tom Bradbury")
     await sheet.getByTestId("customer-hit").first().click()
     await sheet.getByLabel("The tier this plan grants").click()
-    await page.getByRole("option", { name: "Guild Pass" }).click()
+    await page.getByRole("option", { name: "Guild Pass", exact: true }).click()
     await sheet.getByLabel("Months").fill("12")
     await sheet.getByLabel("Paid").fill("60.00")
     await sheet.getByRole("button", { name: "Save plan" }).click()

@@ -18,7 +18,7 @@ import type {
 
 import { DEMO_CUSTOMERS } from "@/lib/api/demo/customers"
 import { DEMO_CARDS } from "@/lib/api/fixtures"
-import { demoItemStore } from "@/lib/api/index"
+import { demoItems } from "@/lib/api/demo/items-store"
 import { itemDetailLine, templateForItem } from "@/lib/api/item-shape"
 import type {
   CashMovementRecord,
@@ -31,9 +31,9 @@ import type {
   StockItemRecord,
 } from "@/lib/api/types"
 
-/** Add stock's array. Reached through a function so the import stays lazy. */
+/** Add stock's array, the one every demo screen reads and writes. */
 export function itemStore(): StockItemRecord[] {
-  return demoItemStore
+  return demoItems
 }
 
 /** The art the catalogue holds for a card, when it holds any. */
@@ -153,20 +153,26 @@ function perksFor(tierId: string) {
  * change their name between the Sell screen and their own profile.
  */
 export const DEMO_SALE_CUSTOMERS: SaleCustomer[] = DEMO_CUSTOMERS.map(
-  (entry) => {
-    const tierId = entry.private.tier ?? "tier_member"
-    return {
-      id: entry.customer.id,
-      name: entry.customer.name,
-      code: entry.customer.code,
-      tierId,
-      tierName:
-        DEMO_TIERS.find((tier) => tier.id === tierId)?.name ?? "Member",
-      perks: perksFor(tierId),
-      creditBalance: entry.private.credit_balance ?? 0,
-      pointsBalance: entry.private.points_balance ?? 0,
-    }
-  }
+  (entry) => ({
+    id: entry.customer.id,
+    name: entry.customer.name,
+    code: entry.customer.code,
+    // The tier is read as it is asked for, not copied when this module is
+    // evaluated: a plan recorded at the counter re-evaluates the customer's
+    // tier, and the till has to price the sale on the tier they hold now.
+    get tierId() {
+      return entry.private.tier ?? "tier_member"
+    },
+    get tierName() {
+      return DEMO_TIERS.find((tier) => tier.id === this.tierId)?.name ?? "Member"
+    },
+    get perks() {
+      return perksFor(this.tierId)
+    },
+    // Balances stay plain fields: the sale and refund paths move them.
+    creditBalance: entry.private.credit_balance ?? 0,
+    pointsBalance: entry.private.points_balance ?? 0,
+  })
 )
 
 /** One issued voucher, so scanning a GGV code on the Sell screen does something. */

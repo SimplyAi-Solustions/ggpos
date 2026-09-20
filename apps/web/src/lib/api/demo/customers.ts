@@ -128,7 +128,9 @@ export const DEMO_CUSTOMERS: DemoCustomer[] = [
       id_status: "none",
       credit_balance: 1250,
       points_balance: 90,
-      tier: "tier_member",
+      // The plan in `demo/loyalty.ts` pins this tier: `resolveTier` keeps it
+      // there while the membership runs, whatever the points say.
+      tier: "tier_pass",
       notes: "Store credit only, agreed with Richard on 4 June.",
     }
   ),
@@ -279,8 +281,8 @@ const DEMO_TIER_NAMES: Record<string, string> = {
   tier_member: "Member",
   tier_regular: "Regular",
   tier_legend: "Legend",
-  // The paid plan the Phase 6 demo records a membership against.
-  tier_guild_pass: "Guild Pass",
+  // The one paid plan, the tier a membership pins.
+  tier_pass: "Guild Pass",
 }
 
 export function demoCreateCustomer(input: NewCustomerInput): CustomerRecord {

@@ -132,7 +132,7 @@ describe("perkValueLine", () => {
 
 describe("perkAllowance", () => {
   const tier = {
-    id: "tier_guild_pass",
+    id: "tier_pass",
     name: "Guild Pass",
     thresholdPoints: 0,
     sort: 40,

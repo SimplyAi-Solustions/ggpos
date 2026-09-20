@@ -133,6 +133,19 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
         new Date()
       )
     : 0
+  // What the credit part of the payout the customer is actually taking
+  // earns. The tile above shows the all-credit figure, because that is what
+  // choosing credit would pay; the display shows this one, because it is
+  // what this offer pays.
+  const displayCreditPoints =
+    config && payout.credit > 0
+      ? evaluateTradeInPoints(
+          programmeFrom(config),
+          loyaltyRulesFrom(config),
+          payout.credit,
+          new Date()
+        )
+      : 0
 
   // ---- The customer-facing display ---------------------------------------
 
@@ -150,25 +163,31 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       publishDisplay(
         "buy_in",
         buyInPayload({
+          // The resolved payout, never the one that was asked for: a mixed
+          // choice with nothing in the cash box is a credit payout, priced
+          // at the credit rate, and the lines on the tablet have to add up
+          // to the total under it.
           lines: state.lines
             .filter((line) => line.accepted)
-            .map((line) => ({
-              title: line.title,
-              detail: lineDetail(line),
-              qty: line.kind === "bulk" ? 1 : line.qty,
-              offerPrice:
-                state.payoutType === "credit"
-                  ? lineOffer(line, rules, settings, conditionMultipliers).credit
-                  : lineOffer(line, rules, settings, conditionMultipliers).cash,
-              image: line.image,
-            })),
+            .map((line) => {
+              const offer = lineOffer(line, rules, settings, conditionMultipliers)
+              return {
+                title: line.title,
+                detail: lineDetail(line),
+                qty: line.kind === "bulk" ? 1 : line.qty,
+                offerPrice: payout.type === "credit" ? offer.credit : offer.cash,
+                image: line.image,
+              }
+            }),
           totalMarket: sums.market,
           totalOffer: payout.cash + payout.credit,
-          payoutType: state.payoutType,
+          payoutType: payout.type,
           // Shortened to a first name and a last initial by the payload
           // builder, because the tablet faces the shop.
           customerName: state.customer?.name ?? "",
-          creditBonusPoints: payout.credit > 0 ? creditPoints : 0,
+          // The points the credit half actually earns, not the points the
+          // whole offer would earn if it were all credit.
+          creditBonusPoints: displayCreditPoints,
         })
       ),
     onSuccess: ({ token }) => {
@@ -222,14 +241,11 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   // ---- Lines, saved as they change ---------------------------------------
   const lineInputs = React.useMemo(
     () =>
-      toLineInputs(
-        state.lines,
-        rules,
-        settings,
-        state.payoutType,
-        conditionMultipliers
-      ),
-    [state.lines, rules, settings, state.payoutType, conditionMultipliers]
+      // The resolved type, so a mixed choice with nothing in the cash box
+      // stores the credit-rate prices the completion route is then told the
+      // payout is.
+      toLineInputs(state.lines, rules, settings, payout.type, conditionMultipliers),
+    [state.lines, rules, settings, payout.type, conditionMultipliers]
   )
   // The signature leaves the ids out: adopting the ids a save hands back
   // would otherwise look like another change and save a second time.

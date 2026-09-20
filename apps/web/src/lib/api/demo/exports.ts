@@ -9,7 +9,7 @@
 import { displayCode } from "@gg/shared"
 
 import { buildCsv, poundsCell, type CsvColumn } from "@/features/reports/csv"
-import { demoItemStore } from "@/lib/api/index"
+import { demoItems } from "@/lib/api/demo/items-store"
 import { demoSales, ensureSeeded } from "@/lib/api/demo/store"
 import type { EndListingRow, ExportKey, StockItemRecord } from "@/lib/api/types"
 
@@ -18,7 +18,7 @@ const ENDED = new Set<string>()
 
 function items(): StockItemRecord[] {
   ensureSeeded()
-  return demoItemStore
+  return demoItems
 }
 
 function column<Row>(label: string, value: (row: Row) => string | number): CsvColumn<Row> {

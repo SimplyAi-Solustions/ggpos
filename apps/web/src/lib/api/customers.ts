@@ -12,6 +12,12 @@ import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
 import {
+  demoRecordReferral,
+  demoResolveReferral,
+  demoWelcomeBonus,
+  recomputeTier,
+} from "@/lib/api/demo/loyalty"
+import {
   demoCreateCustomer,
   demoCreditLedgerFor,
   demoEraseCustomer,
@@ -174,17 +180,13 @@ async function duplicatesFor(customer: CustomerRecord): Promise<CustomerSummary[
 export async function getCustomer(idOrCode: string): Promise<CustomerProfile | null> {
   if (isDemo()) {
     const profile = demoGetCustomer(idOrCode)
-    if (profile) {
-      // The server keeps `customer_private.tier` right after every points
-      // row and every membership change; the demo shop has no cron, so the
-      // tier is worked out as the profile is read and the header and the
-      // Guild block agree. Imported here rather than at the top of the file
-      // because that store reaches back into this barrel.
-      const guild = await import("@/lib/api/demo/loyalty")
-      guild.recomputeTier(profile.customer.id)
-      return demoGetCustomer(idOrCode)
-    }
-    return profile
+    if (!profile) return null
+    // The server keeps `customer_private.tier` right after every points row
+    // and every membership change; the demo shop has no cron, so the tier is
+    // worked out as the profile is read and the header and the Guild block
+    // agree.
+    recomputeTier(profile.customer.id)
+    return demoGetCustomer(idOrCode)
   }
 
   const needle = idOrCode.trim()
@@ -285,20 +287,13 @@ export async function findCustomerByScan(
 /** The server assigns `code` and `qr_token` in pb_hooks/customers.pb.js. */
 export async function createCustomer(input: NewCustomerInput): Promise<CustomerRecord> {
   if (isDemo()) {
-    // Loaded here rather than at the top of the file: the demo Guild store
-    // reads the demo shop's seed figures as it is evaluated, and that store
-    // reaches back into this barrel, so importing it up there would make a
-    // cycle that leaves its constants undefined.
-    const guild = await import("@/lib/api/demo/loyalty")
     // The code is resolved before the card is made, so a code that belongs
     // to nobody refuses the whole thing rather than leaving a customer with
     // a referral that was never recorded.
-    const referrer = input.referredBy
-      ? guild.demoResolveReferral(input.referredBy)
-      : null
+    const referrer = input.referredBy ? demoResolveReferral(input.referredBy) : null
     const record = demoCreateCustomer(input)
-    if (referrer) guild.demoRecordReferral(referrer, record.id)
-    guild.demoWelcomeBonus(record.id)
+    if (referrer) demoRecordReferral(referrer, record.id)
+    demoWelcomeBonus(record.id)
     return record
   }
 

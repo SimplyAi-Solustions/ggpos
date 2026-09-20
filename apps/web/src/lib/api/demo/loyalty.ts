@@ -129,38 +129,21 @@ export const rules: LoyaltyRuleRecord[] = [
   },
 ]
 
-/** The seeded three, plus the paid Guild Pass a membership pins. */
-export const tiers: LoyaltyTierRecord[] = [
-  ...DEMO_TIERS.map((tier) => ({
-    id: tier.id,
-    name: tier.name,
-    threshold_points: tier.thresholdPoints,
-    sort: tier.sort,
-    perks: tier.perks as unknown[],
-    paid_plan: tier.paidPlan,
-    colour_token: `tier-${tier.name.toLowerCase()}`,
-  })),
-  {
-    id: "tier_guild_pass",
-    name: "Guild Pass",
-    threshold_points: 0,
-    sort: 40,
-    paid_plan: true,
-    colour_token: "tier-pass",
-    perks: [
-      {
-        type: "percent_off",
-        value: 10,
-        scope: ["single", "graded", "retro", "sealed", "accessory", "other"],
-      },
-      { type: "points_multiplier", value: 1.5 },
-      { type: "free_event_entries", value: 2, perMonth: true },
-      { type: "lounge_hours", value: 12, perMonth: true },
-      { type: "priority_release_booking" },
-      { type: "member_event_pricing" },
-    ],
-  },
-]
+/**
+ * The shop's tiers, the seed's own four: three earned on points and the one
+ * paid plan. They are the rows `demo/store.ts` already serves as
+ * `config.loyalty.tiers`, so the admin screen, the till's perk lookup and
+ * the portal are all reading one list rather than three copies of it.
+ */
+export const tiers: LoyaltyTierRecord[] = DEMO_TIERS.map((tier) => ({
+  id: tier.id,
+  name: tier.name,
+  threshold_points: tier.thresholdPoints,
+  sort: tier.sort,
+  perks: tier.perks as unknown[],
+  paid_plan: tier.paidPlan,
+  colour_token: `tier-${tier.name.toLowerCase().replace(/\s+/g, "-")}`,
+}))
 
 /** Five rewards with the kit's placeholder art, in a 4:3 frame. */
 export const rewards: LoyaltyRewardRecord[] = [
@@ -505,7 +488,7 @@ export const memberships: DemoMembership[] = [
   {
     id: "membership_demo_1",
     customer: "cust_demo_3",
-    tier: "tier_guild_pass",
+    tier: "tier_pass",
     status: "active",
     started_at: daysAgo(48),
     renews_at: daysAhead(317),
