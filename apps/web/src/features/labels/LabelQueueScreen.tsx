@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Field } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Hint, MicroLabel } from "@/components/ui/micro-label"
+import { MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import {
   Select,
@@ -283,16 +283,19 @@ export function LabelQueueScreen() {
                 Printer settings
               </Button>
             </div>
-            <Hint>
-              {printQueue.deviceName}
+            {/* A sentence rather than a tracked label: the device name, the
+                roll and a count are longer than an uppercase run should
+                ever be. */}
+            <p className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+              Labels print here as {printQueue.deviceName}
               {printQueue.roll === "any"
                 ? ""
-                : ` · ${templateName(printQueue.roll as LabelTemplateKey)}`}
-              {printQueue.busy ? " · Printing" : ""}
+                : ` on the ${templateName(printQueue.roll as LabelTemplateKey)} roll`}
+              .
               {printQueue.printed > 0
-                ? ` · ${printQueue.printed} printed here`
+                ? ` ${printQueue.printed} printed so far.`
                 : ""}
-            </Hint>
+            </p>
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
