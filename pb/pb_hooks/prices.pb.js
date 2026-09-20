@@ -136,11 +136,6 @@ routerAdd(
 
     const settingsRow = util.settings(e.app);
     const apiKeys = (settingsRow && util.jsonField(settingsRow, "api_keys", {})) || {};
-    // Not `getFloat(...) || 15`: a plain number field has no null state in
-    // PocketBase (its zero value is 0), so that would silently overrule an
-    // admin who deliberately set the haircut to 0 - only a genuinely
-    // unseeded settings row (settingsRow itself null) falls back to 15.
-    const haircutPct = settingsRow ? settingsRow.getFloat("ebay_haircut_pct") : 15;
     const fxRates = policy.latestFxRates(e.app);
     const now = new Date();
 
@@ -174,7 +169,7 @@ routerAdd(
           apiKeys.ebay,
           queryText,
           cacheKey,
-          haircutPct
+          ebay.haircutPctFromSettings(e.app)
         );
         raw = raw.concat(ebayRows);
       } catch (err) {
@@ -398,6 +393,235 @@ routerAdd(
 
     const candidates = rows.map(policy.candidateFromSnapshot);
     const now = new Date();
+    const result = policy.choose(candidates, priority, now);
+
+    return e.json(200, { chosen: result.chosen, sources: result.sources, condition_adjusted: null });
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// POST /api/vault/retro/{id}/refresh-prices   { completeness }
+// ---------------------------------------------------------------------
+routerAdd(
+  "POST",
+  "/api/vault/retro/{id}/refresh-prices",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const policy = require(`${__hooks}/adapters/pricing_policy.js`);
+    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
+
+    const retroId = e.request.pathValue("id");
+    let title = null;
+    try {
+      title = e.app.findRecordById("retro_titles", retroId);
+    } catch (err) {
+      throw e.notFoundError("Retro title not found. Check the id or add it manually.", null);
+    }
+
+    const body = util.body(e);
+    const completeness = util.asStr(body.completeness) || "loose";
+
+    const settingsRow = util.settings(e.app);
+    const apiKeys = (settingsRow && util.jsonField(settingsRow, "api_keys", {})) || {};
+    const pricechartingKey = apiKeys.pricecharting;
+    // PriceCharting is the one source this route exists to call - a clean
+    // refusal up front (rather than silently doing nothing useful, or
+    // silently falling back to eBay alone) matches "validate first, write
+    // second" (pb/README.md).
+    if (!pricechartingKey) {
+      throw e.error(
+        422,
+        "PriceCharting is not set up. Add the key in Settings or enter a UK comp.",
+        null
+      );
+    }
+
+    let platformRow = null;
+    try {
+      platformRow = e.app.findRecordById("platforms", title.getString("platform"));
+    } catch (err) {
+      platformRow = null;
+    }
+    const platformKey = platformRow ? platformRow.getString("key") : "";
+
+    const fxRates = policy.latestFxRates(e.app);
+    const now = new Date();
+
+    let raw = [];
+    try {
+      const pricecharting = require(`${__hooks}/adapters/pricecharting.js`);
+      raw =
+        pricecharting.getPrices(pricechartingKey, title.getString("name"), platformKey, completeness) ||
+        [];
+    } catch (err) {
+      console.log(`[prices] pricecharting getPrices failed for retro_title ${retroId}: ${err}`);
+      raw = [];
+    }
+
+    if (apiKeys.ebay && apiKeys.ebay.client_id && apiKeys.ebay.client_secret) {
+      try {
+        const ebay = require(`${__hooks}/adapters/ebay.js`);
+        const statestore = require(`${__hooks}/adapters/statestore.js`);
+        const queryText = [title.getString("name"), completeness].filter(Boolean).join(" ");
+        const cacheKey = `retro:${retroId}:${completeness}`;
+        const ebayRows = ebay.getPrices(
+          statestore.forApp(e.app),
+          apiKeys.ebay,
+          queryText,
+          cacheKey,
+          ebay.haircutPctFromSettings(e.app)
+        );
+        raw = raw.concat(ebayRows);
+      } catch (err) {
+        console.log(`[prices] ebay getPrices failed for retro_title ${retroId}: ${err}`);
+      }
+    }
+
+    for (let i = 0; i < raw.length; i++) {
+      const snapshot = policy.fromAdapterCandidate(raw[i], fxRates, now);
+      if (!snapshot) continue;
+      policy.writeSnapshot(e.app, {
+        retroTitle: retroId,
+        finish: completeness,
+        source: snapshot.source,
+        nativeCurrency: snapshot.nativeCurrency,
+        nativeLow: snapshot.nativeLow,
+        nativeMid: snapshot.nativeMid,
+        nativeMarket: snapshot.nativeMarket,
+        nativeTrend: snapshot.nativeTrend,
+        fxRate: snapshot.fxRate,
+        fxDate: snapshot.fxDate,
+        gbpMarket: snapshot.gbpMarket,
+        fetchedAt: snapshot.fetchedAt,
+        evidenceUrl: snapshot.evidenceUrl,
+      });
+    }
+
+    // Same body as the GET, read straight back from what was just written.
+    const priority =
+      (settingsRow && util.jsonField(settingsRow, "retro_source_priority", null)) ||
+      pricingShared.DEFAULT_RETRO_PRIORITY;
+    let rows = [];
+    try {
+      rows = e.app.findRecordsByFilter(
+        "price_snapshots",
+        "retro_title = {:id} && finish = {:completeness}",
+        "-fetched_at",
+        100,
+        0,
+        { id: retroId, completeness: completeness }
+      );
+    } catch (err) {
+      rows = [];
+    }
+    const candidates = rows.map(policy.candidateFromSnapshot);
+    const result = policy.choose(candidates, priority, now);
+
+    return e.json(200, { chosen: result.chosen, sources: result.sources, condition_adjusted: null });
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// POST /api/vault/retro/{id}/uk-comp   { completeness, price, url, sold_at }
+// ---------------------------------------------------------------------
+routerAdd(
+  "POST",
+  "/api/vault/retro/{id}/uk-comp",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const policy = require(`${__hooks}/adapters/pricing_policy.js`);
+    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
+
+    const staff = e.auth;
+    const retroId = e.request.pathValue("id");
+    try {
+      e.app.findRecordById("retro_titles", retroId);
+    } catch (err) {
+      throw e.notFoundError("Retro title not found. Check the id or add it manually.", null);
+    }
+
+    const body = util.body(e);
+    // completeness stands in for finish/condition here - retro has neither
+    // (docs/api-contract.md's Phase 3 section).
+    const completeness = util.asStr(body.completeness) || "loose";
+    const price = util.asInt(body.price, -1);
+    const url = util.asStr(body.url);
+    const soldAt = util.asStr(body.sold_at);
+
+    if (price < 0) {
+      throw e.badRequestError("Enter the sold price in pence.", null);
+    }
+    if (!/^https:\/\/(www\.)?ebay\.co\.uk\/itm\//i.test(url)) {
+      throw e.badRequestError(
+        "That is not an ebay.co.uk item link. Paste the listing's own URL (ebay.co.uk/itm/...).",
+        null
+      );
+    }
+    const soldDate = new Date(soldAt + "T00:00:00.000Z");
+    if (isNaN(soldDate.getTime())) {
+      throw e.badRequestError("Enter the date it sold, as YYYY-MM-DD.", null);
+    }
+    const now = new Date();
+    if (soldDate.getTime() > now.getTime()) {
+      throw e.badRequestError("That sale date is in the future.", null);
+    }
+    const daysOld = (now.getTime() - soldDate.getTime()) / 86400000;
+    if (daysOld > 30) {
+      throw e.badRequestError(
+        "That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days.",
+        null
+      );
+    }
+
+    let snapshot = null;
+    e.app.runInTransaction((txApp) => {
+      snapshot = policy.writeSnapshot(txApp, {
+        retroTitle: retroId,
+        finish: completeness,
+        source: "uk_sold_manual",
+        nativeCurrency: "GBP",
+        nativeLow: price,
+        nativeMid: price,
+        nativeMarket: price,
+        nativeTrend: price,
+        fxRate: 1,
+        fxDate: soldAt,
+        gbpMarket: price,
+        fetchedAt: soldDate.toISOString(),
+        evidenceUrl: url,
+      });
+
+      auditLib.writeAuditLog(txApp, {
+        actor: staff.id,
+        action: "uk_comp",
+        collection: "price_snapshots",
+        record: snapshot.id,
+        meta: { retro_title: retroId, completeness: completeness, price: price },
+        ip: e.realIP(),
+      });
+    });
+
+    const settingsRow = util.settings(e.app);
+    const priority =
+      (settingsRow && util.jsonField(settingsRow, "retro_source_priority", null)) ||
+      pricingShared.DEFAULT_RETRO_PRIORITY;
+    let rows = [];
+    try {
+      rows = e.app.findRecordsByFilter(
+        "price_snapshots",
+        "retro_title = {:id} && finish = {:completeness}",
+        "-fetched_at",
+        100,
+        0,
+        { id: retroId, completeness: completeness }
+      );
+    } catch (err) {
+      rows = [];
+    }
+    const candidates = rows.map(policy.candidateFromSnapshot);
     const result = policy.choose(candidates, priority, now);
 
     return e.json(200, { chosen: result.chosen, sources: result.sources, condition_adjusted: null });

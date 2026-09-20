@@ -1087,3 +1087,113 @@ export interface StockCountSummary {
   missing: number
   unexpected: number
 }
+
+// ---------------------------------------------------------------------------
+// Lookup, prices and FX (Phase 3)
+//
+// The wire shapes of docs/api-contract.md's "Phase 3: lookup, prices and FX"
+// routes, read off pb/pb_hooks/lookup.pb.js, prices.pb.js, fx.pb.js and
+// pb/pb_hooks/adapters/pricing_policy.js so they match what the server
+// actually sends. Money is integer GBP pence; `native_*` figures are minor
+// units of `native_currency` and never appear on screen without the GBP
+// figure beside them (CLAUDE.md, "Pricing").
+//
+// The import sits here rather than at the top of the file so this block stays
+// one self-contained append while three packages are being written in
+// parallel; ES modules hoist it either way.
+// ---------------------------------------------------------------------------
+
+import type { PriceSource } from "@gg/shared/pricing"
+
+/** The five games with a card catalogue behind them. `retro` is not one. */
+export type LookupGame = "pokemon" | "mtg" | "yugioh" | "onepiece" | "lorcana"
+
+/** One row of `GET /api/vault/lookup`, straight off `cards` + `card_sets`. */
+export interface CardLookupRow {
+  id: string
+  /** The `games` record id, not its key. */
+  game: string
+  /** The `card_sets` record id. */
+  set: string
+  set_code: string
+  set_name: string
+  number: string
+  name: string
+  rarity: string
+  image_small: string
+  image_large: string
+  finishes_available: string[]
+  external_ids: Record<string, string>
+  last_synced: string
+}
+
+/** One row of `GET /api/vault/retro/lookup`. `id` is "" for a preview-only hit. */
+export interface RetroTitleRow {
+  id: string
+  /** The `platforms` record id. */
+  platform: string
+  name: string
+  region: string
+  /** A PocketBase file name on `retro_titles`, not a URL. */
+  cover: string
+  external_ids: Record<string, string>
+}
+
+/** A retro title with its platform resolved, as the screens use it. */
+export interface RetroHit {
+  id: string
+  name: string
+  /** The `platforms` record id, or "" on a preview-only hit. */
+  platformId: string
+  /** The platform's `key`, for example "snes_pal_box". */
+  platformKey: string
+  platformName: string
+  region: string
+  /** A URL the browser can load, built from the file name. */
+  image?: string
+}
+
+/**
+ * One source's valuation. `gbp_market` is the only figure a screen shows on
+ * its own; `native_market` only ever appears beside it as supporting detail.
+ */
+export interface PriceSourceRow {
+  source: PriceSource
+  gbp_market: number
+  native_currency: "GBP" | "EUR" | "USD"
+  native_market: number
+  /** GBP per one unit of `native_currency`, or null for a GBP source. */
+  fx_rate: number | null
+  fx_date: string | null
+  fetched_at: string
+  stale: boolean
+  /** The ebay.co.uk listing behind a staff-entered UK sold comp. */
+  evidence_url: string
+}
+
+/** The body every price route answers with, GET and POST alike. */
+export interface PriceView {
+  chosen: PriceSourceRow | null
+  /** One row per source that has a value, in the shop's priority order. */
+  sources: PriceSourceRow[]
+  /** `chosen.gbp_market` after the condition multiplier; null for retro. */
+  condition_adjusted: number | null
+}
+
+/** What the "Add UK comp" sheet sends. `price` is integer GBP pence. */
+export interface UkCompInput {
+  finish?: string
+  condition?: string
+  price: number
+  url: string
+  /** YYYY-MM-DD. */
+  sold_at: string
+}
+
+/** `GET /api/vault/fx`. `rates[code]` is GBP per one unit of `code`. */
+export interface FxRatesView {
+  base: string
+  rates: Record<string, number>
+  fetched_at: string | null
+  stale: boolean
+}

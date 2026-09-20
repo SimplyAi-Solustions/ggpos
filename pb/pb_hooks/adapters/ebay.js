@@ -9,10 +9,20 @@
 //
 // UK-located, GBP, fixed-price listings only; the adapter takes the median
 // of the five lowest asking prices and applies a configurable
-// asking-to-sold haircut (settings.ebay_haircut_pct, default 15) because
-// asking prices sit above what sells. Switched off entirely when
-// settings.api_keys.ebay is not set (PLAN.md: "If eBay declines production
-// access ... this source is switched off in settings").
+// asking-to-sold haircut because asking prices sit above what sells.
+// Switched off entirely when settings.api_keys.ebay is not set (PLAN.md:
+// "If eBay declines production access ... this source is switched off in
+// settings").
+//
+// The haircut percent has exactly one home: settings.offer.ebayHaircutPct
+// (the settings editor's own field, alongside bulkThreshold and friends in
+// that same JSON blob), read here by haircutPctFromSettings(app) and
+// falling back to DEFAULT_HAIRCUT_PCT when the key is absent. getPrices()
+// itself still takes haircutPct as a plain argument rather than an app -
+// every adapter here stays testable under plain Node with no PocketBase at
+// all (pb/scripts/check-adapters.mjs) - so the one PocketBase-specific read
+// lives in this one small function, and every caller uses it rather than
+// reading settings.offer itself.
 //
 // `store` (adapters/statestore.js) caches the application token and, per
 // PLAN.md ("Cached 24 hours per card"), the computed candidate itself,
@@ -61,6 +71,26 @@ function getToken(store, clientId, clientSecret, transport) {
   var expiresAt = new Date(Date.now() + Math.max(0, (fresh.expires_in || 0) - 60) * 1000).toISOString();
   store.set("ebay_oauth_token", { access_token: fresh.access_token }, expiresAt);
   return fresh.access_token;
+}
+
+/**
+ * settings.offer.ebayHaircutPct (an integer percent), the one home for this
+ * figure - falls back to DEFAULT_HAIRCUT_PCT when the settings row does not
+ * exist yet or the key is absent from it. PocketBase-only (needs `app`);
+ * every caller in pb_hooks reads the haircut through this rather than
+ * settings.offer itself, so there is exactly one place that knows the key.
+ */
+function haircutPctFromSettings(app) {
+  try {
+    var util = require(__hooks + "/lib/vaultutil.js");
+    var settingsRow = util.settings(app);
+    if (!settingsRow) return DEFAULT_HAIRCUT_PCT;
+    var offer = util.jsonField(settingsRow, "offer", null);
+    var value = offer && offer.ebayHaircutPct;
+    return value === undefined || value === null ? DEFAULT_HAIRCUT_PCT : value;
+  } catch (err) {
+    return DEFAULT_HAIRCUT_PCT;
+  }
 }
 
 /**
@@ -175,6 +205,7 @@ module.exports = {
   medianAskingCandidate: medianAskingCandidate,
   parseListings: parseListings,
   getToken: getToken,
+  haircutPctFromSettings: haircutPctFromSettings,
   DEFAULT_HAIRCUT_PCT: DEFAULT_HAIRCUT_PCT,
   CACHE_HOURS: CACHE_HOURS,
 };

@@ -84,11 +84,14 @@ Request
   "discount_source": "manual" | "tier_perk" | "reward" | null,
   "reward_code": "GGV...." | null,
   "cash_session": "<id or null>",
-  "sumup_ref": "" 
+  "sumup_ref": "",
+  "client_id": "<optional, up to 64 characters>"
 }
 ```
 
 Server checks: every item is `in_stock` (or `reserved` for this customer) with enough `qty`; `payment_split` sums to the total after discount (for a single payment method the split may be omitted); cash requires an open session; store credit requires balance; points pass `checkPointsRedemption` from the shared evaluator; a reward code must be an unused, unexpired `reward_redemptions` row for this customer.
+
+`client_id` is the offline queue's idempotency key: the counter PWA generates one per sale before it ever leaves the device, so a queued "mark sold" that gets replayed after a reconnect (docs/PLAN.md, "Offline") cannot create the sale twice. When `client_id` is given and a `sales` row already carries it, the server skips every check above and returns 200 with the same body the original completion produced, rebuilt from that stored sale (`number`, `total`, `status`, `points_earned`) and the customer's **current** balances, rather than creating a second sale. `sales.client_id` carries a unique index where non-empty, so this holds even under a genuine race. 400 when `client_id` is over 64 characters.
 
 Inside one transaction: assign `number` from `counters.sale` (`GG-S-000456`); set singles to `sold`, decrement multi-quantity lines and set `sold` at zero; write `sale_lines` with `vat_rate` and `tax_scheme` from the item; write `credit_ledger` (`-store_credit`, reason `sale`); write `points_ledger` (`-points`, reason `redeem`) and then the points earned (`earn_sale`, computed with the shared `evaluateSalePoints` over live `loyalty_rules` and the customer's tier); mark the reward redemption `used`; write `cash_movements` (type `cash_sale`); recompute cached balances; audit any `unit_price` that differs from `items.price` as a price override.
 
@@ -120,6 +123,18 @@ Response 200: `{ "sale": { "id": "...", "status": "part_refunded" }, "refunded":
 - `POST /api/vault/cash-sessions/open` with `{ "float": 10000 }`: 409 when a session is already open. Returns the session.
 - `GET /api/vault/cash-sessions/current`: `{ "session": {...} | null, "expected": 0, "movements": [...] }`. `cash_movements.amount` is signed (cash sales and float_in positive; payouts, refunds and bank drops negative; adjustments carry their own sign), so `expected = float + sum(amount)`. `open` returns the same `{ session, expected, movements }` shape.
 - `POST /api/vault/cash-sessions/:id/close` with `{ "counted": 12345, "notes": "" }`: sets `expected`, `counted`, `variance = counted - expected`, `closed_by`, `closed_at`; a variance over `settings.cash_variance_alert` (pence) is audited. Returns the closed session.
+
+## Stock counts
+
+Counts and their lines are ordinary `stock_counts` / `stock_count_lines` rows (staff create and update rules); closing is the one custom route, because it has to reconcile every line, optionally move stock and audit in a single transaction, and because `status` must never reach `"closed"` any other way.
+
+`POST /api/vault/stock-counts/:id/close` (**admin**) with `{ "move_unexpected": true | false }`.
+
+In one transaction: for every `stock_count_lines` row on the count, `variance = scanned_qty - expected_qty`; when `move_unexpected` is true, every line whose item was scanned but not expected (`expected_qty = 0` and `scanned_qty > 0`) has its item's `location` set to the count's own `location`; the count's `status` becomes `closed`, with `closed_by` and `closed_at`. Audit carries the count id, the number of lines and the ids of any items moved.
+
+Response 200: `{ "stock_count": { "id": "...", "status": "closed", "closed_by": "...", "closed_at": "..." }, "lines": 12, "moved_items": [ "..." ] }`. 404 when the count does not exist, 409 when it is already closed, 403 for a non-admin staff member.
+
+`stock_counts.status` cannot be set to any value through the collection API (`updateRule` requires `@request.body.status:isset = false`), so this route is the only way a count closes; a plain staff token may still create a count, add lines to it, and edit its `location` or `notes`.
 
 ## Labels
 
@@ -205,6 +220,11 @@ Where the routes differ from the text above, the built behaviour is the truth an
 
 The catalogue and price adapters (`pb_hooks/adapters/*.js`), driving `cards`, `card_sets`, `retro_titles`, `price_snapshots` and `fx_rates`. Every route below needs a `staff` token; none needs admin or step-up. Money and error conventions are as above.
 
+Two things worth stating plainly, since both read like they might be a mistake if you only see them once, in passing:
+
+- **One Piece prices are stored under `source: "tcgplayer"`, not a separate `"optcg"` value.** The OPTCG API's `market_price` is TCGplayer-derived data (docs/PLAN.md: "OPTCG `market_price` as fallback" beside Cardmarket file 18), so it belongs in the same `price_snapshots.source` slot as every other game's TCGplayer figure, and the counter's source badge ("from TCGplayer") reads correctly for a One Piece card with no special case. `services/pricesync`'s own TCGCSV One Piece feed writes to the same slot; `chooseMarketPrice` takes the freshest row per source, so the two coexist without conflict.
+- **`GET /api/vault/fx`'s `rates` are GBP per one unit of the foreign currency**, in both directions (EUR and USD): `rates.EUR = 0.8606` means one euro is worth 86.06 pence. Every conversion in this package and in `packages/shared/src/money.ts` reads a rate the same way, so a candidate's native amount is always multiplied by the rate it stands beside, never divided.
+
 `GET /api/vault/lookup?game=<key>&q=<text>`
 
 `game` is one of `pokemon`, `mtg`, `yugioh`, `onepiece`, `lorcana`. Searches that game's adapter (name, or the "set number" forms `sv151 199` / `blb 223` for Pokemon/MTG/Lorcana, `OP01-001` / `CT13-EN003` for One Piece/Yu-Gi-Oh!), writes every match through to `cards` (and `card_sets` when the set is new), and returns at most 25 rows:
@@ -253,6 +273,14 @@ IGDB search (`platform` is one of `platforms.key`, mapped to IGDB's own numeric 
 
 Same shape as the cards GET above (`chosen`, `sources`, and `condition_adjusted: null` - condition multipliers are a TCG-card concept, not a retro one). `retro_source_priority` order (UK sold comp, PriceCharting PAL, eBay UK asking, PriceCharting NTSC). `completeness` is read off `price_snapshots.finish` - PLAN.md's data model gives `price_snapshots` one such column, shared by a card's finish and a retro item's completeness, rather than adding a second that would mean the same thing.
 
+`POST /api/vault/retro/:id/refresh-prices` with `{ "completeness": "loose" | "boxed" | "cib" }`
+
+Bypasses the price cache: calls PriceCharting (PAL category first, NTSC only when PAL has no entry) plus eBay UK asking (when `settings.api_keys.ebay` is set), converts every candidate to GBP pence at the latest `fx_rates` row, writes one `price_snapshots` row per source that returned a usable figure against this `retro_title`, and returns the same body as the GET, freshly recomputed. 422 `"PriceCharting is not set up. Add the key in Settings or enter a UK comp."` when `settings.api_keys.pricecharting` is not configured - PriceCharting is the one source this route exists to call, so it refuses cleanly up front rather than silently doing nothing useful; a UK comp still works with no key at all.
+
+`POST /api/vault/retro/:id/uk-comp` with `{ "completeness", "price": <pence>, "url": "https://www.ebay.co.uk/itm/...", "sold_at": "YYYY-MM-DD" }`
+
+The same body and rules as the card version, with `completeness` standing in for `finish` and `condition` (retro has neither) - `price_snapshots.finish` is written from `completeness`, as above. Writes a `price_snapshots` row (`source: "uk_sold_manual"`, native and GBP both `price`, `fx_rate: 1`, `evidence_url: url`, `fetched_at` set to `sold_at`) against this `retro_title`, audits it (the title id, completeness and price only), and returns the same `{ chosen, sources, condition_adjusted: null }` body as the GET. Same 400s as the card version: a non-`ebay.co.uk` item URL, a sale date in the future, or a sale more than 30 days old.
+
 `GET /api/vault/fx`
 
 ```json
@@ -263,8 +291,9 @@ Reads the latest `fx_rates` row only - the daily 07:00 cron (`crons.pb.js`) is t
 
 ### Implementation notes (as built in Phase 3)
 
-- **The GET price routes never call an adapter.** Only `POST .../refresh-prices` (cards) does; there is no retro equivalent of `refresh-prices` or `uk-comp` in this phase - only `GET /api/vault/retro/lookup` and `GET /api/vault/retro/:id/prices` were built, matching this document. A retro `refresh-prices`/`uk-comp` pair (wiring `pb_hooks/adapters/pricecharting.js` and `.../ebay.js` into a live route for `retro_titles`) is a natural follow-up, not yet scheduled.
-- **`price_snapshots.source` has no `"optcg"` value** (its enum is fixed by `packages/shared/src/pricing.ts`'s `PriceSource` union, which this package does not own). One Piece's own `market_price` fallback (PLAN.md: "OPTCG `market_price` as fallback") is therefore written under `source: "tcgplayer"`, alongside whatever `services/pricesync` also writes there from the TCGCSV One Piece file - `chooseMarketPrice` already takes the freshest row per source, so the two coexist correctly without a schema change.
-- **eBay and PriceCharting cache their own OAuth tokens and, for eBay, the computed candidate itself** in the new `adapter_state` collection (superuser-only; see the Phase 3 migration), keyed by `card+finish+condition` for eBay's 24-hour "asking price" cache (docs/PLAN.md). This is separate from, and in addition to, `price_snapshots`' own freshness windows above.
+- **The GET price routes never call an adapter.** Only the two `POST .../refresh-prices` routes (cards and retro) do.
+- **`price_snapshots.source` has no `"optcg"` value** (its enum is fixed by `packages/shared/src/pricing.ts`'s `PriceSource` union, which this package does not own) - see the plain statement above on why `"tcgplayer"` is the correct, not merely convenient, home for it.
+- **eBay and PriceCharting cache their own OAuth tokens and, for eBay, the computed candidate itself** in the new `adapter_state` collection (superuser-only; see the Phase 3 migration), keyed by `card+finish+condition` (or `retro_title+completeness`) for eBay's 24-hour "asking price" cache (docs/PLAN.md). This is separate from, and in addition to, `price_snapshots`' own freshness windows above.
+- **The eBay asking haircut lives at `settings.offer.ebayHaircutPct`** (an integer percent, alongside the other `offer` figures the settings editor already writes), read by `pb_hooks/adapters/ebay.js`'s own `haircutPctFromSettings(app)` and falling back to 15 when the key is absent. This is its one home: nothing else in this package reads a haircut figure from anywhere else.
 - **Every adapter re-hosts an image it must not hotlink before writing anything.** YGOPRODeck and OPTCG images are fetched into `cards.image_file` (a new file field - see the Phase 3 migration) the moment an exact lookup resolves them, never as a bare URL, even transiently; a name search against either game therefore returns `image_small`/`image_large` empty for a card the database has not resolved exactly yet, rather than a hotlinked URL a picker would render. TCGdex, Scryfall and Lorcast images may be linked directly, and are lazily re-hosted the first time an item is created against that card (`items.pb.js`'s `onRecordCreate`, `pb_hooks/adapters/images.js`) - a failed fetch there never blocks the item create.
 - **`GET /api/vault/retro/lookup`'s IGDB platform ids are hand-derived**, not confirmed against a live key (nobody on this build has one - see `pb_hooks/adapters/fixtures/igdb_HANDWRITTEN_*.json`). Confirm `pb_hooks/adapters/igdb.js`'s `PLATFORM_IGDB_IDS` against IGDB's own `/platforms` once a key exists. The same caveat applies to `pb_hooks/adapters/pricecharting.js`'s PAL/NTSC console-category slugs.

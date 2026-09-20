@@ -18,6 +18,11 @@
  * itself from the immutable numbers through lib/shared/saleline.js, so any
  * sequence of partial refunds adds back up to exactly what was taken.
  *
+ * `sales.complete` also accepts an optional `client_id` (the offline
+ * queue's idempotency key, docs/api-contract.md's "Sales" section): a
+ * replayed request carrying one that already exists returns that sale's
+ * own body again rather than creating a second sale.
+ *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
@@ -42,6 +47,49 @@ routerAdd(
     const staff = e.auth;
     const body = util.body(e);
     const now = new Date();
+
+    // -----------------------------------------------------------------
+    // Idempotency (docs/api-contract.md, "Sales"): the offline queue's
+    // client_id. A replayed request with one already on a sale skips every
+    // check below and returns that sale's own body, rebuilt from the
+    // stored row plus the customer's *current* balances, rather than
+    // selling the same items twice. Checked before anything else is even
+    // read, so a duplicate never re-runs (and re-fails) the stock checks
+    // against items the first completion already sold.
+    // -----------------------------------------------------------------
+    const clientId = util.asStr(body.client_id);
+    if (clientId.length > 64) {
+      throw e.badRequestError("client_id is too long. Keep it to 64 characters or fewer.", null);
+    }
+    if (clientId) {
+      let existingSale = null;
+      try {
+        existingSale = e.app.findFirstRecordByFilter("sales", "client_id = {:clientId}", {
+          clientId: clientId,
+        });
+      } catch (err) {
+        existingSale = null;
+      }
+      if (existingSale) {
+        const existingCustomerId = existingSale.getString("customer");
+        const fresh = existingCustomerId
+          ? balances.recompute(e.app, existingCustomerId)
+          : { credit: 0, points: 0 };
+        const existingSplit = util.jsonField(existingSale, "payment_split", {}) || {};
+        return e.json(200, {
+          sale: {
+            id: existingSale.id,
+            number: existingSale.getString("number"),
+            total: existingSale.getInt("total"),
+            status: existingSale.getString("status"),
+          },
+          sumup_amount: util.asInt(existingSplit.sumup_card, 0),
+          points_earned: existingSale.getInt("points_earned"),
+          credit_balance: fresh.credit,
+          points_balance: fresh.points,
+        });
+      }
+    }
 
     // -----------------------------------------------------------------
     // Lines and stock
@@ -423,6 +471,7 @@ routerAdd(
         if (customerId) sale.set("customer", customerId);
         if (session) sale.set("cash_session", session.id);
         if (discountSource) sale.set("discount_source", discountSource);
+        if (clientId) sale.set("client_id", clientId);
         txApp.save(sale);
 
         const saleLines = txApp.findCollectionByNameOrId("sale_lines");

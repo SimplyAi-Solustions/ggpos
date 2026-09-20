@@ -33,11 +33,15 @@
  *    and lazily by items.pb.js's onRecordCreate for every other source, the
  *    first time an item is created against a card whose image is still a
  *    bare third-party URL (docs/PLAN.md, "Card images and market prices").
- *  - `settings.ebay_haircut_pct`: the asking-to-sold haircut the eBay
+ *  - `settings.offer.ebayHaircutPct`: the asking-to-sold haircut the eBay
  *    adapter applies to its median-of-five-lowest-asking figure before it
  *    is offered as a candidate (docs/PLAN.md: "a configurable asking-to-
- *    sold haircut (default 15 percent)"). A plain (non-onlyInt) number,
- *    like `bulk_rate_pct` beside it - a percentage, not money.
+ *    sold haircut (default 15 percent)"). This is the settings editor's own
+ *    home for the figure - alongside `bulkThreshold` and friends in the
+ *    same JSON blob (1789819680_phase2_fields.js) - not a new column, so
+ *    there is exactly one place in `settings` this figure can live. Merged
+ *    into the existing `offer` object rather than overwriting it, so a shop
+ *    that has already tuned its other offer figures keeps them.
  */
 migrate((app) => {
   // -------------------------------------------------------------------
@@ -72,14 +76,10 @@ migrate((app) => {
   app.save(cards);
 
   // -------------------------------------------------------------------
-  // settings.ebay_haircut_pct
+  // settings.offer.ebayHaircutPct - merged into the existing JSON blob,
+  // never replacing it, so a shop that has already tuned bulkThreshold and
+  // friends keeps those values.
   // -------------------------------------------------------------------
-  const settings = app.findCollectionByNameOrId("settings");
-  settings.fields.add(
-    new Field({ name: "ebay_haircut_pct", type: "number", min: 0, max: 100 })
-  );
-  app.save(settings);
-
   let row = null;
   try {
     row = app.findFirstRecordByFilter("settings", "id != ''");
@@ -87,13 +87,38 @@ migrate((app) => {
     row = null; // no settings row yet (fresh, pre-seed database)
   }
   if (row) {
-    row.set("ebay_haircut_pct", 15);
-    app.save(row);
+    let offer = {};
+    try {
+      const raw = row.get("offer");
+      offer = raw ? JSON.parse(toString(raw)) || {} : {};
+    } catch (err) {
+      offer = {};
+    }
+    if (offer.ebayHaircutPct === undefined || offer.ebayHaircutPct === null) {
+      offer.ebayHaircutPct = 15;
+      row.set("offer", offer);
+      app.save(row);
+    }
   }
 }, (app) => {
-  const settings = app.findCollectionByNameOrId("settings");
-  settings.fields.removeByName("ebay_haircut_pct");
-  app.save(settings);
+  let row = null;
+  try {
+    row = app.findFirstRecordByFilter("settings", "id != ''");
+  } catch (err) {
+    row = null;
+  }
+  if (row) {
+    let offer = {};
+    try {
+      const raw = row.get("offer");
+      offer = raw ? JSON.parse(toString(raw)) || {} : {};
+    } catch (err) {
+      offer = {};
+    }
+    delete offer.ebayHaircutPct;
+    row.set("offer", offer);
+    app.save(row);
+  }
 
   const cards = app.findCollectionByNameOrId("cards");
   cards.fields.removeByName("image_file");
