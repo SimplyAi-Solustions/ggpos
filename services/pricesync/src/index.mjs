@@ -20,7 +20,7 @@
 // build step, so it cannot import that TypeScript module directly).
 import { pathToFileURL } from "node:url";
 
-import { authenticate, getFullList, createSubmitContext, submitRequests, chunkArray } from "./lib/pb-client.mjs";
+import { authenticate, getFullList, getFirst, createSubmitContext, submitRequests, chunkArray } from "./lib/pb-client.mjs";
 import { fetchCachedStream } from "./lib/http.mjs";
 import { ingestCardmarketStream } from "./lib/cardmarket.mjs";
 import { fetchGroups, findRelevantGroups, fetchPrices, buildTcgcsvRow } from "./lib/tcgcsv.mjs";
@@ -31,6 +31,13 @@ const DEFAULT_TCGCSV_BASE_URL = "https://tcgcsv.com/tcgplayer";
 const FX_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 200;
 const TCGCSV_GROUP_DISCOVERY_CONCURRENCY = 8;
+// Filter queries built from a list of ids (fetchExistingToday's card list
+// is not chunked - it is one filter over a fixed source/date range - but
+// fetchCurrentCardPrices's "id = ... || id = ..." lookup is, since its
+// list of ids is exactly how many cards this run touched). 200 matches
+// the batch size, comfortably under any filter/URL length PocketBase or
+// a reverse proxy in front of it would reasonably cap.
+const ID_FILTER_CHUNK_SIZE = 200;
 
 // Cardmarket game ids and TCGCSV category ids, both from docs/PLAN.md,
 // "Card images and market prices (verified live, 19 Sep 2026)".
@@ -102,7 +109,7 @@ function recordTouched(touchedCards, row) {
 
 async function fetchCurrentCardPrices(pbUrl, token, cardIds) {
   const map = new Map();
-  for (const ids of chunkArray(cardIds, 50)) {
+  for (const ids of chunkArray(cardIds, ID_FILTER_CHUNK_SIZE)) {
     const filter = ids.map((id) => `id = "${id}"`).join(" || ");
     const rows = await getFullList(pbUrl, token, "cards", { fields: "id,prices", filter, perPage: 200 });
     for (const r of rows) map.set(r.id, r.prices || {});
@@ -110,15 +117,39 @@ async function fetchCurrentCardPrices(pbUrl, token, cardIds) {
   return map;
 }
 
+// The numeric fields of one cards.prices[source] entry. Every response
+// this service reads (including cards.prices itself, a JSON field nested
+// inside a PocketBase record) is parsed with numberAsString (see
+// json-stream.mjs), so a source this run did not touch comes back with
+// these as decimal strings, not numbers - coerced back here, field by
+// field, rather than with a blanket deep-coerce that could reach into a
+// future field that is not supposed to be numeric.
+const PRICE_ENTRY_NUMERIC_KEYS = ["native_low", "native_mid", "native_market", "native_trend", "gbp_market", "fx_rate"];
+
+function coercePriceEntryNumbers(entry) {
+  if (!entry || typeof entry !== "object") return entry;
+  const out = { ...entry };
+  for (const key of PRICE_ENTRY_NUMERIC_KEYS) {
+    if (key in out) out[key] = Number(out[key]);
+  }
+  return out;
+}
+
 /** "finally update each touched card's `prices` json with the latest
  * value per source and fetched_at" - merged, not overwritten, so a
  * source this run did not touch (for example TCGCSV failed but Cardmarket
- * succeeded) keeps its last known value instead of being wiped out. */
+ * succeeded, or a source this app writes some other way entirely, such as
+ * uk_sold_manual or ebay_uk_asking) keeps its last known value instead of
+ * being wiped out or corrupted back into strings (see
+ * coercePriceEntryNumbers above). */
 async function updateCardPrices(pbUrl, submitCtx, touchedCards, log, warn) {
   const cardIds = [...touchedCards.keys()];
   const currentPrices = await fetchCurrentCardPrices(pbUrl, submitCtx.token, cardIds);
   const requests = cardIds.map((cardId) => {
-    const merged = { ...(currentPrices.get(cardId) || {}) };
+    const merged = {};
+    for (const [source, entry] of Object.entries(currentPrices.get(cardId) || {})) {
+      merged[source] = coercePriceEntryNumbers(entry);
+    }
     for (const [source, row] of Object.entries(touchedCards.get(cardId))) {
       merged[source] = {
         finish: row.finish,
@@ -158,13 +189,20 @@ async function runCardmarketGame(game, ctx) {
 
   const url = `${cardmarketBaseUrl}/price_guide_${game.cardmarketGameId}.json`;
   const { stream, fromCache, whenCached } = await fetchCachedStream(url, cacheDir, `cardmarket-${game.cardmarketGameId}`);
+  // Attached the moment whenCached exists, before anything below it can
+  // throw: an unhandled rejection is fatal on Node 22, and if
+  // ingestCardmarketStream throws first, a `.catch()` written after it
+  // would never run to observe a rejection that settles in the
+  // background regardless (see http.mjs's fetchCachedStream doc comment).
+  const cacheReady = whenCached.catch((err) => warn(`${label}: could not update the on-disk cache: ${err.message}`));
+
   const { seen, matched, rows } = await ingestCardmarketStream(stream, {
     cardsByCardmarketId: wanted,
     fx: { gbpPerEur, fxDatePb },
     fetchedAtPb,
     warn: (msg) => warn(`${label}: ${msg}`),
   });
-  await whenCached.catch((err) => warn(`${label}: could not update the on-disk cache: ${err.message}`));
+  await cacheReady;
 
   const queue = createUpsertQueue({ ctx: submitCtx, existingToday, flushSize: BATCH_SIZE });
   for (const row of rows) await queue.push(row);
@@ -194,24 +232,26 @@ async function runTcgcsvGame(game, ctx) {
     return null;
   }
 
-  const groups = await fetchGroups(tcgcsvBaseUrl, game.tcgcsvCategoryId, cacheDir);
+  const scopedWarn = (msg) => warn(`${label}: ${msg}`);
+  const groups = await fetchGroups(tcgcsvBaseUrl, game.tcgcsvCategoryId, cacheDir, scopedWarn);
   const relevantGroupIds = await findRelevantGroups(
     tcgcsvBaseUrl,
     game.tcgcsvCategoryId,
     groups,
     new Set(wanted.keys()),
     cacheDir,
-    TCGCSV_GROUP_DISCOVERY_CONCURRENCY
+    TCGCSV_GROUP_DISCOVERY_CONCURRENCY,
+    scopedWarn
   );
 
   let seen = 0;
   let matched = 0;
   const rows = [];
   for (const groupId of relevantGroupIds) {
-    const prices = await fetchPrices(tcgcsvBaseUrl, game.tcgcsvCategoryId, groupId, cacheDir);
+    const prices = await fetchPrices(tcgcsvBaseUrl, game.tcgcsvCategoryId, groupId, cacheDir, scopedWarn);
     for (const entry of prices) {
       seen += 1;
-      const row = buildTcgcsvRow(entry, wanted, { gbpPerUsd, fxDatePb }, fetchedAtPb);
+      const row = buildTcgcsvRow(entry, wanted, { gbpPerUsd, fxDatePb }, fetchedAtPb, scopedWarn);
       if (row) {
         matched += 1;
         rows.push(row);
@@ -265,7 +305,10 @@ export async function run(env = process.env, { now = () => new Date() } = {}) {
   log("authenticated to PocketBase");
 
   // --- FX rate: refuse to run on a stale or missing rate ------------------
-  const [fxRow] = await getFullList(pbUrl, token, "fx_rates", { sort: "-fetched_at", perPage: 1 });
+  // getFirst (a single request) rather than getFullList(..., {perPage:1})
+  // (one request PER ROW in the whole collection, in descending date
+  // order, just to read the first one) - see pb-client.mjs.
+  const fxRow = await getFirst(pbUrl, token, "fx_rates", { sort: "-fetched_at" });
   if (!fxRow) {
     throw new HardFailure("No fx_rates row exists yet. Run the FX cron before pricesync.", 2);
   }
@@ -399,6 +442,14 @@ export async function run(env = process.env, { now = () => new Date() } = {}) {
   for (const s of summary) {
     log(s.error ? `  ${s.label}: FAILED - ${s.error}` : `  ${s.label}: seen=${s.seen} matched=${s.matched} written=${s.written}${s.failed ? ` failed=${s.failed}` : ""}`);
   }
+  // docs/PLAN.md's pricesync bullet also says this run "flags prices
+  // older than 3 days" - that flag is read-time, not write-time: the
+  // /api/vault/prices route (not owned by this package) compares a
+  // price_snapshots row's own fetched_at against "now" when it is read,
+  // the same way the FX staleness warning in "Currency: GBP everywhere"
+  // works. There is deliberately nothing to write here for it - a row
+  // this run does not touch simply keeps the fetched_at it already has,
+  // which is exactly what lets a later read notice it has gone stale.
   log(hadFailure ? "done, with failures - see warnings above" : "done, no failures");
 
   return { exitCode: hadFailure ? 1 : 0, summary };
