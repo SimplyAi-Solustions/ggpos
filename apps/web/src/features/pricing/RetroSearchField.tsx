@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { ProductImage } from "@/components/product-image"
 import { RETRO_PLATFORMS, searchRetro } from "@/lib/api/lookup"
 import { LOOKUP_STALE_MS } from "@/lib/api/prices"
+import { refusalOrFallback } from "@/lib/api/refusal"
 import type { RetroHit } from "@/lib/api/types"
 
 export interface RetroSearchFieldProps {
@@ -48,12 +49,25 @@ export function RetroSearchField({
   const deferred = React.useDeferredValue(value)
   const enabled = deferred.trim().length >= 2
 
-  const { data: results = [] } = useQuery({
+  const { data: results = [], isError, error } = useQuery({
     queryKey: ["lookup", "retro", platformKey, deferred],
     queryFn: () => searchRetro(deferred, platformKey || undefined),
     enabled,
     staleTime: LOOKUP_STALE_MS,
+    // "IGDB did not answer. Try again, or add the title manually." is worth
+    // reading straight away, not after three quiet retries.
+    retry: false,
   })
+
+  // The route's own words when it has any: a missing IGDB key and an IGDB
+  // that did not answer are different problems with different answers.
+  const refused =
+    isError && error
+      ? refusalOrFallback(
+          error,
+          "That search did not answer. Try again, or type the title and price it by hand."
+        )
+      : null
 
   const showList = open && enabled && results.length > 0
   const clampedActive = Math.min(active, Math.max(results.length - 1, 0))
@@ -161,6 +175,12 @@ export function RetroSearchField({
           </ul>
         ) : null}
       </div>
+
+      {refused ? (
+        <p className="mt-3 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+          {refused}
+        </p>
+      ) : null}
     </div>
   )
 }

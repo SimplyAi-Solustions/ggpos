@@ -101,6 +101,12 @@ export interface SourceDetailOptions {
   gameKey?: string
   /** The asking-to-sold haircut from settings, as a whole percent. */
   haircutPct?: number
+  /**
+   * The ECB date `GET /api/vault/fx` reports for the day's rate. A snapshot
+   * written before that field existed carries no `fx_date` of its own, and
+   * the conversion detail says which day the rate is from either way.
+   */
+  fxDate?: string | null
 }
 
 /**
@@ -126,7 +132,7 @@ export function sourceDetail(
     const label = sourceLabel(row.source, gameKey)
     const native = formatNative(row.native_market, row.native_currency)
     const rate = formatRate(row.fx_rate)
-    const when = shortDate(row.fx_date ?? row.fetched_at)
+    const when = shortDate(row.fx_date || options.fxDate || row.fetched_at)
     const parts = [`from ${label} ${native}`]
     if (rate) parts.push(`at ${rate}`)
     const head = parts.join(" ")

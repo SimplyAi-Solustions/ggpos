@@ -469,6 +469,7 @@ export function PriceSources({
   const rows = sourceRows(query.data, priority, {
     gameKey: subject.gameKey,
     haircutPct: settings.ebayHaircutPct,
+    fxDate: fx.data?.date ?? null,
   })
   const pickedRow = picked ? rows.find((row) => row.source === picked && row.gbp !== null) : null
 

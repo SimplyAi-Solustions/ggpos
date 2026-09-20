@@ -43,6 +43,7 @@ export const DEMO_FX: FxRatesView = {
   rates: { EUR: 0.8606, USD: 0.75 },
   // Four days old, so the source view's stale-rate line has something to say.
   fetched_at: hoursAgo(96),
+  date: hoursAgo(96).slice(0, 10),
   stale: true,
 }
 
@@ -229,7 +230,7 @@ function toRow(snapshot: Snapshot, now: number): PriceSourceRow {
     native_currency: snapshot.currency,
     native_market: snapshot.native,
     fx_rate: snapshot.currency === "GBP" ? 1 : rate,
-    fx_date: snapshot.currency === "GBP" ? null : DEMO_FX.fetched_at,
+    fx_date: snapshot.currency === "GBP" ? null : (DEMO_FX.date ?? null),
     fetched_at: snapshot.fetchedAt,
     stale: ageHours > MAX_AGE_HOURS[snapshot.source],
     evidence_url: snapshot.evidence ?? "",
@@ -289,9 +290,17 @@ function numberMatches(cardNumber: string, typed: string): boolean {
   )
 }
 
+/** The One Piece adapter only takes a card code, for example OP01-001. */
+const ONE_PIECE_CODE = /\bop\d{2}-\d{3}\b/i
+
 export function searchCards(game: LookupGame | "" | undefined, q: string): CardHit[] {
   const needle = q.trim().toLowerCase()
   const tokens = needle.split(/\s+/).filter(Boolean)
+  // The same refusal the route makes, so the field shows the same sentence
+  // with or without a server behind it.
+  if (game === "onepiece" && !ONE_PIECE_CODE.test(needle)) {
+    throw new Error("One Piece search needs a card code, for example OP01-001.")
+  }
   return DEMO_CATALOGUE.filter((card) => {
     if (game && card.gameKey !== game) return false
     const haystack =

@@ -27,7 +27,11 @@ import {
   LOOKUP_GAMES,
   searchCards,
 } from "@/lib/api/lookup"
-import { refusalMessage } from "@/lib/api/refusal"
+import { refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
+
+/** When the lookup comes back with nothing and no words of its own. */
+const FALLBACK_MESSAGE =
+  "Nothing in the catalogue matches that. Check the spelling, or add it manually."
 
 export interface CardSearchFieldProps {
   id: string
@@ -83,6 +87,10 @@ export function CardSearchField({
     queryFn: () => searchCards(game, deferred),
     enabled: enabled && !exact,
     staleTime: LOOKUP_STALE_MS,
+    // A refusal is an answer: "One Piece search needs a card code, for
+    // example OP01-001." should land under the field, not be retried three
+    // times first.
+    retry: false,
   })
 
   const one = useQuery({
@@ -100,11 +108,16 @@ export function CardSearchField({
     : (search.data ?? [])
   const pending = exact ? one.isFetching : search.isFetching
 
-  // The server's own sentence for a card that is not in the set, shown as it
-  // is: "Card not found in Scarlet & Violet 151. Check the number or add it
-  // manually." Anything else that went wrong has no staff-readable words.
-  const notFound = exact && one.isError ? refusalMessage(one.error) : null
-  const empty = enabled && !pending && results.length === 0
+  // The server's own sentence, shown as it is: "Card not found in Scarlet &
+  // Violet 151. Check the number or add it manually." for a number that is
+  // not in the set, and "One Piece search needs a card code, for example
+  // OP01-001." for a game whose adapter cannot search by name.
+  const failure = exact ? one.error : search.error
+  const refused =
+    (exact ? one.isError : search.isError) && failure
+      ? refusalOrFallback(failure, FALLBACK_MESSAGE)
+      : null
+  const empty = enabled && !pending && !refused && results.length === 0
 
   const showList = open && enabled && results.length > 0
   const clampedActive = Math.min(active, Math.max(results.length - 1, 0))
@@ -241,15 +254,15 @@ export function CardSearchField({
         ) : null}
       </div>
 
-      {notFound || empty ? (
+      {refused || empty ? (
         <div
           data-testid="lookup-empty"
           className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2"
         >
           <p className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
-            {notFound ??
+            {refused ??
               (game
-                ? "Nothing in the catalogue matches that. Check the spelling, or add it manually."
+                ? FALLBACK_MESSAGE
                 : "Nothing matches that yet. Pick a game to search it properly, or add it manually.")}
           </p>
           <Button variant="text" type="button" onClick={() => setManualOpen(true)}>

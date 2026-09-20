@@ -1201,6 +1201,9 @@ export interface UkCompInput {
 export interface FxRatesView {
   base: string
   rates: Record<string, number>
+  /** When we fetched them. */
   fetched_at: string | null
+  /** The ECB's own date for the rate, when the route reports one. */
+  date?: string | null
   stale: boolean
 }

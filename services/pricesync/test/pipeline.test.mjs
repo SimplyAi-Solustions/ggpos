@@ -384,8 +384,8 @@ describe("pricesync pipeline", () => {
       assert.equal(cardD.gbp_market, 983); // 1325 * 0.7421 = 983.28 -> 983
       assert.equal(cardD.fx_rate, 0.7421);
 
-      const cardBTcg = byKey("cardB", "holofoil", "tcgplayer");
-      assert.ok(cardBTcg, "cardB/holofoil/tcgplayer row missing (subTypeName should become the finish)");
+      const cardBTcg = byKey("cardB", "holo", "tcgplayer");
+      assert.ok(cardBTcg, "cardB/holo/tcgplayer row missing (subTypeName 'Holofoil' should map through the finish alias table to 'holo')");
       assert.equal(cardBTcg.native_market, 2250);
       assert.equal(cardBTcg.gbp_market, 1670); // 2250 * 0.7421 = 1669.725 -> half-up -> 1670
 
