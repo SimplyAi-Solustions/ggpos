@@ -11,6 +11,14 @@
  * one we can always honour; store credit is worked out again when the items
  * are on the counter and is never lower. `toQuoteLines` therefore mirrors
  * `toLineInputs` with the payout fixed at cash.
+ *
+ * Every line also carries its `kind` and its `game`. The received route can
+ * infer both for a card or a retro line and for nothing else, so a sealed
+ * box, a graded slab, a title nobody recognised or a bulk lot would be
+ * accepted by the customer and then refused at the counter with "Line N has
+ * no game set", leaving the quote stuck at `accepted`. `bulk` is not one of
+ * `trade_in_lines.kind`'s values, so a lot goes as `other`, exactly as
+ * `toLineInputs` writes it out for a buy-in.
  */
 import type { ConditionMultipliers, OfferSettings, PricingRule } from "@gg/shared/pricing"
 
@@ -19,6 +27,7 @@ import {
   MANUAL_SOURCE,
   PENDING_SOURCE,
   bulkTitle,
+  itemKindFor,
   lineOffer,
   type TradeLine,
 } from "@/features/tradein/machine"
@@ -51,6 +60,8 @@ export function toQuoteLines(
           market_price: flat,
           market_source: BULK_SOURCE,
           offer_price: flat,
+          kind: itemKindFor(line.kind),
+          game: line.gameId,
         }
       }
 
@@ -67,6 +78,8 @@ export function toQuoteLines(
         market_source:
           line.marketSource === PENDING_SOURCE ? MANUAL_SOURCE : line.marketSource,
         offer_price: offer.cash,
+        kind: itemKindFor(line.kind),
+        game: line.gameId,
       }
     })
 }
@@ -89,6 +102,15 @@ export function offerProblem(lines: QuoteLine[]): string | null {
   const blank = lines.findIndex((line) => line.offer_price <= 0)
   if (blank >= 0) {
     return `Line ${blank + 1} has no offer on it. Price it, or override the offer.`
+  }
+  // The received route needs a game on any line it cannot infer one from,
+  // so the counter catches it here rather than letting the customer accept
+  // an offer that cannot be turned into a buy-in.
+  const gameless = lines.findIndex(
+    (line) => !line.card && !line.retro_title && !line.game
+  )
+  if (gameless >= 0) {
+    return `Line ${gameless + 1} has no game on it. Pick the game and try again.`
   }
   return null
 }

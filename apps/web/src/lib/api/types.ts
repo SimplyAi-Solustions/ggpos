@@ -1633,6 +1633,19 @@ export interface QuoteLine {
   market_price: number
   market_source?: string
   offer_price: number
+  /**
+   * `trade_in_lines.kind`, sent on every line the counter offers.
+   *
+   * `POST /api/vault/quotes/:id/received` only reads it for a line with no
+   * card and no retro title, which is exactly the line it could not
+   * otherwise infer a kind for; without it a sealed, graded, typed-in or
+   * bulk line is accepted by the customer and then cannot be received.
+   * `bulk` is not one of the collection's own values, so a lot goes as
+   * `other`, the same way `toLineInputs` writes a lot out for a buy-in.
+   */
+  kind?: string
+  /** A `games` record id, read under the same rule and for the same reason. */
+  game?: string
 }
 
 /** `quotes`. */
