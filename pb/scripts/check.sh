@@ -36,6 +36,10 @@ ID_PHOTO_KEY="check-id-photo-key-0123456789abc"
 SERVER_PID=""
 PASS_COUNT=0
 
+# A second, short-lived server started with no GG_ID_PHOTO_KEY (section 15q).
+KEYLESS_PID=""
+KEYLESS_DIR=""
+
 # --- small helpers ----------------------------------------------------
 
 # Read JSON from stdin, print the value at a dot-separated path (numbers
@@ -66,11 +70,21 @@ ok() {
   echo "OK: $1"
 }
 
+# True when a curl %{time_total} reading is under `limit` seconds.
+under_seconds() {
+  awk -v t="$1" -v limit="$2" 'BEGIN { exit !(t + 0 < limit + 0) }'
+}
+
 cleanup() {
   if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
+  if [ -n "$KEYLESS_PID" ] && kill -0 "$KEYLESS_PID" 2>/dev/null; then
+    kill "$KEYLESS_PID" 2>/dev/null || true
+    wait "$KEYLESS_PID" 2>/dev/null || true
+  fi
+  [ -n "$KEYLESS_DIR" ] && rm -rf "$KEYLESS_DIR"
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
