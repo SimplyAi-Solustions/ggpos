@@ -9,7 +9,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { Link } from "@tanstack/react-router"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { displayCode, formatGBP, parseDecimalToMinor } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
@@ -46,6 +46,7 @@ import {
   lineTotal,
   pointsPreview,
   summarise,
+  voucherProblem,
   type BasketLine,
 } from "@/features/sell/basket"
 import {
@@ -132,18 +133,33 @@ function TotalRow({
  */
 function SplitField({ method, amount }: { method: SplitMethod; amount: number }) {
   const [text, setText] = React.useState(() => (amount ? penceToField(amount) : ""))
+  const [invalid, setInvalid] = React.useState(false)
 
   return (
     <Field label={PAYMENT_LABELS[method]} htmlFor={`split-${method}`}>
       <MoneyInput
         id={`split-${method}`}
         value={text}
+        invalid={invalid}
         onChange={(next) => {
           setText(next)
           const pence = parseDecimalToMinor(next)
-          dispatchBasket({ type: "setSplit", method, amount: pence ?? 0 })
+          if (next.trim() === "") {
+            setInvalid(false)
+            dispatchBasket({ type: "setSplit", method, amount: 0 })
+            return
+          }
+          // A half-typed or three-decimal amount says so and leaves the last
+          // good figure standing, rather than quietly becoming nothing.
+          setInvalid(pence === null)
+          if (pence !== null) {
+            dispatchBasket({ type: "setSplit", method, amount: pence })
+          }
         }}
       />
+      {invalid ? (
+        <FieldError>Pounds and pence, for example 12.50.</FieldError>
+      ) : null}
     </Field>
   )
 }
@@ -183,6 +199,26 @@ export function SellScreen() {
     queryFn: () => getSale(refundSaleId as string),
     enabled: Boolean(refundSaleId),
   })
+
+  /**
+   * A sale, an undo and a refund all move stock, the drawer, the day's
+   * numbers and the sale itself, so every one of those reads is put back in
+   * step rather than left showing what was true a moment ago.
+   */
+  const queryClient = useQueryClient()
+  const settle = React.useCallback(() => {
+    for (const key of [
+      ["cash-current"],
+      ["cash-sessions"],
+      ["sales-today"],
+      ["today-stats"],
+      ["items"],
+      ["item"],
+      ["sale"],
+    ]) {
+      void queryClient.invalidateQueries({ queryKey: key })
+    }
+  }, [queryClient])
 
   const totals = summarise(basket)
   const payment = checkPayment(basket, totals, {
@@ -240,8 +276,9 @@ export function SellScreen() {
             setScanError("Scan the customer's card first, then their voucher.")
             return
           }
-          if (voucher.customer !== basket.customer.id) {
-            setScanError("That voucher belongs to a different customer.")
+          const problem = voucherProblem(voucher, basket.customer, totals.subtotal)
+          if (problem) {
+            setScanError(problem)
             return
           }
           dispatchBasket({ type: "applyVoucher", voucher })
@@ -269,7 +306,7 @@ export function SellScreen() {
         setScanError(refusalOrFallback(error, "That code could not be looked up. Try again."))
       }
     },
-    [basket.customer]
+    [basket.customer, totals.subtotal]
   )
 
   React.useEffect(() => setScanHandler((raw) => void commit(raw)), [commit])
@@ -325,8 +362,7 @@ export function SellScreen() {
       })
       setUndoLeft(UNDO_MS)
       dispatchBasket({ type: "clear" })
-      void refetchCash()
-      void refetchSales()
+      settle()
     },
     onError: (error) =>
       setSaleError(refusalOrFallback(error, "That sale did not go through. Try again.")),
@@ -366,8 +402,7 @@ export function SellScreen() {
     onSuccess: () => {
       setUndoLeft(0)
       setDone(null)
-      void refetchCash()
-      void refetchSales()
+      settle()
     },
     onError: (error) => {
       if (error instanceof StepUpCancelled) return
@@ -407,8 +442,7 @@ export function SellScreen() {
     onSuccess: () => {
       setRefundSaleId(null)
       setRefundError(null)
-      void refetchCash()
-      void refetchSales()
+      settle()
     },
     onError: (error) => {
       if (error instanceof StepUpCancelled) return
@@ -819,19 +853,34 @@ export function SellScreen() {
           )
         : null}
 
-      {done && undoLeft > 0 ? (
+      {done && (undoLeft > 0 || undo.isPending) ? (
         <div
           role="status"
           data-testid="undo-toast"
           className="fixed inset-x-5 bottom-[calc(var(--gg-dock-h,5rem)+1rem)] z-50 mx-auto flex max-w-[480px] items-center justify-between gap-6 rounded-[var(--radius)] border border-hairline bg-popover px-5 py-4 shadow-panel min-[900px]:inset-x-auto min-[900px]:right-10 min-[900px]:bottom-10"
         >
-          <span className="text-[15px] text-foreground">
+          <span className="min-w-0 text-[15px] text-foreground">
             {done.number} for {formatGBP(done.total)}
+            {done.payment === "mixed" ? (
+              <span className="block text-[13px] text-muted-foreground-2">
+                Split payment, so undo asks where the money goes back.
+              </span>
+            ) : null}
           </span>
           <Button
             variant="text"
             loading={undo.isPending}
-            onClick={() => undo.mutate(done)}
+            onClick={() => {
+              // A split payment has no single way back, so the sheet asks
+              // where the money should go rather than guessing the card.
+              if (done.payment === "mixed") {
+                setUndoLeft(0)
+                setRefundError(null)
+                setRefundSaleId(done.id)
+                return
+              }
+              undo.mutate(done)
+            }}
           >
             Undo
           </Button>

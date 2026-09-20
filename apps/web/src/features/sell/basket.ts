@@ -11,7 +11,7 @@ import {
   evaluateSalePoints,
   formatGBP,
   penceToPoints,
-  roundHalfUp,
+  spread,
   type LoyaltyProgramme,
   type SaleLineForPoints,
   type TierPerk,
@@ -143,11 +143,11 @@ export function basketReducer(
         ),
       }
     }
-    case "remove":
-      return {
-        ...state,
-        lines: state.lines.filter((line) => line.itemId !== action.itemId),
-      }
+    case "remove": {
+      const lines = state.lines.filter((line) => line.itemId !== action.itemId)
+      // Nothing left to take a reward off, so the reward comes off too.
+      return { ...state, lines, voucher: lines.length === 0 ? null : state.voucher }
+    }
     case "setUnitPrice":
       return {
         ...state,
@@ -237,16 +237,45 @@ export function voucherDiscountFor(voucher: RewardVoucher | null): number {
   return voucher.type === "money_off" ? voucher.value : 0
 }
 
+/**
+ * Why this reward cannot go on this basket, or null when it can.
+ *
+ * The completion route wants a customer, `discount_source` of "reward" and a
+ * discount equal to the reward's value, so a reward worth more than the
+ * basket can never be sent: it would have to be clamped, and a clamped
+ * reward is not the reward.
+ */
+export function voucherProblem(
+  voucher: RewardVoucher,
+  customer: SaleCustomer | null,
+  subtotal: number
+): string | null {
+  if (voucher.type !== "money_off") {
+    return "That reward is not money off. Use it on the customer's account instead."
+  }
+  if (!customer || customer.id !== voucher.customer) {
+    return "A reward needs the customer it was issued to on the sale."
+  }
+  if (voucher.value > subtotal) {
+    return `This ${formatGBP(voucher.value)} reward is more than the basket. Add another item or take the reward off.`
+  }
+  return null
+}
+
 export function summarise(state: BasketState): BasketTotals {
   const subtotal = state.lines.reduce((total, line) => total + lineTotal(line), 0)
   const perk = perkFor(state.lines, state.customer)
 
-  const manual =
+  // Clamped to the basket, so a manual amount left over from a bigger basket
+  // shows what it actually takes off rather than what was typed.
+  const manual = Math.min(
+    subtotal,
     state.manualDiscount.kind === "amount"
       ? state.manualDiscount.value
       : state.manualDiscount.kind === "percent"
         ? applyPercent(subtotal, state.manualDiscount.value)
         : 0
+  )
 
   // A reward is the whole discount on a sale: the completion route checks
   // that `discount` equals the reward's value, so a perk or a manual amount
@@ -278,12 +307,15 @@ export function summarise(state: BasketState): BasketTotals {
     discount,
     discountSource: source,
     total,
-    lineTotals: state.lines.map((line) => ({
-      itemId: line.itemId,
-      total:
-        subtotal > 0
-          ? lineTotal(line) - roundHalfUp((discount * lineTotal(line)) / subtotal)
-          : 0,
+    // The shared spread, with the last line absorbing the remainder, so the
+    // line totals sum to the sale total exactly and the points preview sees
+    // what the server will.
+    lineTotals: spread(
+      state.lines.map(lineTotal),
+      discount
+    ).map((total, index) => ({
+      itemId: state.lines[index]?.itemId ?? "",
+      total,
     })),
   }
 }
@@ -319,6 +351,12 @@ export interface PaymentContext {
   programme?: LoyaltyProgramme
   /** Is there an open cash session to take cash into? */
   cashSessionOpen: boolean
+  /**
+   * `settings.cash_cap` in pence, from the config route. Zero switches cash
+   * sales off, which is how the completion route reads it. Undefined while
+   * the config is still loading, and then nothing is refused on its account.
+   */
+  cashCap?: number
 }
 
 export interface PaymentCheck {
@@ -353,8 +391,9 @@ export function checkPayment(
     problems.push("Scan an item to start a sale.")
   }
 
-  if (state.voucher && state.customer?.id !== state.voucher.customer) {
-    problems.push("A reward needs the customer it was issued to on the sale.")
+  if (state.voucher) {
+    const problem = voucherProblem(state.voucher, state.customer, totals.subtotal)
+    if (problem) problems.push(problem)
   }
 
   if (state.payment === "mixed" && summed !== totals.total) {
@@ -368,6 +407,18 @@ export function checkPayment(
 
   if (split.cash > 0 && !ctx.cashSessionOpen) {
     problems.push("Open a cash session before taking cash.")
+  }
+
+  // The same two refusals the completion route makes, said up front rather
+  // than after the basket has been rung up.
+  if (split.cash > 0 && ctx.cashCap !== undefined) {
+    if (ctx.cashCap === 0) {
+      problems.push("Cash sales are switched off in settings.")
+    } else if (split.cash > ctx.cashCap) {
+      problems.push(
+        `That is over the ${formatGBP(ctx.cashCap)} cash cap. Take the rest on the card.`
+      )
+    }
   }
 
   if (split.store_credit > 0) {
