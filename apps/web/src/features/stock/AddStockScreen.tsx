@@ -1,4 +1,5 @@
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Controller, useForm, useWatch } from "react-hook-form"
@@ -23,6 +24,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { ProductImage } from "@/components/product-image"
+import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
 import { CameraSheet } from "@/features/scan/CameraSheet"
 import { CardSearchField } from "@/features/stock/CardSearchField"
@@ -180,6 +182,8 @@ export function AddStockScreen({
   const [labelNote, setLabelNote] = React.useState<string | null>(null)
   const [cameraOpen, setCameraOpen] = React.useState(false)
   const searchRef = React.useRef<HTMLInputElement>(null)
+  const formRef = React.useRef<HTMLFormElement>(null)
+  const dock = useCounterDock()
 
   const { data: games = [] } = useQuery({ queryKey: ["games"], queryFn: listGames })
   const { data: locations = [] } = useQuery({
@@ -330,19 +334,20 @@ export function AddStockScreen({
 
   // ---- The form ---------------------------------------------------------
   return (
-    // Extra room at the foot on a phone, so the docked block never covers
-    // the last field.
-    <section className="pt-16 max-[899px]:pb-20 sm:pt-24">
+    <section className="pt-16 sm:pt-24">
       <PageTitle>Add stock</PageTitle>
       <Lede>Every card, cart and box in one place, priced and findable.</Lede>
 
       <div className="mt-14 flex flex-col gap-12 min-[900px]:grid min-[900px]:grid-cols-[minmax(0,1fr)_168px] min-[900px]:items-start min-[900px]:gap-16">
         <form
+          ref={formRef}
           noValidate
           onSubmit={handleSubmit((values) => save.mutate(values))}
           aria-label="Add stock"
           // Keeps a focused field clear of the docked block on a phone.
-          className="max-[899px]:[&_[data-slot=field]]:scroll-mb-44"
+          // A control scrolled into view clears the docked group, whatever
+          // the browser decides to scroll: the field, the input or the chip.
+          className="max-[899px]:[&_*]:scroll-mb-[calc(var(--gg-dock-h,5rem)+1.5rem)]"
         >
           {saved && binderMode ? (
             <p
@@ -691,17 +696,27 @@ export function AddStockScreen({
             </Button>
           </div>
 
-          <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-30 border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
-            <Button
-              type="submit"
-              trailingArrow
-              loading={save.isPending}
-              className="w-full"
-            >
-              Save item
-            </Button>
-          </div>
         </form>
+
+        {/* Below 900px the one primary action docks into the shell's thumb
+            zone, directly on top of the tab bar. It lives outside the form in
+            the DOM, so it asks the form to submit itself. */}
+        {dock
+          ? createPortal(
+              <div className="border-t border-hairline-soft bg-background px-5 py-3">
+                <Button
+                  type="button"
+                  trailingArrow
+                  loading={save.isPending}
+                  className="w-full"
+                  onClick={() => formRef.current?.requestSubmit()}
+                >
+                  Save item
+                </Button>
+              </div>,
+              dock
+            )
+          : null}
 
         {/* Beside the form on a desktop, above it on a phone. A phone has no
             room to hold an empty frame open, so it appears with the card. */}

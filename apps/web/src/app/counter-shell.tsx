@@ -31,6 +31,7 @@ import {
 import { Wordmark } from "@/components/ui/wordmark"
 import { useTheme } from "@/components/theme-provider"
 import { CommandPalette } from "@/app/command-palette"
+import { CounterDockContext } from "@/app/counter-dock"
 import { IdleLock } from "@/app/idle-lock"
 import { dispatchScan, makeScanFallback } from "@/app/scan-bus"
 import { useShortcuts } from "@/app/shortcuts"
@@ -172,6 +173,8 @@ export function CounterShell() {
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   const [moreOpen, setMoreOpen] = React.useState(false)
+  const [dockSlot, setDockSlot] = React.useState<HTMLDivElement | null>(null)
+  const dockRef = React.useRef<HTMLDivElement>(null)
   const demo = isDemo()
 
   const openPalette = React.useCallback(() => setPaletteOpen(true), [])
@@ -185,7 +188,27 @@ export function CounterShell() {
     })
   }, [navigate])
 
+  // Publish the fixed group's real height, safe-area inset and any docked
+  // button included, so the content column reserves exactly that much room
+  // rather than a guessed number that drifts when the bar changes.
+  React.useEffect(() => {
+    const dock = dockRef.current
+    if (!dock) return undefined
+    const root = document.documentElement
+    const apply = () => {
+      root.style.setProperty("--gg-dock-h", `${dock.offsetHeight}px`)
+    }
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(dock)
+    return () => {
+      observer.disconnect()
+      root.style.removeProperty("--gg-dock-h")
+    }
+  }, [])
+
   return (
+    <CounterDockContext.Provider value={dockSlot}>
     <div className="flex min-h-svh w-full flex-col bg-background">
       <header className="mx-auto flex w-full max-w-[1040px] items-center justify-between gap-6 px-5 py-7 sm:px-10">
         <Link to="/counter" className="rounded-[var(--radius)] outline-none">
@@ -213,7 +236,7 @@ export function CounterShell() {
 
       <main
         id="counter-main"
-        className="mx-auto w-full max-w-[1040px] flex-1 px-5 pb-28 sm:px-10 min-[900px]:pb-16"
+        className="mx-auto w-full max-w-[1040px] flex-1 px-5 pb-[calc(var(--gg-dock-h,5rem)+2.5rem)] sm:px-10 min-[900px]:pb-16"
       >
         <Outlet />
       </main>
@@ -223,10 +246,17 @@ export function CounterShell() {
         <Hint>GG Vault</Hint>
       </footer>
 
-      {/* Phones: the thumb bar takes over from the nav links. */}
+      {/* Phones: one fixed group in the thumb zone. A screen's docked block
+          button goes in the slot, directly on top of the tab bar, so no strip
+          of the page can ever show between the two. */}
+      <div
+        ref={dockRef}
+        className="fixed inset-x-0 bottom-0 z-40 min-[900px]:hidden"
+      >
+      <div ref={setDockSlot} />
       <nav
         aria-label="Counter"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-hairline-soft bg-background pb-[env(safe-area-inset-bottom)] min-[900px]:hidden"
+        className="border-t border-hairline-soft bg-background pb-[env(safe-area-inset-bottom)]"
       >
         <ul className="flex items-stretch">
           {BAR.map(({ to, label, exact, Icon }) => (
@@ -261,10 +291,12 @@ export function CounterShell() {
           </li>
         </ul>
       </nav>
+      </div>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} />
       <IdleLock />
     </div>
+    </CounterDockContext.Provider>
   )
 }
