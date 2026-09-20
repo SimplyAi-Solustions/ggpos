@@ -178,6 +178,24 @@ export function formatRange(range: DateRange, options: { year?: boolean } = {}):
   return `${from.day} ${from.month} to ${to.day} ${to.month}${tail}`
 }
 
+/**
+ * The same range as a phrase a sentence can be built round: "on 20 Sep 2026",
+ * "between 1 and 7 Sep 2026". Used by the empty states, which have to say
+ * what is empty rather than leave a blank chart.
+ */
+export function formatWhen(range: DateRange): string {
+  if (range.from === range.to) return `on ${formatDay(range.from)}`
+  const from = parts(range.from)
+  const to = parts(range.to)
+  if (from.year !== to.year) {
+    return `between ${from.day} ${from.month} ${from.year} and ${to.day} ${to.month} ${to.year}`
+  }
+  if (from.month === to.month) {
+    return `between ${from.day} and ${to.day} ${to.month} ${to.year}`
+  }
+  return `between ${from.day} ${from.month} and ${to.day} ${to.month} ${to.year}`
+}
+
 /** "against 1 to 31 Aug". The year is only printed when the two differ. */
 export function compareLabel(range: DateRange, previous: DateRange): string {
   const sameYear =

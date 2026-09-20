@@ -240,7 +240,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
       countColumn("count", "Sales", "detail"),
     ],
     panels: [],
-    emptyLine: "No sales in this range. Widen the dates.",
+    emptyLine: "No sales {when}. Widen the range.",
     note: "Revenue is net of every refund on file. A payment breakdown is the gross split, since a refund is not paid back through the method it came in on.",
   },
 
@@ -285,7 +285,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         ],
       },
     ],
-    emptyLine: "No buy-ins in this range. Widen the dates.",
+    emptyLine: "No buy-ins {when}. Widen the range.",
     note: "Average offer is the offer as a percent of market, over every accepted line priced against a market value. It reads zero on a staff breakdown, where offer percent is not a line-level figure.",
   },
 
@@ -325,7 +325,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
       percentColumn("margin_pct", "Percent"),
     ],
     panels: [],
-    emptyLine: "Nothing sold in this range, so there is no margin to show.",
+    emptyLine: "Nothing sold {when}, so there is no margin to show.",
     note: "The VAT figure is a margin scheme estimate, one sixth of the positive margin on margin scheme lines, and reads zero while the shop is not VAT registered. Marked down counts stock priced under its value at intake, which is a proxy for a markdown rather than a log of every price change.",
   },
 
@@ -421,7 +421,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         ],
       },
     ],
-    emptyLine: "No sales in this range. Widen the dates.",
+    emptyLine: "No sales {when}. Widen the range.",
     note: "A channel is the sale's own channel, never an item's eBay fields. Listings ended counts items that were on eBay and no longer are, which is a proxy: there is no ended status of its own.",
   },
 
@@ -476,7 +476,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         ],
       },
     ],
-    emptyLine: "Nobody bought or sold in this range. Widen the dates.",
+    emptyLine: "Nobody bought or sold {when}. Widen the range.",
     note: "Credit owed is every credit ledger row up to the end of the range, recomputed rather than read off a cached balance.",
   },
 
@@ -525,7 +525,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         ],
       },
     ],
-    emptyLine: "No points issued in this range yet.",
+    emptyLine: "No points issued {when} yet.",
     note: "The cost of the programme is the points redeemed in the range valued at the redemption rate, as a percent of the same range's revenue.",
   },
 
@@ -565,7 +565,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         ],
       },
     ],
-    emptyLine: "No session was closed in this range. Widen the dates.",
+    emptyLine: "No session was closed {when}. Widen the range.",
   },
 
   compliance: {
@@ -587,7 +587,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
       moneyColumn("total_offer", "Paid", "figure"),
     ],
     panels: [],
-    emptyLine: "No buy-in was completed in this range.",
+    emptyLine: "No buy-in was completed {when}.",
     note: "The seller snapshot on every cash buy-in is the record local dealer rules ask for, and is kept for six years.",
   },
 }
