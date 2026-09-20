@@ -673,6 +673,7 @@ PHOTO_STATUS="$(curl -s -D "$TMP_DIR/idphoto.headers" -o "$TMP_DIR/idphoto.bin" 
 [ "$PHOTO_STATUS" = "200" ] || fail "the ID photo with a step-up token returned $PHOTO_STATUS"
 grep -qi '^cache-control: *no-store' "$TMP_DIR/idphoto.headers" || fail "the ID photo response has no 'Cache-Control: no-store' header: $(cat "$TMP_DIR/idphoto.headers")"
 grep -qi '^content-disposition: *inline' "$TMP_DIR/idphoto.headers" || fail "the ID photo response has no 'Content-Disposition: inline' header"
+grep -qi '^content-type: *image/png' "$TMP_DIR/idphoto.headers" || fail "the ID photo is not served as image/png (is id_documents.mime being stored?): $(grep -i content-type "$TMP_DIR/idphoto.headers")"
 cmp -s "$TMP_DIR/id.png" "$TMP_DIR/idphoto.bin" || fail "the decrypted ID photo does not match the PNG that was uploaded"
 ok "an admin with a step-up token gets the decrypted PNG back, no-store and inline"
 
