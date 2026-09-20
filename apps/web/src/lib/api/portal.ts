@@ -75,7 +75,14 @@ export async function signInWithCode(otpId: string, code: string): Promise<Vault
   return getMe()
 }
 
-function signInMessage(error: unknown): string {
+/**
+ * The sentence a failed sign-in shows.
+ *
+ * Exported for its own unit test: these are the words a customer reads when
+ * the shop cannot be reached or the code has run out, and they are worth
+ * pinning down.
+ */
+export function signInMessage(error: unknown): string {
   if (error instanceof ClientResponseError) {
     if (error.status === 400) {
       return "That code does not match, or it has run out. Send another."
