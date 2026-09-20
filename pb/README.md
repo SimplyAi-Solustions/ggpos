@@ -35,7 +35,7 @@ Environment variables:
 | `PB_PORT` | Local dev port for `pb/scripts/dev.sh` (default `8091`). |
 | `GG_ADMIN_EMAIL`, `GG_ADMIN_PASSWORD` | See "Creating the first admin" below. |
 | `GG_ID_PHOTO_KEY` | **Required in production.** Exactly 32 characters (`$security.encrypt` is AES-256-GCM and rejects any other length). Encrypts every ID photo before it is written, and peppers the step-up token signing key. `POST /api/vault/customers/:id/id-check` refuses with 500 rather than storing a photo in the clear without it, and `GET /api/vault/id-photo/:id` cannot decrypt without it. It lives in the environment, never in `pb_data`, so a stolen database backup has no readable ID photos in it. Add it to `deploy/.env.example` and generate one per install, for example `openssl rand -base64 24 \| cut -c1-32`. **Changing it makes every stored photo undecryptable** - rotate only alongside a purge. |
-| `GG_ADAPTER_TRANSPORT_MODE` | Set to `offline_fail` to make every adapter in `pb_hooks/adapters/*.js` throw the instant it tries to reach the real network, instead of calling out. `pb/scripts/check.sh` runs its whole throwaway server this way, so its route-level Phase 3 checks fail loudly rather than silently passing because a live call happened to succeed. Unset (the default) in dev and production - adapters call out normally. |
+| `GG_ADAPTER_TRANSPORT_MODE` | `offline_fail` makes every adapter in `pb_hooks/adapters/*.js` throw the instant it tries to reach the real network, instead of calling out. `fixture` instead hands the call to `pb_hooks/adapters/fixture_transport.js`, which answers a known set of calls from `pb_hooks/adapters/fixtures/` and throws for anything else - the same safety net as `offline_fail`, but able to serve a real (fixture) response for the calls it knows. `pb/scripts/check.sh` runs its whole throwaway server under `fixture`, so its route-level Phase 3 checks exercise the real routes end to end with no live network call, and still fail loudly rather than silently passing on a call this build never intended to make. Unset (the default) in dev and production - adapters call out normally. |
 
 ## Migrations and seeds
 
@@ -282,6 +282,22 @@ erased record whose identifying fields survive in a permanent,
 superuser-only table is not really erased. Quote photos ninety days after
 their quote closes still wait on a "closed at" field on `quotes`.
 
+### The image queue cron
+
+`cronAdd("image_queue", "*/5 * * * *")` drains `adapter_state`'s
+`image_queue` entry, an array of card ids `items.pb.js`'s `onRecordCreate`
+pushes onto (never fetches from) the first time an item is created against a
+card whose image is still a bare third-party URL. A buy-in creates every
+item inside one `$app.runInTransaction`, so `e.app` there can be that
+transaction's own `txApp`; a network call at that point would hold the
+whole transaction open for as long as the image host takes to answer, so
+the item-create hook only ever does the one fast, local write and the
+actual fetch happens later, off that path entirely, when this cron runs.
+Every queued card gets one attempt with a short per-image timeout and the
+queue is cleared regardless of outcome - a card whose image keeps failing
+is not worth retrying every five minutes forever; the lazy cache tries
+again on the next item created against that same card anyway.
+
 ### Card and price adapters
 
 `pb_hooks/adapters/*.js` are plain CommonJS modules, not `.pb.js` hook
@@ -300,12 +316,13 @@ files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
 | `pricecharting.js` | Retro prices: PriceCharting, a paid API ($49/month). PAL category searched first, NTSC only when PAL has no entry; prices are integer US cents, never a string. Behind `settings.api_keys.pricecharting` being set. |
 | `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then a haircut off (`haircutPctFromSettings(app)` reads `settings.offer.ebayHaircutPct`, default 15 - the one home for this figure). Behind `settings.api_keys.ebay` being set. |
 | `frankfurter.js` | FX: the ECB reference rate, base GBP. No key. Inverts Frankfurter's own "units of X per GBP" into "GBP per unit of X" once, here - see `docs/api-contract.md`'s Phase 3 section. |
-| `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit and a `qs(params)` query-string builder. Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). Throws immediately, naming the call, when `GG_ADAPTER_TRANSPORT_MODE=offline_fail` is set (see "Environment variables" above). |
-| `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens and eBay's 24-hour price cache. `forApp(app)` for PocketBase, `memory()` for tests. |
-| `registry.js` | Which adapter answers for which `games.key`; recognises the "set number" query forms (`docs/api-contract.md`'s Phase 3 section). |
-| `storage.js` | Write-through: one adapter search result into `card_sets`/`cards`, and a `cards` row back out as the row shape the contract promises. `isFresh()` is the whole 30-day lookup cache. |
-| `pricing_policy.js` | The valuation policy behind the prices routes: this build's freshness windows (stricter than `packages/shared/src/pricing.ts`'s own default - see the contract), an adapter candidate's decimal-string-or-cents figure converted to GBP pence exactly once, and `price_snapshots` reads and writes. |
-| `images.js` | Re-hosts a URL (or bytes an adapter already fetched) into a record's file field and rewrites its `image_*` text fields to the resulting local URL. Never throws - a failed fetch must never block whatever is happening (an item create, a lookup). |
+| `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit, a `qs(params)` query-string builder and `stripQuery(url)` (never let a key or a token reach a log line or an error message). Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). `GG_ADAPTER_TRANSPORT_MODE` (see "Environment variables" above) changes this: `offline_fail` throws immediately, naming the call; `fixture` hands the call to `fixture_transport.js` instead. |
+| `fixture_transport.js` | Answers a fixed set of known adapter calls from `pb_hooks/adapters/fixtures/` - the same files `pb/scripts/check-adapters.mjs` unit-tests each adapter against - and throws for anything it has no mapping for, same as `offline_fail`. This is what `pb/scripts/check.sh` runs its whole throwaway server under, so its route-level checks exercise a real search, an exact lookup, `refresh-prices` and the image queue end to end with no live network call. Goja-only (`$os.readFile` to load a fixture's JSON off disk) - never required under plain Node. |
+| `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens, eBay's 24-hour price cache, and `images.js`'s image queue. `forApp(app)` for PocketBase, `memory()` for tests. |
+| `registry.js` | Which adapter answers for which `games.key`; recognises the "set number" query forms (`docs/api-contract.md`'s Phase 3 section), including the small per-game alias table (`sv151` for TCGdex's own `sv03.5`) and running a game's set sync once inline the first time it is needed on an install with no `card_sets` rows for it yet. |
+| `storage.js` | Write-through: one adapter search result into `card_sets`/`cards`, and a `cards` row back out as the row shape the contract promises. `isFresh()` is the whole 30-day lookup cache. Refuses (rather than crashing on a later required-field validation error) to write through a result with no set code at all. |
+| `pricing_policy.js` | The valuation policy behind the prices routes: this build's freshness windows (stricter than `packages/shared/src/pricing.ts`'s own default - see the contract), an adapter candidate's decimal-string-or-cents figure converted to GBP pence exactly once, condition validation and adjustment, and `price_snapshots` reads and writes. Every write goes through `writeSnapshotSafely`, which logs and skips rather than failing a whole `refresh-prices` batch over one bad candidate. |
+| `images.js` | Re-hosts a URL (or bytes an adapter already fetched) into a record's file field and rewrites its `image_*` text fields to the resulting local URL, after validating the response is under 2 MB and sniffing its real type from its own first bytes (never a `Content-Type` header or a URL's extension alone). Never throws - a failed fetch must never block whatever is happening (an item create, a lookup). `enqueueImageCache(app, cardId)` / `drainImageQueue(app, timeoutSeconds)` are the queue `items.pb.js`'s `onRecordCreate` and `crons.pb.js`'s `image_queue` cron use to keep a network call off the item-create path entirely - see "The image queue cron" below. |
 
 Every adapter's outbound call carries `User-Agent: GGVault/1.0
 (+https://vault.ggentertainment.co.uk)` and a timeout (`http.js`), and API

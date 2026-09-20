@@ -250,8 +250,13 @@ function view(
   multiplier: number | null
 ): PriceView {
   const now = Date.now()
+  // Exactly as the route's own filter reads it: `finish = {:finish}`, with an
+  // empty finish matching the rows written without one rather than all of
+  // them. A demo that matched loosely would price a card the counter could
+  // not, and hide the bug this very rule exists to expose.
+  const wanted = finish || ""
   const rows = snapshots
-    .filter((row) => row.subject === subject && (!finish || row.finish === finish))
+    .filter((row) => row.subject === subject && row.finish === wanted)
     .map((row) => toRow(row, now))
 
   const sources: PriceSourceRow[] = []
@@ -373,7 +378,9 @@ export function refreshPrices(subject: string, finish: string) {
 export function addUkComp(subject: string, input: UkCompInput) {
   snapshots.push({
     subject,
-    finish: input.finish ?? "",
+    // `price_snapshots.finish` carries a card's finish and a retro title's
+    // completeness alike, which is the one column the routes file under.
+    finish: input.completeness ?? input.finish ?? "",
     source: "uk_sold_manual",
     currency: "GBP",
     native: input.price,

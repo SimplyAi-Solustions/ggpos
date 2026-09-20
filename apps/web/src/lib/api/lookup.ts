@@ -99,7 +99,8 @@ export function toCardHit(row: CardLookupRow, gameKey: string): CardHit {
 export async function searchCards(
   game: LookupGame | "" | undefined,
   q: string,
-  limit = 8
+  limit = 8,
+  signal?: AbortSignal
 ): Promise<CardHit[]> {
   const query = q.trim()
   if (query.length < 2) return []
@@ -109,7 +110,7 @@ export async function searchCards(
   if (!game) {
     const perGame = await Promise.all(
       LOOKUP_GAMES.map((entry) =>
-        searchCards(entry.key, query, limit).catch(() => [] as CardHit[])
+        searchCards(entry.key, query, limit, signal).catch(() => [] as CardHit[])
       )
     )
     // Round robin rather than "all the Pokemon first", so a Magic card is
@@ -126,6 +127,10 @@ export async function searchCards(
   const response = await pb.send<{ cards: CardLookupRow[] }>("/api/vault/lookup", {
     method: "GET",
     query: { game, q: query },
+    // TanStack aborts the signal the moment a newer keystroke takes over, and
+    // a name search reaches the adapter, so five abandoned fan-outs are five
+    // abandoned adapter calls unless this is passed through.
+    signal,
   })
   return (response.cards ?? []).map((row) => toCardHit(row, game)).slice(0, limit)
 }
@@ -140,20 +145,47 @@ export async function searchCards(
 export async function getCard(
   game: LookupGame,
   set: string,
-  number: string
+  number: string,
+  signal?: AbortSignal
 ): Promise<CardHit | null> {
   if (isDemo()) return demo.getCard(game, set, number)
   const response = await pb.send<{ cards: CardLookupRow[] }>(
     `/api/vault/lookup/${encodeURIComponent(game)}/${encodeURIComponent(set)}/${encodeURIComponent(number)}`,
-    { method: "GET" }
+    { method: "GET", signal }
   )
   const row = response.cards?.[0]
   return row ? toCardHit(row, game) : null
 }
 
+/**
+ * The `platforms` table, keyed by id, read once per session.
+ *
+ * A retro row carries the platform's record id, not its key, and a search
+ * that named no platform still resolves every row it wrote through: without
+ * this every preview row would draw in the 3:4 "Other" frame and read
+ * "Other" under its name.
+ */
+let platformsByIdCache: Promise<Map<string, string>> | null = null
+
+function platformsById(): Promise<Map<string, string>> {
+  if (!platformsByIdCache) {
+    platformsByIdCache = pb
+      .collection("platforms")
+      .getFullList<{ id: string; key: string }>({ fields: "id,key" })
+      .then((rows) => new Map(rows.map((row) => [row.id, row.key])))
+      .catch(() => new Map<string, string>())
+  }
+  return platformsByIdCache
+}
+
 /** A retro row with its platform resolved to something `ProductImage` takes. */
-function toRetroHit(row: RetroTitleRow, platformKey: string): RetroHit {
-  const key = (platformKey || "other") as PlatformKey
+function toRetroHit(
+  row: RetroTitleRow,
+  platformKey: string,
+  byId?: Map<string, string>
+): RetroHit {
+  const resolved = (byId?.get(row.platform) || platformKey || "other") as PlatformKey
+  const key = resolved in PLATFORMS ? resolved : ("other" as PlatformKey)
   return {
     id: row.id,
     name: row.name,
@@ -176,7 +208,8 @@ function toRetroHit(row: RetroTitleRow, platformKey: string): RetroHit {
  */
 export async function searchRetro(
   q: string,
-  platform?: string
+  platform?: string,
+  signal?: AbortSignal
 ): Promise<RetroHit[]> {
   const query = q.trim()
   if (query.length < 2) return []
@@ -184,9 +217,14 @@ export async function searchRetro(
 
   const response = await pb.send<{ titles: RetroTitleRow[] }>(
     "/api/vault/retro/lookup",
-    { method: "GET", query: platform ? { q: query, platform } : { q: query } }
+    {
+      method: "GET",
+      query: platform ? { q: query, platform } : { q: query },
+      signal,
+    }
   )
-  return (response.titles ?? []).map((row) => toRetroHit(row, platform ?? ""))
+  const byId = await platformsById()
+  return (response.titles ?? []).map((row) => toRetroHit(row, platform ?? "", byId))
 }
 
 /** True for the 404 the exact lookup makes when the adapter has nothing. */
@@ -291,6 +329,11 @@ export async function createManualCard(input: ManualCardInput): Promise<CardHit>
     name: input.name.trim(),
     source: "manual",
     search_text: `${input.name} ${code} ${input.number}`.toLowerCase(),
+    // The exact lookup serves a row whose `last_synced` is under 30 days old
+    // straight from the database. Without a stamp this row looks ancient, so
+    // every lookup of a card only this shop knows about would ask the
+    // adapter, get nothing, and answer 404 for a card that is right there.
+    last_synced: new Date().toISOString(),
   })
 
   return {
