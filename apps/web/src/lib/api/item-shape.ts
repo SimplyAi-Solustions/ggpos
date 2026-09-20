@@ -7,14 +7,14 @@
  * whichever one answered.
  */
 import type { PlatformKey } from "@/design/platforms"
-import type { ItemKind, ItemRecord, LabelTemplateKey } from "@/lib/api/types"
+import type { ItemKind, LabelTemplateKey, StockItemRecord } from "@/lib/api/types"
 
 /**
  * The `ProductImage` frame for a stock row. `items` carries no platform of
  * its own: a card is a card, a graded card is a slab, and everything else
  * falls back to the table's 3:4 default until a retro title names a platform.
  */
-export function platformForItem(item: Pick<ItemRecord, "kind">): PlatformKey {
+export function platformForItem(item: Pick<StockItemRecord, "kind">): PlatformKey {
   switch (item.kind) {
     case "single":
       return "tcg_card"
@@ -28,7 +28,7 @@ export function platformForItem(item: Pick<ItemRecord, "kind">): PlatformKey {
 }
 
 /** "SV151 199/165 Holo", or "PAL Boxed" for retro. Never longer than a line. */
-export function itemDetailLine(item: ItemRecord): string {
+export function itemDetailLine(item: StockItemRecord): string {
   const parts =
     item.kind === "retro"
       ? [item.region, item.completeness, item.finish]

@@ -655,6 +655,26 @@ export interface RewardVoucher {
 
 // ---- Stock ----------------------------------------------------------------
 
+/**
+ * The rest of `items`, read off 1789819320_stock_collections.js: the fields
+ * the item page and the label templates show that Add stock never sets.
+ */
+export interface StockItemRecord extends ItemRecord {
+  region?: "PAL" | "NTSC" | "JP"
+  cosmetic_grade?: "A" | "B" | "C"
+  tested?: boolean
+  grade_company?: string
+  grade?: string
+  cert_no?: string
+  supplier_ref?: string
+  trade_in_line?: string
+  reserved_for?: string
+  reserved_until?: string
+  ebay_listing_id?: string
+  label_printed_at?: string
+  photos?: string[]
+}
+
 export interface ItemFilters {
   /** Blank means every status the list shows. */
   status?: ItemStatus
@@ -704,7 +724,7 @@ export interface ItemEvent {
 }
 
 /** The item page: the record plus everything it shows about where it came from. */
-export interface ItemDetail extends ItemRecord {
+export interface ItemDetail extends StockItemRecord {
   image?: string
   /** A `PlatformKey` from src/design/platforms.ts. */
   platform: string

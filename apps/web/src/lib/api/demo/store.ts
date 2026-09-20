@@ -22,16 +22,16 @@ import { itemDetailLine, templateForItem } from "@/lib/api/item-shape"
 import type {
   CashMovementRecord,
   CashSessionRecord,
-  ItemRecord,
   LabelJobDetail,
   RewardVoucher,
   SaleCustomer,
   SaleLineDetail,
   SaleRecord,
+  StockItemRecord,
 } from "@/lib/api/types"
 
 /** Add stock's array. Reached through a function so the import stays lazy. */
-export function itemStore(): ItemRecord[] {
+export function itemStore(): StockItemRecord[] {
   return demoItemStore
 }
 
@@ -224,7 +224,7 @@ export function ensureSeeded() {
 
   const items = itemStore()
 
-  const soldCharizard: ItemRecord = {
+  const soldCharizard: StockItemRecord = {
     id: "item_demo_sold_1",
     sku: buildCode("sealed", "5N2W8").encoded,
     kind: "sealed",
@@ -239,7 +239,7 @@ export function ensureSeeded() {
     source: "supplier",
     created: todayAt(9, 41),
   }
-  const soldLlanowar: ItemRecord = {
+  const soldLlanowar: StockItemRecord = {
     id: "item_demo_sold_2",
     sku: buildCode("single", "W8Q4R").encoded,
     kind: "single",
