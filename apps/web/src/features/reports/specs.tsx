@@ -253,7 +253,12 @@ export interface ReportSpec {
 }
 
 const INK: ChartTone = 1
-const GREY: ChartTone = 3
+/**
+ * A report's own second series. `--chart-3` is kept for the comparison
+ * period, so a declared series never draws in the same tone as "the period
+ * before" and leaves two grey lines nobody can tell apart.
+ */
+const GREY: ChartTone = 2
 const VOLT: ChartTone = 5
 
 export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
