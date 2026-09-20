@@ -22,6 +22,18 @@ const DEMO_NO_CREDIT_EMAIL = "tom.bradbury@example.co.uk"
 const PHOTO = join(__dirname, "fixtures", "id-sample.png")
 
 /** Below 900px the primary action is a second, docked copy of the button. */
+/**
+ * No service worker for these specs.
+ *
+ * The built app registers one, and with two workers hitting a single
+ * `vite preview` a navigation served out of its precache occasionally comes
+ * back as an error page (`ERR_HTTP_RESPONSE_CODE_FAILURE`) when the entry it
+ * holds was written by an earlier build. Nothing here tests the worker, so
+ * it is blocked rather than raced: the push handler has its own unit-level
+ * coverage and is exercised by hand.
+ */
+test.use({ serviceWorkers: "block" })
+
 function primary(page: Page, name: string) {
   return page.getByRole("button", { name, exact: true }).filter({ visible: true })
 }

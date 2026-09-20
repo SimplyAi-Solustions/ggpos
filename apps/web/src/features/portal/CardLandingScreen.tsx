@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Hint } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { GMark } from "@/components/ui/wordmark"
+import { GGLogo } from "@/components/ui/wordmark"
 import { isDemo } from "@/lib/api/mode"
 import { getCardLanding, getMe } from "@/lib/api/portal"
 import { currentStaff } from "@/lib/auth"
@@ -73,15 +73,18 @@ export function CardLandingScreen({ token }: { token: string }) {
     }
   }, [staff, signedInCustomer, me.data, token, navigate])
 
-  const known = landing.data?.known ?? !landing.isError
+  // Pending is neither: a card that turns out not to exist must not flash
+  // "This card belongs to a GG Guild member" first.
+  const known = landing.data?.known === true
+  const settled = staff ? !staffLookup.isPending : !landing.isPending
 
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-[560px] flex-col items-start justify-center px-5 py-16 sm:px-10">
-      {staff && staffLookup.isPending ? (
+      {!settled ? (
         <SkeletonText lines={3} />
       ) : (
         <>
-          <GMark className="h-10" title="GG Entertainment" />
+          <GGLogo className="h-10" title="GG Entertainment" />
 
           {known ? (
             <>

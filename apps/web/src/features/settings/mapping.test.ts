@@ -328,3 +328,59 @@ describe("validation", () => {
     expect(validateSettings({ ...form(), shopName: "  " }).shopName).toContain("needs a name")
   })
 })
+
+describe("the notification settings", () => {
+  it("reads test mode as the server reads it", () => {
+    // Anything but an explicit false keeps test mode on, so a half-filled
+    // settings row can never start emailing customers.
+    expect(recordToForm({ ...DEMO_SETTINGS_RECORD, email: {} }).email.test_mode).toBe(true)
+    expect(
+      recordToForm({ ...DEMO_SETTINGS_RECORD, email: undefined }).email.test_mode
+    ).toBe(true)
+    expect(
+      recordToForm({ ...DEMO_SETTINGS_RECORD, email: { test_mode: false } }).email.test_mode
+    ).toBe(false)
+  })
+
+  it("keeps the addressing the screen does not show", () => {
+    const record = {
+      ...DEMO_SETTINGS_RECORD,
+      email: {
+        from_name: "GG Entertainment",
+        from_address: "hello@ggentertainment.co.uk",
+        reply_to: "counter@ggentertainment.co.uk",
+        test_mode: true,
+      },
+    }
+    const patch = formToPatch({
+      ...recordToForm(record),
+      email: { ...recordToForm(record).email, test_mode: false },
+    })
+    expect(patch.email).toEqual({
+      from_name: "GG Entertainment",
+      from_address: "hello@ggentertainment.co.uk",
+      reply_to: "counter@ggentertainment.co.uk",
+      test_mode: false,
+    })
+  })
+
+  it("never writes the push key back: it is the deploy's, and read only", () => {
+    const patch = formToPatch(form())
+    expect(patch).not.toHaveProperty("push")
+    expect(patch).not.toHaveProperty("email_provider")
+  })
+
+  it("takes the hold window in hours, defaulting to the server's 48", () => {
+    expect(recordToForm({ ...DEMO_SETTINGS_RECORD, holds: undefined }).holdHours).toBe("48")
+    expect(formToPatch({ ...form(), holdHours: "72" }).holds).toEqual({ hours: 72 })
+  })
+
+  it("says what to do about a hold window that is not a number of hours", () => {
+    expect(validateSettings({ ...form(), holdHours: "nought" }).holdHours).toBe(
+      "Enter the number of hours a hold lasts, for example 48."
+    )
+    expect(validateSettings({ ...form(), holdHours: "0" }).holdHours).toContain(
+      "for example 48."
+    )
+  })
+})

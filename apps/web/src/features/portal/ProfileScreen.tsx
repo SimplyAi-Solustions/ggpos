@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/sheet"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
-import { deleteMyAccount, downloadMyData, getMe, getPushConfig, updateMe } from "@/lib/api/portal"
+import { deleteMyAccount, downloadMyData, getMe, updateMe } from "@/lib/api/portal"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { disablePush, enablePush, pushState, type PushState } from "@/lib/push"
 import { ID_STATUS_SENTENCE, MONTHS } from "@/features/portal/format"
@@ -69,11 +69,6 @@ export function ProfileScreen() {
     error: readError,
     refetch,
   } = useQuery({ queryKey: ["portal", "me"], queryFn: getMe })
-  const { data: push } = useQuery({
-    queryKey: ["portal", "push-config"],
-    queryFn: getPushConfig,
-    staleTime: 10 * 60_000,
-  })
 
   const [name, setName] = React.useState("")
   const [phone, setPhone] = React.useState("")
@@ -112,7 +107,9 @@ export function ProfileScreen() {
     setPushWanted(me.customer.notifications?.push ?? true)
   }, [me])
 
-  const vapid = push?.vapid_public_key ?? ""
+  // The public VAPID key comes back on `/me`: `GET /api/vault/config` is
+  // staff-only, so a customer token asking it would only ever get a 403.
+  const vapid = me?.push?.vapid_public_key ?? ""
   React.useEffect(() => {
     let cancelled = false
     void pushState(vapid).then((next) => {

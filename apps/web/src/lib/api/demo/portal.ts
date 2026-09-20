@@ -180,6 +180,10 @@ export function demoMe(): VaultMe {
       ).length,
       want_list: demoMyWants().length,
     },
+    // No key in the demo shop, which is what an install that has not set
+    // push up looks like: the Profile screen says so rather than offering a
+    // switch that could never work.
+    push: { vapid_public_key: "" },
   }
 }
 

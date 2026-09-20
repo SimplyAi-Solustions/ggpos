@@ -74,6 +74,10 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 
 const MAX_MESSAGE = 2000
 
+/** The same treatment every other screen gives a blocked block button. */
+const BLOCKED =
+  "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
+
 /** One line of an offer that has already gone out. */
 function OfferedLine({
   title,
@@ -628,6 +632,7 @@ export function QuotePage({ id }: { id: string }) {
             <Button
               type="button"
               trailingArrow
+              className={BLOCKED}
               loading={cancel.isPending}
               disabled={reason.trim().length === 0}
               onClick={() => cancel.mutate()}

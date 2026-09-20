@@ -28,7 +28,6 @@ import {
 import type {
   CardLanding,
   CreditLedgerRecord,
-  PushConfig,
   TradeInLineRecord,
   TradeInRecord,
   VaultMe,
@@ -154,21 +153,6 @@ export async function getCardLanding(token: string): Promise<CardLanding> {
     method: "GET",
   })
   return { known: true }
-}
-
-/** The VAPID key, from the public half of `GET /api/vault/config`. */
-export async function getPushConfig(): Promise<PushConfig> {
-  if (isDemo()) return { vapid_public_key: "" }
-  try {
-    const config = await pbCustomer.send<{ push?: PushConfig }>(
-      "/api/vault/config",
-      { method: "GET" }
-    )
-    return config.push ?? { vapid_public_key: "" }
-  } catch {
-    // A shop that has not set push up is not an error worth a screen.
-    return { vapid_public_key: "" }
-  }
 }
 
 // ---------------------------------------------------------------------------

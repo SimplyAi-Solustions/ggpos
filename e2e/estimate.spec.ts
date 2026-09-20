@@ -11,6 +11,18 @@ import { expect, test, type Page } from "@playwright/test"
 const DEMO_EMAIL = "jasmine.okafor@example.co.uk"
 const DEMO_CODE = "48213976"
 
+/**
+ * No service worker for these specs.
+ *
+ * The built app registers one, and with two workers hitting a single
+ * `vite preview` a navigation served out of its precache occasionally comes
+ * back as an error page (`ERR_HTTP_RESPONSE_CODE_FAILURE`) when the entry it
+ * holds was written by an earlier build. Nothing here tests the worker, so
+ * it is blocked rather than raced: the push handler has its own unit-level
+ * coverage and is exercised by hand.
+ */
+test.use({ serviceWorkers: "block" })
+
 async function pickCharizard(page: Page) {
   await page.getByLabel("Card").fill("Charizard")
   await page.getByRole("option", { name: /Charizard ex/ }).click()
