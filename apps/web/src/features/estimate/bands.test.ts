@@ -27,11 +27,28 @@ describe("formatBand", () => {
 describe("bandIsEmpty", () => {
   it("is true when there is nothing to show", () => {
     expect(bandIsEmpty(null)).toBe(true)
+    expect(bandIsEmpty(undefined)).toBe(true)
     expect(bandIsEmpty({ low: 0, high: 0 })).toBe(true)
+  })
+
+  it("is true for the null band an unpriced card comes back with", () => {
+    expect(bandIsEmpty({ low: null, high: null })).toBe(true)
   })
 
   it("is false as soon as either end is worth something", () => {
     expect(bandIsEmpty({ low: 0, high: 25 })).toBe(false)
+    expect(bandIsEmpty({ low: null, high: 25 })).toBe(false)
+  })
+})
+
+describe("formatBand on a band with a null end", () => {
+  it("shows nothing at all for a band with no figures in it", () => {
+    expect(formatBand({ low: null, high: null })).toBe("")
+  })
+
+  it("shows the one end it has rather than inventing the other", () => {
+    expect(formatBand({ low: null, high: 1500 })).toBe("£15.00")
+    expect(formatBand({ low: 1200, high: null })).toBe("£12.00")
   })
 })
 

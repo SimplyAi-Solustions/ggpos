@@ -35,12 +35,51 @@ describe("quoteTimeline", () => {
     expect(current?.detail).toBe("This offer holds until 27 Sep 2026.")
   })
 
-  it("stops the path at declined rather than carrying on past it", () => {
-    const result = steps("declined")
-    expect(result.at(-1)).toMatchObject({ label: "Declined", state: "stopped" })
+  it("stops the path when a quote closes, rather than carrying on past it", () => {
+    const result = steps("declined", { offer_total: 4200 })
+    expect(result.at(-1)).toMatchObject({ label: "Closed", state: "stopped" })
     expect(result.some((step) => step.label === "Paid" && step.state === "done")).toBe(
       false
     )
+  })
+
+  it("does not claim an offer was made when a quote closed before one", () => {
+    // The shop can cancel a quote from `submitted` with a note, which the
+    // server also records as `declined`. Drawing "Offer made" as done there
+    // would be a history that did not happen.
+    const result = steps("declined")
+    expect(result.some((step) => step.label === "Offer made")).toBe(false)
+    expect(result.map((step) => step.label)).toEqual([
+      "Sent",
+      "Being looked at",
+      "Closed",
+    ])
+    expect(result.at(-1)).toMatchObject({ label: "Closed", state: "stopped" })
+  })
+
+  it("counts an offer with no total but an expiry as having been made", () => {
+    const result = steps("declined", { offer_expires_at: "2026-09-27T12:00:00Z" })
+    expect(result.find((step) => step.label === "Offer made")?.state).toBe("done")
+  })
+
+  it("words a closed quote for either side, and says what to do next", () => {
+    expect(steps("declined").at(-1)!.detail).toBe(
+      "This quote was closed. Send new photos any time."
+    )
+  })
+
+  it("marks the items as received and waits on payment", () => {
+    const result = steps("received")
+    const current = result.find((step) => step.state === "current")
+    expect(current?.label).toBe("Items received")
+    expect(current?.detail).toContain("Payment follows")
+    expect(result.find((step) => step.label === "Accepted")?.state).toBe("done")
+  })
+
+  it("asks for an answer on an offer with no expiry rather than a date", () => {
+    const result = steps("offered")
+    const current = result.find((step) => step.state === "current")
+    expect(current?.detail).toBe("Accept or decline below.")
   })
 
   it("says when an expired offer ran out, and what to do next", () => {

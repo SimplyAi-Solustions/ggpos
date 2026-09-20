@@ -81,17 +81,20 @@ Then build and start the stack:
 docker compose up -d --build
 ```
 
-The first build takes a few minutes (it compiles the PocketBase image
-and the pricesync image). Check both containers came up:
+The first build takes a few minutes (it compiles the PocketBase image,
+the pricesync image and the notify image). Check all three containers
+came up:
 
 ```bash
 docker compose ps
 ```
 
-`pocketbase` should show as `running` (and, after about 15-45 seconds,
-`healthy`). `pricesync` is expected to show as `Exited (0)` - it is a
-run-once script, not a server; see the comment in `docker-compose.yml`
-if that looks surprising.
+`pocketbase` and `notify` should both show as `running` (`pocketbase`
+also `healthy` after about 15-45 seconds; `notify` has no healthcheck of
+its own - "running" is enough, see "Push notifications" below for how to
+confirm it is actually sending anything). `pricesync` is expected to show
+as `Exited (0)` - it is a run-once script, not a server; see the comment
+in `docker-compose.yml` if that looks surprising.
 
 ## 4. Creating the superuser
 
@@ -363,6 +366,7 @@ looks exactly like the shop's own and saves nothing.
 
 ```bash
 docker compose logs -f pocketbase   # the app and API
+docker compose logs -f notify       # the push sidecar - a persistent container, so `docker compose logs` works for it the normal way
 tail -f deploy/logs/pricesync.log   # the nightly price sync's own log (see "pricesync configuration")
 tail -f deploy/logs/backup.log      # the nightly backup's own log
 ```
@@ -465,3 +469,8 @@ that supports "install as app":
       1789819980_batch_api_settings.js` turns this on for you as part of
       the schema migrations, so this is a check, not a step; see
       "pricesync configuration" above
+- [ ] VAPID keys are generated, the private key and subject are in `.env`,
+      the public key is in `settings.push.vapid_public_key`, and
+      `docker compose logs notify` shows a pass completing rather than a
+      missing-environment-variable error - see "Push notifications
+      (the notify service)" above

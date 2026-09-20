@@ -5,16 +5,19 @@
 # correctly:
 #   docker compose up -d --build
 #
-# Two services:
+# Three services:
 #   pocketbase - the app itself: the PocketBase API, its realtime
 #                websocket/SSE endpoints, and the built React PWA served
 #                straight out of pb_public.
 #   pricesync  - a Node script that streams the nightly Cardmarket and
 #                TCGCSV price files into PocketBase, then exits. See the
 #                comment on that service below for how it is scheduled.
+#   notify     - a small, persistent Node sidecar that sends Web Push for
+#                notifications rows PocketBase has not pushed yet. See the
+#                comment on that service below.
 #
-# Both read their secrets and settings from .env - copy .env.example to
-# .env and fill it in before the first `docker compose up` (see
+# All three read their secrets and settings from .env - copy .env.example
+# to .env and fill it in before the first `docker compose up` (see
 # deploy/README.md).
 
 name: ggvault
@@ -133,6 +136,32 @@ services:
     # restart it after it exits", not "don't start it". That is harmless:
     # the price upsert is idempotent, so an extra run at deploy time just
     # means slightly fresher prices, never duplicate or corrupted data.
+
+  notify:
+    build:
+      context: ../services/notify
+    image: ggvault-notify
+    container_name: ggvault-notify
+    # Unlike pricesync, this is a long-running process: services/notify's
+    # own src/index.mjs polls PocketBase every 60 seconds for the life of
+    # the container, rather than running once and exiting - so, unlike
+    # pricesync, it is restarted after a crash or a host reboot the same
+    # way pocketbase itself is, and there is no cron line for it in
+    # deploy/README.md.
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Internal address on the ggvault network, always port 8090 - the
+      # same fixed-on-purpose value pricesync's own PB_URL uses above, for
+      # the same reason (only ever this value while both containers share
+      # this one compose file).
+      PB_URL: http://pocketbase:8090
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    networks:
+      - ggvault
 
 networks:
   ggvault:
