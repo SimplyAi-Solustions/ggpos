@@ -4,10 +4,13 @@ import {
   evaluateSalePoints,
   evaluateTradeInPoints,
   parseTierPerk,
+  perkAllowance,
   penceToPoints,
   pointsToNextTier,
   pointsToPence,
+  resolveTier,
   tierForPoints,
+  tierWindowPoints,
   type LoyaltyProgramme,
   type LoyaltyRule,
   type LoyaltyTier,
@@ -210,5 +213,77 @@ describe("tiers", () => {
     expect(tierForPoints(tiers, 20000)?.name).toBe("Legend")
     expect(pointsToNextTier(tiers, 2000)).toEqual({ tier: tiers[1], points: 500 })
     expect(pointsToNextTier(tiers, 20000)).toBeNull()
+  })
+})
+
+describe("tierWindowPoints", () => {
+  const now = new Date("2026-09-20T12:00:00Z")
+  const row = (delta: number, reason: string, created: string) => ({ delta, reason, created })
+
+  it("counts only rows inside the window, at a calendar-month boundary", () => {
+    // 12 calendar months back from 20 Sep 2026 is 20 Sep 2025: that instant
+    // counts, a second before it does not.
+    const rows = [
+      row(100, "earn_sale", "2025-09-20T12:00:00Z"),
+      row(50, "earn_sale", "2025-09-20T11:59:59Z"),
+    ]
+    expect(tierWindowPoints(rows, now, 12)).toBe(100)
+  })
+  it("reads PocketBase's own stored date form as well as ISO", () => {
+    expect(tierWindowPoints([row(100, "earn_sale", "2026-09-19 08:00:00.000Z")], now, 12)).toBe(100)
+    expect(tierWindowPoints([row(100, "earn_sale", "2024-01-05 09:00:00.000Z")], now, 12)).toBe(0)
+  })
+  it("excludes redeem and expire, counts a negative adjust and a refund reversal", () => {
+    const rows = [
+      row(3000, "earn_sale", "2026-09-01T10:00:00Z"),
+      row(-1000, "redeem", "2026-09-02T10:00:00Z"),
+      row(-500, "expire", "2026-09-03T10:00:00Z"),
+      row(-200, "adjust", "2026-09-04T10:00:00Z"),
+      row(-300, "refund_reverse", "2026-09-05T10:00:00Z"),
+    ]
+    expect(tierWindowPoints(rows, now, 12)).toBe(2500)
+  })
+  it("counts everything when the window is 0 (all time)", () => {
+    const rows = [
+      row(100, "earn_sale", "2019-01-01T00:00:00Z"),
+      row(-40, "redeem", "2019-01-02T00:00:00Z"),
+    ]
+    expect(tierWindowPoints(rows, now, 0)).toBe(100)
+  })
+  it("skips a row with an unreadable date rather than counting it", () => {
+    expect(tierWindowPoints([row(100, "earn_sale", "not a date")], now, 12)).toBe(0)
+    expect(tierWindowPoints([], now, 12)).toBe(0)
+  })
+})
+
+describe("perkAllowance", () => {
+  it("reads the tier's own monthly allowance, 0 when it has none", () => {
+    const legend: LoyaltyTier = {
+      id: "l",
+      name: "Legend",
+      thresholdPoints: 10000,
+      sort: 2,
+      perks: [
+        { type: "free_event_entries", value: 2, perMonth: true },
+        { type: "lounge_hours", value: 12, perMonth: true },
+      ],
+      paidPlan: false,
+    }
+    expect(perkAllowance(legend, "free_event_entries")).toBe(2)
+    expect(perkAllowance(legend, "lounge_hours")).toBe(12)
+    expect(perkAllowance(tiers[0] ?? null, "free_event_entries")).toBe(0)
+    expect(perkAllowance(null, "lounge_hours")).toBe(0)
+  })
+})
+
+describe("resolveTier", () => {
+  it("pins the membership's tier over the earned one, both ways", () => {
+    expect(resolveTier(tiers, 0, "pass")?.name).toBe("Guild Pass")
+    expect(resolveTier(tiers, 20000, "pass")?.name).toBe("Guild Pass")
+    expect(resolveTier(tiers, 20000, null)?.name).toBe("Legend")
+    expect(resolveTier(tiers, 2600, null)?.name).toBe("Regular")
+  })
+  it("falls back to the earned tier when the pinned one no longer exists", () => {
+    expect(resolveTier(tiers, 2600, "deleted-tier-id")?.name).toBe("Regular")
   })
 })

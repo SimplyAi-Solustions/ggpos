@@ -10,6 +10,9 @@ exports.penceToPoints = penceToPoints;
 exports.checkPointsRedemption = checkPointsRedemption;
 exports.tierForPoints = tierForPoints;
 exports.pointsToNextTier = pointsToNextTier;
+exports.tierWindowPoints = tierWindowPoints;
+exports.perkAllowance = perkAllowance;
+exports.resolveTier = resolveTier;
 /**
  * GG Guild loyalty evaluator. Pure functions so the admin preview in the app and
  * the PocketBase hook produce the same points for the same sale.
@@ -184,4 +187,79 @@ function pointsToNextTier(tiers, windowPoints) {
         .filter((t) => !t.paidPlan && t.thresholdPoints > windowPoints)
         .sort((a, b) => a.thresholdPoints - b.thresholdPoints)[0];
     return next ? { tier: next, points: next.thresholdPoints - windowPoints } : null;
+}
+/** Reasons that never count towards a tier: spending points must not cost a tier. */
+const TIER_WINDOW_EXCLUDED_REASONS = ["redeem", "expire"];
+/**
+ * PocketBase stores a date as "2026-09-20 12:00:00.000Z" (a space, not the
+ * ISO "T"), which not every JS engine parses. Normalising the separator
+ * first means the same row reads the same in the browser, in Vitest and in
+ * goja.
+ */
+function parseLedgerDate(value) {
+    if (!value)
+        return null;
+    const parsed = new Date(String(value).trim().replace(" ", "T"));
+    return isNaN(parsed.getTime()) ? null : parsed;
+}
+/** `at` minus `months` calendar months, clamped to the end of the target month. */
+function monthsBefore(at, months) {
+    const d = new Date(at.getTime());
+    const day = d.getUTCDate();
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - months);
+    const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+    d.setUTCDate(Math.min(day, lastDay));
+    return d;
+}
+/**
+ * Points counted towards a tier: every ledger row created inside the last
+ * `windowMonths` calendar months, except the rows that only ever move points
+ * out again (`redeem`, `expire`). Spending points, or letting them expire,
+ * never costs a tier; a `refund_reverse` or a negative `adjust` does count
+ * against it, because both undo something that earned the tier in the first
+ * place. `windowMonths` of 0 (or less) means all time.
+ */
+function tierWindowPoints(rows, now, windowMonths) {
+    const start = windowMonths > 0 ? monthsBefore(now, windowMonths) : null;
+    let total = 0;
+    for (const row of rows || []) {
+        if (!row)
+            continue;
+        if (TIER_WINDOW_EXCLUDED_REASONS.indexOf(row.reason) >= 0)
+            continue;
+        if (start) {
+            const at = parseLedgerDate(row.created);
+            if (!at || at.getTime() < start.getTime())
+                continue;
+        }
+        total += Math.round(row.delta || 0);
+    }
+    return total;
+}
+/** A tier's monthly allowance for a counted perk, 0 when the tier has none. */
+function perkAllowance(tier, type) {
+    if (!tier)
+        return 0;
+    for (const perk of tier.perks || []) {
+        if (perk && perk.type === type)
+            return perk.value || 0;
+    }
+    return 0;
+}
+/**
+ * The tier a customer is actually on: a paid plan pins it for as long as the
+ * membership is active, whatever the window says; otherwise it is earned from
+ * the window's own points.
+ *
+ * An `activeMembershipTierId` naming a tier that no longer exists falls back
+ * to the earned tier rather than leaving the customer with none.
+ */
+function resolveTier(tiers, windowPoints, activeMembershipTierId) {
+    if (activeMembershipTierId) {
+        const pinned = (tiers || []).find((t) => t && t.id === activeMembershipTierId);
+        if (pinned)
+            return pinned;
+    }
+    return tierForPoints(tiers, windowPoints);
 }

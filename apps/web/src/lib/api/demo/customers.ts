@@ -279,6 +279,8 @@ const DEMO_TIER_NAMES: Record<string, string> = {
   tier_member: "Member",
   tier_regular: "Regular",
   tier_legend: "Legend",
+  // The paid plan the Phase 6 demo records a membership against.
+  tier_guild_pass: "Guild Pass",
 }
 
 export function demoCreateCustomer(input: NewCustomerInput): CustomerRecord {

@@ -11,6 +11,7 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { StickerRing } from "@/components/ui/sticker"
 import { GuildCardFront } from "@/features/customers/GuildCard"
 import { getMe } from "@/lib/api/portal"
+import { LoadFailed } from "@/features/portal/LoadFailed"
 
 /**
  * My card: the thing a customer opens at the counter.
@@ -105,7 +106,7 @@ function Figure({
 
 export function CardScreen() {
   const install = useInstallPrompt()
-  const { data: me, isPending } = useQuery({
+  const { data: me, isPending, error, refetch } = useQuery({
     queryKey: ["portal", "me"],
     queryFn: getMe,
   })
@@ -120,13 +121,12 @@ export function CardScreen() {
 
   if (!me) {
     return (
-      <section className="pt-12 sm:pt-20">
-        <PageTitle>My card</PageTitle>
-        <p className="mt-4 max-w-[56ch] text-base leading-[1.5] text-muted-foreground">
-          We could not read your card just now. Check your connection and
-          reload the page.
-        </p>
-      </section>
+      <LoadFailed
+        title="My card"
+        error={error}
+        fallback="We could not read your card just now. Check your connection and try again."
+        onRetry={() => void refetch()}
+      />
     )
   }
 
@@ -168,6 +168,16 @@ export function CardScreen() {
           value={formatGBP(me.balances.credit)}
           testId="portal-credit"
         />
+      </div>
+
+      {/* What the points are for, one tap from the figure itself. */}
+      <div className="mt-8 flex flex-wrap items-center gap-x-10 gap-y-6">
+        <Button variant="text" render={<Link to="/account/guild" />}>
+          Guild
+        </Button>
+        <Button variant="text" render={<Link to="/account/rewards" />}>
+          Rewards
+        </Button>
       </div>
 
       {install.available ? (

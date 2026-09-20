@@ -12,6 +12,11 @@ import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
 import {
+  demoRecordReferral,
+  demoResolveReferral,
+  demoWelcomeBonus,
+} from "@/lib/api/demo/loyalty"
+import {
   demoCreateCustomer,
   demoCreditLedgerFor,
   demoEraseCustomer,
@@ -271,7 +276,16 @@ export async function findCustomerByScan(
 
 /** The server assigns `code` and `qr_token` in pb_hooks/customers.pb.js. */
 export async function createCustomer(input: NewCustomerInput): Promise<CustomerRecord> {
-  if (isDemo()) return demoCreateCustomer(input)
+  if (isDemo()) {
+    // The code is resolved before the card is made, so a code that belongs
+    // to nobody refuses the whole thing rather than leaving a customer with
+    // a referral that was never recorded.
+    const referrer = input.referredBy ? demoResolveReferral(input.referredBy) : null
+    const record = demoCreateCustomer(input)
+    if (referrer) demoRecordReferral(referrer, record.id)
+    demoWelcomeBonus(record.id)
+    return record
+  }
 
   return pb.collection("customers").create<CustomerRecord>({
     name: input.name.trim(),
@@ -279,6 +293,9 @@ export async function createCustomer(input: NewCustomerInput): Promise<CustomerR
     email: input.email?.trim() || undefined,
     marketing_consent: input.marketingConsent ?? false,
     source: "counter",
+    // A code, not an id: the create hook resolves it, refuses one that
+    // belongs to nobody, and writes the pending referral row.
+    referred_by: input.referredBy ? normaliseCode(input.referredBy) : undefined,
   })
 }
 

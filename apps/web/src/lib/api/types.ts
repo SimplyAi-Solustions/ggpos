@@ -257,6 +257,12 @@ export interface NewCustomerInput {
   phone?: string
   email?: string
   marketingConsent?: boolean
+  /**
+   * The customer code of whoever sent them in, `GGC-4K7M2`. The server
+   * resolves it, refuses one that is not a customer, and writes the
+   * pending `referrals` row; it can only ever be set at creation.
+   */
+  referredBy?: string
 }
 
 export interface CustomerPatch {
@@ -1018,6 +1024,12 @@ export interface VaultSettingsRow {
   push?: { vapid_public_key?: string }
   /** How long a want-list hold stands. `{ hours: 48 }` by default. */
   holds?: { hours?: number }
+  /**
+   * The customer-facing display: whether the counter publishes to it at
+   * all, the ticker it scrolls while it is idle, and where its sign-up QR
+   * points. Not a key and not a secret, so the config route serves it.
+   */
+  display?: { enabled?: boolean; ticker?: string; signup_url?: string }
   /** The importers' header-name mappings, seeded by the Phase 4 migration. */
   import_mappings?: Record<string, { headerRow?: number; columns?: Record<string, string[]> }>
 }
@@ -1908,4 +1920,263 @@ export interface VaultTradeInDetail extends VaultTradeIn {
 /** `GET /api/vault/config`'s push block, empty until deploy sets a key. */
 export interface PushConfig {
   vapid_public_key: string
+}
+
+// ---------------------------------------------------------------------------
+// Loyalty, vouchers, memberships and the customer display (Phase 6)
+//
+// Field names read off pb/pb_migrations/1789819500_loyalty_collections.js;
+// route shapes off the Phase 6 route list (the loyalty admin screen, the
+// perks wallet, memberships, adjustments, vouchers and `display_state`).
+// Money is integer GBP pence, points are integers, dates are ISO.
+// ---------------------------------------------------------------------------
+
+/** `loyalty_programme`, the one record an admin edits. */
+export interface LoyaltyProgrammeRecord extends LoyaltyProgrammeRow {
+  id: string
+  name?: string
+  points_name?: string
+  terms?: string
+}
+
+/** `loyalty_rules`, as the admin editor reads and writes one. */
+export interface LoyaltyRuleRecord extends LoyaltyRuleRow {
+  created?: string
+  updated?: string
+}
+
+/** A rule on its way to the collection API. No id means a new row. */
+export interface LoyaltyRuleWrite {
+  id?: string
+  name: string
+  type: string
+  conditions: Record<string, unknown>
+  value: number
+  active: boolean
+  priority: number
+  starts_at: string
+  ends_at: string
+}
+
+/** `loyalty_tiers`, as the admin editor reads and writes one. */
+export interface LoyaltyTierRecord extends LoyaltyTierRow {
+  colour_token?: string
+}
+
+export interface LoyaltyTierWrite {
+  id?: string
+  name: string
+  threshold_points: number
+  sort: number
+  perks: unknown[]
+  paid_plan: boolean
+}
+
+export type RewardType = RewardVoucher["type"]
+
+/** `loyalty_rewards`. `value` is pence for money_off and store_credit. */
+export interface LoyaltyRewardRecord {
+  id: string
+  name: string
+  description?: string
+  cost_points?: number
+  type: RewardType
+  value?: number
+  stock_limit?: number
+  per_customer_limit?: number
+  active?: boolean
+  starts_at?: string
+  ends_at?: string
+  /** The stored filename; `imageUrl` is what a screen renders. */
+  image?: string
+  imageUrl?: string
+}
+
+export interface LoyaltyRewardWrite {
+  id?: string
+  name: string
+  description: string
+  cost_points: number
+  type: RewardType
+  value: number
+  stock_limit: number
+  per_customer_limit: number
+  active: boolean
+  starts_at: string
+  ends_at: string
+  /** A picked file, or null to leave the stored image alone. */
+  image?: File | null
+}
+
+export type MembershipStatus = "active" | "lapsed" | "cancelled"
+
+/** `memberships`, with the customer and tier joined for the list. */
+export interface MembershipRecord {
+  id: string
+  customer: string
+  customerName: string
+  customerCode: string
+  tier: string
+  tierName: string
+  status: MembershipStatus
+  started_at: string
+  renews_at: string
+  /** Integer GBP pence. */
+  price: number
+  payment_note: string
+}
+
+/** `POST /api/vault/memberships`. */
+export interface MembershipInput {
+  customer: string
+  tier: string
+  months: number
+  /** Integer GBP pence. */
+  price: number
+  payment_note?: string
+}
+
+/** `POST /api/vault/memberships/:id/renew`. */
+export interface MembershipRenewal {
+  months: number
+  price: number
+  payment_note?: string
+}
+
+/** The two perks with a monthly allowance, and the four informational ones. */
+export type CountedPerkType = "free_event_entries" | "lounge_hours"
+
+/**
+ * One entry of the wallet `GET /api/vault/customers/:id/perks` answers. The
+ * counted perks carry `allowed`, `used` and the `YYYY-MM` period; the rest
+ * are informational and carry only what they are worth.
+ */
+export interface PerkWalletEntry {
+  type: TierPerk["type"]
+  value?: number
+  scope?: string[]
+  allowed?: number
+  used?: number
+  period?: string
+}
+
+/** One `points_ledger` row, with the sentence the counter shows for it. */
+export interface PointsLedgerRow {
+  id: string
+  delta: number
+  reason: string
+  balance_after: number
+  created: string
+  ref?: string
+  note?: string
+}
+
+/** A referral as the profile counts them. */
+export interface ReferralSummary {
+  /** The customer who referred this one, if any. */
+  referredBy: { id: string; name: string; code: string } | null
+  earned: number
+  pending: number
+}
+
+/** Everything the Guild section of a customer profile shows. */
+export interface CustomerGuild {
+  tier: { id: string; name: string } | null
+  /** Points earned inside the programme's rolling tier window. */
+  windowPoints: number
+  pointsBalance: number
+  next: { name: string; points: number } | null
+  perks: PerkWalletEntry[]
+  membership: MembershipRecord | null
+  referral: ReferralSummary
+  vouchers: VoucherSummary[]
+}
+
+export type VoucherStatus = "issued" | "used" | "expired" | "cancelled"
+
+/** A `reward_redemptions` row as the counter lists one. */
+export interface VoucherSummary {
+  id: string
+  code: string
+  number: string
+  status: VoucherStatus
+  rewardName: string
+  type: RewardType
+  /** Pence for money_off and store_credit; otherwise not money. */
+  value: number
+  expiresAt: string | null
+  created: string
+}
+
+/** `GET /api/vault/vouchers/:code`: the voucher and whose it is. */
+export interface VoucherDetail extends VoucherSummary {
+  customer: { id: string; code: string; name: string }
+}
+
+/** `POST /api/vault/loyalty/adjust` (admin, step-up). */
+export interface PointsAdjustment {
+  customer: string
+  delta: number
+  reason: string
+}
+
+// ---- The customer display -------------------------------------------------
+
+export type DisplayMode = "idle" | "sale" | "buy_in"
+
+/** One basket line as the display shows it. Never an item id or a SKU. */
+export interface DisplaySaleLine {
+  title: string
+  detail: string
+  qty: number
+  unit_price: number
+  image_url?: string
+}
+
+export interface DisplaySalePayload {
+  lines: DisplaySaleLine[]
+  subtotal: number
+  discount: number
+  discount_label?: string
+  total: number
+  points_to_earn: number
+  customer_name?: string
+}
+
+export interface DisplayBuyInLine {
+  title: string
+  detail: string
+  qty: number
+  offer_price: number
+  image_url?: string
+}
+
+export interface DisplayBuyInPayload {
+  lines: DisplayBuyInLine[]
+  total_market: number
+  total_offer: number
+  payout_type: PayoutType
+  customer_name: string
+  credit_bonus_points?: number
+}
+
+export type DisplayPayload =
+  | Record<string, never>
+  | DisplaySalePayload
+  | DisplayBuyInPayload
+
+/** The one `display_state` row, as the kiosk and the wizard read it. */
+export interface DisplayState {
+  mode: DisplayMode
+  payload: DisplayPayload
+  token: string
+  customer_accepted_at: string
+  expires_at: string
+}
+
+/** `settings.display`, as the config route serves it. */
+export interface DisplaySettings {
+  enabled: boolean
+  ticker: string
+  signup_url: string
 }
