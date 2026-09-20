@@ -277,12 +277,14 @@ export const CsvImportsStatusOptions = {
 	"failed": "failed",
 } as const
 export type CsvImportsStatusOptions = typeof CsvImportsStatusOptions[keyof typeof CsvImportsStatusOptions]
-export type CsvImportsRecord<Terrors = unknown> = {
+export type CsvImportsRecord<Terrors = unknown, Tresolved_rows = unknown> = {
 	created: IsoAutoDateString
 	errors?: null | Terrors
 	file?: FileNameString
 	id: string
+	resolved_rows?: null | Tresolved_rows
 	rows_ok?: number
+	rows_skipped?: number
 	rows_total?: number
 	staff?: RecordIdString
 	status?: CsvImportsStatusOptions
@@ -364,6 +366,7 @@ export type DailyStatsRecord<Tbuy_in_total_by_payout = unknown, Tsales_total_by_
 	points_redeemed?: number
 	returning_customers?: number
 	sales_count?: number
+	sales_refunded?: number
 	sales_total_by_payment?: null | Tsales_total_by_payment
 	stock_value_cost?: number
 	stock_value_market?: number
@@ -485,6 +488,7 @@ export type ItemsRecord = {
 	kind: ItemsKindOptions
 	label_printed_at?: IsoDateString
 	language?: string
+	listed_at?: IsoDateString
 	location?: RecordIdString
 	market_at_intake?: number
 	notes?: string
@@ -932,15 +936,24 @@ export const SalesStatusOptions = {
 	"part_refunded": "part_refunded",
 } as const
 export type SalesStatusOptions = typeof SalesStatusOptions[keyof typeof SalesStatusOptions]
+
+export const SalesChannelOptions = {
+	"counter": "counter",
+	"ebay": "ebay",
+} as const
+export type SalesChannelOptions = typeof SalesChannelOptions[keyof typeof SalesChannelOptions]
 export type SalesRecord<Tpayment_split = unknown> = {
 	cash_session?: RecordIdString
+	channel?: SalesChannelOptions
 	client_id?: string
 	created: IsoAutoDateString
 	customer?: RecordIdString
 	discount?: number
 	discount_source?: SalesDiscountSourceOptions
+	external_ref?: string
 	id: string
 	number: string
+	occurred_at?: IsoDateString
 	payment?: SalesPaymentOptions
 	payment_split?: null | Tpayment_split
 	points_earned?: number
@@ -983,7 +996,7 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown> = {
+export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
@@ -996,6 +1009,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	email_provider?: SettingsEmailProviderOptions
 	id: string
 	id_photo_retention_months?: number
+	import_mappings?: null | Timport_mappings
 	label_default_template?: RecordIdString
 	markup_bands?: null | Tmarkup_bands
 	min_single_offer?: number
@@ -1013,6 +1027,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	shop_postcode?: string
 	shop_town?: string
 	source_priority?: null | Tsource_priority
+	sumup?: null | Tsumup
 	updated: IsoAutoDateString
 	vat_registered?: boolean
 }
@@ -1244,7 +1259,7 @@ export type CashMovementsResponse<Texpand = unknown> = Required<CashMovementsRec
 export type CashSessionsResponse<Texpand = unknown> = Required<CashSessionsRecord> & BaseSystemFields<Texpand>
 export type CountersResponse<Texpand = unknown> = Required<CountersRecord> & BaseSystemFields<Texpand>
 export type CreditLedgerResponse<Texpand = unknown> = Required<CreditLedgerRecord> & BaseSystemFields<Texpand>
-export type CsvImportsResponse<Terrors = unknown, Texpand = unknown> = Required<CsvImportsRecord<Terrors>> & BaseSystemFields<Texpand>
+export type CsvImportsResponse<Terrors = unknown, Tresolved_rows = unknown, Texpand = unknown> = Required<CsvImportsRecord<Terrors, Tresolved_rows>> & BaseSystemFields<Texpand>
 export type CustomerPrivateResponse<Texpand = unknown> = Required<CustomerPrivateRecord> & BaseSystemFields<Texpand>
 export type CustomersResponse<Texpand = unknown> = Required<CustomersRecord> & AuthSystemFields<Texpand>
 export type DailyStatsResponse<Tbuy_in_total_by_payout = unknown, Tsales_total_by_payment = unknown, Texpand = unknown> = Required<DailyStatsRecord<Tbuy_in_total_by_payout, Tsales_total_by_payment>> & BaseSystemFields<Texpand>
@@ -1275,7 +1290,7 @@ export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemp
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Temail, Tmarkup_bands, Toffer, Tretro_source_priority, Tsource_priority>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Temail, Timport_mappings, Tmarkup_bands, Toffer, Tretro_source_priority, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
