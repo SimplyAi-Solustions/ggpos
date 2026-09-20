@@ -196,6 +196,22 @@ function fromAdapterCandidate(raw, fxRates, now) {
   };
 }
 
+/**
+ * writeSnapshot, but never throws: an untrusted adapter candidate can carry
+ * a value that fails price_snapshots' own field validation even after
+ * fromAdapterCandidate's checks (an oversized number, for instance) - this
+ * logs and skips that one row rather than failing an entire refresh-prices
+ * batch over it.
+ */
+function writeSnapshotSafely(app, params) {
+  try {
+    return writeSnapshot(app, params);
+  } catch (err) {
+    console.log(`[pricing_policy] could not write a ${params.source || "unknown"} snapshot: ${err}`);
+    return null;
+  }
+}
+
 /** The same snapshot-shaped object as a PriceCandidate, before it is even saved. */
 function snapshotToCandidate(snapshot) {
   return {
@@ -210,7 +226,14 @@ function snapshotToCandidate(snapshot) {
   };
 }
 
-/** The latest fx_rates row as {EUR, USD, date}, or null when there are no rows at all. */
+/**
+ * The latest fx_rates row as {EUR, USD, date}, or null when there are no
+ * rows at all. `date` prefers the row's own `date` column (the ECB rate's
+ * own date, stamped by crons.pb.js's fx cron from Frankfurter's response)
+ * and falls back to `fetched_at` only for a row written before that column
+ * existed - fetch time is wrong at a weekend or a bank holiday, when
+ * Frankfurter keeps serving Friday's rate under today's date.
+ */
 function latestFxRates(app) {
   var rows = [];
   try {
@@ -221,10 +244,11 @@ function latestFxRates(app) {
   if (!rows[0]) return null;
   var util = require(__hooks + "/lib/vaultutil.js");
   var quotes = util.jsonField(rows[0], "quotes", {}) || {};
+  var ownDate = rows[0].getString("date");
   return {
     EUR: quotes.EUR || null,
     USD: quotes.USD || null,
-    date: rows[0].getString("fetched_at").slice(0, 10),
+    date: ownDate || rows[0].getString("fetched_at").slice(0, 10),
   };
 }
 
