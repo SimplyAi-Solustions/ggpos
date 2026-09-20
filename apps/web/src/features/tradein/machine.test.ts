@@ -17,6 +17,7 @@ import {
   toLineInputs,
   totals,
   visibleSteps,
+  type CustomerGateFacts,
   type TradeLine,
   type WizardCustomer,
   type WizardState,
@@ -238,9 +239,9 @@ describe("the cash gate", () => {
 })
 
 describe("the ID gate", () => {
-  const good = {
-    flags: [] as const,
-    idStatus: "verified" as const,
+  const good: CustomerGateFacts = {
+    flags: [],
+    idStatus: "verified",
     idExpiry: "2030-01-01",
     address: "12 Castle Street, Bolsover, S44 6PP",
   }

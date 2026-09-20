@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { PageTitle } from "@/components/ui/page-title"
 import { useCounterDock } from "@/app/counter-dock"
 import { Prog } from "@/features/tradein/Prog"
+import { needsSave, nextSavedShape } from "@/features/tradein/saving"
 import { CustomerStep } from "@/features/tradein/steps/CustomerStep"
 import { DoneStep } from "@/features/tradein/steps/DoneStep"
 import {
@@ -146,9 +147,6 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       : "[]"
   )
 
-  /** Never equal to a real shape, so a failed save is always retried. */
-  const UNSAVED = "\u0000unsaved"
-
   const saveLines = useMutation({
     mutationFn: ({
       id,
@@ -163,11 +161,11 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       // Marked saved only once the server has it. Marking it before the
       // request is what would lose a line: the shape would look current
       // while nothing had been written.
-      savedShape.current = variables.shape
+      savedShape.current = nextSavedShape("saved", variables.shape)
       dispatch({ type: "adopt-line-ids", ids: records.map((record) => record.id) })
     },
     onError: (error) => {
-      savedShape.current = UNSAVED
+      savedShape.current = nextSavedShape("failed", shape)
       setSaveError(
         refusalOrFallback(error, "Those lines did not save. Check the connection.")
       )
@@ -177,8 +175,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   const id = state.tradeInId
   React.useEffect(() => {
     if (!id) return undefined
-    if (shape === savedShape.current) return undefined
-    if (saveLines.isPending) return undefined
+    if (!needsSave(shape, savedShape.current, saveLines.isPending)) return undefined
     const timer = window.setTimeout(
       () => saveLines.mutate({ id, inputs: lineInputs, shape }),
       500
