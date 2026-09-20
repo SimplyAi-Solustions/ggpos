@@ -38,12 +38,8 @@ import type {
   ReportRow,
   SavedReportRecord,
 } from "@/lib/api/types"
-import {
-  busiestSlot,
-  Heatmap,
-  SeriesChart,
-  type ChartDatum,
-} from "@/features/reports/charts"
+import { Heatmap, SeriesChart, type ChartDatum } from "@/features/reports/charts"
+import { busiestSlot } from "@/features/reports/heatmap-summary"
 import { buildCsv, csvFilename, downloadCsv } from "@/features/reports/csv"
 import { DateRangeControl } from "@/features/reports/DateRangeControl"
 import { ReportTable } from "@/features/reports/ReportTable"
@@ -308,6 +304,22 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
     downloadCsv(csvFilename(reportKey, range.from, range.to), text)
   }
 
+  const heatmap = reportKey === "sales" ? (envelope?.totals?.heatmap as number[][]) : undefined
+
+  /**
+   * The hidden sentence for the heatmap. It names the busiest slot and what
+   * was in it: "darkest where most sales were" tells a screen reader
+   * nothing, since it cannot see which cell is darkest.
+   */
+  const heatmapSummary = React.useMemo(() => {
+    if (!heatmap || heatmap.length === 0) return ""
+    const best = busiestSlot(heatmap)
+    const when = formatWhen(range)
+    if (!best) return `No sales by hour and weekday ${when}.`
+    const hour = `${String(best.hour).padStart(2, "0")}:00`
+    return `Sales by hour and weekday ${when}, in shop time. Busiest ${best.day} ${hour}, ${best.count} ${best.count === 1 ? "sale" : "sales"}.`
+  }, [heatmap, range])
+
   const primary = (
     <Button
       className={`w-full min-[900px]:w-auto ${BLOCKED}`}
@@ -336,21 +348,6 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
     )
   }
 
-  const heatmap = reportKey === "sales" ? (envelope?.totals?.heatmap as number[][]) : undefined
-
-  /**
-   * The hidden sentence for the heatmap. It names the busiest slot and what
-   * was in it: "darkest where most sales were" tells a screen reader
-   * nothing, since it cannot see which cell is darkest.
-   */
-  const heatmapSummary = React.useMemo(() => {
-    if (!heatmap || heatmap.length === 0) return ""
-    const best = busiestSlot(heatmap)
-    const when = formatWhen(range)
-    if (!best) return `No sales by hour and weekday ${when}.`
-    const hour = `${String(best.hour).padStart(2, "0")}:00`
-    return `Sales by hour and weekday ${when}, in shop time. Busiest ${best.day} ${hour}, ${best.count} ${best.count === 1 ? "sale" : "sales"}.`
-  }, [heatmap, range])
   const empty = spec.emptyLine.replace("{when}", formatWhen(range))
 
   return (

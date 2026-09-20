@@ -41,6 +41,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import { useReducedMotionGuard } from "@/design/motion"
+import { HEATMAP_WEEKDAYS } from "@/features/reports/heatmap-summary"
 
 /** Which of the five tokens a series is drawn in. */
 export type ChartTone = 1 | 2 | 3 | 4 | 5
@@ -179,7 +180,7 @@ export function SeriesChart({
 // The sales heatmap: hour of day by weekday, for staffing
 // ---------------------------------------------------------------------------
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const WEEKDAYS = HEATMAP_WEEKDAYS
 
 /** Ink at stepped opacities, never a colour ramp. */
 const STEPS = [0, 0.08, 0.2, 0.36, 0.56, 0.82]
@@ -195,21 +196,6 @@ export interface HeatmapProps {
   rows: number[][]
   summary: string
   className?: string
-}
-
-/** The slot with the most sales in it, for the hidden summary. */
-export function busiestSlot(
-  rows: number[][]
-): { day: string; hour: number; count: number } | null {
-  let best: { day: string; hour: number; count: number } | null = null
-  rows.forEach((hours, day) => {
-    hours.forEach((count, hour) => {
-      if (count > 0 && (best === null || count > best.count)) {
-        best = { day: WEEKDAYS[day] ?? "", hour, count }
-      }
-    })
-  })
-  return best
 }
 
 export function Heatmap({ rows, summary, className }: HeatmapProps) {
