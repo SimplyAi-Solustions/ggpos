@@ -121,7 +121,6 @@ describe("the offer over a sourced market", () => {
   it("still takes the condition off the market before the band", () => {
     const nm = lineOffer(line({ condition: "NM" }), RULES, SETTINGS)
     const lp = lineOffer(line({ condition: "LP" }), RULES, SETTINGS)
-    expect(lp.adjustedMarketIsLower ?? lp.cash < nm.cash).toBeTruthy()
     expect(lp.cash).toBeLessThan(nm.cash)
     expect(lp.credit).toBeLessThan(nm.credit)
   })

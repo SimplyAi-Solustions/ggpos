@@ -1,7 +1,7 @@
 import { ClientResponseError } from "pocketbase"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { resetNet } from "@/lib/offline/net"
+import { isOffline, resetNet, setSimulatedOffline } from "@/lib/offline/net"
 import {
   dismissConflict,
   enqueue,
@@ -55,6 +55,14 @@ function refusal(status: number, message: string): ClientResponseError {
 /** A request that never reached anybody. */
 function dropped(): ClientResponseError {
   return new ClientResponseError({ status: 0, response: {}, isAbort: false })
+}
+
+/** The server, saying who are you. */
+function unauthorised(): ClientResponseError {
+  return new ClientResponseError({
+    status: 401,
+    response: { code: 401, message: "The request requires valid record authorization token." },
+  })
 }
 
 describe("the offline queue", () => {
@@ -111,6 +119,39 @@ describe("the offline queue", () => {
     })
 
     expect(report.conflict?.message).toBe("That item is already sold.")
+    expect(queueSnapshot().pending).toHaveLength(0)
+  })
+
+  it("holds everything when the token has gone, without calling it a conflict", async () => {
+    await enqueue(sale("one", "item_1", 100, "2026-09-20T10:01:00.000Z"))
+    await enqueue(sale("two", "item_2", 200, "2026-09-20T10:02:00.000Z"))
+
+    const send = vi.fn(async () => {
+      throw unauthorised()
+    })
+    const report = await replayQueue(send)
+
+    // The server answered, so the line is up: this is a sign-in, not an outage.
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(report.needsAuth).toBe(true)
+    expect(report.offline).toBe(false)
+    expect(report.conflict).toBeNull()
+    expect(isOffline()).toBe(false)
+    expect(queueSnapshot().pending).toHaveLength(2)
+    expect(queueSnapshot().conflicts).toHaveLength(0)
+    expect(queueSnapshot().authNeeded).toBe(true)
+  })
+
+  it("forgets the sign-in once something goes through", async () => {
+    await enqueue(sale("one", "item_1", 100, "2026-09-20T10:01:00.000Z"))
+    await replayQueue(async () => {
+      throw unauthorised()
+    })
+    expect(queueSnapshot().authNeeded).toBe(true)
+
+    await replayQueue(async () => {})
+
+    expect(queueSnapshot().authNeeded).toBe(false)
     expect(queueSnapshot().pending).toHaveLength(0)
   })
 
@@ -189,6 +230,19 @@ describe("the offline queue", () => {
 
     expect(queueSnapshot().conflicts).toHaveLength(0)
     expect(queueSnapshot().pending).toHaveLength(0)
+  })
+
+  it("sends nothing while the demo switch says the line is down", async () => {
+    await enqueue(sale("one", "item_1", 100, "2026-09-20T10:01:00.000Z"))
+    setSimulatedOffline(true)
+
+    const send = vi.fn(async () => {})
+    const report = await replayQueue(send)
+
+    expect(send).not.toHaveBeenCalled()
+    expect(report.offline).toBe(true)
+    expect(queueSnapshot().pending).toHaveLength(1)
+    setSimulatedOffline(false)
   })
 
   it("keeps nothing back when everything goes through", async () => {

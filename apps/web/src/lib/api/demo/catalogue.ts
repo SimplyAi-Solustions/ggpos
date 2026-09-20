@@ -16,7 +16,7 @@
  * keep their ids here, so an item added on Add stock, a buy-in line and a
  * price check all name the same card.
  */
-import { convertMinorToGbpPence, type PriceSource } from "@gg/shared"
+import { convertMinorToGbpPence, roundHalfUp, type PriceSource } from "@gg/shared"
 
 import { cardArt } from "@/kit/placeholder-art"
 import { PLATFORMS } from "@/design/platforms"
@@ -162,7 +162,9 @@ const SEED: SeedRow[] = [
   { subject: "card_sv151_199", finish: "holo", source: "ebay_uk_asking", currency: "GBP", native: 33915, age: 40 },
   { subject: "card_sv151_199", finish: "holo", source: "cardmarket", currency: "EUR", native: 36830, age: 4 },
   { subject: "card_sv151_199", finish: "holo", source: "tcgplayer", currency: "USD", native: 42100, age: 20 },
+  { subject: "card_sv151_199", finish: "normal", source: "ebay_uk_asking", currency: "GBP", native: 27500, age: 40 },
   { subject: "card_sv151_199", finish: "normal", source: "cardmarket", currency: "EUR", native: 29400, age: 6 },
+  { subject: "card_sv151_199", finish: "normal", source: "tcgplayer", currency: "USD", native: 34000, age: 20 },
 
   // Mew ex and Pikachu, so the rest of the demo set prices itself too.
   { subject: "card_sv151_205", finish: "holo", source: "cardmarket", currency: "EUR", native: 7250, age: 5 },
@@ -270,7 +272,7 @@ function view(
     chosen,
     sources,
     condition_adjusted:
-      chosen && multiplier !== null ? Math.floor(chosen.gbp_market * multiplier + 0.5) : null,
+      chosen && multiplier !== null ? roundHalfUp(chosen.gbp_market * multiplier) : null,
   }
 }
 

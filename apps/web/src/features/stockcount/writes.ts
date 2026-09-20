@@ -30,15 +30,18 @@ export function createWriteQueue(write: LineWriter): WriteQueue {
   return {
     push(line) {
       const previous = chains.get(line.itemId)
-      const next = (previous ?? Promise.resolve(line)).then(
-        (settled) =>
-          // The row may have been created by the write before this one, so
-          // the id it came back with wins over the draft id in hand.
-          write(settled.itemId === line.itemId ? { ...line, id: settled.id } : line),
-        // The one before failed. This scan still deserves its attempt, from
-        // the line as the screen has it.
-        () => write(line)
-      )
+      const next = previous
+        ? previous.then(
+            // The row may have been created by the write before this one, so
+            // the id it came back with wins over the draft id in hand.
+            (settled) => write({ ...line, id: settled.id }),
+            // The one before failed. This scan still deserves its attempt,
+            // from the line as the screen has it.
+            () => write(line)
+          )
+        : // Nothing is in flight for this item, so the first scan of it goes
+          // out at once rather than a microtask later.
+          write(line)
       inFlight += 1
       chains.set(
         line.itemId,

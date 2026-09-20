@@ -501,7 +501,12 @@ export function PriceSources({
         </ul>
       )}
 
-      {query.data && query.data.condition_adjusted !== null && subject.condition ? (
+      {/* Only worth saying when the condition actually takes something off. */}
+      {query.data &&
+      query.data.condition_adjusted !== null &&
+      query.data.chosen &&
+      query.data.condition_adjusted !== query.data.chosen.gbp_market &&
+      subject.condition ? (
         <p className="mt-4 text-[13px] leading-[1.45] text-muted-foreground">
           {subject.condition} takes it to{" "}
           <span className="tnum">{formatGBP(query.data.condition_adjusted)}</span>.
