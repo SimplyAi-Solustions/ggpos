@@ -13,8 +13,15 @@ import { Route as IndexRouteImport } from "./routes/index"
 import { Route as AccountRouteImport } from "./routes/account"
 import { Route as CounterRouteImport } from "./routes/counter"
 import { Route as DisplayRouteImport } from "./routes/display"
+import { Route as EstimateRouteImport } from "./routes/estimate"
 import { Route as KitRouteImport } from "./routes/kit"
 import { Route as LoginRouteImport } from "./routes/login"
+import { Route as AccountIndexRouteImport } from "./routes/account.index"
+import { Route as AccountCreditRouteImport } from "./routes/account.credit"
+import { Route as AccountEstimateRouteImport } from "./routes/account.estimate"
+import { Route as AccountMeRouteImport } from "./routes/account.me"
+import { Route as AccountNotificationsRouteImport } from "./routes/account.notifications"
+import { Route as AccountWantsRouteImport } from "./routes/account.wants"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
 import { Route as CounterIndexRouteImport } from "./routes/counter.index"
 import { Route as CounterCashRouteImport } from "./routes/counter.cash"
@@ -24,6 +31,11 @@ import { Route as CounterScanRouteImport } from "./routes/counter.scan"
 import { Route as CounterSellRouteImport } from "./routes/counter.sell"
 import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
+import { Route as AccountQuotesIndexRouteImport } from "./routes/account.quotes.index"
+import { Route as AccountQuotesIdRouteImport } from "./routes/account.quotes.$id"
+import { Route as AccountQuotesNewRouteImport } from "./routes/account.quotes.new"
+import { Route as AccountTradeInsIndexRouteImport } from "./routes/account.trade-ins.index"
+import { Route as AccountTradeInsIdRouteImport } from "./routes/account.trade-ins.$id"
 import { Route as CounterCustomersIndexRouteImport } from "./routes/counter.customers.index"
 import { Route as CounterCustomersNewRouteImport } from "./routes/counter.customers.new"
 import { Route as CounterReportsIndexRouteImport } from "./routes/counter.reports.index"
@@ -60,6 +72,11 @@ const DisplayRoute = DisplayRouteImport.update({
   path: "/display",
   getParentRoute: () => rootRouteImport,
 } as any)
+const EstimateRoute = EstimateRouteImport.update({
+  id: "/estimate",
+  path: "/estimate",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KitRoute = KitRouteImport.update({
   id: "/kit",
   path: "/kit",
@@ -69,6 +86,36 @@ const LoginRoute = LoginRouteImport.update({
   id: "/login",
   path: "/login",
   getParentRoute: () => rootRouteImport,
+} as any)
+const AccountIndexRoute = AccountIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountCreditRoute = AccountCreditRouteImport.update({
+  id: "/credit",
+  path: "/credit",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountEstimateRoute = AccountEstimateRouteImport.update({
+  id: "/estimate",
+  path: "/estimate",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountMeRoute = AccountMeRouteImport.update({
+  id: "/me",
+  path: "/me",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
+  id: "/notifications",
+  path: "/notifications",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountWantsRoute = AccountWantsRouteImport.update({
+  id: "/wants",
+  path: "/wants",
+  getParentRoute: () => AccountRoute,
 } as any)
 const CTokenRoute = CTokenRouteImport.update({
   id: "/c/$token",
@@ -114,6 +161,31 @@ const LabelsPrintRoute = LabelsPrintRouteImport.update({
   id: "/labels/print",
   path: "/labels/print",
   getParentRoute: () => rootRouteImport,
+} as any)
+const AccountQuotesIndexRoute = AccountQuotesIndexRouteImport.update({
+  id: "/quotes/",
+  path: "/quotes/",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountQuotesIdRoute = AccountQuotesIdRouteImport.update({
+  id: "/quotes/$id",
+  path: "/quotes/$id",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountQuotesNewRoute = AccountQuotesNewRouteImport.update({
+  id: "/quotes/new",
+  path: "/quotes/new",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountTradeInsIndexRoute = AccountTradeInsIndexRouteImport.update({
+  id: "/trade-ins/",
+  path: "/trade-ins/",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountTradeInsIdRoute = AccountTradeInsIdRouteImport.update({
+  id: "/trade-ins/$id",
+  path: "/trade-ins/$id",
+  getParentRoute: () => AccountRoute,
 } as any)
 const CounterCustomersIndexRoute = CounterCustomersIndexRouteImport.update({
   id: "/customers/",
@@ -195,11 +267,17 @@ const CounterTradeIdReceiptRoute = CounterTradeIdReceiptRouteImport.update({
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute
-  "/account": typeof AccountRoute
+  "/account": typeof AccountRouteWithChildren
   "/counter": typeof CounterRouteWithChildren
   "/display": typeof DisplayRoute
+  "/estimate": typeof EstimateRoute
   "/kit": typeof KitRoute
   "/login": typeof LoginRoute
+  "/account/credit": typeof AccountCreditRoute
+  "/account/estimate": typeof AccountEstimateRoute
+  "/account/me": typeof AccountMeRoute
+  "/account/notifications": typeof AccountNotificationsRoute
+  "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
@@ -208,12 +286,18 @@ export interface FileRoutesByFullPath {
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
+  "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
+  "/account/quotes/$id": typeof AccountQuotesIdRoute
+  "/account/quotes/new": typeof AccountQuotesNewRoute
+  "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
+  "/account/quotes/": typeof AccountQuotesIndexRoute
+  "/account/trade-ins/": typeof AccountTradeInsIndexRoute
   "/counter/customers/": typeof CounterCustomersIndexRoute
   "/counter/reports/": typeof CounterReportsIndexRoute
   "/counter/stock/": typeof CounterStockIndexRoute
@@ -227,10 +311,15 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute
-  "/account": typeof AccountRoute
   "/display": typeof DisplayRoute
+  "/estimate": typeof EstimateRoute
   "/kit": typeof KitRoute
   "/login": typeof LoginRoute
+  "/account/credit": typeof AccountCreditRoute
+  "/account/estimate": typeof AccountEstimateRoute
+  "/account/me": typeof AccountMeRoute
+  "/account/notifications": typeof AccountNotificationsRoute
+  "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
@@ -239,12 +328,18 @@ export interface FileRoutesByTo {
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
+  "/account": typeof AccountIndexRoute
   "/counter": typeof CounterIndexRoute
+  "/account/quotes/$id": typeof AccountQuotesIdRoute
+  "/account/quotes/new": typeof AccountQuotesNewRoute
+  "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
+  "/account/quotes": typeof AccountQuotesIndexRoute
+  "/account/trade-ins": typeof AccountTradeInsIndexRoute
   "/counter/customers": typeof CounterCustomersIndexRoute
   "/counter/reports": typeof CounterReportsIndexRoute
   "/counter/stock": typeof CounterStockIndexRoute
@@ -259,11 +354,17 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   "/": typeof IndexRoute
-  "/account": typeof AccountRoute
+  "/account": typeof AccountRouteWithChildren
   "/counter": typeof CounterRouteWithChildren
   "/display": typeof DisplayRoute
+  "/estimate": typeof EstimateRoute
   "/kit": typeof KitRoute
   "/login": typeof LoginRoute
+  "/account/credit": typeof AccountCreditRoute
+  "/account/estimate": typeof AccountEstimateRoute
+  "/account/me": typeof AccountMeRoute
+  "/account/notifications": typeof AccountNotificationsRoute
+  "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
@@ -272,12 +373,18 @@ export interface FileRoutesById {
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
+  "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
+  "/account/quotes/$id": typeof AccountQuotesIdRoute
+  "/account/quotes/new": typeof AccountQuotesNewRoute
+  "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
+  "/account/quotes/": typeof AccountQuotesIndexRoute
+  "/account/trade-ins/": typeof AccountTradeInsIndexRoute
   "/counter/customers/": typeof CounterCustomersIndexRoute
   "/counter/reports/": typeof CounterReportsIndexRoute
   "/counter/stock/": typeof CounterStockIndexRoute
@@ -296,8 +403,14 @@ export interface FileRouteTypes {
     | "/account"
     | "/counter"
     | "/display"
+    | "/estimate"
     | "/kit"
     | "/login"
+    | "/account/credit"
+    | "/account/estimate"
+    | "/account/me"
+    | "/account/notifications"
+    | "/account/wants"
     | "/c/$token"
     | "/counter/cash"
     | "/counter/exports"
@@ -306,12 +419,18 @@ export interface FileRouteTypes {
     | "/counter/sell"
     | "/counter/settings"
     | "/labels/print"
+    | "/account/"
     | "/counter/"
+    | "/account/quotes/$id"
+    | "/account/quotes/new"
+    | "/account/trade-ins/$id"
     | "/counter/customers/new"
     | "/counter/reports/$key"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
+    | "/account/quotes/"
+    | "/account/trade-ins/"
     | "/counter/customers/"
     | "/counter/reports/"
     | "/counter/stock/"
@@ -325,10 +444,15 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | "/"
-    | "/account"
     | "/display"
+    | "/estimate"
     | "/kit"
     | "/login"
+    | "/account/credit"
+    | "/account/estimate"
+    | "/account/me"
+    | "/account/notifications"
+    | "/account/wants"
     | "/c/$token"
     | "/counter/cash"
     | "/counter/exports"
@@ -337,12 +461,18 @@ export interface FileRouteTypes {
     | "/counter/sell"
     | "/counter/settings"
     | "/labels/print"
+    | "/account"
     | "/counter"
+    | "/account/quotes/$id"
+    | "/account/quotes/new"
+    | "/account/trade-ins/$id"
     | "/counter/customers/new"
     | "/counter/reports/$key"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
+    | "/account/quotes"
+    | "/account/trade-ins"
     | "/counter/customers"
     | "/counter/reports"
     | "/counter/stock"
@@ -359,8 +489,14 @@ export interface FileRouteTypes {
     | "/account"
     | "/counter"
     | "/display"
+    | "/estimate"
     | "/kit"
     | "/login"
+    | "/account/credit"
+    | "/account/estimate"
+    | "/account/me"
+    | "/account/notifications"
+    | "/account/wants"
     | "/c/$token"
     | "/counter/cash"
     | "/counter/exports"
@@ -369,12 +505,18 @@ export interface FileRouteTypes {
     | "/counter/sell"
     | "/counter/settings"
     | "/labels/print"
+    | "/account/"
     | "/counter/"
+    | "/account/quotes/$id"
+    | "/account/quotes/new"
+    | "/account/trade-ins/$id"
     | "/counter/customers/new"
     | "/counter/reports/$key"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
+    | "/account/quotes/"
+    | "/account/trade-ins/"
     | "/counter/customers/"
     | "/counter/reports/"
     | "/counter/stock/"
@@ -389,9 +531,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AccountRoute: typeof AccountRoute
+  AccountRoute: typeof AccountRouteWithChildren
   CounterRoute: typeof CounterRouteWithChildren
   DisplayRoute: typeof DisplayRoute
+  EstimateRoute: typeof EstimateRoute
   KitRoute: typeof KitRoute
   LoginRoute: typeof LoginRoute
   CTokenRoute: typeof CTokenRoute
@@ -428,6 +571,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof DisplayRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/estimate": {
+      id: "/estimate"
+      path: "/estimate"
+      fullPath: "/estimate"
+      preLoaderRoute: typeof EstimateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/kit": {
       id: "/kit"
       path: "/kit"
@@ -441,6 +591,48 @@ declare module "@tanstack/react-router" {
       fullPath: "/login"
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    "/account/": {
+      id: "/account/"
+      path: "/"
+      fullPath: "/account/"
+      preLoaderRoute: typeof AccountIndexRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/credit": {
+      id: "/account/credit"
+      path: "/credit"
+      fullPath: "/account/credit"
+      preLoaderRoute: typeof AccountCreditRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/estimate": {
+      id: "/account/estimate"
+      path: "/estimate"
+      fullPath: "/account/estimate"
+      preLoaderRoute: typeof AccountEstimateRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/me": {
+      id: "/account/me"
+      path: "/me"
+      fullPath: "/account/me"
+      preLoaderRoute: typeof AccountMeRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/notifications": {
+      id: "/account/notifications"
+      path: "/notifications"
+      fullPath: "/account/notifications"
+      preLoaderRoute: typeof AccountNotificationsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/wants": {
+      id: "/account/wants"
+      path: "/wants"
+      fullPath: "/account/wants"
+      preLoaderRoute: typeof AccountWantsRouteImport
+      parentRoute: typeof AccountRoute
     }
     "/c/$token": {
       id: "/c/$token"
@@ -504,6 +696,41 @@ declare module "@tanstack/react-router" {
       fullPath: "/labels/print"
       preLoaderRoute: typeof LabelsPrintRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    "/account/quotes/": {
+      id: "/account/quotes/"
+      path: "/quotes"
+      fullPath: "/account/quotes/"
+      preLoaderRoute: typeof AccountQuotesIndexRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/quotes/$id": {
+      id: "/account/quotes/$id"
+      path: "/quotes/$id"
+      fullPath: "/account/quotes/$id"
+      preLoaderRoute: typeof AccountQuotesIdRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/quotes/new": {
+      id: "/account/quotes/new"
+      path: "/quotes/new"
+      fullPath: "/account/quotes/new"
+      preLoaderRoute: typeof AccountQuotesNewRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/trade-ins/": {
+      id: "/account/trade-ins/"
+      path: "/trade-ins"
+      fullPath: "/account/trade-ins/"
+      preLoaderRoute: typeof AccountTradeInsIndexRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/trade-ins/$id": {
+      id: "/account/trade-ins/$id"
+      path: "/trade-ins/$id"
+      fullPath: "/account/trade-ins/$id"
+      preLoaderRoute: typeof AccountTradeInsIdRouteImport
+      parentRoute: typeof AccountRoute
     }
     "/counter/customers/": {
       id: "/counter/customers/"
@@ -613,6 +840,37 @@ declare module "@tanstack/react-router" {
   }
 }
 
+interface AccountRouteChildren {
+  AccountCreditRoute: typeof AccountCreditRoute
+  AccountEstimateRoute: typeof AccountEstimateRoute
+  AccountMeRoute: typeof AccountMeRoute
+  AccountNotificationsRoute: typeof AccountNotificationsRoute
+  AccountWantsRoute: typeof AccountWantsRoute
+  AccountIndexRoute: typeof AccountIndexRoute
+  AccountQuotesIdRoute: typeof AccountQuotesIdRoute
+  AccountQuotesNewRoute: typeof AccountQuotesNewRoute
+  AccountTradeInsIdRoute: typeof AccountTradeInsIdRoute
+  AccountQuotesIndexRoute: typeof AccountQuotesIndexRoute
+  AccountTradeInsIndexRoute: typeof AccountTradeInsIndexRoute
+}
+
+const AccountRouteChildren: AccountRouteChildren = {
+  AccountCreditRoute: AccountCreditRoute,
+  AccountEstimateRoute: AccountEstimateRoute,
+  AccountMeRoute: AccountMeRoute,
+  AccountNotificationsRoute: AccountNotificationsRoute,
+  AccountWantsRoute: AccountWantsRoute,
+  AccountIndexRoute: AccountIndexRoute,
+  AccountQuotesIdRoute: AccountQuotesIdRoute,
+  AccountQuotesNewRoute: AccountQuotesNewRoute,
+  AccountTradeInsIdRoute: AccountTradeInsIdRoute,
+  AccountQuotesIndexRoute: AccountQuotesIndexRoute,
+  AccountTradeInsIndexRoute: AccountTradeInsIndexRoute,
+}
+
+const AccountRouteWithChildren =
+  AccountRoute._addFileChildren(AccountRouteChildren)
+
 interface CounterRouteChildren {
   CounterCashRoute: typeof CounterCashRoute
   CounterExportsRoute: typeof CounterExportsRoute
@@ -668,9 +926,10 @@ const CounterRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AccountRoute: AccountRoute,
+  AccountRoute: AccountRouteWithChildren,
   CounterRoute: CounterRouteWithChildren,
   DisplayRoute: DisplayRoute,
+  EstimateRoute: EstimateRoute,
   KitRoute: KitRoute,
   LoginRoute: LoginRoute,
   CTokenRoute: CTokenRoute,

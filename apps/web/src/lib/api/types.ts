@@ -1519,3 +1519,233 @@ export interface SumUpPullResult {
   unmatched: number
   refunded: number
 }
+
+// ---------------------------------------------------------------------------
+// The customer portal, "My Vault" (Phase 5)
+//
+// Shapes read off the Phase 5 route list: every money field is integer GBP
+// pence, every date is ISO. Nothing here is ever fetched with a staff token;
+// the portal talks to PocketBase through `lib/pb-customer.ts`.
+// ---------------------------------------------------------------------------
+
+/** The half of a `customers` record the customer themself may see. */
+export interface VaultMeCustomer {
+  id: string
+  code: string
+  name: string
+  email: string
+  phone: string
+  marketing_consent: boolean
+  birthday_month: number | null
+  qr_token: string
+  created: string
+}
+
+/**
+ * `GET /api/vault/me`, and what `PATCH /api/vault/me` gives back.
+ *
+ * `notifications` is optional because the route list does not name it in the
+ * GET shape while the PATCH body sets it. The Profile screen therefore holds
+ * the two switches locally when the server does not echo them back, so a
+ * customer who turns email off still sees it off after a save.
+ */
+export interface VaultMe {
+  customer: VaultMeCustomer
+  balances: { credit: number; points: number }
+  tier: { id: string; name: string } | null
+  id_status: IdStatus
+  counts: { trade_ins: number; open_quotes: number; want_list: number }
+  notifications?: { email: boolean; push: boolean }
+}
+
+/** The body of `PATCH /api/vault/me`. The email is the sign-in identity. */
+export interface VaultMePatch {
+  name?: string
+  phone?: string
+  marketing_consent?: boolean
+  birthday_month?: number | null
+  notifications?: { email: boolean; push: boolean }
+}
+
+export type QuoteStatus =
+  | "submitted"
+  | "reviewing"
+  | "offered"
+  | "accepted"
+  | "declined"
+  | "received"
+  | "completed"
+  | "expired"
+
+export type QuoteDropOff = "in_store" | "post"
+
+/** One line of a staff offer on a quote. Money is integer GBP pence. */
+export interface QuoteLine {
+  card?: string
+  retro_title?: string
+  title: string
+  condition?: string
+  finish?: string
+  qty: number
+  market_price: number
+  market_source?: string
+  offer_price: number
+}
+
+/** `quotes`. */
+export interface QuoteRecord extends BaseRecord {
+  customer: string
+  number?: string
+  status: QuoteStatus
+  message?: string
+  drop_off?: QuoteDropOff
+  lines?: QuoteLine[]
+  /** The sum of `offer_price` times `qty`, recomputed server-side. */
+  offer_total?: number
+  offer_expires_at?: string
+  reply?: string
+  staff_note?: string
+  photo_count?: number
+  trade_in?: string
+}
+
+export interface QuoteMessage {
+  id: string
+  author: "customer" | "staff"
+  body: string
+  created: string
+}
+
+export interface QuotePhoto {
+  name: string
+  /** Carries a file token, so it is never a shareable link. */
+  url: string
+}
+
+/** `GET /api/vault/quotes/:id`. */
+export interface QuoteDetail {
+  quote: QuoteRecord
+  messages: QuoteMessage[]
+  photos: QuotePhoto[]
+}
+
+/** What the Get a quote screen sends, before it is turned into multipart. */
+export interface NewQuoteInput {
+  photos: Blob[]
+  message: string
+  dropOff: QuoteDropOff
+}
+
+export type WantListStatus = "open" | "matched" | "fulfilled" | "closed"
+
+/** `want_list`. */
+export interface WantListRecord extends BaseRecord {
+  customer: string
+  card?: string
+  free_text?: string
+  /** Integer GBP pence; empty means any price. */
+  max_price?: number
+  status: WantListStatus
+  matched_item?: string
+  notified_at?: string
+}
+
+/** A want-list row with the card and any hold already joined. */
+export interface WantListRow {
+  id: string
+  title: string
+  subtitle: string
+  image?: string
+  maxPrice: number | null
+  status: WantListStatus
+  /** ISO, when an item is being held: `items.reserved_until`. */
+  heldUntil: string | null
+  /** Integer GBP pence, the held item's price. */
+  heldPrice: number | null
+  created: string
+}
+
+/** What the want-list screen sends to `POST /api/vault/want-list`. */
+export interface NewWantInput {
+  cardId?: string
+  freeText?: string
+  /** Integer GBP pence, or null for any price. */
+  maxPrice: number | null
+}
+
+/** One hit from `GET /api/vault/estimate/search?q=`. */
+export interface EstimateCardHit {
+  id: string
+  name: string
+  set: string
+  number: string
+  image?: string
+  finishes?: string[]
+}
+
+/** `GET /api/vault/estimate`. Money is integer GBP pence. */
+export interface EstimateResult {
+  card: { name: string; set: string; number: string; image?: string }
+  market: number | null
+  as_of: string
+  cash: { low: number; high: number }
+  credit: { low: number; high: number }
+  note: string
+}
+
+export type NotificationKind =
+  | "quote_offer"
+  | "quote_expiring"
+  | "quote_expired"
+  | "want_match"
+  | "hold_released"
+  | "trade_in"
+  | "points"
+  | "other"
+
+/** `notifications`, as `GET /api/vault/me/notifications` returns them. */
+export interface NotificationRow {
+  id: string
+  kind: NotificationKind
+  title: string
+  body: string
+  /** An in-app path the notification opens, for example `/account/quotes/x`. */
+  link?: string
+  read_at?: string
+  created: string
+}
+
+/** `GET /api/vault/c/:token` for a signed-out visitor, or for staff. */
+export interface CardLanding {
+  known: boolean
+  /** Staff only: enough to open the customer at the counter. */
+  staff?: { customer_id: string; code: string; name: string }
+}
+
+/** One completed trade-in as My Vault lists it. */
+export interface VaultTradeIn {
+  id: string
+  number: string
+  status: TradeInStatus
+  at: string
+  payoutType: PayoutType | null
+  payoutCash: number
+  payoutCredit: number
+  totalOffer: number
+}
+
+/** A trade-in with the lines the customer sold. */
+export interface VaultTradeInDetail extends VaultTradeIn {
+  lines: {
+    id: string
+    title: string
+    detail: string
+    qty: number
+    offerPrice: number
+  }[]
+}
+
+/** `GET /api/vault/config`'s push block, empty until deploy sets a key. */
+export interface PushConfig {
+  vapid_public_key: string
+}

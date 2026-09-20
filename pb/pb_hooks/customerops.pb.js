@@ -345,14 +345,10 @@ routerAdd(
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
+    const customerops = require(`${__hooks}/lib/customerops.js`);
 
     const staff = util.requireAdmin(e);
     stepup.requireStepUp(e);
-
-    // Rows that are wholly the person's own and go with them. Their
-    // trade-ins, sales and ledgers stay: UK GDPR Article 17(3)(b) keeps the
-    // record the shop is required to hold, with the seller snapshot on it.
-    const DELETED = ["want_list", "notifications", "push_subscriptions", "quotes"];
 
     const customerId = e.request.pathValue("id");
     try {
@@ -375,103 +371,11 @@ routerAdd(
 
     try {
       e.app.runInTransaction((txApp) => {
-        const liveCredit = balances.creditBalance(txApp, customerId);
-        if (liveCredit > 0) {
-          halt = {
-            status: 422,
-            message: `This customer still has ${money.formatGBP(liveCredit)} store credit. Pay it out or write it off first.`,
-          };
+        const outcome = customerops.erase(txApp, customerId);
+        if (!outcome.ok) {
+          halt = { status: outcome.status, message: outcome.message };
           throw new Error(halt.message);
         }
-
-        const removed = {};
-
-        // --- the ID photos, file and all -------------------------------
-        let documents = [];
-        try {
-          documents = txApp.findRecordsByFilter("id_documents", "customer = {:customer}", "created", 0, 0, {
-            customer: customerId,
-          });
-        } catch (err) {
-          documents = [];
-        }
-        for (let i = 0; i < documents.length; i++) {
-          if (documents[i]) txApp.delete(documents[i]);
-        }
-        removed.id_documents = documents.length;
-
-        // --- vouchers they will never come back for ---------------------
-        let issued = [];
-        try {
-          issued = txApp.findRecordsByFilter(
-            "reward_redemptions",
-            'customer = {:customer} && status = "issued"',
-            "created",
-            0,
-            0,
-            { customer: customerId }
-          );
-        } catch (err) {
-          issued = [];
-        }
-        for (let i = 0; i < issued.length; i++) {
-          if (!issued[i]) continue;
-          issued[i].set("status", "cancelled");
-          txApp.save(issued[i]);
-        }
-        removed.reward_redemptions = issued.length;
-
-        // --- their own rows ---------------------------------------------
-        for (let i = 0; i < DELETED.length; i++) {
-          let rows = [];
-          try {
-            rows = txApp.findRecordsByFilter(DELETED[i], "customer = {:customer}", "created", 0, 0, {
-              customer: customerId,
-            });
-          } catch (err) {
-            rows = [];
-          }
-          for (let r = 0; r < rows.length; r++) {
-            if (rows[r]) txApp.delete(rows[r]);
-          }
-          removed[DELETED[i]] = rows.length;
-        }
-
-        // --- customer_private -------------------------------------------
-        let priv = null;
-        try {
-          priv = txApp.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
-            customer: customerId,
-          });
-        } catch (err) {
-          priv = null;
-        }
-        if (priv) {
-          priv.set("address", "");
-          priv.set("dob", "");
-          priv.set("notes", "");
-          priv.set("flags", []);
-          priv.set("id_status", "none");
-          priv.set("id_type", "");
-          priv.set("id_expiry", "");
-          priv.set("id_ref_last4", "");
-          priv.set("id_verified_by", "");
-          priv.set("id_verified_at", "");
-          txApp.save(priv);
-        }
-
-        // --- the customer record itself ----------------------------------
-        // The code stays: it is on printed receipts and on the six-year
-        // buy-in register, and it identifies nobody on its own.
-        const customer = txApp.findRecordById("customers", customerId);
-        customer.set("name", "Erased customer");
-        customer.set("email", "");
-        customer.set("phone", "");
-        customer.set("marketing_consent", false);
-        customer.set("birthday_month", null);
-        // Rotated, so a QR card already in a wallet stops resolving.
-        customer.set("qr_token", $security.randomString(32));
-        txApp.save(customer);
 
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
@@ -479,11 +383,11 @@ routerAdd(
           collection: "customers",
           record: customerId,
           // Ids and counts only.
-          meta: { removed: removed },
+          meta: { removed: outcome.removed },
           ip: e.realIP(),
         });
 
-        result = { erased: true, customer: txApp.findRecordById("customers", customerId) };
+        result = { erased: true, customer: outcome.customer };
       });
     } catch (err) {
       if (halt) throw e.error(halt.status, halt.message, null);

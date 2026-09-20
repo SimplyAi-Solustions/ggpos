@@ -56,6 +56,17 @@ onRecordCreate((e) => {
   if (!e.record.getString("qr_token")) {
     e.record.set("qr_token", $security.randomString(32));
   }
+  // Portal delivery preferences (Phase 5, PATCH /api/vault/me): a bool
+  // field has no unset state, so a create request that leaves these out
+  // reads as false here, same as any other create - defaulted to true so a
+  // customer is not silently opted out of every notification the moment
+  // their record is made.
+  if (!e.record.get("notify_email")) {
+    e.record.set("notify_email", true);
+  }
+  if (!e.record.get("notify_push")) {
+    e.record.set("notify_push", true);
+  }
 
   e.next();
 }, "customers");

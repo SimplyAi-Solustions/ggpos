@@ -88,6 +88,15 @@ routerAdd(
       tiers = [];
     }
 
+    // The one field settings.push carries (docs/api-contract.md's Phase 5
+    // section): a VAPID public key is not a secret (it is handed to every
+    // browser that subscribes), unlike the private half, which lives only
+    // in services/notify's own environment and never touches this
+    // collection at all - so this is named back in as its own top-level
+    // key rather than left dropped wholesale by name like every other
+    // "push"-named field above.
+    const pushSettings = util.jsonField(settingsRecord, "push", {}) || {};
+
     return e.json(200, {
       settings: settings,
       pricing_rules: pricingRules,
@@ -96,6 +105,7 @@ routerAdd(
         rules: loyaltyRules,
         tiers: tiers,
       },
+      push: { vapid_public_key: pushSettings.vapid_public_key || "" },
     });
   },
   $apis.requireAuth("staff")

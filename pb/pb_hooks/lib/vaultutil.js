@@ -225,6 +225,91 @@ function tier(app, tierId) {
 }
 
 // ---------------------------------------------------------------------
+// Portal (Phase 5): the one /me shape GET /api/vault/me, PATCH
+// /api/vault/me and GET /api/vault/c/:token (portal.pb.js) all return, so
+// the three routes can never quietly disagree about what a customer's own
+// summary looks like. Balances are always the live ledger sums, never
+// customer_private's cached fields (CLAUDE.md's "Money": never a cached
+// figure where the ledger is the truth). Nothing from customer_private
+// reaches here beyond id_status and the tier id/name.
+// ---------------------------------------------------------------------
+
+/** `{id, name}` for a customer_private row's tier, or null. */
+function tierSummary(app, priv) {
+  var tierId = priv ? priv.getString("tier") : "";
+  if (!tierId) return null;
+  try {
+    var row = app.findRecordById("loyalty_tiers", tierId);
+    return { id: row.id, name: row.getString("name") };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * The full /me shape for one customer record already in hand - never
+ * fetches the customers row itself, so a caller that already has it (or
+ * only has a qr_token match) does not pay for a second lookup.
+ */
+function meShapeFor(app, customer) {
+  var balances = require(`${__hooks}/lib/balances.js`);
+
+  var priv = null;
+  try {
+    priv = app.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
+      customer: customer.id,
+    });
+  } catch (err) {
+    priv = null;
+  }
+
+  function count(collection, filter, params) {
+    try {
+      return app.findRecordsByFilter(collection, filter, "", 0, 0, params || {}).length;
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  return {
+    customer: {
+      id: customer.id,
+      code: customer.getString("code"),
+      name: customer.getString("name"),
+      email: customer.getString("email"),
+      phone: customer.getString("phone"),
+      marketing_consent: customer.getBool("marketing_consent"),
+      birthday_month: customer.getInt("birthday_month"),
+      qr_token: customer.getString("qr_token"),
+      created: customer.getString("created"),
+      notifications: {
+        email: customer.getBool("notify_email"),
+        push: customer.getBool("notify_push"),
+      },
+    },
+    balances: {
+      credit: balances.creditBalance(app, customer.id),
+      points: balances.pointsBalance(app, customer.id),
+    },
+    tier: tierSummary(app, priv),
+    id_status: priv ? priv.getString("id_status") || "none" : "none",
+    counts: {
+      trade_ins: count("trade_ins", "customer = {:c}", { c: customer.id }),
+      open_quotes: count(
+        "quotes",
+        "customer = {:c} && (status = 'submitted' || status = 'reviewing' || status = 'offered' || status = 'accepted' || status = 'received')",
+        { c: customer.id }
+      ),
+      want_list: count(
+        "want_list",
+        "customer = {:c} && (status = 'open' || status = 'matched')",
+        { c: customer.id }
+      ),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------
 // Cash sessions
 // ---------------------------------------------------------------------
 
@@ -415,6 +500,8 @@ module.exports = {
   programme: programme,
   loyaltyRules: loyaltyRules,
   tier: tier,
+  tierSummary: tierSummary,
+  meShapeFor: meShapeFor,
   openCashSession: openCashSession,
   sessionMovements: sessionMovements,
   sessionExpected: sessionExpected,

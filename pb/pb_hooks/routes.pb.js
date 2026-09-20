@@ -38,14 +38,27 @@ routerAdd(
   $apis.requireAuth("staff")
 );
 
-// GET /api/vault/me: the caller's own staff record, hand-picked so a
-// sensitive field (pin_hash) can never leak even if the schema grows more
-// of them later - this does not just strip a deny-list.
+// GET /api/vault/me: the caller's own record. For staff, the same
+// hand-picked shape as always (pin_hash can never leak even if the schema
+// grows more sensitive fields later - this does not just strip a
+// deny-list). For a customer, the Phase 5 portal summary
+// (docs/api-contract.md's Phase 5 section): balances summed live from the
+// ledgers, tier, id_status, and per-area counts, built once in
+// lib/vaultutil.js's meShapeFor so this route, PATCH /api/vault/me
+// (portal.pb.js) and GET /api/vault/c/:token can never disagree on the
+// shape. One registration, not two: PocketBase's router refuses a second
+// handler on the same method and path outright, so the customer branch
+// lives here rather than in a route of its own in portal.pb.js.
 routerAdd(
   "GET",
   "/api/vault/me",
   (e) => {
-    const staff = e.auth;
+    const auth = e.auth;
+    if (auth.collection().name === "customers") {
+      const util = require(`${__hooks}/lib/vaultutil.js`);
+      return e.json(200, util.meShapeFor(e.app, auth));
+    }
+    const staff = auth;
     return e.json(200, {
       id: staff.id,
       name: staff.getString("name"),
@@ -55,5 +68,5 @@ routerAdd(
       updated: staff.getString("updated"),
     });
   },
-  $apis.requireAuth("staff")
+  $apis.requireAuth("staff", "customers")
 );

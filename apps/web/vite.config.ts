@@ -103,6 +103,10 @@ export default defineConfig({
         // bwip-js is one 900 kB module that cannot be split.
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         cleanupOutdatedCaches: true,
+        // The push and notificationclick handlers for My Vault, pulled into
+        // this worker rather than registered as a second one: two workers
+        // would fight over the same scope. See apps/web/public/push-sw.js.
+        importScripts: ["/push-sw.js"],
         navigateFallback: "/index.html",
         // Never answer an API call or the PocketBase dashboard with the app.
         navigateFallbackDenylist: [/^\/api\//, /^\/_\//],

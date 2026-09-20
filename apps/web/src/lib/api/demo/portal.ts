@@ -1,0 +1,580 @@
+import { formatGBP } from "@gg/shared"
+
+import { boxArt, cardArt } from "@/kit/placeholder-art"
+import { PLATFORMS } from "@/design/platforms"
+import {
+  DEMO_CUSTOMERS,
+  demoCreditLedgerFor,
+  findDemoCustomer,
+} from "@/lib/api/demo/customers"
+import { demoGetLines, demoTradeInsFor } from "@/lib/api/demo/tradeins"
+import {
+  DEMO_PORTAL_CODE,
+  DEMO_PORTAL_CUSTOMER_ID,
+  DEMO_PORTAL_EMAIL,
+} from "@/lib/api/demo/portal-seed"
+import type {
+  CardLanding,
+  NewQuoteInput,
+  NewWantInput,
+  NotificationRow,
+  QuoteDetail,
+  QuoteMessage,
+  QuoteRecord,
+  VaultMe,
+  VaultMePatch,
+  VaultTradeIn,
+  VaultTradeInDetail,
+  WantListRow,
+} from "@/lib/api/types"
+
+/**
+ * My Vault's demo shop, in memory.
+ *
+ * One signed-in customer, Jasmine Okafor, who is the same person the counter's
+ * demo book already holds: the same record id, the same code and the same QR
+ * token, so scanning her card at the demo counter and opening `/c/<token>` in
+ * the demo portal land on one customer rather than two.
+ *
+ * Everything below is deterministic, so the e2e suite and the screenshot
+ * script see the same figures on every run: one completed counter trade-in
+ * and one that came in through a quote, a credit ledger that adds up to the
+ * balance, two quotes in different states, a want list with one live hold,
+ * and three notifications with two unread.
+ *
+ * Nothing is persisted. A reload starts the demo portal over.
+ */
+
+const DAY = 86_400_000
+const HOUR = 3_600_000
+
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * DAY).toISOString()
+}
+
+function hoursAhead(hours: number): string {
+  return new Date(Date.now() + hours * HOUR).toISOString()
+}
+
+function randomId(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+const CARD_ART = cardArt(PLATFORMS.tcg_card.ratio)
+const BOX_ART = boxArt(PLATFORMS.snes_pal_box.ratio)
+
+
+function seedCustomer() {
+  return (
+    findDemoCustomer(DEMO_PORTAL_CUSTOMER_ID) ??
+    DEMO_CUSTOMERS[0] ??
+    null
+  )
+}
+
+export { DEMO_PORTAL_CODE, DEMO_PORTAL_CUSTOMER_ID, DEMO_PORTAL_EMAIL }
+
+// ---------------------------------------------------------------------------
+// The session
+// ---------------------------------------------------------------------------
+
+/** Set by `demoRequestCode`, so the code step cannot be reached cold. */
+let pendingEmail = ""
+
+export function demoRequestCode(email: string): { otpId: string } {
+  const clean = email.trim().toLowerCase()
+  if (!clean.includes("@")) {
+    throw new Error("That does not look like an email address. Check it and try again.")
+  }
+  pendingEmail = clean
+  return { otpId: "demo-otp" }
+}
+
+export function demoSignIn(code: string): VaultMe {
+  if (code !== DEMO_PORTAL_CODE) {
+    throw new Error("That code does not match. Check it, or send another.")
+  }
+  if (pendingEmail && pendingEmail !== DEMO_PORTAL_EMAIL) {
+    throw new Error(
+      "We have no card on that email address. Ask at the counter and we will add it."
+    )
+  }
+  return demoMe()
+}
+
+// ---------------------------------------------------------------------------
+// Me
+// ---------------------------------------------------------------------------
+
+const preferences = { email: true, push: false }
+
+export function demoMe(): VaultMe {
+  const entry = seedCustomer()
+  if (!entry) throw new Error("The demo shop has no customers.")
+  const credit = demoCreditLedgerFor(entry.customer.id).reduce(
+    (sum, row) => sum + row.amount,
+    0
+  )
+  return {
+    customer: {
+      id: entry.customer.id,
+      code: entry.customer.code,
+      name: entry.customer.name,
+      email: entry.customer.email ?? "",
+      phone: entry.customer.phone ?? "",
+      marketing_consent: entry.customer.marketing_consent ?? false,
+      birthday_month: entry.customer.birthday_month ?? null,
+      qr_token: entry.customer.qr_token ?? "",
+      created: entry.customer.created ?? daysAgo(412),
+    },
+    balances: { credit, points: entry.private.points_balance ?? 0 },
+    // Tiers land in Phase 6. Until then the card reads "Member", which is
+    // what the counter's own card prints when a customer has no tier row.
+    tier: null,
+    id_status: entry.private.id_status ?? "none",
+    counts: {
+      trade_ins: demoMyTradeIns().length,
+      open_quotes: demoQuotes.filter((quote) =>
+        ["submitted", "reviewing", "offered", "accepted", "received"].includes(
+          quote.status
+        )
+      ).length,
+      want_list: demoWants.filter((row) => row.status !== "closed").length,
+    },
+    notifications: { ...preferences },
+  }
+}
+
+export function demoPatchMe(patch: VaultMePatch): VaultMe {
+  const entry = seedCustomer()
+  if (!entry) throw new Error("The demo shop has no customers.")
+  if (patch.name !== undefined) entry.customer.name = patch.name
+  if (patch.phone !== undefined) entry.customer.phone = patch.phone || undefined
+  if (patch.marketing_consent !== undefined) {
+    entry.customer.marketing_consent = patch.marketing_consent
+  }
+  if (patch.birthday_month !== undefined) {
+    entry.customer.birthday_month = patch.birthday_month ?? undefined
+  }
+  if (patch.notifications) {
+    preferences.email = patch.notifications.email
+    preferences.push = patch.notifications.push
+  }
+  return demoMe()
+}
+
+export function demoExport(): Record<string, unknown> {
+  const me = demoMe()
+  return {
+    exported_at: new Date().toISOString(),
+    customer: me.customer,
+    balances: me.balances,
+    id_status: me.id_status,
+    trade_ins: demoMyTradeIns().map((entry) => demoMyTradeIn(entry.id)),
+    credit_ledger: demoCreditLedgerFor(me.customer.id),
+    quotes: demoQuotes.map(({ ...quote }) => quote),
+    want_list: demoWants,
+    notifications: demoNotifications,
+  }
+}
+
+export function demoDeleteAccount(): { erased: true } {
+  const me = demoMe()
+  if (me.balances.credit > 0) {
+    throw new Error(
+      `You still have ${formatGBP(me.balances.credit)} store credit. Use it or ask the shop to pay it out first.`
+    )
+  }
+  return { erased: true }
+}
+
+export function demoCardLanding(token: string): CardLanding {
+  const entry = seedCustomer()
+  if (!entry || entry.customer.qr_token !== token) {
+    throw new Error("That card is not one of ours.")
+  }
+  return { known: true }
+}
+
+// ---------------------------------------------------------------------------
+// Trade-ins and store credit
+// ---------------------------------------------------------------------------
+
+/**
+ * The remote buy-in the completed quote below turned into. The counter's own
+ * demo book holds Jasmine's counter trade-in; this is the one that arrived
+ * through the portal, so My Vault shows both routes into the shop.
+ */
+const REMOTE_TRADE_IN: VaultTradeInDetail = {
+  id: "trade_demo_portal",
+  number: "GG-BI-000061",
+  status: "completed",
+  at: daysAgo(38),
+  payoutType: "cash",
+  payoutCash: 4200,
+  payoutCredit: 0,
+  totalOffer: 4200,
+  lines: [
+    {
+      id: "trade_demo_portal_l1",
+      title: "Pidgeot ex 113/191",
+      detail: "Near mint, holo",
+      qty: 1,
+      offerPrice: 2600,
+    },
+    {
+      id: "trade_demo_portal_l2",
+      title: "Super Mario World, boxed",
+      detail: "Boxed, complete",
+      qty: 1,
+      offerPrice: 1600,
+    },
+  ],
+}
+
+function summarise(entry: VaultTradeIn): VaultTradeIn {
+  return {
+    id: entry.id,
+    number: entry.number,
+    status: entry.status,
+    at: entry.at,
+    payoutType: entry.payoutType,
+    payoutCash: entry.payoutCash,
+    payoutCredit: entry.payoutCredit,
+    totalOffer: entry.totalOffer,
+  }
+}
+
+export function demoMyTradeIns(): VaultTradeIn[] {
+  const fromCounter = demoTradeInsFor(DEMO_PORTAL_CUSTOMER_ID)
+    .filter((entry) => entry.status === "completed")
+    .map(summarise)
+  return [...fromCounter, summarise(REMOTE_TRADE_IN)].sort((a, b) =>
+    b.at.localeCompare(a.at)
+  )
+}
+
+export function demoMyTradeIn(id: string): VaultTradeInDetail {
+  if (id === REMOTE_TRADE_IN.id) return REMOTE_TRADE_IN
+  const summary = demoMyTradeIns().find((entry) => entry.id === id)
+  if (!summary) throw new Error("That trade-in is not on your record.")
+  return {
+    ...summary,
+    lines: demoGetLines(id).map((line) => ({
+      id: line.id,
+      title: line.free_text_title || "Item",
+      detail: [line.condition, line.completeness].filter(Boolean).join(", "),
+      qty: line.qty ?? 1,
+      offerPrice: line.offer_price ?? 0,
+    })),
+  }
+}
+
+export function demoCreditLedger() {
+  return demoCreditLedgerFor(DEMO_PORTAL_CUSTOMER_ID)
+}
+
+// ---------------------------------------------------------------------------
+// Quotes
+// ---------------------------------------------------------------------------
+
+interface DemoQuote extends QuoteRecord {
+  messages: QuoteMessage[]
+  photos: { name: string; url: string }[]
+}
+
+export const demoQuotes: DemoQuote[] = [
+  {
+    id: "quote_demo_1",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    number: "GG-Q-000014",
+    status: "offered",
+    message: "Four holos and a boxed SNES game. Happy with credit if it is better.",
+    drop_off: "in_store",
+    created: daysAgo(3),
+    offer_total: 4200,
+    offer_expires_at: hoursAhead(96),
+    lines: [
+      {
+        title: "Charizard ex 199/165",
+        condition: "NM",
+        finish: "holo",
+        qty: 1,
+        market_price: 32000,
+        market_source: "Cardmarket",
+        offer_price: 2600,
+      },
+      {
+        title: "Super Mario World, boxed",
+        qty: 1,
+        market_price: 3200,
+        market_source: "PriceCharting PAL",
+        offer_price: 1600,
+      },
+    ],
+    messages: [
+      {
+        id: "quote_demo_1_m1",
+        author: "customer",
+        body: "Four holos and a boxed SNES game. Happy with credit if it is better.",
+        created: daysAgo(3),
+      },
+      {
+        id: "quote_demo_1_m2",
+        author: "staff",
+        body: "Thanks, that is a nice lot. The Charizard looks near mint from the photo, so the offer assumes that. Bring it in and we will check it over.",
+        created: daysAgo(1),
+      },
+    ],
+    photos: [
+      { name: "quote-1.jpg", url: CARD_ART },
+      { name: "quote-2.jpg", url: BOX_ART },
+    ],
+  },
+  {
+    id: "quote_demo_2",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    number: "GG-Q-000009",
+    status: "completed",
+    message: "Bulk Pokemon, about 300 cards, plus two Game Boy carts.",
+    drop_off: "in_store",
+    created: daysAgo(44),
+    offer_total: 4200,
+    offer_expires_at: daysAgo(37),
+    reply: "Yes please, I will bring them Saturday.",
+    trade_in: REMOTE_TRADE_IN.id,
+    lines: [
+      {
+        title: "Pidgeot ex 113/191",
+        condition: "NM",
+        qty: 1,
+        market_price: 4800,
+        market_source: "Cardmarket",
+        offer_price: 2600,
+      },
+      {
+        title: "Super Mario World, boxed",
+        qty: 1,
+        market_price: 3200,
+        market_source: "PriceCharting PAL",
+        offer_price: 1600,
+      },
+    ],
+    messages: [
+      {
+        id: "quote_demo_2_m1",
+        author: "customer",
+        body: "Bulk Pokemon, about 300 cards, plus two Game Boy carts.",
+        created: daysAgo(44),
+      },
+      {
+        id: "quote_demo_2_m2",
+        author: "staff",
+        body: "Offer sent. It holds for seven days.",
+        created: daysAgo(42),
+      },
+    ],
+    photos: [{ name: "quote-3.jpg", url: CARD_ART }],
+  },
+]
+
+/** The record half of a demo quote, without its thread or its photos. */
+function toQuoteRecord(quote: DemoQuote): QuoteRecord {
+  const { messages, photos, ...record } = quote
+  void messages
+  void photos
+  return record
+}
+
+export function demoListQuotes(): QuoteRecord[] {
+  return [...demoQuotes]
+    .sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""))
+    .map(toQuoteRecord)
+}
+
+function findQuote(id: string): DemoQuote {
+  const quote = demoQuotes.find((entry) => entry.id === id)
+  if (!quote) throw new Error("That quote is not on your record.")
+  return quote
+}
+
+export function demoGetQuote(id: string): QuoteDetail {
+  const { messages, photos, ...quote } = findQuote(id)
+  return { quote, messages: [...messages], photos: [...photos] }
+}
+
+export function demoCreateQuote(input: NewQuoteInput): QuoteRecord {
+  const id = randomId("quote")
+  const created = new Date().toISOString()
+  const quote: DemoQuote = {
+    id,
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    number: `GG-Q-0000${15 + demoQuotes.length}`,
+    status: "submitted",
+    message: input.message,
+    drop_off: input.dropOff,
+    created,
+    photo_count: input.photos.length,
+    messages: input.message
+      ? [{ id: `${id}_m1`, author: "customer", body: input.message, created }]
+      : [],
+    photos: input.photos.map((_photo, index) => ({
+      name: `photo-${index + 1}.jpg`,
+      url: CARD_ART,
+    })),
+  }
+  demoQuotes.unshift(quote)
+  return toQuoteRecord(quote)
+}
+
+export function demoQuoteMessage(id: string, body: string): QuoteMessage {
+  const quote = findQuote(id)
+  const message: QuoteMessage = {
+    id: randomId("msg"),
+    author: "customer",
+    body,
+    created: new Date().toISOString(),
+  }
+  quote.messages.push(message)
+  return message
+}
+
+export function demoAnswerQuote(
+  id: string,
+  answer: "accept" | "decline",
+  reply?: string
+): QuoteRecord {
+  const quote = findQuote(id)
+  if (quote.status !== "offered") {
+    throw new Error("This offer is no longer open. Ask the shop for a new one.")
+  }
+  quote.status = answer === "accept" ? "accepted" : "declined"
+  if (reply) {
+    quote.reply = reply
+    quote.messages.push({
+      id: randomId("msg"),
+      author: "customer",
+      body: reply,
+      created: new Date().toISOString(),
+    })
+  }
+  return toQuoteRecord(quote)
+}
+
+// ---------------------------------------------------------------------------
+// Want list
+// ---------------------------------------------------------------------------
+
+export const demoWants: WantListRow[] = [
+  {
+    id: "want_demo_1",
+    title: "Charizard ex",
+    subtitle: "Scarlet & Violet 151 - 199/165",
+    image: CARD_ART,
+    maxPrice: 25000,
+    status: "matched",
+    heldUntil: hoursAhead(30),
+    heldPrice: 23000,
+    created: daysAgo(12),
+  },
+  {
+    id: "want_demo_2",
+    title: "Pidgeot ex",
+    subtitle: "Surging Sparks - 113/191",
+    image: CARD_ART,
+    maxPrice: 4000,
+    status: "open",
+    heldUntil: null,
+    heldPrice: null,
+    created: daysAgo(6),
+  },
+  {
+    id: "want_demo_3",
+    title: "Pokemon Snap, boxed",
+    subtitle: "Typed in by you",
+    maxPrice: null,
+    status: "open",
+    heldUntil: null,
+    heldPrice: null,
+    created: daysAgo(2),
+  },
+]
+
+/**
+ * Copies, not the stored rows.
+ *
+ * TanStack Query keeps the previous reference when a refetch is deeply equal
+ * to what it already holds, so handing back the very objects the demo store
+ * mutates would leave the screen showing the old state after a write. The
+ * server sends fresh JSON every time; so does this.
+ */
+export function demoListWants(): WantListRow[] {
+  return demoWants
+    .filter((row) => row.status !== "closed")
+    .map((row) => ({ ...row }))
+}
+
+export function demoAddWant(input: NewWantInput, title: string, subtitle: string) {
+  const row: WantListRow = {
+    id: randomId("want"),
+    title,
+    subtitle,
+    image: input.cardId ? CARD_ART : undefined,
+    maxPrice: input.maxPrice,
+    status: "open",
+    heldUntil: null,
+    heldPrice: null,
+    created: new Date().toISOString(),
+  }
+  demoWants.unshift(row)
+  return row
+}
+
+export function demoCloseWant(id: string) {
+  const row = demoWants.find((entry) => entry.id === id)
+  if (!row) throw new Error("That row is not on your want list.")
+  row.status = "closed"
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export const demoNotifications: NotificationRow[] = [
+  {
+    id: "note_demo_1",
+    kind: "want_match",
+    title: "Charizard ex 199/165 is in",
+    body: "Held for you until the time on your want list. Come and collect it.",
+    link: "/account/wants",
+    created: daysAgo(1),
+  },
+  {
+    id: "note_demo_2",
+    kind: "quote_offer",
+    title: "Your quote offer, £42.00",
+    body: "We have priced the lot you sent. The offer holds for four more days.",
+    link: "/account/quotes/quote_demo_1",
+    created: daysAgo(1),
+  },
+  {
+    id: "note_demo_3",
+    kind: "trade_in",
+    title: "Buy-in GG-BI-000061 completed",
+    body: "£42.00 paid in cash. Thanks for bringing them in.",
+    link: "/account/trade-ins/trade_demo_portal",
+    read_at: daysAgo(37),
+    created: daysAgo(38),
+  },
+]
+
+export function demoListNotifications(): NotificationRow[] {
+  return demoNotifications
+    .map((row) => ({ ...row }))
+    .sort((a, b) => b.created.localeCompare(a.created))
+}
+
+export function demoMarkNotificationRead(id: string) {
+  const row = demoNotifications.find((entry) => entry.id === id)
+  if (row && !row.read_at) row.read_at = new Date().toISOString()
+}
