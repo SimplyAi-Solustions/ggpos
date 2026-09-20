@@ -33,8 +33,10 @@ describe("idCaptureProblem", () => {
     expect(idCaptureProblem(good({ idExpiry: "2020-01-01" }))).toMatch(/expired/)
   })
 
-  it("wants all four digits", () => {
-    expect(idCaptureProblem(good({ idRefLast4: "44" }))).toMatch(/last four/)
+  it("takes one to four digits, which is what the route accepts", () => {
+    expect(idCaptureProblem(good({ idRefLast4: "44" }))).toBeNull()
+    expect(idCaptureProblem(good({ idRefLast4: "" }))).toMatch(/last digits/)
+    expect(idCaptureProblem(good({ idRefLast4: "44718" }))).toMatch(/last digits/)
   })
 
   it("refuses cash to someone under 18, with the reason", () => {

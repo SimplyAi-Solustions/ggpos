@@ -1,9 +1,14 @@
 import { beforeAll, describe, expect, it } from "vitest"
 
-import { completeSale, refundSale, todayStats } from "@/lib/api/demo/sales"
-import { getCurrent, open } from "@/lib/api/demo/cash"
+import { completeSale, getSale, refundSale, todayStats } from "@/lib/api/demo/sales"
+import { close as closeSession, getCurrent, open, openSession } from "@/lib/api/demo/cash"
 import { getItem, listItems } from "@/lib/api/demo/items"
-import { DEMO_SALE_CUSTOMERS, ensureSeeded, itemStore } from "@/lib/api/demo/store"
+import {
+  DEMO_SALE_CUSTOMERS,
+  DEMO_VOUCHERS,
+  ensureSeeded,
+  itemStore,
+} from "@/lib/api/demo/store"
 
 /**
  * The demo counter's own arithmetic. It stands in for the server's
@@ -136,5 +141,109 @@ describe("the demo counter", () => {
 
     const byTitle = listItems({ search: "charizard" }, 1)
     expect(byTitle.items[0]?.title).toContain("Charizard")
+  })
+})
+
+describe("the refund contract", () => {
+  beforeAll(() => {
+    ensureSeeded()
+  })
+
+  it("counts a part refund up rather than rewriting the line", () => {
+    const item = itemStore().find(
+      (row) => row.status === "in_stock" && (row.qty ?? 1) >= 3
+    )
+    // Nothing multi-quantity in the demo store, so make the case explicitly.
+    const sealed = item ?? itemStore()[0]!
+    sealed.status = "in_stock"
+    sealed.qty = 3
+
+    const already = openSession()
+    if (already) closeSession(already.id, 0, "")
+    open(5000)
+    const sale = completeSale({
+      lines: [{ item: sealed.id, qty: 3, unit_price: 1000, discount: 0 }],
+      customer: null,
+      payment: "cash",
+      payment_split: { cash: 3000 },
+      discount: 0,
+      discount_source: null,
+      reward_code: null,
+      cash_session: null,
+      sumup_ref: "",
+    })
+
+    const full = getSale(sale.sale.id)!
+    const lineId = full.lines[0]!.id
+
+    const first = refundSale(sale.sale.id, {
+      lines: [{ sale_line: lineId, qty: 1 }],
+      reason: "One came back",
+      refund_method: "cash",
+    })
+    expect(first.refunded).toBe(1000)
+    expect(first.sale.status).toBe("part_refunded")
+
+    const afterOne = getSale(sale.sale.id)!
+    expect(afterOne.lines[0]!.qty).toBe(3)
+    expect(afterOne.lines[0]!.refunded_qty).toBe(1)
+    expect(afterOne.lines[0]!.status).toBe("sold")
+    expect(afterOne.refunded_total).toBe(1000)
+
+    const rest = refundSale(sale.sale.id, {
+      lines: [{ sale_line: lineId, qty: 2 }],
+      reason: "The rest too",
+      refund_method: "cash",
+    })
+    expect(rest.refunded).toBe(2000)
+    expect(rest.sale.status).toBe("refunded")
+
+    const afterAll = getSale(sale.sale.id)!
+    expect(afterAll.lines[0]!.refunded_qty).toBe(3)
+    expect(afterAll.lines[0]!.status).toBe("refunded")
+    expect(afterAll.refunded_total).toBe(3000)
+
+    // Nothing is left to give back.
+    expect(
+      refundSale(sale.sale.id, {
+        lines: [{ sale_line: lineId, qty: 1 }],
+        reason: "Again",
+        refund_method: "cash",
+      }).refunded
+    ).toBe(0)
+  })
+
+  it("refuses a reward without the customer it was issued to", () => {
+    const item = itemStore().find((row) => row.status === "in_stock")!
+    expect(() =>
+      completeSale({
+        lines: [{ item: item.id, qty: 1, unit_price: 1000, discount: 500 }],
+        customer: null,
+        payment: "sumup_card",
+        payment_split: { sumup_card: 500 },
+        discount: 500,
+        discount_source: "reward",
+        reward_code: DEMO_VOUCHERS[0]!.code,
+        cash_session: null,
+        sumup_ref: "",
+      })
+    ).toThrow("A reward needs the customer")
+  })
+
+  it("refuses a reward stacked on another discount", () => {
+    const item = itemStore().find((row) => row.status === "in_stock")!
+    expect(() =>
+      completeSale({
+        lines: [{ item: item.id, qty: 1, unit_price: 1000, discount: 0 }],
+        customer: DEMO_VOUCHERS[0]!.customer,
+        payment: "sumup_card",
+        payment_split: { sumup_card: 400 },
+        discount: 600,
+        discount_source: "reward",
+        reward_code: DEMO_VOUCHERS[0]!.code,
+        cash_session: null,
+        sumup_ref: "",
+      })
+    ).toThrow("A reward is the whole discount")
   })
 })

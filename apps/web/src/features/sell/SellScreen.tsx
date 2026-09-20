@@ -238,7 +238,11 @@ export function SellScreen() {
             setScanError("That voucher has been used or has run out. Check the code.")
             return
           }
-          if (basket.customer && voucher.customer !== basket.customer.id) {
+          if (!basket.customer) {
+            setScanError("Scan the customer's card first, then their voucher.")
+            return
+          }
+          if (voucher.customer !== basket.customer.id) {
             setScanError("That voucher belongs to a different customer.")
             return
           }
@@ -351,7 +355,10 @@ export function SellScreen() {
       return refundSale(
         sale.id,
         {
-          lines: full.lines.map((line) => ({ sale_line: line.id, qty: line.qty ?? 1 })),
+          lines: full.lines.map((line) => ({
+          sale_line: line.id,
+          qty: (line.qty ?? 1) - (line.refunded_qty ?? 0),
+        })),
           reason: "Undone at the counter",
           refund_method: method,
         },
@@ -386,10 +393,13 @@ export function SellScreen() {
       return refundSale(
         sale.id,
         {
-          lines: lineIds.map((id) => ({
-            sale_line: id,
-            qty: sale.lines.find((line) => line.id === id)?.qty ?? 1,
-          })),
+          lines: lineIds.map((id) => {
+            const line = sale.lines.find((row) => row.id === id)
+            return {
+              sale_line: id,
+              qty: (line?.qty ?? 1) - (line?.refunded_qty ?? 0),
+            }
+          }),
           reason,
           refund_method: method,
         },
@@ -642,19 +652,25 @@ export function SellScreen() {
           />
         ) : null}
         {totals.voucherDiscount > 0 && basket.voucher ? (
-          <TotalRow
-            label={basket.voucher.rewardName}
-            value={`-${formatGBP(totals.voucherDiscount)}`}
-            tone="muted"
-            action={
-              <Button
-                variant="text"
-                onClick={() => dispatchBasket({ type: "applyVoucher", voucher: null })}
-              >
-                Clear
-              </Button>
-            }
-          />
+          <>
+            <TotalRow
+              label={basket.voucher.rewardName}
+              value={`-${formatGBP(totals.voucherDiscount)}`}
+              tone="muted"
+              action={
+                <Button
+                  variant="text"
+                  onClick={() => dispatchBasket({ type: "applyVoucher", voucher: null })}
+                >
+                  Clear
+                </Button>
+              }
+            />
+            <p className="mt-3 text-[13px] text-muted-foreground-2">
+              A reward is the whole discount on a sale, so the tier perk and any
+              manual amount stand aside while it is on.
+            </p>
+          </>
         ) : null}
         <TotalRow
           label="Discount"

@@ -3,7 +3,7 @@ import { motion } from "motion/react"
 import { displayCode, formatGBP } from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
-import { Hint, MicroLabel } from "@/components/ui/micro-label"
+import { MicroLabel } from "@/components/ui/micro-label"
 import { PageTitle } from "@/components/ui/page-title"
 import { Seal } from "@/components/ui/seal"
 import { ProductImage } from "@/components/product-image"
@@ -146,8 +146,14 @@ export function DoneStep({
             Email receipt
           </Button>
         ) : null}
-        {emailNote ? <Hint aria-live="polite">{emailNote}</Hint> : null}
-        {labelNote ? <Hint aria-live="polite">{labelNote}</Hint> : null}
+        {emailNote || labelNote ? (
+          <p
+            aria-live="polite"
+            className="max-w-[46ch] text-[13px] leading-[1.45] text-muted-foreground"
+          >
+            {emailNote ?? labelNote}
+          </p>
+        ) : null}
       </div>
     </section>
   )

@@ -155,11 +155,7 @@ export function OfferStep({
         >
           {payoutType === "mixed" ? "Not mixed" : "Mixed"}
         </Button>
-        <Hint>
-          {payoutType === "mixed"
-            ? "Back to one payout"
-            : "Some cash, the rest as store credit"}
-        </Hint>
+        <Hint>{payoutType === "mixed" ? "One payout" : "Part cash"}</Hint>
       </div>
 
       {payoutType === "mixed" ? (
@@ -179,7 +175,9 @@ export function OfferStep({
               {formatGBP(payout.credit)}
             </p>
           </div>
-          <Hint className="pb-3">Mixed pays at the cash rate throughout.</Hint>
+          <p className="max-w-[40ch] pb-3 text-[13px] leading-[1.45] text-muted-foreground-2">
+            A mixed payout is priced at the cash rate throughout.
+          </p>
         </div>
       ) : null}
 
@@ -218,7 +216,7 @@ export function OfferStep({
         >
           Show customer
         </Button>
-        <Hint>Opens the counter display</Hint>
+        <Hint>Opens the display</Hint>
       </div>
 
       {blockReason ? (

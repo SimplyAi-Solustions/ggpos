@@ -148,14 +148,27 @@ export function GuildCardBack({
         className
       )}
     >
-      <span
+      {/* A drawn texture rather than a repeating gradient: it prints
+          crisply at 203 dpi and follows the ink colour in night mode. */}
+      <svg
         aria-hidden="true"
-        className="absolute inset-0"
-        style={{
-          backgroundImage:
-            "repeating-linear-gradient(135deg, var(--hairline) 0 1px, transparent 1px 5px)",
-        }}
-      />
+        className="absolute inset-0 size-full text-hairline"
+        preserveAspectRatio="none"
+        viewBox="0 0 80 50"
+      >
+        <defs>
+          <pattern
+            id="gg-pinstripe"
+            width="4"
+            height="4"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(45)"
+          >
+            <line x1="0" y1="0" x2="0" y2="4" stroke="currentColor" strokeWidth="0.5" />
+          </pattern>
+        </defs>
+        <rect width="80" height="50" fill="url(#gg-pinstripe)" />
+      </svg>
       <span className="relative flex items-center gap-[2mm] bg-background px-[3mm] py-[1.5mm]">
         <GMark className="h-[4mm]" title="GG Entertainment" />
         <span className="font-mono text-[7pt] leading-none font-bold tracking-[0.28em] text-foreground uppercase">

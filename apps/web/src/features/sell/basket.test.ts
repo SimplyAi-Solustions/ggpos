@@ -233,7 +233,7 @@ describe("the totals", () => {
     expect(totals.discountSource).toBe("tier_perk")
   })
 
-  it("puts a reward ahead of a manual discount as the recorded source", () => {
+  it("lets a reward stand in for every other discount, never stack on them", () => {
     const voucher: RewardVoucher = {
       id: "r1",
       code: "GGV3H7K9T",
@@ -243,17 +243,54 @@ describe("the totals", () => {
       value: 500,
       expiresAt: null,
     }
-    const state = basketReducer(
-      basketReducer(withLines(line()), {
-        type: "setDiscount",
-        discount: { kind: "amount", value: 100 },
-      }),
-      { type: "applyVoucher", voucher }
-    )
+    let state = basketReducer(withLines(line()), {
+      type: "attachCustomer",
+      customer: LEGEND,
+    })
+    state = basketReducer(state, {
+      type: "setDiscount",
+      discount: { kind: "amount", value: 100 },
+    })
+    state = basketReducer(state, { type: "applyVoucher", voucher })
+
     const totals = summarise(state)
+    // The completion route checks the discount equals the reward's value, so
+    // the Legend perk and the manual pound both step aside.
     expect(totals.voucherDiscount).toBe(500)
-    expect(totals.discount).toBe(600)
+    expect(totals.perkDiscount).toBe(0)
+    expect(totals.manualDiscount).toBe(0)
+    expect(totals.discount).toBe(500)
     expect(totals.discountSource).toBe("reward")
+
+    const cleared = basketReducer(state, { type: "applyVoucher", voucher: null })
+    const after = summarise(cleared)
+    expect(after.perkDiscount).toBe(3250)
+    expect(after.manualDiscount).toBe(100)
+    expect(after.discountSource).toBe("manual")
+  })
+
+  it("refuses a reward that is not this customer's", () => {
+    const voucher: RewardVoucher = {
+      id: "r1",
+      code: "GGV3H7K9T",
+      customer: "cust_someone_else",
+      rewardName: "Five pounds off",
+      type: "money_off",
+      value: 500,
+      expiresAt: null,
+    }
+    const state = basketReducer(withLines(line()), {
+      type: "applyVoucher",
+      voucher,
+    })
+    const check = checkPayment(state, summarise(state), {
+      programme: PROGRAMME,
+      cashSessionOpen: true,
+    })
+    expect(check.ok).toBe(false)
+    expect(check.problems).toContain(
+      "A reward needs the customer it was issued to on the sale."
+    )
   })
 
   it("spreads the discount across the lines for the points preview", () => {

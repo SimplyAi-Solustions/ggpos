@@ -38,8 +38,9 @@ export function idCaptureProblem(values: IdCaptureValues): string | null {
   if (new Date(values.idExpiry).getTime() <= Date.now()) {
     return "That ID has expired. Ask for one that is in date."
   }
-  if (values.idRefLast4.length !== 4) {
-    return "Enter the last four digits of the ID number."
+  // The route takes 1 to 4 characters: some documents show fewer.
+  if (values.idRefLast4.length < 1 || values.idRefLast4.length > 4) {
+    return "Enter the last digits of the ID number, up to four."
   }
   if (!values.dob) return "Enter the customer's date of birth."
   const age = ageAt(values.dob, new Date())

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
-import { Hint, MicroLabel, SectionHeading } from "@/components/ui/micro-label"
+import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -446,7 +446,9 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
               ))}
             </ChipGroup>
           </div>
-          <Hint className="mt-3 block">Staff only. Never shown in My Vault.</Hint>
+          <p className="mt-3 text-[13px] leading-[1.45] text-muted-foreground-2">
+            Staff only. Never shown in My Vault.
+          </p>
         </div>
       </div>
 
@@ -520,7 +522,14 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         <Button variant="text-destructive" type="button" onClick={() => setEraseOpen(true)}>
           Erase
         </Button>
-        {cardNote ? <Hint aria-live="polite">{cardNote}</Hint> : null}
+        {cardNote ? (
+          <p
+            aria-live="polite"
+            className="max-w-[46ch] text-[13px] leading-[1.45] text-muted-foreground"
+          >
+            {cardNote}
+          </p>
+        ) : null}
       </div>
 
       <IdPhotoSheet

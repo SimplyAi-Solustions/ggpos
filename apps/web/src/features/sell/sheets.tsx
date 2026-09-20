@@ -297,9 +297,16 @@ function RefundForm({
   onConfirm: (lineIds: string[], method: RefundMethod, reason: string) => void
   onCancel: () => void
 }) {
-  const refundable = sale.lines.filter((line) => line.status !== "refunded")
+  // `qty` is never rewritten by a refund, so what is left on a line is its
+  // quantity less what has already gone back.
+  const refundable = sale.lines
+    .map((line) => ({
+      line,
+      remaining: (line.qty ?? 1) - (line.refunded_qty ?? 0),
+    }))
+    .filter((row) => row.remaining > 0)
   const [chosen, setChosen] = React.useState<string[]>(() =>
-    refundable.map((line) => line.id)
+    refundable.map((row) => row.line.id)
   )
   const [method, setMethod] = React.useState<RefundMethod>(() =>
     sale.payment === "cash"
@@ -311,11 +318,8 @@ function RefundForm({
   const [reason, setReason] = React.useState("")
 
   const total = refundable
-    .filter((line) => chosen.includes(line.id))
-    .reduce(
-      (sum, line) => sum + (line.unit_price ?? 0) * (line.qty ?? 1) - (line.discount ?? 0),
-      0
-    )
+    .filter((row) => chosen.includes(row.line.id))
+    .reduce((sum, row) => sum + (row.line.unit_price ?? 0) * row.remaining, 0)
 
   return (
     <>
@@ -326,8 +330,9 @@ function RefundForm({
           </p>
         ) : (
           <ul>
-            {refundable.map((line) => {
+            {refundable.map(({ line, remaining }) => {
               const on = chosen.includes(line.id)
+              const part = (line.refunded_qty ?? 0) > 0
               return (
                 <li
                   key={line.id}
@@ -351,11 +356,20 @@ function RefundForm({
                           : "size-4 shrink-0 border border-hairline"
                       }
                     />
-                    <span className="min-w-0 flex-1 truncate text-[15px] text-foreground">
-                      {line.title}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] text-foreground">
+                        {line.title}
+                      </span>
+                      {part || remaining > 1 ? (
+                        <span className="block truncate text-[13px] text-muted-foreground-2">
+                          {part
+                            ? `${remaining} of ${line.qty ?? 1} left to refund`
+                            : `${remaining} on this line`}
+                        </span>
+                      ) : null}
                     </span>
                     <span className="tnum shrink-0 text-[15px] text-foreground">
-                      {formatGBP((line.unit_price ?? 0) * (line.qty ?? 1))}
+                      {formatGBP((line.unit_price ?? 0) * remaining)}
                     </span>
                   </button>
                 </li>

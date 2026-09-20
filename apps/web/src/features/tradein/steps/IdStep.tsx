@@ -166,9 +166,11 @@ export function IdStep({
             className="mt-5 max-h-56 w-auto border border-hairline"
           />
         ) : null}
-        <Hint className="mt-3 block">
-          Resized to 1600px and re-encoded, so no location data is kept
-        </Hint>
+        {/* Sentence case, not a tracked label: DESIGN.md caps an uppercase
+            run at about 24 characters and this is an explanation. */}
+        <p className="mt-3 max-w-[46ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+          Resized to 1600px and re-encoded, so no location data is kept.
+        </p>
       </div>
 
       <div className="mt-12 flex max-w-[34rem] flex-col gap-8">
