@@ -1,4 +1,4 @@
-import { ageAt } from "@/features/tradein/machine"
+import { ageAt, type IdGate } from "@/features/tradein/machine"
 import { photoFileName } from "@/features/tradein/id-photo"
 import type { IdType } from "@/lib/api"
 
@@ -31,8 +31,26 @@ export const EMPTY_CAPTURE: IdCaptureValues = {
   photo: null,
 }
 
-/** What is still missing before the ID check can be sent. */
-export function idCaptureProblem(values: IdCaptureValues): string | null {
+/**
+ * What is still missing before the ID check can be sent.
+ *
+ * `gate` says which half of the check this is: a customer whose ID fields
+ * and photo are already good but who has never given an address is asked
+ * for the address and nothing else, because asking for a passport again
+ * over a missing postcode wastes everybody's time.
+ */
+export function idCaptureProblem(
+  values: IdCaptureValues,
+  gate: IdGate = { needed: true, reason: "full" }
+): string | null {
+  if (!gate.needed) return null
+
+  if (gate.reason === "address") {
+    return values.address.trim().length < 6
+      ? "Enter the customer's address. A cash buy-in needs it on the record."
+      : null
+  }
+
   if (!values.photo) return "Photograph the ID before you continue."
   if (!values.idExpiry) return "Enter the date the ID expires."
   if (new Date(values.idExpiry).getTime() <= Date.now()) {

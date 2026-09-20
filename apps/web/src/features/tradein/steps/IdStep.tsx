@@ -20,7 +20,7 @@ import {
 import {
   ageAt,
   cashBlock,
-  needsIdGate,
+  type IdGate,
   type Payout,
   type WizardCustomer,
 } from "@/features/tradein/machine"
@@ -40,6 +40,8 @@ export interface IdStepProps {
   cashCap: number
   values: IdCaptureValues
   onChange: (patch: Partial<IdCaptureValues>) => void
+  /** What this cash payout still needs, from `idGate`. */
+  gate: IdGate
   /** The server's own refusal, shown under the control that caused it. */
   serverError: string | null
 }
@@ -59,6 +61,7 @@ export function IdStep({
   cashCap,
   values,
   onChange,
+  gate,
   serverError,
 }: IdStepProps) {
   const [preview, setPreview] = React.useState<string | null>(null)
@@ -66,7 +69,6 @@ export function IdStep({
   const [busy, setBusy] = React.useState(false)
   const fileRef = React.useRef<HTMLInputElement>(null)
 
-  const alreadyGood = !needsIdGate(customer.facts)
   const block = cashBlock(customer.facts, payout.cash, cashCap)
   const typedAge = ageAt(values.dob, new Date())
   const underAge = typedAge !== null && typedAge < 18
@@ -89,7 +91,7 @@ export function IdStep({
     }
   }
 
-  if (block.kind === "cap") {
+  if (block.kind === "cap" || block.kind === "off") {
     return (
       <div>
         <SectionHeading className="mt-0">ID check</SectionHeading>
@@ -98,13 +100,45 @@ export function IdStep({
         </p>
         <p className="mt-5 max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground">
           The cash on this buy-in is {formatGBP(payout.cash)}. Go back to the
-          offer and move the difference to store credit.
+          offer and take it as store credit instead.
         </p>
       </div>
     )
   }
 
-  if (alreadyGood) {
+  if (gate.needed && gate.reason === "address") {
+    return (
+      <div>
+        <SectionHeading className="mt-0">ID check</SectionHeading>
+        <p
+          data-testid="id-address-only"
+          className="max-w-[56ch] text-base leading-[1.5] text-foreground"
+        >
+          {customer.name}&rsquo;s {customer.facts.idType || "ID"} is on file and
+          runs to {formatDate(customer.facts.idExpiry)}. The buy-in register
+          needs their address as well.
+        </p>
+        <div className="mt-10 max-w-[34rem]">
+          <Field label="Address" htmlFor="id-address" layout="stacked">
+            <Textarea
+              id="id-address"
+              maxLength={300}
+              placeholder="1 High Street, Bolsover, S44 6AA"
+              value={values.address}
+              onChange={(event) => onChange({ address: event.target.value })}
+            />
+          </Field>
+        </div>
+        {serverError ? (
+          <p role="alert" className="mt-8 max-w-[56ch] text-[13px] text-destructive">
+            {serverError}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
+
+  if (!gate.needed) {
     return (
       <div>
         <SectionHeading className="mt-0">ID check</SectionHeading>

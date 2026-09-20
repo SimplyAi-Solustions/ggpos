@@ -54,6 +54,7 @@ concern per file:
 | `..._phase2_fields.js` | Appends what the custom routes need: `id_documents.mime`; `settings.cash_variance_alert`, `.offer`, `.default_intake_location`, `.email`, `.receipt_terms` (and their defaults on the seeded row); `trade_in_lines.kind`, `.game`, `.completeness`; and it makes `trade_ins.number` optional with a partial unique index (see below) |
 | `..._phase2_refunds_and_protection.js` | `sale_lines.refunded_qty`, `sales.refunded_total` and `trade_ins.id_document`; makes `trade_ins.signature` and `quotes.photos` `protected`; and adds the partial unique index that allows only one open `cash_sessions` row (`WHERE closed_at = ''`) |
 | `..._single_bands_any_condition.js` | Data fix: the seeded single `pricing_rules` bands were NM-only, so every other condition matched no rule. Condition is applied by `adjustForCondition` before a rule is chosen, so the bands are condition wildcards |
+| `..._trade_in_line_overrides.js` | `trade_in_lines.override_reason` (which is also the override flag), `.override_cash`, `.override_credit` and `.cosmetic_grade` |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -515,6 +516,16 @@ of the workspace, the same way `pnpm-lock.yaml` is committed).
 - **The trade-in route trusts the line's `offer_price`.** It checks the
   payout matches the accepted lines, not that each `offer_price` is what
   `computeOffer` would produce, because staff may override an offer with
-  a reason. Overrides are audited on the sale side (`price_override`);
-  buy-in overrides are not yet, since the line carries no "overridden"
-  flag to notice one by.
+  a reason. `offer_price` stays the figure actually paid for the payout
+  type chosen, overridden or not, so the payout arithmetic reads it alone;
+  `override_cash` and `override_credit` are the record of what the staff
+  member typed for each type. A line is overridden when
+  `override_reason` is non-empty, and the completion route lists those
+  line ids in its audit meta as `overridden_lines`. The reason itself
+  stays on the line: `audit_log` is permanent and superuser-only.
+- **A bulk lot is an ordinary line.** The buy-in wizard sends a lot as one
+  `kind: "other"` line of `qty: 1` with the flat figure in both
+  `offer_price` and `market_price`, `market_source` "Bulk lot" and a title
+  like "Bulk lot, 400 cards". "other" is not one of the per-unit kinds, so
+  it becomes a single `items` row of `qty` 1 with one label job, and the
+  receipt and the stock book need no special case for it.

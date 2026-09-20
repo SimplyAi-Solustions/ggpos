@@ -1,7 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "@tanstack/react-router"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { DEFAULT_OFFER_SETTINGS } from "@gg/shared/pricing"
 import { evaluateTradeInPoints } from "@gg/shared/loyalty"
 
@@ -22,8 +22,8 @@ import { ItemsStep } from "@/features/tradein/steps/ItemsStep"
 import { OfferStep } from "@/features/tradein/steps/OfferStep"
 import {
   canAdvance,
+  idGate,
   initialState,
-  needsIdGate,
   nextStep,
   payoutFor,
   reducer,
@@ -38,6 +38,7 @@ import {
   createDraftTradeIn,
   currentCashSessionId,
   emailReceipt,
+  latestIdDocument,
   loyaltyRulesFrom,
   offerSettingsFrom,
   programmeFrom,
@@ -47,6 +48,7 @@ import {
   submitIdCheck,
   useVaultConfig,
   type IdCheckPayload,
+  type TradeInLineInput,
 } from "@/lib/api"
 
 export interface BuyInWizardProps {
@@ -144,46 +146,90 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       : "[]"
   )
 
+  /** Never equal to a real shape, so a failed save is always retried. */
+  const UNSAVED = "\u0000unsaved"
+
   const saveLines = useMutation({
-    mutationFn: (id: string) => saveTradeInLines(id, lineInputs),
-    onSuccess: (records) => {
+    mutationFn: ({
+      id,
+      inputs,
+    }: {
+      id: string
+      inputs: TradeInLineInput[]
+      shape: string
+    }) => saveTradeInLines(id, inputs),
+    onSuccess: (records, variables) => {
       setSaveError(null)
+      // Marked saved only once the server has it. Marking it before the
+      // request is what would lose a line: the shape would look current
+      // while nothing had been written.
+      savedShape.current = variables.shape
       dispatch({ type: "adopt-line-ids", ids: records.map((record) => record.id) })
     },
-    onError: (error) =>
+    onError: (error) => {
+      savedShape.current = UNSAVED
       setSaveError(
         refusalOrFallback(error, "Those lines did not save. Check the connection.")
-      ),
+      )
+    },
   })
 
   const id = state.tradeInId
   React.useEffect(() => {
     if (!id) return undefined
     if (shape === savedShape.current) return undefined
-    const timer = window.setTimeout(() => {
-      savedShape.current = shape
-      saveLines.mutate(id)
-    }, 500)
+    if (saveLines.isPending) return undefined
+    const timer = window.setTimeout(
+      () => saveLines.mutate({ id, inputs: lineInputs, shape }),
+      500
+    )
     return () => window.clearTimeout(timer)
     // `saveLines` is stable for the life of this screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, shape])
+  }, [id, shape, saveLines.isPending])
 
   // ---- Completion ---------------------------------------------------------
+  /**
+   * The ID document this session has already stored for this customer. A
+   * refused completion is retried with the same photo rather than taking a
+   * second one: the route stores every photo it is sent, and a customer's
+   * ID is not something to keep duplicate copies of.
+   */
+  const storedDocument = React.useRef<{ customer: string; id: string } | null>(null)
+
   const complete = useMutation({
     mutationFn: async () => {
       if (!state.tradeInId) throw new Error("This buy-in has no draft yet.")
 
+      // Flush anything the debounce is still holding, so the server prices
+      // the lines the counter is looking at rather than the ones from
+      // before the payout tile was switched.
+      if (shape !== savedShape.current) {
+        const written = await saveTradeInLines(state.tradeInId, lineInputs)
+        savedShape.current = shape
+        dispatch({
+          type: "adopt-line-ids",
+          ids: written.map((record) => record.id),
+        })
+      }
+
       let idCheck: IdCheckPayload | null = null
-      if (cashRequired && state.customer && needsIdGate(state.customer.facts)) {
-        const result = await submitIdCheck(state.customer.id, idCheckForm(capture))
+      if (cashRequired && state.customer && gate.needed) {
+        const already =
+          storedDocument.current?.customer === state.customer.id
+            ? storedDocument.current.id
+            : null
+        const documentId =
+          already ??
+          (await submitIdCheck(state.customer.id, idCheckForm(capture))).id_document
+        storedDocument.current = { customer: state.customer.id, id: documentId }
         idCheck = {
           id_type: capture.idType,
           id_expiry: capture.idExpiry,
           id_ref_last4: capture.idRefLast4,
           dob: capture.dob,
           address: capture.address.trim(),
-          id_document: result.id_document,
+          id_document: documentId,
         }
       }
 
@@ -200,6 +246,10 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
     },
     onSuccess: (result) => {
       setStepError(null)
+      // The photo blob, the date of birth and the address belong to the
+      // person who has just walked away.
+      setCapture(EMPTY_CAPTURE)
+      storedDocument.current = null
       void queryClient.invalidateQueries({ queryKey: ["customer"] })
       void queryClient.invalidateQueries({ queryKey: ["trade-ins"] })
       dispatch({
@@ -231,8 +281,25 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       setEmailNote(refusalOrFallback(error, "That receipt was not sent.")),
   })
 
+  // ---- The ID gate --------------------------------------------------------
+  /**
+   * Whether a photo the retention cron has not purged is still on file. A
+   * customer verified a year ago can have lost theirs, and the completion
+   * route refuses a cash payout without one.
+   */
+  const { data: idDocument, isSuccess: idDocumentChecked } = useQuery({
+    queryKey: ["id-document", state.customer?.id ?? ""],
+    queryFn: () => latestIdDocument(state.customer?.id ?? ""),
+    enabled: Boolean(state.customer && cashRequired),
+    staleTime: 60_000,
+  })
+  const gate = idGate(
+    state.customer?.facts ?? { flags: [], idStatus: "none" },
+    { hasPhoto: idDocumentChecked ? idDocument !== null : null }
+  )
+
   // ---- The one button ----------------------------------------------------
-  const gate = state.customer
+  const advanceGate = state.customer
     ? canAdvance(state, sums, payout, settings.cashCap)
     : { ok: state.step !== "customer", reason: "Scan or search for the customer first." }
 
@@ -240,14 +307,13 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
     nextStep(state.step, { cashRequired }) === "done" && state.step !== "done"
 
   function advance() {
-    if (!gate.ok) {
-      setStepError(gate.reason)
+    if (!advanceGate.ok) {
+      setStepError(advanceGate.reason)
       return
     }
     if (state.step === "id") {
-      const problem = idCaptureProblem(capture)
-      const skip = state.customer && !needsIdGate(state.customer.facts)
-      if (!skip && problem) {
+      const problem = idCaptureProblem(capture, gate)
+      if (problem) {
         setStepError(problem)
         return
       }
@@ -292,7 +358,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
       <Button
         type="button"
         trailingArrow
-        loading={complete.isPending}
+        loading={complete.isPending || saveLines.isPending}
         onClick={advance}
         className={full ? "w-full" : undefined}
       >
@@ -404,6 +470,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
                 onChange={(patch) =>
                   setCapture((current) => ({ ...current, ...patch }))
                 }
+                gate={gate}
                 serverError={stepError}
               />
             ) : null}
@@ -412,6 +479,14 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
           {stepError && state.step !== "offer" && state.step !== "id" ? (
             <p role="alert" className="mt-8 max-w-[56ch] text-[13px] text-destructive">
               {stepError}
+            </p>
+          ) : null}
+
+          {/* A line that did not save is worth knowing about on every step,
+              not only the one it was typed on. */}
+          {saveError && state.step !== "items" ? (
+            <p role="alert" className="mt-4 max-w-[56ch] text-[13px] text-destructive">
+              {saveError}
             </p>
           ) : null}
 
