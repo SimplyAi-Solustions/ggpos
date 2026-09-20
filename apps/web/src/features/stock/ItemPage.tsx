@@ -52,6 +52,7 @@ import { PriceSources } from "@/features/pricing"
 // ("Held for you until 22 Sep, 14:00"), so the counter and the customer's
 // email cannot read differently.
 import { formatDateTime as holdTime } from "@/features/quotes/format"
+import { holdHasEnded } from "@/features/quotes/filters"
 import { suggestedSellPrice } from "@/features/pricing/suggest"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
@@ -444,9 +445,7 @@ export function ItemPage({ sku }: { sku: string }) {
   }
 
   const sellable = item.status === "in_stock" || item.status === "reserved"
-  const holdEnded = Boolean(
-    item.reservedUntil && new Date(item.reservedUntil).getTime() <= Date.now()
-  )
+  const holdEnded = holdHasEnded(item.reservedUntil)
 
   const sellAction = (
     <Button

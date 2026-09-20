@@ -55,15 +55,39 @@ export function canCancel(status: QuoteStatus): boolean {
   return !["declined", "expired", "completed", "received"].includes(status)
 }
 
+/**
+ * True once an ISO time has gone by.
+ *
+ * Read at the call site rather than in a component, so a screen never calls
+ * `Date.now()` while it renders: both crons here (the hourly one that
+ * expires an offer and the quarter-hourly one that releases a hold) can be
+ * up to their own interval behind, so the screen works it out itself and
+ * says so in words.
+ */
+export function hasPassed(
+  iso: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!iso) return false
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return false
+  return at.getTime() <= now.getTime()
+}
+
 /** True when an offer has run out, which the record says before the cron does. */
 export function offerHasExpired(
   expiresAt: string | null | undefined,
   now: Date = new Date()
 ): boolean {
-  if (!expiresAt) return false
-  const at = new Date(expiresAt)
-  if (Number.isNaN(at.getTime())) return false
-  return at.getTime() <= now.getTime()
+  return hasPassed(expiresAt, now)
+}
+
+/** True when a hold has run out, whatever the item's status still says. */
+export function holdHasEnded(
+  reservedUntil: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  return hasPassed(reservedUntil, now)
 }
 
 /**

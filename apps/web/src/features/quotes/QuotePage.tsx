@@ -56,7 +56,6 @@ import {
   formatDateTime,
 } from "@/features/quotes/format"
 import { offerProblem, quoteOfferTotal, toQuoteLines } from "@/features/quotes/offer"
-import { quoteQueueQuery } from "@/features/quotes/QuotesScreen"
 import { offerSettingsFrom, rulesFrom, useVaultConfig } from "@/lib/api"
 // Straight from the module rather than through the barrel, which the counter
 // shell imports: Phase 4 and Phase 5's own modules stay out of the entry
@@ -66,6 +65,7 @@ import {
   getStaffQuote,
   markQuoteReceived,
   markQuoteReviewing,
+  quoteQueueQuery,
   sendQuoteOffer,
   sendStaffQuoteMessage,
 } from "@/lib/api/quotes"

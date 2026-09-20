@@ -28,14 +28,8 @@ import {
   formatAge,
   photoCount,
 } from "@/features/quotes/format"
-import { listQuoteQueue } from "@/lib/api/quotes"
+import { quoteQueueQuery } from "@/lib/api/quotes"
 import { refusalOrFallback } from "@/lib/api/refusal"
-
-export const quoteQueueQuery = {
-  queryKey: ["quote-queue"] as const,
-  queryFn: listQuoteQueue,
-  staleTime: 15_000,
-}
 
 export function QuotesScreen() {
   const [active, setActive] = React.useState<QuoteFilter[]>([])

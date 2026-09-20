@@ -68,6 +68,10 @@ routerAdd("GET", "/api/vault/estimate/search", (e) => {
       set: setName,
       number: card.getString("number"),
       image: card.getString("image_large") || card.getString("image_small") || "",
+      // The card's own finishes_available (adapters/storage.js's own field,
+      // json, [] when never set) so the estimate page can offer finish
+      // chips straight from a search hit, with no follow-up request.
+      finishes: util.jsonField(card, "finishes_available", []) || [],
     });
   }
 

@@ -78,7 +78,12 @@ function sendEmail(app, settingsRow, to, subject, text) {
  *   body: string,
  *   link?: string,
  *   email?: boolean,
- * }} opts
+ * }} opts `link` is optional here but never actually blank on a customer
+ *   row: an omitted `link` for a `customer` target falls back to
+ *   `/account/notifications`, so every customer-facing notification
+ *   always carries an in-app path to open. A `staffAll` row has no such
+ *   fallback - every call in this package already sets its own
+ *   `/counter/...` link.
  * @returns {Array<any>} the notification record(s) written.
  */
 function notify(app, opts) {

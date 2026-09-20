@@ -19,12 +19,18 @@ import {
   DEMO_PORTAL_CODE,
   DEMO_PORTAL_CUSTOMER_ID,
   DEMO_PORTAL_EMAIL,
+  DEMO_PORTAL_NO_CREDIT_EMAIL,
+  DEMO_PORTAL_NO_CREDIT_ID,
+  demoPortalCustomerForEmail,
+  demoPortalCustomerId,
+  setDemoPortalCustomer,
 } from "@/lib/api/demo/portal-seed"
 import type {
   CardLanding,
   HoldRow,
   NewQuoteInput,
   NewWantInput,
+  NotificationPage,
   NotificationRow,
   QuoteDetail,
   QuoteLine,
@@ -81,13 +87,20 @@ const BOX_ART = boxArt(PLATFORMS.snes_pal_box.ratio)
 
 function seedCustomer() {
   return (
+    findDemoCustomer(demoPortalCustomerId()) ??
     findDemoCustomer(DEMO_PORTAL_CUSTOMER_ID) ??
     DEMO_CUSTOMERS[0] ??
     null
   )
 }
 
-export { DEMO_PORTAL_CODE, DEMO_PORTAL_CUSTOMER_ID, DEMO_PORTAL_EMAIL }
+export {
+  DEMO_PORTAL_CODE,
+  DEMO_PORTAL_CUSTOMER_ID,
+  DEMO_PORTAL_EMAIL,
+  DEMO_PORTAL_NO_CREDIT_EMAIL,
+  DEMO_PORTAL_NO_CREDIT_ID,
+}
 
 // ---------------------------------------------------------------------------
 // The session
@@ -109,11 +122,13 @@ export function demoSignIn(code: string): VaultMe {
   if (code !== DEMO_PORTAL_CODE) {
     throw new Error("That code does not match. Check it, or send another.")
   }
-  if (pendingEmail && pendingEmail !== DEMO_PORTAL_EMAIL) {
+  const id = demoPortalCustomerForEmail(pendingEmail)
+  if (!id) {
     throw new Error(
       "We have no card on that email address. Ask at the counter and we will add it."
     )
   }
+  setDemoPortalCustomer(id)
   return demoMe()
 }
 
@@ -121,7 +136,13 @@ export function demoSignIn(code: string): VaultMe {
 // Me
 // ---------------------------------------------------------------------------
 
-const preferences = { email: true, push: false }
+/** One preference pair per demo card, both on by default as the server's are. */
+const preferences: Record<string, { email: boolean; push: boolean }> = {}
+
+function preferencesFor(id: string) {
+  if (!preferences[id]) preferences[id] = { email: true, push: true }
+  return preferences[id]
+}
 
 export function demoMe(): VaultMe {
   const entry = seedCustomer()
@@ -141,6 +162,7 @@ export function demoMe(): VaultMe {
       birthday_month: entry.customer.birthday_month ?? null,
       qr_token: entry.customer.qr_token ?? "",
       created: entry.customer.created ?? daysAgo(412),
+      notifications: { ...preferencesFor(entry.customer.id) },
     },
     balances: { credit, points: entry.private.points_balance ?? 0 },
     // Tiers land in Phase 6. Until then the card reads "Member", which is
@@ -156,9 +178,8 @@ export function demoMe(): VaultMe {
             quote.status
           )
       ).length,
-      want_list: demoWants.filter((row) => row.status !== "closed").length,
+      want_list: demoMyWants().length,
     },
-    notifications: { ...preferences },
   }
 }
 
@@ -174,8 +195,9 @@ export function demoPatchMe(patch: VaultMePatch): VaultMe {
     entry.customer.birthday_month = patch.birthday_month ?? undefined
   }
   if (patch.notifications) {
-    preferences.email = patch.notifications.email
-    preferences.push = patch.notifications.push
+    const prefs = preferencesFor(entry.customer.id)
+    prefs.email = patch.notifications.email
+    prefs.push = patch.notifications.push
   }
   return demoMe()
 }
@@ -189,9 +211,11 @@ export function demoExport(): Record<string, unknown> {
     id_status: me.id_status,
     trade_ins: demoMyTradeIns().map((entry) => demoMyTradeIn(entry.id)),
     credit_ledger: demoCreditLedgerFor(me.customer.id),
-    quotes: demoQuotes.map(({ ...quote }) => quote),
-    want_list: demoWants,
-    notifications: demoNotifications,
+    // The real export sends every quote without its `photos` field, and
+    // carries no message thread at all (docs/api-contract.md, Phase 5).
+    quotes: demoListQuotes(),
+    want_list: demoMyWants(),
+    notifications: demoMyNotifications(),
   }
 }
 
@@ -206,10 +230,8 @@ export function demoDeleteAccount(): { erased: true } {
 }
 
 export function demoCardLanding(token: string): CardLanding {
-  const entry = seedCustomer()
-  if (!entry || entry.customer.qr_token !== token) {
-    throw new Error("That card is not one of ours.")
-  }
+  const known = DEMO_CUSTOMERS.some((entry) => entry.customer.qr_token === token)
+  if (!known) throw new Error("That card is not one of ours.")
   return { known: true }
 }
 
@@ -263,6 +285,11 @@ function summarise(entry: VaultTradeIn): VaultTradeIn {
 }
 
 export function demoMyTradeIns(): VaultTradeIn[] {
+  if (demoPortalCustomerId() !== DEMO_PORTAL_CUSTOMER_ID) {
+    // The second demo card has never sold us anything, which is what makes
+    // its erasure path reachable.
+    return []
+  }
   const fromCounter = demoTradeInsFor(DEMO_PORTAL_CUSTOMER_ID)
     .filter((entry) => entry.status === "completed")
     .map(summarise)
@@ -288,7 +315,7 @@ export function demoMyTradeIn(id: string): VaultTradeInDetail {
 }
 
 export function demoCreditLedger() {
-  return demoCreditLedgerFor(DEMO_PORTAL_CUSTOMER_ID)
+  return demoCreditLedgerFor(demoPortalCustomerId())
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +515,7 @@ export function demoListQuotes(): QuoteRecord[] {
   // customers' quotes as well, because the counter's queue needs a queue;
   // My Vault has never shown anybody else's.
   return demoQuotes
-    .filter((quote) => quote.customer === DEMO_PORTAL_CUSTOMER_ID)
+    .filter((quote) => quote.customer === demoPortalCustomerId())
     .sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""))
     .map(toQuoteRecord)
 }
@@ -501,7 +528,13 @@ function findQuote(id: string): DemoQuote {
 
 export function demoGetQuote(id: string): QuoteDetail {
   const { messages, photos, ...quote } = findQuote(id)
-  return { quote, messages: [...messages], photos: [...photos] }
+  return {
+    // Lines are spread too: the screen must never be handed the very array
+    // the store keeps, or an offer edited in one place changes in another.
+    quote: { ...quote, lines: quote.lines ? quote.lines.map((line) => ({ ...line })) : undefined },
+    messages: messages.map((message) => ({ ...message })),
+    photos: photos.map((photo) => ({ ...photo })),
+  }
 }
 
 export function demoCreateQuote(input: NewQuoteInput): QuoteRecord {
@@ -509,7 +542,7 @@ export function demoCreateQuote(input: NewQuoteInput): QuoteRecord {
   const created = new Date().toISOString()
   const quote: DemoQuote = {
     id,
-    customer: DEMO_PORTAL_CUSTOMER_ID,
+    customer: demoPortalCustomerId(),
     number: `GG-Q-0000${15 + demoQuotes.length}`,
     status: "submitted",
     message: input.message,
@@ -566,40 +599,55 @@ export function demoAnswerQuote(
 // Want list
 // ---------------------------------------------------------------------------
 
-export const demoWants: WantListRow[] = [
+interface DemoWant extends WantListRow {
+  customer: string
+}
+
+export const demoWants: DemoWant[] = [
   {
     id: "want_demo_1",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
     title: "Charizard ex",
     subtitle: "Scarlet & Violet 151 - 199/165",
     image: CARD_ART,
     maxPrice: 25000,
     status: "matched",
-    heldUntil: hoursAhead(30),
-    heldPrice: 23000,
+    hold: {
+      until: hoursAhead(30),
+      price: 23000,
+      title: "Charizard ex 199/165",
+    },
     created: daysAgo(12),
   },
   {
     id: "want_demo_2",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
     title: "Pidgeot ex",
     subtitle: "Surging Sparks - 113/191",
     image: CARD_ART,
     maxPrice: 4000,
     status: "open",
-    heldUntil: null,
-    heldPrice: null,
+    hold: null,
     created: daysAgo(6),
   },
   {
     id: "want_demo_3",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
     title: "Pokemon Snap, boxed",
     subtitle: "Typed in by you",
     maxPrice: null,
     status: "open",
-    heldUntil: null,
-    heldPrice: null,
+    hold: null,
     created: daysAgo(2),
   },
 ]
+
+/** The signed-in card's own open rows. */
+function demoMyWants(): DemoWant[] {
+  return demoWants.filter(
+    (row) => row.customer === demoPortalCustomerId() && row.status !== "closed"
+  )
+}
 
 /**
  * Copies, not the stored rows.
@@ -610,29 +658,38 @@ export const demoWants: WantListRow[] = [
  * server sends fresh JSON every time; so does this.
  */
 export function demoListWants(): WantListRow[] {
-  return demoWants
-    .filter((row) => row.status !== "closed")
-    .map((row) => ({ ...row }))
+  return demoMyWants().map(({ customer, ...row }) => {
+    void customer
+    return { ...row, hold: row.hold ? { ...row.hold } : null }
+  })
 }
 
-export function demoAddWant(input: NewWantInput, title: string, subtitle: string) {
-  const row: WantListRow = {
+export function demoAddWant(
+  input: NewWantInput,
+  title: string,
+  subtitle: string
+): WantListRow {
+  const row: DemoWant = {
     id: randomId("want"),
+    customer: demoPortalCustomerId(),
     title,
     subtitle,
     image: input.cardId ? CARD_ART : undefined,
     maxPrice: input.maxPrice,
     status: "open",
-    heldUntil: null,
-    heldPrice: null,
+    hold: null,
     created: new Date().toISOString(),
   }
   demoWants.unshift(row)
-  return row
+  const { customer, ...shape } = row
+  void customer
+  return shape
 }
 
 export function demoCloseWant(id: string) {
-  const row = demoWants.find((entry) => entry.id === id)
+  const row = demoWants.find(
+    (entry) => entry.id === id && entry.customer === demoPortalCustomerId()
+  )
   if (!row) throw new Error("That row is not on your want list.")
   row.status = "closed"
 }
@@ -641,18 +698,24 @@ export function demoCloseWant(id: string) {
 // Notifications
 // ---------------------------------------------------------------------------
 
-export const demoNotifications: NotificationRow[] = [
+interface DemoNotification extends NotificationRow {
+  customer: string
+}
+
+export const demoNotifications: DemoNotification[] = [
   {
     id: "note_demo_1",
-    kind: "want_match",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "want_match",
     title: "Charizard ex 199/165 is in",
     body: "Held for you until the time on your want list. Come and collect it.",
-    link: "/account/wants",
+    link: "/account/want-list",
     created: daysAgo(1),
   },
   {
     id: "note_demo_2",
-    kind: "quote_offer",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "quote_offer",
     title: "Your quote offer, £42.00",
     body: "We have priced the lot you sent. The offer holds for four more days.",
     link: "/account/quotes/quote_demo_1",
@@ -660,7 +723,8 @@ export const demoNotifications: NotificationRow[] = [
   },
   {
     id: "note_demo_3",
-    kind: "trade_in",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "trade_in",
     title: "Buy-in GG-BI-000061 completed",
     body: "£42.00 paid in cash. Thanks for bringing them in.",
     link: "/account/trade-ins/trade_demo_portal",
@@ -669,14 +733,26 @@ export const demoNotifications: NotificationRow[] = [
   },
 ]
 
-export function demoListNotifications(): NotificationRow[] {
+/** The signed-in card's own rows, newest first. */
+function demoMyNotifications(): NotificationRow[] {
   return demoNotifications
-    .map((row) => ({ ...row }))
+    .filter((row) => row.customer === demoPortalCustomerId())
+    .map(({ customer, ...row }) => {
+      void customer
+      return { ...row }
+    })
     .sort((a, b) => b.created.localeCompare(a.created))
 }
 
+export function demoListNotifications(): NotificationPage {
+  const items = demoMyNotifications()
+  return { items, unread: items.filter((row) => !row.read_at).length }
+}
+
 export function demoMarkNotificationRead(id: string) {
-  const row = demoNotifications.find((entry) => entry.id === id)
+  const row = demoNotifications.find(
+    (entry) => entry.id === id && entry.customer === demoPortalCustomerId()
+  )
   if (row && !row.read_at) row.read_at = new Date().toISOString()
 }
 

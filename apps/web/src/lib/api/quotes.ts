@@ -11,7 +11,7 @@
 import { displayCode } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
-import { customerAuthId, pbCustomer } from "@/lib/pb-customer"
+import { pbCustomer } from "@/lib/pb-customer"
 import { isDemo } from "@/lib/api/mode"
 import { noteNetworkSuccess } from "@/lib/offline/net"
 import {
@@ -162,6 +162,13 @@ export async function listQuoteQueue(): Promise<QuoteQueueRow[]> {
   })
   noteNetworkSuccess()
   return page.items.map(toQueueRow)
+}
+
+/** The queue as a TanStack query, so the screen and its writes share a key. */
+export const quoteQueueQuery = {
+  queryKey: ["quote-queue"] as const,
+  queryFn: listQuoteQueue,
+  staleTime: 15_000,
 }
 
 /**
