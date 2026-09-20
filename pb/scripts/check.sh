@@ -112,261 +112,7 @@ cleanup() {
     wait "$KEYLESS_PID" 2>/dev/null || true
   fi
   if [ -n "$BACKDATE_PID" ] && kill -0 "$BACKDATE_PID" 2>/dev/null; then
-    
-# --- 24k. The fix round -------------------------------------------------
-
-# A referrals row with one customer at both ends pays two bonuses to one
-# person. Creation refuses one and the merge deletes one (section 16c), so
-# this writes it straight through the collection API to prove the
-# completion routes refuse it too, wherever it came from.
-P6_SELF_REF_ID="$(p6_customer "P6 Self Referral" "p6-selfref@local.test")"
-P6_SELF_REF_ROW="$(curl -s -X POST "$BASE/api/collections/referrals/records" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"referrer\":\"$P6_SELF_REF_ID\",\"referee\":\"$P6_SELF_REF_ID\",\"status\":\"pending\"}" | jval id)"
-[ -n "$P6_SELF_REF_ROW" ] || fail "could not seed a self-referral row"
-P6_SELF_REF_ITEM="$(make_item "P6 Self Referral Item" 1 500 1000)"
-curl -s -o /dev/null -X POST "$BASE/api/vault/sales/complete" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"lines\":[{\"item\":\"$P6_SELF_REF_ITEM\",\"qty\":1,\"unit_price\":1000,\"discount\":0}],\"customer\":\"$P6_SELF_REF_ID\",\"payment\":\"sumup_card\"}"
-[ "$(p6_points_rows "$P6_SELF_REF_ID" referral)" = "0" ] \
-  || fail "a sale paid a referral bonus on a row with the same customer at both ends"
-[ "$(curl -s "$BASE/api/collections/referrals/records/$P6_SELF_REF_ROW" -H "Authorization: $STAFF_TOKEN" | jval status)" = "pending" ] \
-  || fail "a self-referral was marked earned rather than left alone"
-ok "a referral with one customer at both ends pays nobody, whichever way it got written"
-
-# A referral earned on a buy-in, not a sale: the same call, from the other
-# completion route.
-P6_BUYIN_REFEREE="$(curl -s -X POST "$BASE/api/collections/customers/records" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"name\":\"P6 Buy-in Referee\",\"email\":\"p6-buyin-referee@local.test\",\"source\":\"counter\",\"referred_by\":\"$P6_REFERRER_CODE\"}" | jval id)"
-[ -n "$P6_BUYIN_REFEREE" ] || fail "could not create the buy-in referee"
-P6_BUYIN_TRADE="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"customer\":\"$P6_BUYIN_REFEREE\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
-curl -s -o /dev/null -X POST "$BASE/api/collections/trade_in_lines/records" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"trade_in\":\"$P6_BUYIN_TRADE\",\"kind\":\"single\",\"game\":\"$GAME_ID\",\"free_text_title\":\"P6 Referral Buy-in Line\",\"condition\":\"NM\",\"qty\":1,\"market_price\":4000,\"market_currency\":\"GBP\",\"offer_price\":2000,\"accepted\":true}"
-P6_BUYIN_COMPLETE="$(curl -s -o "$TMP_DIR/p6-buyin-referral.json" -w '%{http_code}' -X POST "$BASE/api/vault/trade-ins/$P6_BUYIN_TRADE/complete" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":2000,"terms_accepted":true}')"
-[ "$P6_BUYIN_COMPLETE" = "200" ] || fail "the referee's first buy-in returned $P6_BUYIN_COMPLETE: $(cat "$TMP_DIR/p6-buyin-referral.json")"
-[ "$(p6_points_rows "$P6_BUYIN_REFEREE" referral)" = "1" ] \
-  || fail "a completed buy-in did not earn the referee their referral bonus"
-[ "$(p6_points_rows "$P6_REFERRER_ID" referral)" = "2" ] \
-  || fail "a completed buy-in did not earn the referrer their second referral bonus"
-[ "$(p6_count referrals "referee='$P6_BUYIN_REFEREE' && status='earned'")" = "1" ] \
-  || fail "the buy-in's referral is not marked earned"
-ok "a first completed buy-in earns a referral exactly as a first sale does"
-
-# A sale big enough to cross a threshold on its own: £250 at 10 points a
-# pound is 2,500, and with the welcome bonus that is Regular.
-P6_QUALIFY_ID="$(p6_customer "P6 Qualify" "p6-qualify@local.test")"
-P6_QUALIFY_ITEM="$(make_item "P6 Qualifying Sale Item" 1 8000 25000)"
-P6_QUALIFY_SALE="$(curl -s -o "$TMP_DIR/p6-qualify.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"lines\":[{\"item\":\"$P6_QUALIFY_ITEM\",\"qty\":1,\"unit_price\":25000,\"discount\":0}],\"customer\":\"$P6_QUALIFY_ID\",\"payment\":\"sumup_card\"}")"
-[ "$P6_QUALIFY_SALE" = "200" ] || fail "the qualifying sale returned $P6_QUALIFY_SALE: $(cat "$TMP_DIR/p6-qualify.json")"
-[ "$(jval points_earned <"$TMP_DIR/p6-qualify.json")" = "2500" ] \
-  || fail "a £250 sale earned '$(jval points_earned <"$TMP_DIR/p6-qualify.json")' points, expected 2500"
-p6_expect_tier "$P6_QUALIFY_ID" Regular "a sale that crosses the Regular threshold did not promote the customer"
-p6_expect_count notifications "customer='$P6_QUALIFY_ID' && type='tier_up'" 1 "the promotion earned by a sale did not notify the customer exactly once"
-ok "a sale that crosses a tier threshold promotes the customer on the spot and tells them once"
-
-# --- The display through the collection API ------------------------------
-P6_DISPLAY_DIRECT_PII="$(curl -s -o "$TMP_DIR/p6-display-direct.json" -w '%{http_code}' -X PATCH \
-  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"mode":"sale","payload":{"lines":[{"title":"Booster","detail":"Sealed","qty":1,"unit_price":499}],"subtotal":499,"discount":0,"total":499,"points_to_earn":40,"customer_email":"someone@local.test"}}')"
-[ "$P6_DISPLAY_DIRECT_PII" = "400" ] \
-  || fail "a direct PATCH of display_state carrying an email returned $P6_DISPLAY_DIRECT_PII, expected 400"
-grep -q "The customer display never shows" "$TMP_DIR/p6-display-direct.json" \
-  || fail "the direct-PATCH refusal does not say what it will not show: $(cat "$TMP_DIR/p6-display-direct.json")"
-
-P6_DISPLAY_DIRECT_STRIP="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
-  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"mode":"sale","payload":{"lines":[{"title":"Booster","detail":"Sealed","qty":1,"unit_price":499,"margin":120}],"subtotal":499,"discount":0,"total":499,"points_to_earn":40,"till_float":9999}}')"
-[ "$P6_DISPLAY_DIRECT_STRIP" = "200" ] || fail "a direct PATCH of a clean display payload returned $P6_DISPLAY_DIRECT_STRIP"
-P6_DISPLAY_DIRECT_ROW="$(curl -s "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" -H "Authorization: $STAFF_TOKEN")"
-echo "$P6_DISPLAY_DIRECT_ROW" | grep -q "till_float" && fail "a direct PATCH put a payload key on the screen that the routes would have dropped"
-echo "$P6_DISPLAY_DIRECT_ROW" | grep -q '"margin"' && fail "a direct PATCH put a line key on the screen that the routes would have dropped"
-
-P6_DISPLAY_DIRECT_ACCEPT="$(curl -s -o "$TMP_DIR/p6-display-accept-direct.json" -w '%{http_code}' -X PATCH \
-  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"customer_accepted_at\":\"$(p6_ago 0 0)\"}")"
-[ "$P6_DISPLAY_DIRECT_ACCEPT" = "400" ] \
-  || fail "stamping customer_accepted_at straight onto display_state returned $P6_DISPLAY_DIRECT_ACCEPT, expected 400"
-P6_DISPLAY_DIRECT_TOKEN="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
-  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"token":"a-token-of-my-own"}')"
-[ "$P6_DISPLAY_DIRECT_TOKEN" = "400" ] \
-  || fail "rewriting the display's own token returned $P6_DISPLAY_DIRECT_TOKEN, expected 400"
-[ "$(curl -s "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" -H "Authorization: $STAFF_TOKEN" | jval customer_accepted_at)" = "" ] \
-  || fail "the display row was stamped as accepted through the collection API"
-curl -s -o /dev/null -X POST "$BASE/api/vault/display/clear" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{}'
-ok "a display_state write through the collection API is stripped the same way, and can neither accept an offer nor mint a token"
-
-# --- A renewal cannot leave two active memberships -----------------------
-P6_LAPSED_ID="$(curl -s -G -H "Authorization: $STAFF_TOKEN" \
-  --data-urlencode "filter=customer='$P6_TIER_ID' && status='lapsed'" \
-  "$BASE/api/collections/memberships/records" | jval "items.0.id")"
-[ -n "$P6_LAPSED_ID" ] || fail "could not find the lapsed membership to renew"
-P6_MEMBERSHIP_LIVE="$(curl -s -X POST "$BASE/api/vault/memberships" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"customer\":\"$P6_TIER_ID\",\"tier\":\"$P6_PASS_TIER_ID\",\"months\":3,\"price\":1800}" | jval "membership.id")"
-[ -n "$P6_MEMBERSHIP_LIVE" ] || fail "could not start the membership the renewal has to clash with"
-P6_RENEW_CLASH="$(curl -s -o "$TMP_DIR/p6-renew-clash.json" -w '%{http_code}' -X POST "$BASE/api/vault/memberships/$P6_LAPSED_ID/renew" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"months":6,"price":3000}')"
-[ "$P6_RENEW_CLASH" = "409" ] \
-  || fail "renewing a lapsed membership beside a live one returned $P6_RENEW_CLASH, expected 409: $(cat "$TMP_DIR/p6-renew-clash.json")"
-[ "$(p6_count memberships "customer='$P6_TIER_ID' && status='active'")" = "1" ] \
-  || fail "the customer holds $(p6_count memberships "customer='$P6_TIER_ID' && status='active'") active memberships, expected 1"
-ok "a renewal that would leave a second active membership is refused (409)"
-
-# Deleting a membership outright re-evaluates the tier, the same as
-# cancelling one does.
-curl -s -o /dev/null -X DELETE "$BASE/api/collections/memberships/records/$P6_MEMBERSHIP_LIVE" -H "Authorization: $STAFF_TOKEN"
-p6_expect_tier "$P6_TIER_ID" Member "deleting a membership left its tier pinned with nothing pinning it"
-ok "a membership deleted through the collection API unpins the tier it was granting"
-
-# --- A printed voucher code at the Sell screen ---------------------------
-P6_SELL_VOUCHER_CODE="$(curl -s -X POST "$BASE/api/vault/rewards/$P6_REWARD_MONEYOFF/redeem" \
-  -H "Authorization: $P6_SHOPPER_TOKEN" -H "Content-Type: application/json" -d '{}' | jval "voucher.code")"
-[ -n "$P6_SELL_VOUCHER_CODE" ] || fail "could not redeem a money-off voucher for the Sell check"
-P6_SELL_VOUCHER_PRINTED="$(printf '%s-%s' "$(echo "$P6_SELL_VOUCHER_CODE" | cut -c1-3)" "$(echo "$P6_SELL_VOUCHER_CODE" | cut -c4-)")"
-P6_SELL_ITEM="$(make_item "P6 Voucher Sale Item" 1 500 2000)"
-P6_SELL_STATUS="$(curl -s -o "$TMP_DIR/p6-voucher-sale.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"lines\":[{\"item\":\"$P6_SELL_ITEM\",\"qty\":1,\"unit_price\":2000,\"discount\":0}],\"customer\":\"$P6_SHOPPER_ID\",\"payment\":\"sumup_card\",\"discount\":500,\"discount_source\":\"reward\",\"reward_code\":\"$P6_SELL_VOUCHER_PRINTED\"}")"
-[ "$P6_SELL_STATUS" = "200" ] \
-  || fail "a sale using the printed form of a voucher code ($P6_SELL_VOUCHER_PRINTED) returned $P6_SELL_STATUS: $(cat "$TMP_DIR/p6-voucher-sale.json")"
-[ "$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=code='$P6_SELL_VOUCHER_CODE'" \
-  "$BASE/api/collections/reward_redemptions/records" | jval "items.0.status")" = "used" ] \
-  || fail "the voucher spent on the sale was not marked used"
-ok "the Sell screen takes a voucher code as it is printed, hyphen and all"
-
-# --- The perks refusal when some of the allowance is left ----------------
-P6_PERK_PART="$(curl -s -o "$TMP_DIR/p6-perk-part.json" -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"lounge_hours","count":13}')"
-[ "$P6_PERK_PART" = "422" ] || fail "asking for 13 of 12 lounge hours returned $P6_PERK_PART, expected 422"
-grep -q "Only 12 lounge hours are left this month." "$TMP_DIR/p6-perk-part.json" \
-  || fail "the refusal claims the allowance is spent when none of it is: $(cat "$TMP_DIR/p6-perk-part.json")"
-curl -s -o /dev/null -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"lounge_hours","count":11}'
-P6_PERK_ONE_LEFT="$(curl -s -o "$TMP_DIR/p6-perk-one.json" -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"lounge_hours","count":2}')"
-[ "$P6_PERK_ONE_LEFT" = "422" ] || fail "asking for 2 of the 1 remaining lounge hour returned $P6_PERK_ONE_LEFT, expected 422"
-grep -q "Only 1 lounge hour is left this month." "$TMP_DIR/p6-perk-one.json" \
-  || fail "the refusal does not count the single remaining hour properly: $(cat "$TMP_DIR/p6-perk-one.json")"
-ok "a perk refusal says how many are left when some are, and only claims they are spent when they are"
-
-# --- Creating and deleting loyalty config is audited ---------------------
-P6_AUDIT_RULE_ID="$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=name='P6 Good rule'" \
-  "$BASE/api/collections/loyalty_rules/records" | jval "items.0.id")"
-[ -n "$P6_AUDIT_RULE_ID" ] || fail "could not find the rule created in section 24h"
-[ "$(p6_count audit_log "action='create' && collection='loyalty_rules' && record='$P6_AUDIT_RULE_ID'")" = "1" ] \
-  || fail "creating a loyalty rule wrote no audit row"
-curl -s -o /dev/null -X DELETE "$BASE/api/collections/loyalty_rules/records/$P6_AUDIT_RULE_ID" -H "Authorization: $STAFF_TOKEN"
-[ "$(p6_count audit_log "action='delete' && collection='loyalty_rules' && record='$P6_AUDIT_RULE_ID'")" = "1" ] \
-  || fail "deleting a loyalty rule wrote no audit row"
-curl -s -G -H "Authorization: $SUPER_TOKEN" --data-urlencode "filter=collection='loyalty_rules'" \
-  "$BASE/api/collections/audit_log/records" | grep -q "P6 Good rule" \
-  || fail "the loyalty rule's audit rows do not carry its name"
-ok "creating and deleting a loyalty rule are both audited, by name"
-
-# A counted perk measured in halves would never divide into whole entries.
-P6_TIER_FRACTION="$(p6_refusal loyalty_tiers '{"name":"P6 Half entries","threshold_points":8888,"sort":55,"perks":[{"type":"free_event_entries","value":1.5,"perMonth":true}]}')"
-case "$P6_TIER_FRACTION" in 400*) : ;; *) fail "a tier offering 1.5 free entries a month gave: $P6_TIER_FRACTION" ;; esac
-ok "a counted perk has to be a whole number of entries or hours"
-
-# --- The rewards list while the programme is switched off ----------------
-curl -s -o /dev/null -X PATCH "$BASE/api/collections/loyalty_programme/records/$P6_PROGRAMME_ID" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"enabled":false}'
-P6_REWARDS_OFF="$(curl -s "$BASE/api/vault/rewards" -H "Authorization: $P6_SHOPPER_TOKEN")"
-P6_REWARDS_OFF_CHECK="$(echo "$P6_REWARDS_OFF" | node -e '
-  let d = "";
-  process.stdin.on("data", (c) => (d += c));
-  process.stdin.on("end", () => {
-    const rewards = (JSON.parse(d || "{}").rewards) || [];
-    if (!rewards.length) { process.stdout.write("no rewards listed"); return; }
-    const bad = rewards.filter((r) => r.can_redeem !== false || r.reason !== "off");
-    process.stdout.write(bad.length ? "bad: " + JSON.stringify(bad.map((r) => [r.name, r.reason, r.can_redeem])) : "ok");
-  });
-')"
-[ "$P6_REWARDS_OFF_CHECK" = "ok" ] \
-  || fail "with the programme off the rewards list still offers rewards ($P6_REWARDS_OFF_CHECK)"
-P6_REDEEM_OFF="$(curl -s -o "$TMP_DIR/p6-redeem-off.json" -w '%{http_code}' -X POST "$BASE/api/vault/rewards/$P6_REWARD_BOOSTER/redeem" \
-  -H "Authorization: $P6_SHOPPER_TOKEN" -H "Content-Type: application/json" -d '{}')"
-[ "$P6_REDEEM_OFF" = "422" ] || fail "redeeming with the programme off returned $P6_REDEEM_OFF, expected 422"
-grep -q "The rewards programme is switched off at the moment. Ask at the counter." "$TMP_DIR/p6-redeem-off.json" \
-  || fail "the programme-off refusal is not the sentence the list promises: $(cat "$TMP_DIR/p6-redeem-off.json")"
-curl -s -o /dev/null -X PATCH "$BASE/api/collections/loyalty_programme/records/$P6_PROGRAMME_ID" \
-  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"enabled":true}'
-[ "$(curl -s "$BASE/api/vault/rewards" -H "Authorization: $P6_SHOPPER_TOKEN" | node -e '
-  let d = "";
-  process.stdin.on("data", (c) => (d += c));
-  process.stdin.on("end", () => {
-    const rewards = (JSON.parse(d || "{}").rewards) || [];
-    process.stdout.write(String(rewards.some((r) => r.reason === "off")));
-  });
-')" = "false" ] || fail "switching the programme back on left the rewards list reading off"
-ok "with the programme switched off every reward reads reason 'off', and the redeem route says the same sentence"
-
-# --- A second run of each nightly pass changes nothing -------------------
-P6_EXPIRE_ROWS_BEFORE="$(p6_count points_ledger "reason='expire'")"
-P6_EXPIRED_VOUCHERS_BEFORE="$(p6_count reward_redemptions "status='expired'")"
-P6_LAPSED_BEFORE="$(p6_count memberships "status='lapsed'")"
-P6_EXPIRY_NOTES_BEFORE="$(p6_notifications "$P6_EXPIRY_ID" points_expired)"
-p6_run_cron points_expire
-p6_run_cron vouchers_expire
-p6_run_cron memberships_lapse
-sleep 2
-[ "$(p6_count points_ledger "reason='expire'")" = "$P6_EXPIRE_ROWS_BEFORE" ] \
-  || fail "a second points_expire run wrote another expire row (now $(p6_count points_ledger "reason='expire'"), was $P6_EXPIRE_ROWS_BEFORE)"
-[ "$(p6_notifications "$P6_EXPIRY_ID" points_expired)" = "$P6_EXPIRY_NOTES_BEFORE" ] \
-  || fail "a second points_expire run told the customer their points had expired all over again"
-[ "$(p6_count reward_redemptions "status='expired'")" = "$P6_EXPIRED_VOUCHERS_BEFORE" ] \
-  || fail "a second vouchers_expire run expired more vouchers"
-[ "$(p6_count memberships "status='lapsed'")" = "$P6_LAPSED_BEFORE" ] \
-  || fail "a second memberships_lapse run lapsed more memberships"
-ok "running points_expire, vouchers_expire and memberships_lapse a second time the same night changes nothing"
-
-# --- The customer's own export carries the Guild ------------------------
-P6_EXPORT_JSON="$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_SHOPPER_TOKEN")"
-[ "$(echo "$P6_EXPORT_JSON" | jlen vouchers)" -ge 1 ] || fail "the export carries no vouchers: $(echo "$P6_EXPORT_JSON" | jlen vouchers)"
-[ "$(echo "$P6_EXPORT_JSON" | jval "vouchers.0.number")" != "" ] || fail "an exported voucher has no number"
-[ "$(echo "$P6_EXPORT_JSON" | jval "vouchers.0.reward")" != "" ] || fail "an exported voucher does not name its reward"
-[ "$(echo "$P6_EXPORT_JSON" | jval "vouchers.0.status")" != "" ] || fail "an exported voucher has no status"
-[ "$(echo "$P6_EXPORT_JSON" | jval "guild.tier")" = "Member" ] \
-  || fail "the export reports tier '$(echo "$P6_EXPORT_JSON" | jval "guild.tier")', expected Member"
-[ "$(echo "$P6_EXPORT_JSON" | jval "guild.window_points")" -gt 0 ] || fail "the export carries no window points"
-
-P6_REFERRER_EXPORT="$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_REFERRER_TOKEN")"
-[ "$(echo "$P6_REFERRER_EXPORT" | jlen referrals)" -ge 2 ] \
-  || fail "the referrer's export carries $(echo "$P6_REFERRER_EXPORT" | jlen referrals) referrals, expected both"
-[ "$(echo "$P6_REFERRER_EXPORT" | jval "referrals.0.direction")" = "referred_by_you" ] \
-  || fail "an exported referral does not say which way round it was"
-[ "$(echo "$P6_REFERRER_EXPORT" | jval "referrals.0.status")" = "earned" ] || fail "an exported referral has no status"
-echo "$P6_REFERRER_EXPORT" | grep -qF "$P6_REFEREE_ID" \
-  && fail "the export hands one customer another customer's record id"
-echo "$P6_REFERRER_EXPORT" | grep -q "p6-referee@local.test" \
-  && fail "the export hands one customer another customer's email address"
-echo "$P6_REFERRER_EXPORT" | grep -q "P6 Referee" \
-  && fail "the export hands one customer another customer's name"
-
-P6_LEGEND_TOKEN="$(p5_impersonate "$P6_LEGEND_ID")"
-P6_LEGEND_EXPORT="$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_LEGEND_TOKEN")"
-[ "$(echo "$P6_LEGEND_EXPORT" | jlen perk_usage)" -ge 1 ] || fail "the export carries no perk counts for a customer who has used one"
-[ "$(echo "$P6_LEGEND_EXPORT" | jval "perk_usage.0.used")" -ge 1 ] || fail "an exported perk count has no figure on it"
-P6_TIER_TOKEN="$(p5_impersonate "$P6_TIER_ID")"
-[ "$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_TIER_TOKEN" | jlen memberships)" -ge 2 ] \
-  || fail "the export carries no memberships for a customer who has held two"
-ok "a customer's own export carries their vouchers, memberships, perk counts, tier and referrals, and never the other party's identity"
-
-kill "$BACKDATE_PID" 2>/dev/null || true
+    kill "$BACKDATE_PID" 2>/dev/null || true
     wait "$BACKDATE_PID" 2>/dev/null || true
   fi
   if [ -n "$KEYLESS_DIR" ]; then
@@ -5963,6 +5709,260 @@ echo "$P6_SALE_NOTES" | grep -qF "Earned on a £20.00 sale" \
 P6_POINTS_ANON="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/me/points")"
 [ "$P6_POINTS_ANON" = "401" ] || fail "GET /me/points without a token returned $P6_POINTS_ANON, expected 401"
 ok "GET /api/vault/me/points explains every row in a sentence, money included"
+
+
+# --- 24k. The fix round -------------------------------------------------
+
+# A referrals row with one customer at both ends pays two bonuses to one
+# person. Creation refuses one and the merge deletes one (section 16c), so
+# this writes it straight through the collection API to prove the
+# completion routes refuse it too, wherever it came from.
+P6_SELF_REF_ID="$(p6_customer "P6 Self Referral" "p6-selfref@local.test")"
+P6_SELF_REF_ROW="$(curl -s -X POST "$BASE/api/collections/referrals/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"referrer\":\"$P6_SELF_REF_ID\",\"referee\":\"$P6_SELF_REF_ID\",\"status\":\"pending\"}" | jval id)"
+[ -n "$P6_SELF_REF_ROW" ] || fail "could not seed a self-referral row"
+P6_SELF_REF_ITEM="$(make_item "P6 Self Referral Item" 1 500 1000)"
+curl -s -o /dev/null -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$P6_SELF_REF_ITEM\",\"qty\":1,\"unit_price\":1000,\"discount\":0}],\"customer\":\"$P6_SELF_REF_ID\",\"payment\":\"sumup_card\"}"
+[ "$(p6_points_rows "$P6_SELF_REF_ID" referral)" = "0" ] \
+  || fail "a sale paid a referral bonus on a row with the same customer at both ends"
+[ "$(curl -s "$BASE/api/collections/referrals/records/$P6_SELF_REF_ROW" -H "Authorization: $STAFF_TOKEN" | jval status)" = "pending" ] \
+  || fail "a self-referral was marked earned rather than left alone"
+ok "a referral with one customer at both ends pays nobody, whichever way it got written"
+
+# A referral earned on a buy-in, not a sale: the same call, from the other
+# completion route.
+P6_BUYIN_REFEREE="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"name\":\"P6 Buy-in Referee\",\"email\":\"p6-buyin-referee@local.test\",\"source\":\"counter\",\"referred_by\":\"$P6_REFERRER_CODE\"}" | jval id)"
+[ -n "$P6_BUYIN_REFEREE" ] || fail "could not create the buy-in referee"
+P6_BUYIN_TRADE="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P6_BUYIN_REFEREE\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
+curl -s -o /dev/null -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$P6_BUYIN_TRADE\",\"kind\":\"single\",\"game\":\"$GAME_ID\",\"free_text_title\":\"P6 Referral Buy-in Line\",\"condition\":\"NM\",\"qty\":1,\"market_price\":4000,\"market_currency\":\"GBP\",\"offer_price\":2000,\"accepted\":true}"
+P6_BUYIN_COMPLETE="$(curl -s -o "$TMP_DIR/p6-buyin-referral.json" -w '%{http_code}' -X POST "$BASE/api/vault/trade-ins/$P6_BUYIN_TRADE/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":2000,"terms_accepted":true}')"
+[ "$P6_BUYIN_COMPLETE" = "200" ] || fail "the referee's first buy-in returned $P6_BUYIN_COMPLETE: $(cat "$TMP_DIR/p6-buyin-referral.json")"
+[ "$(p6_points_rows "$P6_BUYIN_REFEREE" referral)" = "1" ] \
+  || fail "a completed buy-in did not earn the referee their referral bonus"
+[ "$(p6_points_rows "$P6_REFERRER_ID" referral)" = "2" ] \
+  || fail "a completed buy-in did not earn the referrer their second referral bonus"
+[ "$(p6_count referrals "referee='$P6_BUYIN_REFEREE' && status='earned'")" = "1" ] \
+  || fail "the buy-in's referral is not marked earned"
+ok "a first completed buy-in earns a referral exactly as a first sale does"
+
+# A sale big enough to cross a threshold on its own: £250 at 10 points a
+# pound is 2,500, and with the welcome bonus that is Regular.
+P6_QUALIFY_ID="$(p6_customer "P6 Qualify" "p6-qualify@local.test")"
+P6_QUALIFY_ITEM="$(make_item "P6 Qualifying Sale Item" 1 8000 25000)"
+P6_QUALIFY_SALE="$(curl -s -o "$TMP_DIR/p6-qualify.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$P6_QUALIFY_ITEM\",\"qty\":1,\"unit_price\":25000,\"discount\":0}],\"customer\":\"$P6_QUALIFY_ID\",\"payment\":\"sumup_card\"}")"
+[ "$P6_QUALIFY_SALE" = "200" ] || fail "the qualifying sale returned $P6_QUALIFY_SALE: $(cat "$TMP_DIR/p6-qualify.json")"
+[ "$(jval points_earned <"$TMP_DIR/p6-qualify.json")" = "2500" ] \
+  || fail "a £250 sale earned '$(jval points_earned <"$TMP_DIR/p6-qualify.json")' points, expected 2500"
+p6_expect_tier "$P6_QUALIFY_ID" Regular "a sale that crosses the Regular threshold did not promote the customer"
+p6_expect_count notifications "customer='$P6_QUALIFY_ID' && type='tier_up'" 1 "the promotion earned by a sale did not notify the customer exactly once"
+ok "a sale that crosses a tier threshold promotes the customer on the spot and tells them once"
+
+# --- The display through the collection API ------------------------------
+P6_DISPLAY_DIRECT_PII="$(curl -s -o "$TMP_DIR/p6-display-direct.json" -w '%{http_code}' -X PATCH \
+  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"mode":"sale","payload":{"lines":[{"title":"Booster","detail":"Sealed","qty":1,"unit_price":499}],"subtotal":499,"discount":0,"total":499,"points_to_earn":40,"customer_email":"someone@local.test"}}')"
+[ "$P6_DISPLAY_DIRECT_PII" = "400" ] \
+  || fail "a direct PATCH of display_state carrying an email returned $P6_DISPLAY_DIRECT_PII, expected 400"
+grep -q "The customer display never shows" "$TMP_DIR/p6-display-direct.json" \
+  || fail "the direct-PATCH refusal does not say what it will not show: $(cat "$TMP_DIR/p6-display-direct.json")"
+
+P6_DISPLAY_DIRECT_STRIP="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"mode":"sale","payload":{"lines":[{"title":"Booster","detail":"Sealed","qty":1,"unit_price":499,"margin":120}],"subtotal":499,"discount":0,"total":499,"points_to_earn":40,"till_float":9999}}')"
+[ "$P6_DISPLAY_DIRECT_STRIP" = "200" ] || fail "a direct PATCH of a clean display payload returned $P6_DISPLAY_DIRECT_STRIP"
+P6_DISPLAY_DIRECT_ROW="$(curl -s "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" -H "Authorization: $STAFF_TOKEN")"
+echo "$P6_DISPLAY_DIRECT_ROW" | grep -q "till_float" && fail "a direct PATCH put a payload key on the screen that the routes would have dropped"
+echo "$P6_DISPLAY_DIRECT_ROW" | grep -q '"margin"' && fail "a direct PATCH put a line key on the screen that the routes would have dropped"
+
+P6_DISPLAY_DIRECT_ACCEPT="$(curl -s -o "$TMP_DIR/p6-display-accept-direct.json" -w '%{http_code}' -X PATCH \
+  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer_accepted_at\":\"$(p6_ago 0 0)\"}")"
+[ "$P6_DISPLAY_DIRECT_ACCEPT" = "400" ] \
+  || fail "stamping customer_accepted_at straight onto display_state returned $P6_DISPLAY_DIRECT_ACCEPT, expected 400"
+P6_DISPLAY_DIRECT_TOKEN="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"token":"a-token-of-my-own"}')"
+[ "$P6_DISPLAY_DIRECT_TOKEN" = "400" ] \
+  || fail "rewriting the display's own token returned $P6_DISPLAY_DIRECT_TOKEN, expected 400"
+[ "$(curl -s "$BASE/api/collections/display_state/records/$P6_DISPLAY_ROW_ID" -H "Authorization: $STAFF_TOKEN" | jval customer_accepted_at)" = "" ] \
+  || fail "the display row was stamped as accepted through the collection API"
+curl -s -o /dev/null -X POST "$BASE/api/vault/display/clear" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{}'
+ok "a display_state write through the collection API is stripped the same way, and can neither accept an offer nor mint a token"
+
+# --- A renewal cannot leave two active memberships -----------------------
+P6_LAPSED_ID="$(curl -s -G -H "Authorization: $STAFF_TOKEN" \
+  --data-urlencode "filter=customer='$P6_TIER_ID' && status='lapsed'" \
+  "$BASE/api/collections/memberships/records" | jval "items.0.id")"
+[ -n "$P6_LAPSED_ID" ] || fail "could not find the lapsed membership to renew"
+P6_MEMBERSHIP_LIVE="$(curl -s -X POST "$BASE/api/vault/memberships" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P6_TIER_ID\",\"tier\":\"$P6_PASS_TIER_ID\",\"months\":3,\"price\":1800}" | jval "membership.id")"
+[ -n "$P6_MEMBERSHIP_LIVE" ] || fail "could not start the membership the renewal has to clash with"
+P6_RENEW_CLASH="$(curl -s -o "$TMP_DIR/p6-renew-clash.json" -w '%{http_code}' -X POST "$BASE/api/vault/memberships/$P6_LAPSED_ID/renew" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"months":6,"price":3000}')"
+[ "$P6_RENEW_CLASH" = "409" ] \
+  || fail "renewing a lapsed membership beside a live one returned $P6_RENEW_CLASH, expected 409: $(cat "$TMP_DIR/p6-renew-clash.json")"
+[ "$(p6_count memberships "customer='$P6_TIER_ID' && status='active'")" = "1" ] \
+  || fail "the customer holds $(p6_count memberships "customer='$P6_TIER_ID' && status='active'") active memberships, expected 1"
+ok "a renewal that would leave a second active membership is refused (409)"
+
+# Deleting a membership outright re-evaluates the tier, the same as
+# cancelling one does.
+curl -s -o /dev/null -X DELETE "$BASE/api/collections/memberships/records/$P6_MEMBERSHIP_LIVE" -H "Authorization: $STAFF_TOKEN"
+p6_expect_tier "$P6_TIER_ID" Member "deleting a membership left its tier pinned with nothing pinning it"
+ok "a membership deleted through the collection API unpins the tier it was granting"
+
+# --- A printed voucher code at the Sell screen ---------------------------
+P6_SELL_VOUCHER_CODE="$(curl -s -X POST "$BASE/api/vault/rewards/$P6_REWARD_MONEYOFF/redeem" \
+  -H "Authorization: $P6_SHOPPER_TOKEN" -H "Content-Type: application/json" -d '{}' | jval "voucher.code")"
+[ -n "$P6_SELL_VOUCHER_CODE" ] || fail "could not redeem a money-off voucher for the Sell check"
+P6_SELL_VOUCHER_PRINTED="$(printf '%s-%s' "$(echo "$P6_SELL_VOUCHER_CODE" | cut -c1-3)" "$(echo "$P6_SELL_VOUCHER_CODE" | cut -c4-)")"
+P6_SELL_ITEM="$(make_item "P6 Voucher Sale Item" 1 500 2000)"
+P6_SELL_STATUS="$(curl -s -o "$TMP_DIR/p6-voucher-sale.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$P6_SELL_ITEM\",\"qty\":1,\"unit_price\":2000,\"discount\":0}],\"customer\":\"$P6_SHOPPER_ID\",\"payment\":\"sumup_card\",\"discount\":500,\"discount_source\":\"reward\",\"reward_code\":\"$P6_SELL_VOUCHER_PRINTED\"}")"
+[ "$P6_SELL_STATUS" = "200" ] \
+  || fail "a sale using the printed form of a voucher code ($P6_SELL_VOUCHER_PRINTED) returned $P6_SELL_STATUS: $(cat "$TMP_DIR/p6-voucher-sale.json")"
+[ "$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=code='$P6_SELL_VOUCHER_CODE'" \
+  "$BASE/api/collections/reward_redemptions/records" | jval "items.0.status")" = "used" ] \
+  || fail "the voucher spent on the sale was not marked used"
+ok "the Sell screen takes a voucher code as it is printed, hyphen and all"
+
+# --- The perks refusal when some of the allowance is left ----------------
+P6_PERK_PART="$(curl -s -o "$TMP_DIR/p6-perk-part.json" -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"lounge_hours","count":13}')"
+[ "$P6_PERK_PART" = "422" ] || fail "asking for 13 of 12 lounge hours returned $P6_PERK_PART, expected 422"
+grep -q "Only 12 lounge hours are left this month." "$TMP_DIR/p6-perk-part.json" \
+  || fail "the refusal claims the allowance is spent when none of it is: $(cat "$TMP_DIR/p6-perk-part.json")"
+curl -s -o /dev/null -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"lounge_hours","count":11}'
+P6_PERK_ONE_LEFT="$(curl -s -o "$TMP_DIR/p6-perk-one.json" -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"lounge_hours","count":2}')"
+[ "$P6_PERK_ONE_LEFT" = "422" ] || fail "asking for 2 of the 1 remaining lounge hour returned $P6_PERK_ONE_LEFT, expected 422"
+grep -q "Only 1 lounge hour is left this month." "$TMP_DIR/p6-perk-one.json" \
+  || fail "the refusal does not count the single remaining hour properly: $(cat "$TMP_DIR/p6-perk-one.json")"
+ok "a perk refusal says how many are left when some are, and only claims they are spent when they are"
+
+# --- Creating and deleting loyalty config is audited ---------------------
+P6_AUDIT_RULE_ID="$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=name='P6 Good rule'" \
+  "$BASE/api/collections/loyalty_rules/records" | jval "items.0.id")"
+[ -n "$P6_AUDIT_RULE_ID" ] || fail "could not find the rule created in section 24h"
+[ "$(p6_count audit_log "action='create' && collection='loyalty_rules' && record='$P6_AUDIT_RULE_ID'")" = "1" ] \
+  || fail "creating a loyalty rule wrote no audit row"
+curl -s -o /dev/null -X DELETE "$BASE/api/collections/loyalty_rules/records/$P6_AUDIT_RULE_ID" -H "Authorization: $STAFF_TOKEN"
+[ "$(p6_count audit_log "action='delete' && collection='loyalty_rules' && record='$P6_AUDIT_RULE_ID'")" = "1" ] \
+  || fail "deleting a loyalty rule wrote no audit row"
+curl -s -G -H "Authorization: $SUPER_TOKEN" --data-urlencode "filter=collection='loyalty_rules'" \
+  "$BASE/api/collections/audit_log/records" | grep -q "P6 Good rule" \
+  || fail "the loyalty rule's audit rows do not carry its name"
+ok "creating and deleting a loyalty rule are both audited, by name"
+
+# A counted perk measured in halves would never divide into whole entries.
+P6_TIER_FRACTION="$(p6_refusal loyalty_tiers '{"name":"P6 Half entries","threshold_points":8888,"sort":55,"perks":[{"type":"free_event_entries","value":1.5,"perMonth":true}]}')"
+case "$P6_TIER_FRACTION" in 400*) : ;; *) fail "a tier offering 1.5 free entries a month gave: $P6_TIER_FRACTION" ;; esac
+ok "a counted perk has to be a whole number of entries or hours"
+
+# --- The rewards list while the programme is switched off ----------------
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/loyalty_programme/records/$P6_PROGRAMME_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"enabled":false}'
+P6_REWARDS_OFF="$(curl -s "$BASE/api/vault/rewards" -H "Authorization: $P6_SHOPPER_TOKEN")"
+P6_REWARDS_OFF_CHECK="$(echo "$P6_REWARDS_OFF" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const rewards = (JSON.parse(d || "{}").rewards) || [];
+    if (!rewards.length) { process.stdout.write("no rewards listed"); return; }
+    const bad = rewards.filter((r) => r.can_redeem !== false || r.reason !== "off");
+    process.stdout.write(bad.length ? "bad: " + JSON.stringify(bad.map((r) => [r.name, r.reason, r.can_redeem])) : "ok");
+  });
+')"
+[ "$P6_REWARDS_OFF_CHECK" = "ok" ] \
+  || fail "with the programme off the rewards list still offers rewards ($P6_REWARDS_OFF_CHECK)"
+P6_REDEEM_OFF="$(curl -s -o "$TMP_DIR/p6-redeem-off.json" -w '%{http_code}' -X POST "$BASE/api/vault/rewards/$P6_REWARD_BOOSTER/redeem" \
+  -H "Authorization: $P6_SHOPPER_TOKEN" -H "Content-Type: application/json" -d '{}')"
+[ "$P6_REDEEM_OFF" = "422" ] || fail "redeeming with the programme off returned $P6_REDEEM_OFF, expected 422"
+grep -q "The rewards programme is switched off at the moment. Ask at the counter." "$TMP_DIR/p6-redeem-off.json" \
+  || fail "the programme-off refusal is not the sentence the list promises: $(cat "$TMP_DIR/p6-redeem-off.json")"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/loyalty_programme/records/$P6_PROGRAMME_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"enabled":true}'
+[ "$(curl -s "$BASE/api/vault/rewards" -H "Authorization: $P6_SHOPPER_TOKEN" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const rewards = (JSON.parse(d || "{}").rewards) || [];
+    process.stdout.write(String(rewards.some((r) => r.reason === "off")));
+  });
+')" = "false" ] || fail "switching the programme back on left the rewards list reading off"
+ok "with the programme switched off every reward reads reason 'off', and the redeem route says the same sentence"
+
+# --- A second run of each nightly pass changes nothing -------------------
+P6_EXPIRE_ROWS_BEFORE="$(p6_count points_ledger "reason='expire'")"
+P6_EXPIRED_VOUCHERS_BEFORE="$(p6_count reward_redemptions "status='expired'")"
+P6_LAPSED_BEFORE="$(p6_count memberships "status='lapsed'")"
+P6_EXPIRY_NOTES_BEFORE="$(p6_notifications "$P6_EXPIRY_ID" points_expired)"
+p6_run_cron points_expire
+p6_run_cron vouchers_expire
+p6_run_cron memberships_lapse
+sleep 2
+[ "$(p6_count points_ledger "reason='expire'")" = "$P6_EXPIRE_ROWS_BEFORE" ] \
+  || fail "a second points_expire run wrote another expire row (now $(p6_count points_ledger "reason='expire'"), was $P6_EXPIRE_ROWS_BEFORE)"
+[ "$(p6_notifications "$P6_EXPIRY_ID" points_expired)" = "$P6_EXPIRY_NOTES_BEFORE" ] \
+  || fail "a second points_expire run told the customer their points had expired all over again"
+[ "$(p6_count reward_redemptions "status='expired'")" = "$P6_EXPIRED_VOUCHERS_BEFORE" ] \
+  || fail "a second vouchers_expire run expired more vouchers"
+[ "$(p6_count memberships "status='lapsed'")" = "$P6_LAPSED_BEFORE" ] \
+  || fail "a second memberships_lapse run lapsed more memberships"
+ok "running points_expire, vouchers_expire and memberships_lapse a second time the same night changes nothing"
+
+# --- The customer's own export carries the Guild ------------------------
+P6_EXPORT_JSON="$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_SHOPPER_TOKEN")"
+[ "$(echo "$P6_EXPORT_JSON" | jlen vouchers)" -ge 1 ] || fail "the export carries no vouchers: $(echo "$P6_EXPORT_JSON" | jlen vouchers)"
+[ "$(echo "$P6_EXPORT_JSON" | jval "vouchers.0.number")" != "" ] || fail "an exported voucher has no number"
+[ "$(echo "$P6_EXPORT_JSON" | jval "vouchers.0.reward")" != "" ] || fail "an exported voucher does not name its reward"
+[ "$(echo "$P6_EXPORT_JSON" | jval "vouchers.0.status")" != "" ] || fail "an exported voucher has no status"
+[ "$(echo "$P6_EXPORT_JSON" | jval "guild.tier")" = "Member" ] \
+  || fail "the export reports tier '$(echo "$P6_EXPORT_JSON" | jval "guild.tier")', expected Member"
+[ "$(echo "$P6_EXPORT_JSON" | jval "guild.window_points")" -gt 0 ] || fail "the export carries no window points"
+
+P6_REFERRER_EXPORT="$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_REFERRER_TOKEN")"
+[ "$(echo "$P6_REFERRER_EXPORT" | jlen referrals)" -ge 2 ] \
+  || fail "the referrer's export carries $(echo "$P6_REFERRER_EXPORT" | jlen referrals) referrals, expected both"
+[ "$(echo "$P6_REFERRER_EXPORT" | jval "referrals.0.direction")" = "referred_by_you" ] \
+  || fail "an exported referral does not say which way round it was"
+[ "$(echo "$P6_REFERRER_EXPORT" | jval "referrals.0.status")" = "earned" ] || fail "an exported referral has no status"
+echo "$P6_REFERRER_EXPORT" | grep -qF "$P6_REFEREE_ID" \
+  && fail "the export hands one customer another customer's record id"
+echo "$P6_REFERRER_EXPORT" | grep -q "p6-referee@local.test" \
+  && fail "the export hands one customer another customer's email address"
+echo "$P6_REFERRER_EXPORT" | grep -q "P6 Referee" \
+  && fail "the export hands one customer another customer's name"
+
+P6_LEGEND_TOKEN="$(p5_impersonate "$P6_LEGEND_ID")"
+P6_LEGEND_EXPORT="$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_LEGEND_TOKEN")"
+[ "$(echo "$P6_LEGEND_EXPORT" | jlen perk_usage)" -ge 1 ] || fail "the export carries no perk counts for a customer who has used one"
+[ "$(echo "$P6_LEGEND_EXPORT" | jval "perk_usage.0.used")" -ge 1 ] || fail "an exported perk count has no figure on it"
+P6_TIER_TOKEN="$(p5_impersonate "$P6_TIER_ID")"
+[ "$(curl -s "$BASE/api/vault/me/export" -H "Authorization: $P6_TIER_TOKEN" | jlen memberships)" -ge 2 ] \
+  || fail "the export carries no memberships for a customer who has held two"
+ok "a customer's own export carries their vouchers, memberships, perk counts, tier and referrals, and never the other party's identity"
 
 kill "$BACKDATE_PID" 2>/dev/null || true
 wait "$BACKDATE_PID" 2>/dev/null || true

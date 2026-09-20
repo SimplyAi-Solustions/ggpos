@@ -18,9 +18,10 @@ import { buildCode } from "../packages/shared/src/sku"
 const DEMO_EMAIL = "demo@ggentertainment.co.uk"
 const DEMO_PASSWORD = "ggvault-demo"
 
-/** The demo Charizard, at £324.99, and Jasmine's card. */
+/** The demo Charizard, at £324.99, Jasmine's card and her £5 reward. */
 const DEMO_SKU = buildCode("single", "7F3K2")
 const JASMINE = "GGC-4K7M2S"
+const MONEY_OFF = buildCode("voucher", "3H7K9")
 
 async function signIn(page: Page) {
   await page.goto("/login?demo=1")
@@ -117,6 +118,15 @@ test.describe("the customer display", () => {
     await expect(tablet.getByTestId("display-points")).toContainText("Earns")
     // A first name and a last initial: the tablet faces the shop.
     await expect(tablet.getByText("Okafor")).toHaveCount(0)
+
+    // Her reward comes off the basket, and the customer can read what came
+    // off and what it was called.
+    await field.fill(MONEY_OFF.display)
+    await field.press("Enter")
+    await expect(counter.getByText("£5 off a single applied")).toBeVisible()
+    await expect(tablet.getByTestId("display-discount")).toHaveText("-£5.00")
+    await expect(tablet.getByTestId("display-sale")).toContainText("£5 off a single")
+    await expect(tablet.getByTestId("display-total")).toHaveText("£319.99")
 
     // Emptying the basket puts the shop's own screen back.
     await counter.getByRole("button", { name: "Remove Charizard ex" }).click()

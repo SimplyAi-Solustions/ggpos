@@ -22,6 +22,8 @@ const DEMO_SKU = buildCode("single", "7F3K2")
 /** Jasmine's £5 money-off reward, and Tom's free sleeve pack. */
 const MONEY_OFF = buildCode("voucher", "3H7K9")
 const FREE_ITEM = buildCode("voucher", "8P2RT")
+/** Jasmine's own card code, which is also her referral code. */
+const JASMINE_CODE = "GGC-4K7M2S"
 
 async function signIn(page: Page) {
   await page.goto("/login?demo=1")
@@ -217,6 +219,54 @@ test.describe("the Guild at the counter", () => {
     await expect(page.getByTestId("basket-customer")).toContainText("Jasmine Okafor")
     await expect(page.getByText("£5 off a single applied")).toBeVisible()
     await expect(page.getByTestId("sell-total")).toHaveText("£319.99")
+  })
+
+  test("cancels a voucher and puts the points back", async ({ page }) => {
+    await signIn(page)
+    await go(page, "Scan")
+
+    const field = page.getByTestId("scan-field")
+    await field.fill(FREE_ITEM.display)
+    await field.press("Enter")
+    await expect(page.getByTestId("voucher-sheet")).toContainText("Sleeve pack")
+
+    await page.getByRole("button", { name: "Cancel and return the points" }).click()
+    await expect(
+      page.getByText("Cancelled. The points are back on Tom Bradbury's account.")
+    ).toBeVisible()
+    await expect(page.getByTestId("voucher-status")).toHaveText("Cancelled")
+    await page.getByRole("button", { name: "Close" }).first().click()
+
+    // The 800 points the sleeve pack cost are on his record again.
+    await openCustomer(page, "Tom Bradbury")
+    await expect(page.getByTestId("customer-points")).toHaveText("1,140")
+  })
+
+  test("takes a referral code on a new customer, and refuses one nobody holds", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await go(page, "New customer")
+    await expect(page.getByRole("heading", { name: "New customer" })).toBeVisible()
+
+    await page.getByLabel("Name", { exact: true }).fill("Priya Sandhu")
+    await page.getByLabel("Referred by").fill(buildCode("customer", "ZZZZZ").display)
+    await primary(page, "Save customer").click()
+
+    // The server is the only thing that can say whether a code is anybody's,
+    // and its sentence lands under the field it belongs to.
+    await expect(
+      page.getByText(/No customer has the code GGC-ZZZZZ/)
+    ).toBeVisible()
+    await expect(page.getByRole("heading", { name: "New customer" })).toBeVisible()
+
+    await page.getByLabel("Referred by").fill(JASMINE_CODE)
+    await primary(page, "Save customer").click()
+
+    // The card exists, and the referral is waiting on Jasmine's record.
+    await expect(page.getByRole("heading", { name: "Priya Sandhu" })).toBeVisible()
+    await openCustomer(page, "Jasmine Okafor")
+    await expect(page.getByTestId("guild-section")).toContainText("1 earned, 2 waiting")
   })
 
   test("adjusts points behind a password, and never below zero", async ({ page }) => {

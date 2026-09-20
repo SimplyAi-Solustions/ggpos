@@ -312,7 +312,10 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         </div>
         <div>
           <MicroLabel className="mb-2">Guild points</MicroLabel>
-          <p className="tnum text-[20px] leading-none font-medium text-foreground">
+          <p
+            data-testid="customer-points"
+            className="tnum text-[20px] leading-none font-medium text-foreground"
+          >
             {(priv?.points_balance ?? 0).toLocaleString("en-GB")}
           </p>
         </div>
