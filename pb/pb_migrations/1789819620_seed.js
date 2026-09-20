@@ -105,13 +105,22 @@ migrate((app) => {
   // pricing_rules: defaults for NM singles (banded), flat retro and
   // sealed rates. game is left empty (wildcard) throughout - kind (plus
   // band, for singles) is specific enough on its own; see pb/README.md.
+  //
+  // Bands chain on the exclusive-upper convention selectRule uses (band_min
+  // inclusive, band_max exclusive): 0-500, 500-5000, 5000-open, so every
+  // adjusted penny value lands in exactly one band, including the boundary
+  // values 500 and 5000 themselves. band_max null (the open top band) is
+  // requested as null here but PocketBase's plain "number" field has no
+  // null state and always round-trips an unset value as 0 - see
+  // pb/README.md and PricingRule.bandMax in packages/shared/src/pricing.ts,
+  // whose selectRule treats 0 the same as null for exactly this reason.
   // -----------------------------------------------------------------
   const pricingRulesCollection = app.findCollectionByNameOrId("pricing_rules");
   const pricingRules = [
     // kind, condition, band_min, band_max, cash_pct, credit_pct, rounding, priority
-    ["single", "NM", 0, 499, 40, 55, 25, 10], // under £5
+    ["single", "NM", 0, 500, 40, 55, 25, 10], // under £5
     ["single", "NM", 500, 5000, 50, 65, 50, 20], // £5 to £50
-    ["single", "NM", 5001, null, 60, 75, 50, 30], // over £50
+    ["single", "NM", 5000, null, 60, 75, 50, 30], // £50 and over
     // Retro: loose, boxed and cib all take the same flat rate, so one
     // wildcard-condition row covers all three completeness values.
     ["retro", "", 0, null, 45, 60, 50, 40],
@@ -175,7 +184,7 @@ migrate((app) => {
       colour_token: "tier-regular",
       sort: 20,
       perks: [
-        { type: "percent_off", value: 5, scope: "sealed" },
+        { type: "percent_off", value: 5, scope: ["sealed"] },
         { type: "points_multiplier", value: 1.25 },
       ],
     },
@@ -185,11 +194,15 @@ migrate((app) => {
       colour_token: "tier-legend",
       sort: 30,
       perks: [
-        { type: "percent_off", value: 10, scope: "all" },
+        {
+          type: "percent_off",
+          value: 10,
+          scope: ["single", "graded", "retro", "sealed", "accessory", "other"],
+        },
         { type: "points_multiplier", value: 1.5 },
-        { type: "free_event_entries", value: 2, per_month: true },
-        { type: "lounge_hours", value: 12, per_month: true },
-        { type: "priority_release_booking", value: true },
+        { type: "free_event_entries", value: 2, perMonth: true },
+        { type: "lounge_hours", value: 12, perMonth: true },
+        { type: "priority_release_booking" },
       ],
     },
   ];
@@ -225,11 +238,14 @@ migrate((app) => {
         "ebay_uk_asking",
         "pricecharting_ntsc",
       ],
-      condition_multipliers: { LP: 0.85, MP: 0.7, HP: 0.5, DMG: 0.3 },
+      // Matches ConditionMultipliers (packages/shared/src/pricing.ts): every
+      // CardCondition key, including NM at 1 (no adjustment).
+      condition_multipliers: { NM: 1, LP: 0.85, MP: 0.7, HP: 0.5, DMG: 0.3 },
+      // Matches MarkupBand[] (packages/shared/src/pricing.ts): { from, multiplier }.
       markup_bands: [
-        { max: 500, markup: 1.1 },
-        { max: 5000, markup: 1.05 },
-        { max: null, markup: 1.0 },
+        { from: 0, multiplier: 1.1 },
+        { from: 500, multiplier: 1.05 },
+        { from: 5000, multiplier: 1.0 },
       ],
       sell_rounding: "49_99",
       label_default_template: savedLabelTemplates["toploader_40x20"].id,

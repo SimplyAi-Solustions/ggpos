@@ -3,6 +3,7 @@ import {
   checkPointsRedemption,
   evaluateSalePoints,
   evaluateTradeInPoints,
+  parseTierPerk,
   penceToPoints,
   pointsToNextTier,
   pointsToPence,
@@ -145,6 +146,60 @@ describe("redemption", () => {
     expect(checkPointsRedemption(programme, 600, 1000, 5000).reason).toBe("insufficient")
     expect(checkPointsRedemption(programme, 5000, 3000, 5000).reason).toBe("over_share")
     expect(checkPointsRedemption(programme, 5000, 2500, 5000).ok).toBe(true)
+  })
+})
+
+describe("parseTierPerk", () => {
+  it("parses one of each seeded-style perk shape", () => {
+    expect(parseTierPerk({ type: "percent_off", value: 10, scope: ["accessory"] })).toEqual({
+      type: "percent_off",
+      value: 10,
+      scope: ["accessory"],
+    })
+    expect(parseTierPerk({ type: "points_multiplier", value: 1.5 })).toEqual({
+      type: "points_multiplier",
+      value: 1.5,
+    })
+    expect(parseTierPerk({ type: "free_event_entries", value: 2, perMonth: true })).toEqual({
+      type: "free_event_entries",
+      value: 2,
+      perMonth: true,
+    })
+    expect(parseTierPerk({ type: "lounge_hours", value: 12, perMonth: true })).toEqual({
+      type: "lounge_hours",
+      value: 12,
+      perMonth: true,
+    })
+    expect(parseTierPerk({ type: "priority_release_booking" })).toEqual({ type: "priority_release_booking" })
+    expect(parseTierPerk({ type: "member_event_pricing" })).toEqual({ type: "member_event_pricing" })
+  })
+  it("parses every Legend tier perk from the fixed seed shape", () => {
+    const legendPerks = [
+      { type: "percent_off", value: 10, scope: ["single", "graded", "retro", "sealed", "accessory", "other"] },
+      { type: "points_multiplier", value: 1.5 },
+      { type: "free_event_entries", value: 2, perMonth: true },
+      { type: "lounge_hours", value: 12, perMonth: true },
+      { type: "priority_release_booking" },
+    ]
+    for (const perk of legendPerks) {
+      expect(parseTierPerk(perk)).not.toBeNull()
+    }
+  })
+  it("rejects the pre-fix seed shapes instead of silently misreading them", () => {
+    // snake_case per_month, not camelCase perMonth
+    expect(parseTierPerk({ type: "free_event_entries", value: 2, per_month: true })).toBeNull()
+    // scope as a bare string, not a string array
+    expect(parseTierPerk({ type: "percent_off", value: 10, scope: "all" })).toBeNull()
+  })
+  it("drops a stray field on a perk that carries none of its own", () => {
+    expect(parseTierPerk({ type: "priority_release_booking", value: true })).toEqual({
+      type: "priority_release_booking",
+    })
+  })
+  it("rejects unknown shapes", () => {
+    expect(parseTierPerk(null)).toBeNull()
+    expect(parseTierPerk({})).toBeNull()
+    expect(parseTierPerk({ type: "not_a_real_perk" })).toBeNull()
   })
 })
 

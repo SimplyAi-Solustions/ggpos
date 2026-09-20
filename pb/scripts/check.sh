@@ -276,6 +276,20 @@ QUOTE_REPLY_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
 [ "$QUOTE_REPLY_STATUS" = "200" ] || fail "customer replying on their quote returned $QUOTE_REPLY_STATUS, expected 200"
 ok "customer can reply on their own quote"
 
+# A customer may accept or decline their own quote, but never jump it
+# straight to any other status in the timeline (that stays staff-driven).
+QUOTE_COMPLETE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"completed"}' "$BASE/api/collections/quotes/records/$QUOTE_ID")"
+[ "$QUOTE_COMPLETE_STATUS" != "200" ] || fail "a customer was able to set their quote's status to completed"
+ok "customer cannot set their quote's status to completed (got $QUOTE_COMPLETE_STATUS)"
+QUOTE_ACCEPT_JSON="$(curl -s -w '\n%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"accepted"}' "$BASE/api/collections/quotes/records/$QUOTE_ID")"
+QUOTE_ACCEPT_STATUS="$(echo "$QUOTE_ACCEPT_JSON" | tail -n1)"
+[ "$QUOTE_ACCEPT_STATUS" = "200" ] || fail "customer accepting their own quote returned $QUOTE_ACCEPT_STATUS, expected 200: $(echo "$QUOTE_ACCEPT_JSON" | head -n -1)"
+ok "customer can set their quote's status to accepted"
+
 # List rules act as a filter: a signed-in customer sees the seeded tiers,
 # an anonymous caller gets 200 with no rows at all.
 TIERS_COUNT="$(curl -s -H "Authorization: $CUSTOMER_TOKEN" "$BASE/api/collections/loyalty_tiers/records" | jval totalItems)"
@@ -284,6 +298,126 @@ ok "customer can read the loyalty tiers ($TIERS_COUNT rows)"
 TIERS_ANON_COUNT="$(curl -s "$BASE/api/collections/loyalty_tiers/records" | jval totalItems)"
 [ "${TIERS_ANON_COUNT:-0}" = "0" ] || fail "loyalty_tiers is readable without signing in ($TIERS_ANON_COUNT rows)"
 ok "loyalty tiers are hidden from anonymous callers"
+
+# -----------------------------------------------------------------------
+# 9. The seeded pricing_rules, settings and loyalty_tiers rows actually
+#    work through the shared evaluators once loaded back from the API:
+#    band edges, "" wildcards and the settings/tier JSON shapes. Runs the
+#    real generated pb_hooks/lib/shared/{pricing,loyalty}.js, not a
+#    hand-copied re-implementation, so it catches drift between the seed
+#    and packages/shared/src/{pricing,loyalty}.ts - see
+#    pb/scripts/check-pricing-loyalty.js.
+# -----------------------------------------------------------------------
+curl -s "$BASE/api/collections/pricing_rules/records?perPage=200" -H "Authorization: $STAFF_TOKEN" \
+  >"$TMP_DIR/pricing_rules.json"
+curl -s "$BASE/api/collections/settings/records?perPage=1" -H "Authorization: $STAFF_TOKEN" \
+  >"$TMP_DIR/settings.json"
+curl -s "$BASE/api/collections/loyalty_tiers/records?perPage=200" -H "Authorization: $STAFF_TOKEN" \
+  >"$TMP_DIR/loyalty_tiers.json"
+
+PRICING_LOYALTY_OUTPUT="$(node "$ROOT/pb/scripts/check-pricing-loyalty.js" "$TMP_DIR" 2>&1)" \
+  || fail "$PRICING_LOYALTY_OUTPUT"
+ok "seeded pricing_rules, settings and loyalty_tiers evaluate correctly through pb_hooks/lib/shared/{pricing,loyalty}.js"
+
+# -----------------------------------------------------------------------
+# 10. SKU bodies are drawn uniformly from the alphabet, not from the old
+#     "one random alphabet character's char code, masked with & 31"
+#     construct, which could never produce nine of the alphabet's thirty-
+#     two symbols (0 9 C F V W X Y Z) and produced nine others twice as
+#     often. 40 bodies of 5 characters is 200 draws; the chance a uniform
+#     draw never lands on any of those nine symbols is negligible, so
+#     seeing one confirms the biased construct is gone.
+# -----------------------------------------------------------------------
+FOUND_RARE_SYMBOL=""
+for _ in $(seq 1 40); do
+  RARE_SKU_JSON="$(curl -s -X POST "$BASE/api/collections/items/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\"}")"
+  RARE_SKU="$(echo "$RARE_SKU_JSON" | jval sku)"
+  [ -n "$RARE_SKU" ] || fail "item created without a sku while sampling for uniformity: $RARE_SKU_JSON"
+  # The body is the 5 characters between the kind letter (index 2) and the
+  # trailing check character, e.g. GGS7F3K2Q -> 7F3K2.
+  RARE_BODY="${RARE_SKU:3:5}"
+  if echo "$RARE_BODY" | grep -qE '[09CFVWXYZ]'; then
+    FOUND_RARE_SYMBOL=1
+    break
+  fi
+done
+[ -n "$FOUND_RARE_SYMBOL" ] || fail "generated 40 item SKUs and none of their bodies contained 0, 9, C, F, V, W, X, Y or Z - looks like the biased legacy random construct is back"
+ok "SKU bodies are drawn uniformly (found a 0/9/C/F/V/W/X/Y/Z among 40 samples)"
+
+# -----------------------------------------------------------------------
+# 11. audit_log never stores a changed field's VALUE, only its name, and
+#     never a value from settings.
+# -----------------------------------------------------------------------
+SETTINGS_ID="$(curl -s "$BASE/api/collections/settings/records?perPage=1" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$SETTINGS_ID" ] || fail "could not find the seeded settings row"
+
+SECRET_API_KEY="check-fake-api-key-$$"
+SETTINGS_UPDATE_STATUS="$(curl -s -o "$TMP_DIR/settings-update.json" -w '%{http_code}' -X PATCH \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"email_api_key\":\"$SECRET_API_KEY\"}" "$BASE/api/collections/settings/records/$SETTINGS_ID")"
+[ "$SETTINGS_UPDATE_STATUS" = "200" ] || fail "could not update settings.email_api_key ($SETTINGS_UPDATE_STATUS): $(cat "$TMP_DIR/settings-update.json")"
+
+AUDIT_LOG_JSON="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200" -H "Authorization: $SUPER_TOKEN")"
+if echo "$AUDIT_LOG_JSON" | grep -qF "$SECRET_API_KEY"; then
+  fail "audit_log recorded the updated email_api_key value - meta must only ever hold field names, never values"
+fi
+ok "updating settings.email_api_key leaves no trace of its value in audit_log"
+
+AUDIT_SETTINGS_META="$(echo "$AUDIT_LOG_JSON" | node -e '
+let d = "";
+process.stdin.on("data", (c) => (d += c));
+process.stdin.on("end", () => {
+  const items = JSON.parse(d || "{}").items || [];
+  const row = [...items].reverse().find((r) => r.collection === "settings");
+  process.stdout.write(row ? JSON.stringify(row.meta) : "");
+});
+')"
+echo "$AUDIT_SETTINGS_META" | grep -q "email_api_key" \
+  || fail "expected an audit_log row for the settings update naming the changed field email_api_key, got: $AUDIT_SETTINGS_META"
+ok "audit_log records the changed field name (email_api_key), not its value"
+
+# -----------------------------------------------------------------------
+# 12. An inactive staff account cannot authenticate
+# -----------------------------------------------------------------------
+INACTIVE_EMAIL="inactive-check@local.test"
+INACTIVE_PASSWORD="inactivecheckpassword123"
+INACTIVE_CREATE_STATUS="$(curl -s -o "$TMP_DIR/inactive-staff.json" -w '%{http_code}' -X POST "$BASE/api/collections/staff/records" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"email\":\"$INACTIVE_EMAIL\",\"password\":\"$INACTIVE_PASSWORD\",\"passwordConfirm\":\"$INACTIVE_PASSWORD\",\"name\":\"Inactive Check\",\"role\":\"staff\",\"active\":false}")"
+[ "$INACTIVE_CREATE_STATUS" = "200" ] || fail "could not create an inactive staff record ($INACTIVE_CREATE_STATUS): $(cat "$TMP_DIR/inactive-staff.json")"
+ok "inactive staff record created"
+
+INACTIVE_AUTH_STATUS="$(curl -s -o "$TMP_DIR/inactive-auth.json" -w '%{http_code}' -X POST "$BASE/api/collections/staff/auth-with-password" \
+  -H "Content-Type: application/json" \
+  -d "{\"identity\":\"$INACTIVE_EMAIL\",\"password\":\"$INACTIVE_PASSWORD\"}")"
+case "$INACTIVE_AUTH_STATUS" in
+  4*) ok "inactive staff account cannot authenticate (got $INACTIVE_AUTH_STATUS)" ;;
+  *) fail "inactive staff account authenticated with status $INACTIVE_AUTH_STATUS, expected 4xx: $(cat "$TMP_DIR/inactive-auth.json")" ;;
+esac
+
+# -----------------------------------------------------------------------
+# 13. A customer may mark their own notification read, but not rewrite it
+# -----------------------------------------------------------------------
+NOTIFICATION_JSON="$(curl -s -X POST "$BASE/api/collections/notifications/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$CUSTOMER_ID\",\"type\":\"quote_offer\",\"title\":\"Your quote is ready\",\"body\":\"Check the app for the offer.\"}")"
+NOTIFICATION_ID="$(echo "$NOTIFICATION_JSON" | jval id)"
+[ -n "$NOTIFICATION_ID" ] || fail "could not create a notification for the check customer: $NOTIFICATION_JSON"
+
+NOTIFICATION_TITLE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"Hijacked title"}' "$BASE/api/collections/notifications/records/$NOTIFICATION_ID")"
+[ "$NOTIFICATION_TITLE_STATUS" != "200" ] || fail "a customer was able to change their own notification's title"
+ok "customer cannot change their own notification's title (got $NOTIFICATION_TITLE_STATUS)"
+
+NOTIFICATION_READ_JSON="$(curl -s -w '\n%{http_code}' -X PATCH \
+  -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"read_at":"2026-09-20T12:00:00Z"}' "$BASE/api/collections/notifications/records/$NOTIFICATION_ID")"
+NOTIFICATION_READ_STATUS="$(echo "$NOTIFICATION_READ_JSON" | tail -n1)"
+[ "$NOTIFICATION_READ_STATUS" = "200" ] || fail "customer marking their own notification read returned $NOTIFICATION_READ_STATUS, expected 200: $(echo "$NOTIFICATION_READ_JSON" | head -n -1)"
+ok "customer can mark their own notification read"
 
 echo
 echo "All checks passed ($PASS_COUNT)."

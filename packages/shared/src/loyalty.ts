@@ -68,6 +68,42 @@ export type TierPerk =
   | { type: "priority_release_booking" }
   | { type: "member_event_pricing" }
 
+/**
+ * Runtime shape check for one loyalty_tiers.perks entry loaded from
+ * PocketBase (plain JSON, so nothing guarantees it matches TierPerk).
+ * Returns null when the shape does not match a known perk exactly - for
+ * example the pre-fix seed's snake_case "per_month" or an "all"/string
+ * scope instead of a string array - rather than silently misreading it.
+ */
+export function parseTierPerk(value: unknown): TierPerk | null {
+  if (!value || typeof value !== "object") return null
+  const v = value as Record<string, unknown>
+  switch (v.type) {
+    case "percent_off":
+      return typeof v.value === "number" &&
+        Array.isArray(v.scope) &&
+        v.scope.every((s) => typeof s === "string")
+        ? { type: "percent_off", value: v.value, scope: v.scope as string[] }
+        : null
+    case "points_multiplier":
+      return typeof v.value === "number" ? { type: "points_multiplier", value: v.value } : null
+    case "free_event_entries":
+      return typeof v.value === "number" && v.perMonth === true
+        ? { type: "free_event_entries", value: v.value, perMonth: true }
+        : null
+    case "lounge_hours":
+      return typeof v.value === "number" && v.perMonth === true
+        ? { type: "lounge_hours", value: v.value, perMonth: true }
+        : null
+    case "priority_release_booking":
+      return { type: "priority_release_booking" }
+    case "member_event_pricing":
+      return { type: "member_event_pricing" }
+    default:
+      return null
+  }
+}
+
 export interface SaleLineForPoints {
   game: string | null
   kind: string

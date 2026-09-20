@@ -26,15 +26,15 @@ onRecordCreate((e) => {
   /**
    * Same retry-by-precheck approach as items.pb.js's SKU assignment (see
    * its comment for why this checks uniqueness itself instead of
-   * retrying a failed e.next()).
+   * retrying a failed e.next()), and the same unbiased body generation
+   * (see items.pb.js's generateUniqueSku for why the plain
+   * sku.generateCode(kind, randomByte) path is avoided here).
    */
   function generateUniqueVoucherCode() {
-    const randomByte = () =>
-      $security.randomStringWithAlphabet(1, sku.CROCKFORD_ALPHABET).charCodeAt(0);
-
     const maxAttempts = 8;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const code = sku.generateCode("voucher", randomByte);
+      const body = $security.randomStringWithAlphabet(5, sku.CROCKFORD_ALPHABET);
+      const code = sku.buildCode("voucher", body);
       try {
         e.app.findFirstRecordByFilter("reward_redemptions", "code = {:code}", {
           code: code.encoded,

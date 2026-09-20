@@ -5,6 +5,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DEFAULT_MARKUP_BANDS = exports.DEFAULT_OFFER_SETTINGS = exports.DEFAULT_CONDITION_MULTIPLIERS = exports.DEFAULT_FRESHNESS = exports.DEFAULT_RETRO_PRIORITY = exports.DEFAULT_TCG_PRIORITY = void 0;
 exports.chooseMarketPrice = chooseMarketPrice;
 exports.adjustForCondition = adjustForCondition;
+exports.isWildcard = isWildcard;
+exports.isOpenEndedBand = isOpenEndedBand;
 exports.selectRule = selectRule;
 exports.computeOffer = computeOffer;
 exports.suggestSellPrice = suggestSellPrice;
@@ -79,6 +81,14 @@ exports.DEFAULT_CONDITION_MULTIPLIERS = {
 function adjustForCondition(gbpMarket, condition, multipliers = exports.DEFAULT_CONDITION_MULTIPLIERS) {
     return (0, money_1.roundHalfUp)(gbpMarket * multipliers[condition]);
 }
+/** True when a rule's optional field ("", null or undefined) should match any value. */
+function isWildcard(value) {
+    return value === null || value === undefined || value === "";
+}
+/** True when a rule's band has no real upper bound - see PricingRule.bandMax. */
+function isOpenEndedBand(bandMax) {
+    return bandMax === null || bandMax === 0;
+}
 /**
  * Select the most specific active rule for the context and adjusted market
  * value. Specificity counts matched optional fields; ties break on priority
@@ -91,24 +101,24 @@ function selectRule(rules, ctx, adjustedMarket) {
             return false;
         if (adjustedMarket < r.bandMin)
             return false;
-        if (r.bandMax !== null && adjustedMarket >= r.bandMax)
+        if (!isOpenEndedBand(r.bandMax) && adjustedMarket >= r.bandMax)
             return false;
-        if (r.game !== null && r.game !== ctx.game)
+        if (!isWildcard(r.game) && r.game !== ctx.game)
             return false;
-        if (r.kind !== null && r.kind !== ctx.kind)
+        if (!isWildcard(r.kind) && r.kind !== ctx.kind)
             return false;
-        if (r.condition !== null && r.condition !== ctx.condition)
+        if (!isWildcard(r.condition) && r.condition !== ctx.condition)
             return false;
-        if (r.finish !== null && r.finish !== ((_a = ctx.finish) !== null && _a !== void 0 ? _a : null))
+        if (!isWildcard(r.finish) && r.finish !== ((_a = ctx.finish) !== null && _a !== void 0 ? _a : null))
             return false;
-        if (r.rarity !== null && r.rarity !== ((_b = ctx.rarity) !== null && _b !== void 0 ? _b : null))
+        if (!isWildcard(r.rarity) && r.rarity !== ((_b = ctx.rarity) !== null && _b !== void 0 ? _b : null))
             return false;
         return true;
     });
     if (matches.length === 0)
         return null;
-    const specificity = (r) => [r.game, r.kind, r.condition, r.finish, r.rarity].filter((v) => v !== null).length;
-    const bandWidth = (r) => r.bandMax === null ? Number.POSITIVE_INFINITY : r.bandMax - r.bandMin;
+    const specificity = (r) => [r.game, r.kind, r.condition, r.finish, r.rarity].filter((v) => !isWildcard(v)).length;
+    const bandWidth = (r) => isOpenEndedBand(r.bandMax) ? Number.POSITIVE_INFINITY : r.bandMax - r.bandMin;
     return matches.sort((a, b) => specificity(b) - specificity(a) ||
         b.priority - a.priority ||
         bandWidth(a) - bandWidth(b))[0];

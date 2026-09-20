@@ -5,6 +5,8 @@ import {
   adjustForCondition,
   chooseMarketPrice,
   computeOffer,
+  isOpenEndedBand,
+  isWildcard,
   selectRule,
   suggestSellPrice,
   type PriceCandidate,
@@ -88,6 +90,84 @@ describe("selectRule", () => {
   })
   it("ignores inactive rules and returns null when nothing matches", () => {
     expect(selectRule(rules, { game: "pokemon", kind: "retro", condition: "loose" }, 2000)).toBeNull()
+  })
+})
+
+describe("isWildcard", () => {
+  it("treats empty string, null and undefined as wildcards", () => {
+    expect(isWildcard("")).toBe(true)
+    expect(isWildcard(null)).toBe(true)
+    expect(isWildcard(undefined)).toBe(true)
+    expect(isWildcard("NM")).toBe(false)
+  })
+})
+
+describe("isOpenEndedBand", () => {
+  it("treats null and 0 as open-ended, and any positive number as a real bound", () => {
+    expect(isOpenEndedBand(null)).toBe(true)
+    expect(isOpenEndedBand(0)).toBe(true)
+    expect(isOpenEndedBand(5000)).toBe(false)
+  })
+})
+
+describe("selectRule: PocketBase wildcard and open-band shapes", () => {
+  // PocketBase stores an empty text/relation field as "" (never null), and
+  // an unset plain number field as 0 (never null) - see pb/README.md and
+  // PricingRule.bandMax. A seeded rule loaded straight from the API looks
+  // exactly like this: every optional field is "" rather than absent, and
+  // an open-ended band's band_max round-trips as 0.
+  const seededRetroRule: PricingRule = {
+    id: "retro",
+    game: "",
+    kind: "retro",
+    condition: "",
+    finish: "",
+    rarity: "",
+    bandMin: 0,
+    bandMax: 0,
+    cashPct: 45,
+    creditPct: 60,
+    rounding: 50,
+    priority: 40,
+    active: true,
+  }
+
+  it("matches a seeded-style rule whose wildcard fields are '' rather than null", () => {
+    expect(selectRule([seededRetroRule], { game: "retro", kind: "retro", condition: "loose" }, 3000)?.id).toBe(
+      "retro"
+    )
+  })
+  it("still respects a non-wildcard field on an otherwise '' rule", () => {
+    const singleOnly: PricingRule = { ...seededRetroRule, id: "single-only", kind: "single" }
+    expect(selectRule([singleOnly], { game: "retro", kind: "retro", condition: "loose" }, 3000)).toBeNull()
+  })
+  it("matches any adjusted market value against a 0 (open-ended) band, not just up to 0", () => {
+    expect(selectRule([seededRetroRule], { game: "retro", kind: "retro", condition: "boxed" }, 250_00)?.id).toBe(
+      "retro"
+    )
+  })
+})
+
+describe("computeOffer: seeded single band edges chain without gaps", () => {
+  // Mirrors pb_migrations/1789819620_seed.js's three single/NM rows after
+  // the band fix: 0-500, 500-5000, 5000-open, each exclusive on the top so
+  // the exact boundary pence values (500 and 5000) land in the next band
+  // rather than matching nothing.
+  const seededSingleRules: PricingRule[] = [
+    { id: "low", game: "", kind: "single", condition: "NM", finish: "", rarity: "", bandMin: 0, bandMax: 500, cashPct: 40, creditPct: 55, rounding: 25, priority: 10, active: true },
+    { id: "mid", game: "", kind: "single", condition: "NM", finish: "", rarity: "", bandMin: 500, bandMax: 5000, cashPct: 50, creditPct: 65, rounding: 50, priority: 20, active: true },
+    { id: "high", game: "", kind: "single", condition: "NM", finish: "", rarity: "", bandMin: 5000, bandMax: 0, cashPct: 60, creditPct: 75, rounding: 50, priority: 30, active: true },
+  ]
+  it("has no gap at the exact boundary pence values", () => {
+    expect(selectRule(seededSingleRules, { game: "pokemon", kind: "single", condition: "NM" }, 499)?.id).toBe("low")
+    expect(selectRule(seededSingleRules, { game: "pokemon", kind: "single", condition: "NM" }, 500)?.id).toBe("mid")
+    expect(selectRule(seededSingleRules, { game: "pokemon", kind: "single", condition: "NM" }, 4999)?.id).toBe("mid")
+    expect(selectRule(seededSingleRules, { game: "pokemon", kind: "single", condition: "NM" }, 5000)?.id).toBe("high")
+  })
+  it("produces a non-zero cash and credit offer for a £20 NM Pokémon single", () => {
+    const o = computeOffer(2000, { game: "pokemon", kind: "single", condition: "NM" }, seededSingleRules)
+    expect(o.cash).toBeGreaterThan(0)
+    expect(o.credit).toBeGreaterThan(0)
   })
 })
 

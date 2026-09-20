@@ -122,11 +122,12 @@ retrying `e.next()` on a unique-constraint failure.
 | `lib/shared/{sku,money,pricing,loyalty}.js` | **Generated, do not edit.** A CommonJS build of `packages/shared/src/{sku,money,pricing,loyalty}.ts` via `pnpm --filter @gg/shared build:hooks`, so the hooks, the frontend and the admin loyalty-rule preview all share one implementation. `sku.js` is the one used here: `generateCode(kind, randomByte)`, `parseCode`, `buildCode`, `CROCKFORD_ALPHABET`, `CODE_KINDS`. |
 | `lib/audit.js` | `writeAuditLog(app, { actor, action, collection, record, meta, ip })` - one row in `audit_log`. |
 | `lib/counters.js` | `nextNumber(app, "trade_in" \| "sale" \| "redemption")` - atomically bumps the matching row in `counters` and returns `GG-BI-000123` / `GG-S-000456` / `GG-V-000012`. Transaction-agnostic: pass `$app`, `e.app`, or a `txApp` from `$app.runInTransaction`. |
-| `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a checked random body, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty. |
-| `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
-| `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, via `lib/shared/sku.js`) when empty. |
+| `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty. |
+| `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
+| `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
+| `staff.pb.js` | `onRecordAuthRequest` on `staff`: refuses to authenticate (issue a token, refresh one, ...) an account with `active: false`, with "This account is inactive. Ask an admin to reactivate it." A deactivated staff member keeps their row (for `audit_log` actor references and historic sales/trade-ins) but cannot sign in again. |
 | `singletons.pb.js` | Refuses a second `settings` or `loyalty_programme` record. |
-| `audit.pb.js` | Logs deletes on `staff`, `customers`, `customer_private`, `id_documents`, `items`, `trade_ins`, `sales`, `credit_ledger`, `points_ledger` (a judgement call - PLAN.md says "sensitive collections" without naming them; revisit if Richard wants a different list), and updates to `pricing_rules` and every `loyalty_*`/`settings` collection. Uses the `*Request` hook variants because only those carry `e.auth` and `e.realIP()`; logs only after `e.next()` returns without throwing. |
+| `audit.pb.js` | Logs deletes on `staff`, `customers`, `customer_private`, `id_documents`, `items`, `trade_ins`, `sales`, `credit_ledger`, `points_ledger` (a judgement call - PLAN.md says "sensitive collections" without naming them; revisit if Richard wants a different list), and updates to `pricing_rules` and every `loyalty_*`/`settings` collection. Uses the `*Request` hook variants because only those carry `e.auth` and `e.realIP()`; logs only after `e.next()` returns without throwing. `meta` never carries a field's *value*, only identifiers: for an update, the names of the fields that changed (`e.record.fieldsData()` diffed against `e.record.original()`, taken before `e.next()`); for a delete, one label from a short list of fields already known to be safe (`items.sku`, `trade_ins.number`, `sales.number`) or nothing at all for every other audited collection - `staff`, `customers`, `customer_private` and `id_documents` above all never contribute a label, since every field on those could be a password hash, `pin_hash`, an ID photo path or other PII. This keeps a password, `pin_hash`, ID photo or API key out of this permanent, superuser-only table, so erasing the original record actually erases it. |
 | `routes.pb.js` | `GET /api/vault/health` (staff-authenticated: status, PocketBase version, a few record counts) and `GET /api/vault/me` (the caller's own `staff` fields, hand-picked so `pin_hash` can never leak). |
 | `crons.pb.js` | Registers `fx`, `prices`, `retention` and `stats` - each just logs for now. Real work is a later phase (`docs/PLAN.md`, "Phases"); day-to-day price ingestion runs in `services/pricesync`, not here, because hooks cannot stream the 15-26 MB Cardmarket files. |
 
@@ -201,7 +202,19 @@ source, not a hand-copied regex); creates a `customers` row and checks
 its `code` the same way, and that a matching `customer_private` row
 appeared; confirms `GET /api/vault/health` returns `401` unauthenticated
 and `200` with a staff token; and, impersonating that customer,
-confirms it cannot view `customer_private` or list `audit_log`. Prints
+confirms it cannot view `customer_private` or list `audit_log`, cannot
+rewrite fields a customer must not touch on their own `customers`,
+`quotes` or `notifications` row (only accepting/declining a quote and
+marking a notification read go through), and can read the loyalty
+tiers. It also loads the seeded `pricing_rules`, `settings` and
+`loyalty_tiers` rows back through `pb_hooks/lib/shared/{pricing,loyalty}.js`
+(`pb/scripts/check-pricing-loyalty.js`) and confirms a card and a retro
+item both price to a non-zero offer, `suggestSellPrice` marks a price up,
+and the Legend tier's perks all parse; generates 40 item SKUs to confirm
+their bodies are drawn uniformly rather than from the old biased
+construct (see "Hooks" above); confirms an `active: false` staff record
+cannot authenticate; and confirms updating `settings.email_api_key`
+never leaves that value, only the field's name, in `audit_log`. Prints
 `OK:`/`FAIL:` per step, exits non-zero on the first failure, and always
 tears the server and temp directory down again (a `trap ... EXIT`), even
 if a check fails.

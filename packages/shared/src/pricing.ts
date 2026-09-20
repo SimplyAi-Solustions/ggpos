@@ -120,6 +120,7 @@ export function adjustForCondition(
 
 export interface PricingRule {
   id: string
+  /** "", null or undefined all mean "any" - see isWildcard. */
   game: string | null
   kind: string | null
   condition: string | null
@@ -127,13 +128,29 @@ export interface PricingRule {
   rarity: string | null
   /** Inclusive lower bound in pence. */
   bandMin: number
-  /** Exclusive upper bound in pence; null means open-ended. */
+  /**
+   * Exclusive upper bound in pence; null means open-ended. PocketBase's
+   * plain "number" field has no null state (its zero value is 0, never
+   * null - see pb/README.md), so a rule saved with no band_max round-trips
+   * from the API as 0, not null. 0 is never a meaningful real upper bound
+   * (bandMin is always >= 0), so isOpenEndedBand treats 0 the same as null.
+   */
   bandMax: number | null
   cashPct: number
   creditPct: number
   rounding: RoundingStep
   priority: number
   active: boolean
+}
+
+/** True when a rule's optional field ("", null or undefined) should match any value. */
+export function isWildcard(value: string | null | undefined): boolean {
+  return value === null || value === undefined || value === ""
+}
+
+/** True when a rule's band has no real upper bound - see PricingRule.bandMax. */
+export function isOpenEndedBand(bandMax: number | null): boolean {
+  return bandMax === null || bandMax === 0
 }
 
 export interface OfferContext {
@@ -157,19 +174,19 @@ export function selectRule(
   const matches = rules.filter((r) => {
     if (!r.active) return false
     if (adjustedMarket < r.bandMin) return false
-    if (r.bandMax !== null && adjustedMarket >= r.bandMax) return false
-    if (r.game !== null && r.game !== ctx.game) return false
-    if (r.kind !== null && r.kind !== ctx.kind) return false
-    if (r.condition !== null && r.condition !== ctx.condition) return false
-    if (r.finish !== null && r.finish !== (ctx.finish ?? null)) return false
-    if (r.rarity !== null && r.rarity !== (ctx.rarity ?? null)) return false
+    if (!isOpenEndedBand(r.bandMax) && adjustedMarket >= (r.bandMax as number)) return false
+    if (!isWildcard(r.game) && r.game !== ctx.game) return false
+    if (!isWildcard(r.kind) && r.kind !== ctx.kind) return false
+    if (!isWildcard(r.condition) && r.condition !== ctx.condition) return false
+    if (!isWildcard(r.finish) && r.finish !== (ctx.finish ?? null)) return false
+    if (!isWildcard(r.rarity) && r.rarity !== (ctx.rarity ?? null)) return false
     return true
   })
   if (matches.length === 0) return null
   const specificity = (r: PricingRule) =>
-    [r.game, r.kind, r.condition, r.finish, r.rarity].filter((v) => v !== null).length
+    [r.game, r.kind, r.condition, r.finish, r.rarity].filter((v) => !isWildcard(v)).length
   const bandWidth = (r: PricingRule) =>
-    r.bandMax === null ? Number.POSITIVE_INFINITY : r.bandMax - r.bandMin
+    isOpenEndedBand(r.bandMax) ? Number.POSITIVE_INFINITY : (r.bandMax as number) - r.bandMin
   return matches.sort(
     (a, b) =>
       specificity(b) - specificity(a) ||

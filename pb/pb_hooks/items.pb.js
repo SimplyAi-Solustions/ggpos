@@ -23,6 +23,14 @@ onRecordCreate((e) => {
    * Generate a SKU body and confirm it is not already taken before
    * handing it back, retrying with a fresh random body on a collision.
    *
+   * $security.randomStringWithAlphabet draws each character uniformly from
+   * the alphabet; generating the whole 5-character body from it in one
+   * call and checking it with sku.buildCode avoids the bias in
+   * sku.generateCode's default randomByte-and-mask-with-31 path (32 is a
+   * clean power of two, but a single alphabet *character*'s code point is
+   * not, so `charCode & 31` favours nine symbols and never produces the
+   * other nine).
+   *
    * This checks uniqueness itself with findFirstRecordByFilter rather
    * than setting a candidate and calling e.next() again on failure:
    * verified against v0.40.4, a *second* e.next() call from the same
@@ -33,12 +41,11 @@ onRecordCreate((e) => {
    */
   function generateUniqueSku(kind) {
     const validKind = sku.CODE_KINDS[kind] ? kind : "other";
-    const randomByte = () =>
-      $security.randomStringWithAlphabet(1, sku.CROCKFORD_ALPHABET).charCodeAt(0);
 
     const maxAttempts = 8;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const code = sku.generateCode(validKind, randomByte);
+      const body = $security.randomStringWithAlphabet(5, sku.CROCKFORD_ALPHABET);
+      const code = sku.buildCode(validKind, body);
       try {
         e.app.findFirstRecordByFilter("items", "sku = {:sku}", { sku: code.encoded });
         // Found an existing row with this code - loop and try again.

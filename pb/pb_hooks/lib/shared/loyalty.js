@@ -2,6 +2,7 @@
 // Source: packages/shared/src. Regenerate with: pnpm --filter @gg/shared build:hooks
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.parseTierPerk = parseTierPerk;
 exports.evaluateSalePoints = evaluateSalePoints;
 exports.evaluateTradeInPoints = evaluateTradeInPoints;
 exports.pointsToPence = pointsToPence;
@@ -14,6 +15,42 @@ exports.pointsToNextTier = pointsToNextTier;
  * the PocketBase hook produce the same points for the same sale.
  */
 const money_1 = require("./money");
+/**
+ * Runtime shape check for one loyalty_tiers.perks entry loaded from
+ * PocketBase (plain JSON, so nothing guarantees it matches TierPerk).
+ * Returns null when the shape does not match a known perk exactly - for
+ * example the pre-fix seed's snake_case "per_month" or an "all"/string
+ * scope instead of a string array - rather than silently misreading it.
+ */
+function parseTierPerk(value) {
+    if (!value || typeof value !== "object")
+        return null;
+    const v = value;
+    switch (v.type) {
+        case "percent_off":
+            return typeof v.value === "number" &&
+                Array.isArray(v.scope) &&
+                v.scope.every((s) => typeof s === "string")
+                ? { type: "percent_off", value: v.value, scope: v.scope }
+                : null;
+        case "points_multiplier":
+            return typeof v.value === "number" ? { type: "points_multiplier", value: v.value } : null;
+        case "free_event_entries":
+            return typeof v.value === "number" && v.perMonth === true
+                ? { type: "free_event_entries", value: v.value, perMonth: true }
+                : null;
+        case "lounge_hours":
+            return typeof v.value === "number" && v.perMonth === true
+                ? { type: "lounge_hours", value: v.value, perMonth: true }
+                : null;
+        case "priority_release_booking":
+            return { type: "priority_release_booking" };
+        case "member_event_pricing":
+            return { type: "member_event_pricing" };
+        default:
+            return null;
+    }
+}
 function ruleIsLive(rule, at) {
     if (!rule.active)
         return false;

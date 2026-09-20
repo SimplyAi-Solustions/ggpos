@@ -39,8 +39,11 @@ migrate((app) => {
     viewRule: `${STAFF_ONLY} || customer = @request.auth.id`,
     createRule: `${STAFF_ONLY} || (@request.auth.collectionName = "customers" && customer = @request.auth.id)`,
     // A customer may add photos, reply, pick drop-off and accept or decline;
-    // the offer itself (lines, total, expiry) and the owner are staff-only.
-    updateRule: `${STAFF_ONLY} || (customer = @request.auth.id && @request.body.customer:isset = false && @request.body.offer_total:isset = false && @request.body.lines:isset = false && @request.body.offer_expires_at:isset = false)`,
+    // the offer itself (lines, total, expiry) and the owner are staff-only,
+    // and the only status transitions a customer may set themselves are
+    // accepting or declining - never jumping the rest of the timeline
+    // (received, completed, ...), which stays staff-driven.
+    updateRule: `${STAFF_ONLY} || (customer = @request.auth.id && @request.body.customer:isset = false && @request.body.offer_total:isset = false && @request.body.lines:isset = false && @request.body.offer_expires_at:isset = false && (@request.body.status:isset = false || @request.body.status = "accepted" || @request.body.status = "declined"))`,
     deleteRule: STAFF_ONLY,
     fields: [
       { name: "customer", type: "relation", required: true, collectionId: customers.id, maxSelect: 1 },

@@ -230,7 +230,10 @@ migrate((app) => {
     listRule: `${STAFF_ONLY} || customer = @request.auth.id`,
     viewRule: `${STAFF_ONLY} || customer = @request.auth.id`,
     createRule: STAFF_ONLY,
-    updateRule: `${STAFF_ONLY} || customer = @request.auth.id`, // lets a customer mark their own read_at
+    // A customer may only flip read_at on their own notification - every
+    // other field (who it is for, its content, whether it has been pushed)
+    // stays staff/system-owned.
+    updateRule: `${STAFF_ONLY} || (customer = @request.auth.id && @request.body.customer:isset = false && @request.body.title:isset = false && @request.body.body:isset = false && @request.body.link:isset = false && @request.body.type:isset = false && @request.body.pushed_at:isset = false)`,
     deleteRule: STAFF_ONLY,
     fields: [
       { name: "customer", type: "relation", collectionId: customers.id, maxSelect: 1 },
