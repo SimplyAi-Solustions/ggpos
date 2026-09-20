@@ -97,8 +97,17 @@ export function parseCsv(text: string): string[][] {
     row.push(cell)
     rows.push(row)
   }
-  // A trailing newline leaves one empty row behind; nothing else should go.
-  return rows.filter((entry) => entry.some((value) => value.trim() !== ""))
+  // Blank lines are kept, deliberately. A row's own 1-based line number is
+  // how an import error names it, and the server counts the file's real
+  // lines; dropping blanks here would shift every preview line number past
+  // the first blank one. `mapRows` skips them instead, by which point the
+  // line number is already known. Only a trailing newline's phantom last
+  // row goes, since the file does not really have a line there.
+  if (rows.length > 0) {
+    const last = rows[rows.length - 1]
+    if (last && last.length === 1 && last[0] === "") rows.pop()
+  }
+  return rows
 }
 
 /** Which column each mapped field sits in, or -1 when the file has none. */
@@ -144,6 +153,10 @@ export function mapRows(text: string, mapping: MappingConfig): MappedFile {
   const lines: number[] = []
   for (let at = headerAt + 1; at < table.length; at += 1) {
     const cells = table[at] ?? []
+    // A blank line in the middle of a file is not a row, but it is a line:
+    // it is skipped here and still counted, so the line numbers on screen
+    // are the line numbers the server's own errors name.
+    if (cells.every((value) => value.trim() === "")) continue
     const row: Record<string, string> = {}
     for (const field of fields) {
       row[field] = (cells[columns[field] ?? -1] ?? "").trim()

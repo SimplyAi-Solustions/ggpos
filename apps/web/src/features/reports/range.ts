@@ -218,11 +218,27 @@ export function formatDelta(
   return `${change > 0 ? "+" : "-"}${format(Math.abs(change))}`
 }
 
-/** The short tick under a bar: "19 Sep", "14 Sep", "Sep". */
-export function bucketTick(label: string, group: ReportGroup): string {
-  if (group === "month") return parts(`${label}-01`).month
+/**
+ * The short tick under a bar: "19 Sep", "14 Sep", "Sep", and "Sep 26" when a
+ * monthly range crosses a year, where a bare month name would put two
+ * Septembers on one axis with nothing to tell them apart.
+ */
+export function bucketTick(
+  label: string,
+  group: ReportGroup,
+  withYear = false
+): string {
+  if (group === "month") {
+    const { month, year } = parts(`${label}-01`)
+    return withYear ? `${month} ${String(year).slice(2)}` : month
+  }
   const { day, month } = parts(label)
   return `${day} ${month}`
+}
+
+/** True when a range does not sit inside one calendar year. */
+export function crossesYear(range: DateRange): boolean {
+  return range.from.slice(0, 4) !== range.to.slice(0, 4)
 }
 
 /** The fuller label in a tooltip and in an exported CSV's first column. */

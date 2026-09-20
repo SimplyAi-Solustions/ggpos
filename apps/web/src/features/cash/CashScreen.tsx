@@ -43,7 +43,7 @@ import { useCounterDock } from "@/app/counter-dock"
 import { MoneyInput } from "@/features/sell/money-input"
 import { useCounterConfig } from "@/lib/api/config"
 import { refusalOrFallback } from "@/lib/api/refusal"
-import { todayIso } from "@/lib/api/dates"
+import { useToday } from "@/lib/use-today"
 import { SumUpSection } from "@/features/cash/SumUpSection"
 import {
   addCashMovement,
@@ -73,6 +73,14 @@ function time(iso?: string): string {
     hour: "2-digit",
     minute: "2-digit",
   })
+}
+
+/** The UTC day a closed session belongs to, for the SumUp comparison. */
+function sessionDay(
+  row: { closed_at?: string; opened_at?: string },
+  fallback: string
+): string {
+  return (row.closed_at ?? row.opened_at ?? fallback).slice(0, 10)
 }
 
 function day(iso?: string): string {
@@ -249,7 +257,7 @@ export function CashScreen() {
   // Today by default, and a past session's own day once one is picked out of
   // the history below, so a drawer that was closed yesterday can still be
   // compared against SumUp.
-  const today = React.useMemo(() => todayIso(), [])
+  const today = useToday()
   const [sumupDate, setSumupDate] = React.useState(today)
 
   const current = useQuery({
@@ -265,6 +273,7 @@ export function CashScreen() {
   const config = useCounterConfig()
 
   const session = current.data?.session ?? null
+  const closedSessions = (history.data ?? []).filter((row) => row.closed_at)
   const expected = current.data?.expected ?? 0
   const movements = current.data?.movements ?? []
   // `settings` is admin-only, so the threshold comes from the config route,
@@ -453,12 +462,6 @@ export function CashScreen() {
             )}
           </div>
 
-          <SumUpSection
-            date={sumupDate}
-            onDateChange={setSumupDate}
-            maxDate={today}
-          />
-
           <div className="mt-16">
             <MicroLabel tone="ink" className="mb-5">
               Close
@@ -544,57 +547,92 @@ export function CashScreen() {
         </div>
       )}
 
+      {/* Outside the open-drawer branch on purpose: a closed day still has
+          card takings worth comparing, and the Compare link on a past
+          session below has to have something to land on. */}
+      <SumUpSection date={sumupDate} onDateChange={setSumupDate} maxDate={today} />
+
       <div className="mt-24">
         <MicroLabel tone="ink" className="mb-5">
           Past sessions
         </MicroLabel>
-        {(history.data ?? []).filter((row) => row.closed_at).length === 0 ? (
+        {closedSessions.length === 0 ? (
           <p className="text-[15px] text-muted-foreground-2">
             No session has been closed yet.
           </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Day</TableHead>
-                <TableHead>Opened</TableHead>
-                <TableHead numeric>Float</TableHead>
-                <TableHead numeric>Expected</TableHead>
-                <TableHead numeric>Counted</TableHead>
-                <TableHead numeric>Variance</TableHead>
-                {/* A seventh column pushes this table off a phone, so the
-                    shortcut is a desktop one; the day field in the SumUp
-                    section reaches any closed day at either width. */}
-                <TableHead className="hidden min-[900px]:table-cell">SumUp</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(history.data ?? [])
-                .filter((row) => row.closed_at)
-                .map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>{day(row.opened_at)}</TableCell>
-                    <TableCell className="font-mono text-[13px]">
-                      {time(row.opened_at)}
-                    </TableCell>
-                    <TableCell numeric>{formatGBP(row.float ?? 0)}</TableCell>
-                    <TableCell numeric>{formatGBP(row.expected ?? 0)}</TableCell>
-                    <TableCell numeric>{formatGBP(row.counted ?? 0)}</TableCell>
-                    <TableCell numeric>{formatGBP(row.variance ?? 0)}</TableCell>
-                    <TableCell className="hidden min-[900px]:table-cell">
-                      <Button
-                        variant="text"
-                        onClick={() =>
-                          setSumupDate((row.closed_at ?? row.opened_at ?? today).slice(0, 10))
-                        }
-                      >
-                        Compare
-                      </Button>
-                    </TableCell>
+          <>
+            {/* From 900px: the table. */}
+            <div className="hidden min-[900px]:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Day</TableHead>
+                    <TableHead>Opened</TableHead>
+                    <TableHead numeric>Float</TableHead>
+                    <TableHead numeric>Expected</TableHead>
+                    <TableHead numeric>Counted</TableHead>
+                    <TableHead numeric>Variance</TableHead>
+                    <TableHead>SumUp</TableHead>
                   </TableRow>
-                ))}
-            </TableBody>
-          </Table>
+                </TableHeader>
+                <TableBody>
+                  {closedSessions.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>{day(row.opened_at)}</TableCell>
+                      <TableCell className="font-mono text-[13px]">
+                        {time(row.opened_at)}
+                      </TableCell>
+                      <TableCell numeric>{formatGBP(row.float ?? 0)}</TableCell>
+                      <TableCell numeric>{formatGBP(row.expected ?? 0)}</TableCell>
+                      <TableCell numeric>{formatGBP(row.counted ?? 0)}</TableCell>
+                      <TableCell numeric>{formatGBP(row.variance ?? 0)}</TableCell>
+                      <TableCell>
+                        <Button
+                          variant="text"
+                          onClick={() => setSumupDate(sessionDay(row, today))}
+                        >
+                          Compare
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Below 900px: seven columns do not fit, so each session is one
+                readable line with its variance on the right. */}
+            <ul className="min-[900px]:hidden">
+              {closedSessions.map((row) => (
+                <li
+                  key={row.id}
+                  data-testid="cash-session-small"
+                  className="flex min-h-12 items-center justify-between gap-4 border-b border-hairline-soft py-3 first:border-t"
+                >
+                  <span className="flex min-w-0 flex-col gap-1">
+                    <span className="truncate text-[15px] text-foreground">
+                      {day(row.opened_at)}, opened {time(row.opened_at)}
+                    </span>
+                    <span className="tnum truncate text-[13px] text-muted-foreground-2">
+                      Counted {formatGBP(row.counted ?? 0)} against{" "}
+                      {formatGBP(row.expected ?? 0)}
+                    </span>
+                    <Button
+                      variant="text"
+                      className="mt-1 self-start"
+                      onClick={() => setSumupDate(sessionDay(row, today))}
+                    >
+                      Compare
+                    </Button>
+                  </span>
+                  <span className="tnum shrink-0 text-[15px] text-foreground">
+                    {formatGBP(row.variance ?? 0)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
 

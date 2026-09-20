@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Field } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { MicroLabel } from "@/components/ui/micro-label"
+import { SkeletonText } from "@/components/ui/skeleton"
 import {
   Sheet,
   SheetBody,
@@ -250,7 +251,8 @@ export function SumUpSection({
           SumUp
         </MicroLabel>
         <p className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground">
-          Add the SumUp API key in Settings to compare card takings.
+          Add the SumUp merchant code and API key in Settings to compare card
+          takings.
         </p>
       </div>
     )
@@ -284,12 +286,9 @@ export function SumUpSection({
 
       {admin ? (
         <div className="mb-10 flex flex-wrap items-center gap-5">
-          <Button
-            variant="circle"
-            loading={pull.isPending}
-            onClick={() => pull.mutate()}
-            aria-label="Fetch from SumUp"
-          >
+          {/* The circle variant puts its own label in a hidden span, which
+              is where its accessible name comes from. */}
+          <Button variant="circle" loading={pull.isPending} onClick={() => pull.mutate()}>
             Fetch from SumUp
           </Button>
           <MicroLabel>Fetch from SumUp</MicroLabel>
@@ -353,7 +352,7 @@ export function SumUpSection({
       ) : null}
 
       {day.isPending && configured ? (
-        <p className="text-[15px] text-muted-foreground-2">Reading the day back.</p>
+        <SkeletonText lines={4} className="max-w-[40rem]" />
       ) : null}
 
       {day.data ? (

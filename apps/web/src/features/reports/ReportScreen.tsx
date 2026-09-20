@@ -52,6 +52,7 @@ import {
   bucketTick,
   bucketTitle,
   compareLabel,
+  crossesYear,
   formatRange,
   formatWhen,
   formatDelta,
@@ -425,7 +426,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
                   series={chartSeries}
                   money={spec.chart.money}
                   summary={chartSummary}
-                  tickFormatter={(label) => bucketTick(label, group)}
+                  tickFormatter={(label) => bucketTick(label, group, crossesYear(range))}
                   labelFormatter={(label) => bucketTitle(label, group)}
                 />
               ) : (
