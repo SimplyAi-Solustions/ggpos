@@ -33,3 +33,6 @@ apps/web/e2e/screenshots/
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+# Throwaway scripts written during a session
+*.tmp.mjs
