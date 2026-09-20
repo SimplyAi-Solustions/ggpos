@@ -322,9 +322,27 @@ function poundsCell(pence) {
   return (negative ? "-" : "") + whole + "." + (rem < 10 ? "0" + rem : String(rem));
 }
 
-/** One CSV cell, quoted only when it has to be. */
+/** A cell that is already a plain number, which must stay a number. */
+var NUMERIC_CELL = /^-?\d+(\.\d+)?$/;
+
+/** A cell a spreadsheet would try to evaluate rather than display. */
+var FORMULA_START = /^[=+\-@\t\r]/;
+
+/**
+ * One CSV cell, quoted only when it has to be.
+ *
+ * Text that opens with =, +, -, @, a tab or a carriage return is prefixed
+ * with a single quote and quoted, so a seller called `=HYPERLINK("x")`
+ * lands in Excel or Numbers as text rather than as a formula the shop's
+ * accountant is asked to run. A cell that is already a plain number
+ * (anything poundsCell produced, including a negative margin) is exempt, so
+ * the money columns stay numeric.
+ */
 function csvCell(value) {
   var s = value === null || value === undefined ? "" : String(value);
+  if (s !== "" && !NUMERIC_CELL.test(s) && FORMULA_START.test(s)) {
+    return '"' + ("'" + s).replace(/"/g, '""') + '"';
+  }
   if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
