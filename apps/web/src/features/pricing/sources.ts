@@ -48,12 +48,32 @@ export function formatNative(minor: number, currency: "GBP" | "EUR" | "USD"): st
   return formatGBP(minor).replace("£", SYMBOLS[currency] ?? "£")
 }
 
-/** "20 Sep", the way a counter says a date out loud. */
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+]
+
+/**
+ * "20 Sep", the way a counter says a date out loud. Written out rather than
+ * left to `toLocaleDateString`, whose en-GB short month for September is
+ * "Sept" in current ICU and plain "Sep" in older ones: a price line that
+ * changes shape with the browser's data is not worth the saving.
+ */
 export function shortDate(iso: string | null | undefined): string {
   if (!iso) return ""
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ""
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`
 }
 
 /** "0.8606", with the trailing zeros of a round rate left off. */

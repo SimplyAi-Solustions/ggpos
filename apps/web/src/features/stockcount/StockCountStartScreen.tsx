@@ -27,7 +27,12 @@ import {
 } from "@/components/ui/table"
 import { useCounterDock } from "@/app/counter-dock"
 import { refusalOrFallback } from "@/lib/api/refusal"
-import { listLocations, listStockCounts, startStockCount } from "@/lib/api"
+import {
+  getOpenStockCount,
+  listLocations,
+  listStockCounts,
+  startStockCount,
+} from "@/lib/api"
 
 const BLOCKED = "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
 
@@ -57,6 +62,16 @@ export function StockCountStartScreen() {
     staleTime: 30_000,
   })
 
+  // Two counts of one shelf at once would both be wrong, so a location that
+  // already has one open offers to carry on with it instead.
+  const open = useQuery({
+    queryKey: ["stock-count-open", locationId],
+    queryFn: () => getOpenStockCount(locationId),
+    enabled: locationId !== "",
+    staleTime: 10_000,
+  })
+  const resume = locationId ? (open.data ?? null) : null
+
   const start = useMutation({
     mutationFn: () => startStockCount(locationId),
     onSuccess: (count) => {
@@ -67,12 +82,25 @@ export function StockCountStartScreen() {
       setError(refusalOrFallback(err, "That count did not start. Try again.")),
   })
 
-  const primary = (
+  const primary = resume ? (
     <Button
       className={`w-full min-[900px]:w-auto ${BLOCKED}`}
       trailingArrow
-      loading={start.isPending}
-      disabled={!locationId || start.isPending}
+      onClick={() =>
+        void navigate({
+          to: "/counter/stock/count/$id",
+          params: { id: resume.id },
+        })
+      }
+    >
+      Carry on counting
+    </Button>
+  ) : (
+    <Button
+      className={`w-full min-[900px]:w-auto ${BLOCKED}`}
+      trailingArrow
+      loading={start.isPending || open.isFetching}
+      disabled={!locationId || start.isPending || open.isFetching}
       onClick={() => start.mutate()}
     >
       Start count
@@ -106,6 +134,16 @@ export function StockCountStartScreen() {
             ))}
           </ChipGroup>
         </Field>
+        {resume ? (
+          <p
+            data-testid="count-resume"
+            className="mt-6 max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground"
+          >
+            A count of {resume.locationName} is already open, started{" "}
+            {when(resume.startedAt)} by {resume.startedByName}. Carry on with
+            that one rather than starting a second.
+          </p>
+        ) : null}
         {error ? (
           <p role="alert" className="mt-6 text-[13px] text-destructive">
             {error}

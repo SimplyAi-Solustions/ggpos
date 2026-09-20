@@ -31,6 +31,9 @@ export function locationName(id?: string): string {
   return DEMO_LOCATIONS.find((location) => location.id === id)?.name ?? "No location"
 }
 
+/** The same three statuses the live snapshot takes. */
+const COUNTED_STATUSES = ["in_stock", "reserved", "listed_ebay"] as const
+
 function toLine(item: StockItemRecord, index: number): StockCountLine {
   return {
     id: `count_line_${index}_${item.id}`,
@@ -38,7 +41,7 @@ function toLine(item: StockItemRecord, index: number): StockCountLine {
     sku: item.sku,
     title: item.title ?? "",
     detail: itemDetailLine(item),
-    expectedQty: Math.max(1, item.qty ?? 1),
+    expectedQty: item.qty ?? 1,
     scannedQty: 0,
     locationName: locationName(item.location),
   }
@@ -66,9 +69,16 @@ export function list(): StockCountDetail[] {
 
 export function start(locationId: string): StockCountDetail {
   ensureSeeded()
+  const open = openFor(locationId)
+  if (open) return open
   sequence += 1
   const expected = itemStore().filter(
-    (item) => item.location === locationId && (item.status ?? "in_stock") === "in_stock"
+    (item) =>
+      item.location === locationId &&
+      COUNTED_STATUSES.includes(
+        (item.status ?? "in_stock") as (typeof COUNTED_STATUSES)[number]
+      ) &&
+      (item.qty ?? 1) > 0
   )
   const count: DemoCount = {
     id: `count_demo_${sequence}`,
@@ -80,6 +90,15 @@ export function start(locationId: string): StockCountDetail {
   }
   counts.push(count)
   return detail(count)
+}
+
+/** The count already open for a location, if there is one. */
+export function openFor(locationId: string): StockCountDetail | null {
+  ensureSeeded()
+  const open = counts.find(
+    (row) => row.locationId === locationId && row.status === "open"
+  )
+  return open ? detail(open) : null
 }
 
 export function get(id: string): StockCountDetail | null {

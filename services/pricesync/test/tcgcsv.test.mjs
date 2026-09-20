@@ -113,6 +113,93 @@ describe("buildTcgcsvRow", () => {
     const row = buildTcgcsvRow(entry, new Map(), FX, FETCHED_AT);
     assert.equal(row, null);
   });
+
+  test("a null marketPrice falls back to midPrice rather than a silent zero", () => {
+    const cardsByTcgplayerId = new Map([["1", { id: "card_x" }]]);
+    const row = buildTcgcsvRow(
+      { productId: "1", lowPrice: "10", midPrice: "15", marketPrice: null, subTypeName: "Normal" },
+      cardsByTcgplayerId,
+      FX,
+      FETCHED_AT
+    );
+    assert.equal(row.native_market, 1500);
+  });
+
+  test("an unparseable price value is warned about and treated as absent, not silently zero with no trace", () => {
+    const cardsByTcgplayerId = new Map([["1", { id: "card_x" }]]);
+    const warnings = [];
+    const row = buildTcgcsvRow(
+      { productId: "1", lowPrice: "not-a-number", midPrice: "15", marketPrice: "22.5", subTypeName: "Normal" },
+      cardsByTcgplayerId,
+      FX,
+      FETCHED_AT,
+      (msg) => warnings.push(msg)
+    );
+    assert.equal(row.native_low, 0);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /unparseable low value/);
+  });
+});
+
+describe("findRelevantGroups", () => {
+  function listenOnFreePort(server) {
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+  }
+
+  test("stops checking further groups once every wanted id has been found", async () => {
+    const requestedGroups = [];
+    const groups = [{ groupId: 1 }, { groupId: 2 }, { groupId: 3 }, { groupId: 4 }, { groupId: 5 }];
+    const server = http.createServer((req, res) => {
+      const m = req.url.match(/^\/tcgplayer\/3\/(\d+)\/products$/);
+      const groupId = Number(m[1]);
+      requestedGroups.push(groupId);
+      // The wanted id lives in group 2; every group is served one at a
+      // time under a concurrency of 1 below so "stops early" is
+      // deterministic rather than a race between concurrent requests.
+      const results = groupId === 2 ? [{ productId: 42, groupId }] : [{ productId: 999, groupId }];
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, errors: [], results }));
+    });
+    const port = await listenOnFreePort(server);
+    try {
+      const cacheDir = await import("node:fs/promises").then((fs) => fs.mkdtemp("/tmp/pricesync-tcgcsv-"));
+      const relevant = await findRelevantGroups(`http://127.0.0.1:${port}/tcgplayer`, 3, groups, new Set(["42"]), cacheDir, 1);
+      assert.deepEqual([...relevant], [2]);
+      assert.deepEqual(requestedGroups, [1, 2], "should not have checked groups 3, 4 or 5 once the only wanted id was found in group 2");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a group whose /products fetch fails twice is skipped with one summary warning, not a thrown error", async () => {
+    let attempts = 0;
+    const groups = [{ groupId: 1 }, { groupId: 2 }];
+    const server = http.createServer((req, res) => {
+      const m = req.url.match(/^\/tcgplayer\/3\/(\d+)\/products$/);
+      const groupId = Number(m[1]);
+      if (groupId === 1) {
+        attempts += 1;
+        res.writeHead(500);
+        return res.end("server error");
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, errors: [], results: [{ productId: 7, groupId }] }));
+    });
+    const port = await listenOnFreePort(server);
+    try {
+      const cacheDir = await import("node:fs/promises").then((fs) => fs.mkdtemp("/tmp/pricesync-tcgcsv-"));
+      const warnings = [];
+      const relevant = await findRelevantGroups(`http://127.0.0.1:${port}/tcgplayer`, 3, groups, new Set(["7"]), cacheDir, 2, (m) =>
+        warnings.push(m)
+      );
+      assert.deepEqual([...relevant], [2]);
+      assert.equal(attempts, 2, "group 1's failing fetch should have been retried exactly once");
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /could not fetch \/products for 1 group/);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("mapWithConcurrency", () => {
