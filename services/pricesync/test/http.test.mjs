@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtemp, unlink, chmod } from "node:fs/promises";
+import { mkdtemp, unlink, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -102,21 +102,27 @@ describe("fetchCachedStream", () => {
 });
 
 describe("fetchCachedJson", () => {
-  test("a cache write failure after a successful fetch is a warning, not a failed read (finding #5: a root-owned /app/cache under a node USER)", async () => {
+  test("a cache write failure after a successful fetch is a warning, not a failed read (finding #5: e.g. an EACCES /app/cache)", async () => {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end('{"ok":true,"n":42}');
     });
     const port = await listenOnFreePort(server);
     const cacheDir = await mkdtemp(path.join(tmpdir(), "pricesync-http-"));
+    const cacheKey = "collides-with-a-directory";
     try {
-      // Read-only after creation: the directory itself exists (mkdir
-      // succeeds, matching a cache VOLUME that is already there but
-      // owned by the wrong user), so the failure happens later, writing
-      // the temp/meta files - exactly the EACCES this finding describes.
-      await chmod(cacheDir, 0o555);
+      // A permission error (EACCES, as an EACCES /app/cache would give -
+      // see deploy/docker-compose.yml's pricesync volume and the
+      // Dockerfile's chown) is not reproducible from a test running as
+      // root, which bypasses ordinary permission bits. A directory
+      // sitting where the temp file needs to go fails the same way
+      // (ENOTDIR/EISDIR on open-for-write) regardless of privilege level,
+      // and exercises the exact same code path: the disk write step
+      // failing after the fetch itself already succeeded.
+      await mkdir(path.join(cacheDir, `${cacheKey}.body.tmp-${process.pid}`), { recursive: true });
+
       const warnings = [];
-      const { json, fromCache } = await fetchCachedJson(`http://127.0.0.1:${port}/x`, cacheDir, "readonly-dir", undefined, (m) =>
+      const { json, fromCache } = await fetchCachedJson(`http://127.0.0.1:${port}/x`, cacheDir, cacheKey, undefined, (m) =>
         warnings.push(m)
       );
       assert.deepEqual(json, { ok: true, n: "42" });
@@ -124,7 +130,6 @@ describe("fetchCachedJson", () => {
       assert.equal(warnings.length, 1, `expected exactly one warning, got: ${JSON.stringify(warnings)}`);
       assert.match(warnings[0], /could not update the on-disk cache/);
     } finally {
-      await chmod(cacheDir, 0o755).catch(() => {});
       server.close();
     }
   });

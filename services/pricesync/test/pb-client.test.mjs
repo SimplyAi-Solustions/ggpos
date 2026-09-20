@@ -9,10 +9,23 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 
-import { getFullList } from "../src/lib/pb-client.mjs";
+import { getFullList, getFirst, authenticate, createSubmitContext, submitRequests } from "../src/lib/pb-client.mjs";
 
 function listenOnFreePort(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => resolve(data ? JSON.parse(data) : undefined));
+  });
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
 }
 
 describe("getFullList", () => {

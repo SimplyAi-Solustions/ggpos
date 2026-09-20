@@ -173,6 +173,60 @@ test.describe("settings", () => {
     await expect(page.getByTestId("rules-matrix")).toHaveCount(0)
   })
 
+  test("is one page title and a heading per section", async ({ page }) => {
+    await signIn(page)
+    await go(page, "Settings")
+
+    // One Anton line per screen, and the sections under it are real
+    // headings rather than spans that look like them.
+    await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1)
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Settings")
+
+    for (const section of [
+      "Buy-in defaults",
+      "Pricing rules",
+      "Sell price",
+      "Limits",
+      "Shop",
+      "Receipt terms",
+      "Price sources",
+    ]) {
+      await expect(page.getByRole("heading", { level: 2, name: section })).toHaveCount(1)
+    }
+    const headings = await page.getByRole("heading", { level: 2 }).count()
+    expect(headings).toBeGreaterThanOrEqual(7)
+  })
+
+  test("offers Settings in the palette to an admin and not to anybody else", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.keyboard.press("ControlOrMeta+k")
+    const palette = page.getByRole("dialog")
+    await expect(palette).toBeVisible()
+    await expect(palette.getByText("Settings", { exact: true })).toBeVisible()
+    await expect(palette.getByText("Stock count", { exact: true })).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(palette).toBeHidden()
+
+    await page.evaluate(() => {
+      const raw = window.localStorage.getItem("gg-demo-staff")
+      if (!raw) return
+      window.localStorage.setItem(
+        "gg-demo-staff",
+        JSON.stringify({ ...JSON.parse(raw), role: "staff" })
+      )
+    })
+    await page.reload()
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+
+    await page.keyboard.press("ControlOrMeta+k")
+    await expect(palette).toBeVisible()
+    // Counts are for everybody; the admin screen is not offered to staff.
+    await expect(palette.getByText("Stock count", { exact: true })).toBeVisible()
+    await expect(palette.getByText("Settings", { exact: true })).toHaveCount(0)
+  })
+
   test("never puts an API key on the page", async ({ page }) => {
     await signIn(page)
     await go(page, "Settings")
