@@ -38,9 +38,13 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // The suite drives the built app into demo mode with `?demo=1`, so an
-    // ordinary build is enough; `VITE_DEMO=1 pnpm --filter web build` pins it.
-    command: `pnpm --filter web exec vite preview --port ${port} --strictPort`,
+    // The suite drives the built app into demo mode with `?demo=1`, which a
+    // production build deliberately ignores (apps/web/src/lib/api/mode.ts):
+    // only a dev server or a build made with `VITE_DEMO_SWITCH=1` honours
+    // the query string. So the suite builds with that flag itself rather
+    // than previewing whatever `dist` happens to hold, and the shop's own
+    // production build (.github/workflows/deploy.yml) never carries it.
+    command: `VITE_DEMO_SWITCH=1 pnpm --filter web build && pnpm --filter web exec vite preview --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

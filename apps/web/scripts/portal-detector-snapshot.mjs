@@ -2,7 +2,7 @@
  * Saves every My Vault route as a self-contained HTML file, so the Impeccable
  * detector can scan pages that live behind the portal's demo sign-in.
  *
- *   pnpm --filter web build
+ *   VITE_DEMO_SWITCH=1 pnpm --filter web build   # the switch honours ?demo=1
  *   pnpm --filter web exec vite preview --port 4173      # in one terminal
  *   node apps/web/scripts/portal-detector-snapshot.mjs <outDir> [baseUrl] [w] [h]
  *   IMPECCABLE_BROWSER=/path/to/chromium \

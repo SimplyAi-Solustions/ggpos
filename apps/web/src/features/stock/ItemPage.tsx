@@ -48,6 +48,10 @@ import { MoneyInput } from "@/features/sell/money-input"
 import { penceToField } from "@/features/sell/money"
 import { addItemToBasket } from "@/features/sell/basket-store"
 import { PriceSources } from "@/features/pricing"
+// The hold line says the time the way the want-list notification says it
+// ("Held for you until 22 Sep, 14:00"), so the counter and the customer's
+// email cannot read differently.
+import { formatDateTime as holdTime } from "@/features/quotes/format"
 import { suggestedSellPrice } from "@/features/pricing/suggest"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
@@ -440,6 +444,9 @@ export function ItemPage({ sku }: { sku: string }) {
   }
 
   const sellable = item.status === "in_stock" || item.status === "reserved"
+  const holdEnded = Boolean(
+    item.reservedUntil && new Date(item.reservedUntil).getTime() <= Date.now()
+  )
 
   const sellAction = (
     <Button
@@ -493,6 +500,35 @@ export function ItemPage({ sku }: { sku: string }) {
           </Badge>
         </span>
       </div>
+
+      {/* The hold, in one line under the status: who it is for and until
+          when, or that it has run out. The release cron puts a lapsed hold
+          back within fifteen minutes, so the item can still read "reserved"
+          here for a few minutes after the time has passed; saying "Hold
+          ended" is honest about what the shelf actually holds. */}
+      {item.status === "reserved" && item.reservedForName ? (
+        <p data-testid="item-hold" className="mt-4 text-[15px] leading-[1.5] text-muted-foreground">
+          {holdEnded ? (
+            "Hold ended"
+          ) : (
+            <>
+              Held for{" "}
+              {item.reservedForCode ? (
+                <Link
+                  to="/counter/customers/$code"
+                  params={{ code: item.reservedForCode }}
+                  className="text-foreground underline-offset-4 outline-none hover:underline"
+                >
+                  {item.reservedForName}
+                </Link>
+              ) : (
+                <span className="text-foreground">{item.reservedForName}</span>
+              )}
+              {item.reservedUntil ? ` until ${holdTime(item.reservedUntil)}` : ""}
+            </>
+          )}
+        </p>
+      ) : null}
 
       <div className="mt-16">
         <MicroLabel tone="ink" className="mb-5">

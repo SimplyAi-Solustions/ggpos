@@ -271,6 +271,15 @@ cd <repo>/deploy
 docker compose up -d --build
 ```
 
+**Never set `VITE_DEMO` or `VITE_DEMO_SWITCH` on a shop build.** A plain
+`pnpm --filter web build`, which is what the deploy workflow runs, produces
+an app that ignores `?demo=1` entirely: the query switch only exists in a
+Vite dev server or in a build made with `VITE_DEMO_SWITCH=1`, which is how
+the end-to-end suite and the screenshot scripts drive a real build onto
+fixtures. With the flag on, anyone who pastes `?demo=1` into the address bar
+gets in-memory demo data on a real till or on a customer's own portal, which
+looks exactly like the shop's own and saves nothing.
+
 ## 9. Logs
 
 ```bash
