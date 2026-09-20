@@ -159,7 +159,7 @@ already exempts this folder from `react-refresh/only-export-components`.
 | `Badge` | `volt` for points and tier (ink on yellow), `outline` for everything else. |
 | `Kbd`, `KbdGroup` | Keyboard shortcuts, drawn rather than described. |
 | `Avatar` | Initials in a 40px hairline circle, Space Mono. |
-| `Wordmark`, `GMark` | "GG VAULT" in Space Mono 700 at 13px tracked .28em, with `mark` adding the yellow G. `GMark` is the logo's G traced to an SVG path, so it stays crisp at 24px. Use the wordmark on the canvas and the G on ink; the volt G alone on a pale canvas is 1.3:1 and should not carry meaning. |
+| `Wordmark`, `GMark` | "GG VAULT" in Space Mono 700 at 13px tracked .28em, with `mark` adding the yellow G. `GMark` is the logo's G traced to an SVG path, so it stays crisp at 24px. The G carries a thin ink outline beneath its fill by default (`outline`), because a volt G alone on a pale canvas is 1.3:1; the outline is the constant ink token, so it vanishes on an ink surface and the G reads as plain volt there. The G still never carries meaning on its own. |
 | `Seal` | The done seal: an 84px volt disc, 2px edge, 4px offset shadow, Anton "DONE" or a tick. Success screens only, once. This is the one place in the app with a zero-blur offset shadow, quoting the marketing site's `--shadow: 6px 6px 0 var(--ink)`. The edge and shadow follow the foreground so the seal survives night mode. |
 | `StickerRing`, `StickerOrbit`, `StickerCards` | The site's doodles at a 4px stroke. Empty states and the customer card, nowhere else. |
 | `Skeleton`, `SkeletonText` | Loading drawn as hairline blocks. Never a spinner, never a shimmer gradient. |
