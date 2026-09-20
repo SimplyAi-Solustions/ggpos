@@ -21,6 +21,6 @@ function CustomerPlaceholder() {
   )
 }
 
-export const Route = createFileRoute("/counter/customers/$code")({
+export const Route = createFileRoute("/counter/customers/$code/")({
   component: CustomerPlaceholder,
 })

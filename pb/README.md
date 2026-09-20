@@ -35,6 +35,7 @@ Environment variables:
 | `PB_VERSION` | Pins the binary `pb/scripts/dev.sh` downloads (default `0.40.4`). Also the version baked into `pb/Dockerfile`'s `PB_VERSION` build arg and the literal in `pb_hooks/routes.pb.js`'s `/api/vault/health` response - keep the three in step if it ever changes. |
 | `PB_PORT` | Local dev port for `pb/scripts/dev.sh` (default `8091`). |
 | `GG_ADMIN_EMAIL`, `GG_ADMIN_PASSWORD` | See "Creating the first admin" below. |
+| `GG_ID_PHOTO_KEY` | **Required in production.** Exactly 32 characters (`$security.encrypt` is AES-256-GCM and rejects any other length). Encrypts every ID photo before it is written, and peppers the step-up token signing key. `POST /api/vault/customers/:id/id-check` refuses with 500 rather than storing a photo in the clear without it, and `GET /api/vault/id-photo/:id` cannot decrypt without it. It lives in the environment, never in `pb_data`, so a stolen database backup has no readable ID photos in it. Add it to `deploy/.env.example` and generate one per install, for example `openssl rand -base64 24 \| cut -c1-32`. **Changing it makes every stored photo undecryptable** - rotate only alongside a purge. |
 
 ## Migrations and seeds
 
@@ -52,6 +53,15 @@ concern per file:
 | `..._loyalty_collections.js` | `loyalty_programme`, `loyalty_rules`, `loyalty_tiers`, `memberships`, `loyalty_rewards`, `reward_redemptions`, `points_ledger`, `perk_usage`, `referrals` |
 | `..._ops_collections.js` | `pricing_rules`, `label_templates`, `label_jobs`, `sumup_transactions`, `csv_imports`, `daily_stats`, `saved_reports`, `notifications`, `push_subscriptions`, `audit_log`, `settings` |
 | `..._seed.js` | Row data: `games`, `platforms`, `locations`, `label_templates`, `pricing_rules`, `loyalty_programme`, `loyalty_tiers`, `settings`, `counters`, and the first admin `staff` account (see below) |
+| `..._phase2_fields.js` | Appends what the custom routes need: `id_documents.mime`; `settings.cash_variance_alert`, `.offer`, `.default_intake_location`, `.email`, `.receipt_terms` (and their defaults on the seeded row); `trade_in_lines.kind`, `.game`, `.completeness`; and it makes `trade_ins.number` optional with a partial unique index (see below) |
+
+`trade_ins.number` starts life empty. Drafts and their lines are created
+through the collection API and the number is only assigned from
+`counters.trade_in` at completion, so a required `number` would make a
+draft impossible to create and would burn a number on every abandoned
+one. `..._phase2_fields.js` therefore drops `required` and rebuilds the
+unique index as a partial one (`WHERE number != ''`), which keeps the
+numbers that do exist unique while any number of drafts sit at `""`.
 
 A few collections need a relation to one that is defined in a *later*
 file (`customers.referred_by` to itself, `customer_private.tier` to
