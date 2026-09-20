@@ -6649,6 +6649,36 @@ p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" "{\"items\":[\"$P7_TEMPLATE_
 [ "$P7_STATUS" = "400" ] || fail "zero copies returned $P7_STATUS, expected 400"
 ok "a named template and a copy count are honoured, and a template nobody has is refused"
 
+# Every other selector, narrowed to a shelf of its own so the counts are
+# exact whatever else this run has put on the shelves.
+P7_SELECTOR_LOCATION="$(curl -s -X POST "$BASE/api/collections/locations/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"P7 Selector Shelf","type":"shelf"}' | jval id)"
+[ -n "$P7_SELECTOR_LOCATION" ] || fail "could not create the selector shelf"
+p7_selector_item() {
+  curl -s -X POST "$BASE/api/collections/items/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"title\":\"$1\",\"qty\":1,\"cost\":100,\"price\":900,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"location\":\"$P7_SELECTOR_LOCATION\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}" \
+    | jval id
+}
+p7_selector_item "P7 Selector One" >/dev/null
+p7_selector_item "P7 Selector Two" >/dev/null
+
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" \
+  "{\"location\":\"$P7_SELECTOR_LOCATION\",\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"acquired_from\":\"$TODAY\",\"acquired_to\":\"$TODAY\"}"
+[ "$P7_STATUS" = "200" ] || fail "the location, kind, game and date selectors together returned $P7_STATUS: $(cat "$TMP_DIR/p7.json")"
+[ "$(p7_val queued)" = "2" ] || fail "location + kind + game + a date range queued $(p7_val queued) labels, expected 2"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" \
+  "{\"location\":\"$P7_SELECTOR_LOCATION\",\"kind\":\"retro\",\"include_queued\":true}"
+[ "$(p7_val queued)" = "0" ] || fail "a kind nothing on that shelf has still queued $(p7_val queued) labels"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" \
+  "{\"location\":\"$P7_SELECTOR_LOCATION\",\"acquired_from\":\"2000-01-01\",\"acquired_to\":\"2000-01-02\",\"include_queued\":true}"
+[ "$(p7_val queued)" = "0" ] || fail "a date range with nothing in it still queued $(p7_val queued) labels"
+p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" \
+  "{\"location\":\"$P7_SELECTOR_LOCATION\",\"acquired_from\":\"2026-13-45\"}"
+[ "$P7_STATUS" = "400" ] || fail "a date that is not a real date returned $P7_STATUS, expected 400"
+ok "the location, kind, game and acquired-date selectors each narrow the batch, and a date that is not real is refused"
+
 # The 500 cap, proved on a batch that really is over it: 501 items on a
 # shelf of their own, created through PocketBase's own Batch API.
 P7_BULK_LOCATION="$(curl -s -X POST "$BASE/api/collections/locations/records" \

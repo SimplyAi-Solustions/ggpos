@@ -231,6 +231,59 @@ test.describe("selling at the counter", () => {
     await expect(page.getByTestId("basket")).toContainText("Charizard ex")
   })
 
+  test("never loses a payment the reader took on a sale that would not complete", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await go(page, "Sell")
+
+    // A split with cash in it, and no drawer open: the sale cannot complete.
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "Mixed", exact: true }).click()
+    await page.getByLabel("Cash").fill("10.00")
+    await page.getByLabel("SumUp card").fill("314.99")
+    await expect(page.getByTestId("sumup-amount")).toHaveText("£314.99")
+    await expect(
+      page.getByText("Open a cash session before taking cash.")
+    ).toBeVisible()
+
+    await page.getByTestId("take-card-payment").click()
+
+    const sheet = page.getByTestId("card-payment-sheet")
+    await expect(sheet.getByTestId("card-payment-status")).toContainText(
+      "The customer has paid, and the sale did not go through.",
+      { timeout: 15_000 }
+    )
+    await expect(sheet.getByTestId("card-payment-status")).toContainText(
+      "Open a cash session before taking cash."
+    )
+    // The SumUp transaction code, so it can be refunded in the app.
+    await expect(sheet.getByTestId("card-payment-code")).toHaveText(/TEHY\d+/)
+    await expect(sheet).toContainText("Refund it in the SumUp app")
+
+    // Closing the sheet leaves the payment on the screen, not in the past.
+    await sheet.getByRole("button", { name: "Back to the sale" }).click()
+    await expect(sheet).toBeHidden()
+    const held = page.getByTestId("card-payment-held")
+    await expect(held).toContainText("Counter Solo")
+    await expect(held).toContainText(/TEHY\d+/)
+
+    // Put the drawer right, and it is still there on the way back.
+    await go(page, "Cash session")
+    await page.getByLabel("Float").fill("100.00")
+    await primary(page, "Open session").click()
+    await expect(page.getByTestId("cash-expected")).toHaveText("£100.00")
+
+    await go(page, "Sell")
+    await expect(page.getByTestId("basket")).toContainText("Charizard ex")
+    await expect(page.getByTestId("card-payment-held")).toContainText(/TEHY\d+/)
+
+    // And the sale completes against that same payment.
+    await primary(page, "Mark sold").click()
+    await expect(page.getByTestId("sale-done")).toContainText(/GG-S-\d{6}/)
+    await expect(page.getByTestId("card-payment-held")).toBeHidden()
+  })
+
   test("says what is wrong when cash is taken with no session open", async ({
     page,
   }) => {

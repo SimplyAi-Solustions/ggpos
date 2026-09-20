@@ -1067,21 +1067,28 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
                 </Button>
               ) : null}
             </div>
-            {reader && !held ? (
-              <Hint>{readerName}</Hint>
-            ) : null}
-            {held ? (
-              <p
-                data-testid="card-payment-held"
-                className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground"
-              >
-                Paid on {readerName}
-                {held.checkout.transaction_code
-                  ? `, ${held.checkout.transaction_code}`
-                  : ""}
-                . Mark the sale sold to finish it, or refund it in the SumUp app.
-              </p>
-            ) : null}
+            {reader && !held ? <Hint>{readerName}</Hint> : null}
+          </div>
+        ) : null}
+
+        {/* Money the reader has already taken stays on the screen whatever
+            the basket does next, until the sale carries it or somebody
+            refunds it in the SumUp app. */}
+        {held ? (
+          <div className="mt-10 flex flex-col gap-2">
+            <MicroLabel tone="ink">Paid on the reader</MicroLabel>
+            <span className="tnum font-display text-[28px] leading-none tracking-[0.01em] text-foreground">
+              {formatGBP(held.checkout.amount)}
+            </span>
+            <p
+              data-testid="card-payment-held"
+              className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground"
+            >
+              {held.checkout.transaction_code
+                ? `${readerName}, ${held.checkout.transaction_code}. `
+                : `${readerName}. `}
+              Mark the sale sold to finish it, or refund it in the SumUp app.
+            </p>
           </div>
         ) : null}
 
