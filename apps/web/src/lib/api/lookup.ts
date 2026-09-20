@@ -238,3 +238,70 @@ export async function stockForCard(cardId: string): Promise<ItemSummary[]> {
 export function gameIdFor(games: GameRecord[], key: string): string {
   return games.find((game) => game.key === key)?.id ?? ""
 }
+
+// ---------------------------------------------------------------------------
+// A card the catalogue has never heard of
+// ---------------------------------------------------------------------------
+
+export interface ManualCardInput {
+  /** One of the five lookup keys, from the chips. */
+  gameKey: string
+  name: string
+  setCode: string
+  number: string
+}
+
+/**
+ * "Not in catalogue" (docs/PLAN.md, "Card not found"): a `cards` row with
+ * `source: "manual"`, and the `card_sets` row it needs if the set is new too.
+ * An admin links it to a real printing later; until then it sells, labels and
+ * prices like any other card, with no price snapshots behind it.
+ */
+export async function createManualCard(input: ManualCardInput): Promise<CardHit> {
+  if (isDemo()) return demo.createManualCard(input)
+
+  const quote = (value: string) => value.replace(/["\\]/g, "\\$&")
+  const game = await pb
+    .collection("games")
+    .getFirstListItem<GameRecord>(`key = "${quote(input.gameKey)}"`)
+
+  const code = input.setCode.trim()
+  let set = await pb
+    .collection("card_sets")
+    .getFirstListItem<{ id: string; code: string; name: string }>(
+      `game = "${game.id}" && code = "${quote(code)}"`
+    )
+    .catch(() => null)
+  if (!set) {
+    set = await pb
+      .collection("card_sets")
+      .create<{ id: string; code: string; name: string }>({
+        game: game.id,
+        code,
+        // The adapter fills the real name in on the next sync; until then the
+        // code is what staff typed and what the label will print.
+        name: code.toUpperCase(),
+      })
+  }
+
+  const card = await pb.collection("cards").create<{ id: string }>({
+    game: game.id,
+    set: set.id,
+    number: input.number.trim(),
+    name: input.name.trim(),
+    source: "manual",
+    search_text: `${input.name} ${code} ${input.number}`.toLowerCase(),
+  })
+
+  return {
+    id: card.id,
+    name: input.name.trim(),
+    number: input.number.trim(),
+    gameKey: input.gameKey,
+    gameId: game.id,
+    setCode: set.code,
+    setName: set.name,
+    finishes: [],
+    marketPence: null,
+  }
+}

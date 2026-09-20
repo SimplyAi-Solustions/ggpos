@@ -407,3 +407,26 @@ export function stockForCard(cardId: string): ItemSummary[] {
 export function demoGameId(key: string): string {
   return DEMO_GAMES.find((game) => game.key === key)?.id ?? ""
 }
+
+/** "Not in catalogue" in demo mode: the card joins the in-memory catalogue. */
+export function createManualCard(input: {
+  gameKey: string
+  name: string
+  setCode: string
+  number: string
+}): CardHit {
+  const card: CardHit = {
+    id: `card_manual_${Math.random().toString(36).slice(2, 10)}`,
+    name: input.name,
+    number: input.number,
+    gameKey: input.gameKey,
+    gameId: demoGameId(input.gameKey),
+    setCode: input.setCode,
+    setName: input.setCode.toUpperCase(),
+    image: CARD_ART,
+    finishes: [],
+    marketPence: null,
+  }
+  DEMO_CATALOGUE.push(card)
+  return card
+}

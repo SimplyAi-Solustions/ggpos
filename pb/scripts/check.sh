@@ -1921,5 +1921,135 @@ STALE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/cards/$P
 [ "$(echo "$STALE_JSON" | jval "sources.0.gbp_market")" = "860" ] || fail "a stale row's figure was hidden rather than returned: $STALE_JSON"
 ok "a price past its source's freshness window is flagged stale rather than hidden"
 
+# --- 19e. The Batch API is on, so the nightly pricesync needs no manual step
+BATCH_SETTINGS_JSON="$(curl -s -H "Authorization: $SUPER_TOKEN" "$BASE/api/settings")"
+[ "$(echo "$BATCH_SETTINGS_JSON" | jval "batch.enabled")" = "true" ] || fail "the Batch API is not enabled in app settings: $(echo "$BATCH_SETTINGS_JSON" | jval batch)"
+[ "$(echo "$BATCH_SETTINGS_JSON" | jval "batch.maxRequests")" = "200" ] || fail "batch.maxRequests is '$(echo "$BATCH_SETTINGS_JSON" | jval "batch.maxRequests")', expected 200"
+ok "the Batch API is enabled in app settings (maxRequests 200), so the nightly pricesync needs no manual step"
+
+CONFIG_OFFER_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/config")"
+[ "$(echo "$CONFIG_OFFER_JSON" | jval "settings.offer.ebayHaircutPct")" = "15" ] \
+  || fail "settings.offer.ebayHaircutPct is '$(echo "$CONFIG_OFFER_JSON" | jval "settings.offer.ebayHaircutPct")', expected 15 (its one seeded home)"
+ok "the eBay haircut is seeded at settings.offer.ebayHaircutPct (15), the one home for the figure"
+
+# --- 19f. Retro refresh-prices and uk-comp -------------------------------
+RETRO_PLATFORM_ID="$(curl -s "$BASE/api/collections/platforms/records?filter=key%3D%27snes_pal_box%27" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$RETRO_PLATFORM_ID" ] || fail "seeded platform 'snes_pal_box' not found"
+RETRO_TITLE_ID="$(curl -s -X POST "$BASE/api/collections/retro_titles/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"platform\":\"$RETRO_PLATFORM_ID\",\"name\":\"Super Mario Kart\"}" | jval id)"
+[ -n "$RETRO_TITLE_ID" ] || fail "could not create the Phase 3 check's retro_titles row"
+
+RETRO_REFRESH_STATUS="$(curl -s -o "$TMP_DIR/retro-refresh-no-key.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/retro/$RETRO_TITLE_ID/refresh-prices" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"completeness":"cib"}')"
+[ "$RETRO_REFRESH_STATUS" = "422" ] || fail "retro refresh-prices with no PriceCharting key returned $RETRO_REFRESH_STATUS, expected 422: $(cat "$TMP_DIR/retro-refresh-no-key.json")"
+grep -qF "PriceCharting is not set up. Add the key in Settings or enter a UK comp." "$TMP_DIR/retro-refresh-no-key.json" \
+  || fail "wrong message for retro refresh-prices with no PriceCharting key: $(cat "$TMP_DIR/retro-refresh-no-key.json")"
+ok "retro refresh-prices refuses cleanly with no PriceCharting key configured"
+
+RETRO_UKCOMP_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/retro/$RETRO_TITLE_ID/uk-comp" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"completeness\":\"cib\",\"price\":3000,\"url\":\"https://www.ebay.co.uk/itm/987654321098\",\"sold_at\":\"$TODAY\"}")"
+RETRO_UKCOMP_STATUS="$(echo "$RETRO_UKCOMP_RESP" | tail -n1)"
+RETRO_UKCOMP_BODY="$(echo "$RETRO_UKCOMP_RESP" | sed '$d')"
+[ "$RETRO_UKCOMP_STATUS" = "200" ] || fail "retro uk-comp returned $RETRO_UKCOMP_STATUS: $RETRO_UKCOMP_BODY"
+[ "$(echo "$RETRO_UKCOMP_BODY" | jval "chosen.source")" = "uk_sold_manual" ] || fail "retro uk-comp was not chosen first: $RETRO_UKCOMP_BODY"
+[ "$(echo "$RETRO_UKCOMP_BODY" | jval "chosen.gbp_market")" = "3000" ] || fail "retro uk-comp's chosen gbp_market is wrong: $RETRO_UKCOMP_BODY"
+ok "retro uk-comp writes a price_snapshots row against the retro title and is chosen first, with no outbound call"
+
+# --- 19g. Sale completion idempotency (the offline queue's client_id) ----
+IDEMPOTENT_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\",\"price\":500}" | jval id)"
+[ -n "$IDEMPOTENT_ITEM_ID" ] || fail "could not create the idempotency check's item"
+
+IDEMPOTENCY_CLIENT_ID="idem-check-$$-$RANDOM"
+SALE1_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$IDEMPOTENT_ITEM_ID\",\"qty\":1,\"unit_price\":500}],\"payment\":\"sumup_card\",\"client_id\":\"$IDEMPOTENCY_CLIENT_ID\"}")"
+SALE1_STATUS="$(echo "$SALE1_RESP" | tail -n1)"
+SALE1_BODY="$(echo "$SALE1_RESP" | sed '$d')"
+[ "$SALE1_STATUS" = "200" ] || fail "the first idempotent sale returned $SALE1_STATUS: $SALE1_BODY"
+SALE1_NUMBER="$(echo "$SALE1_BODY" | jval "sale.number")"
+[ -n "$SALE1_NUMBER" ] || fail "the first idempotent sale has no number: $SALE1_BODY"
+
+SALE2_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$IDEMPOTENT_ITEM_ID\",\"qty\":1,\"unit_price\":500}],\"payment\":\"sumup_card\",\"client_id\":\"$IDEMPOTENCY_CLIENT_ID\"}")"
+SALE2_STATUS="$(echo "$SALE2_RESP" | tail -n1)"
+SALE2_BODY="$(echo "$SALE2_RESP" | sed '$d')"
+[ "$SALE2_STATUS" = "200" ] || fail "the replayed idempotent sale returned $SALE2_STATUS, expected 200: $SALE2_BODY"
+[ "$(echo "$SALE2_BODY" | jval "sale.number")" = "$SALE1_NUMBER" ] \
+  || fail "the replayed sale got number '$(echo "$SALE2_BODY" | jval "sale.number")', expected the original '$SALE1_NUMBER'"
+[ "$(echo "$SALE2_BODY" | jval "sale.id")" = "$(echo "$SALE1_BODY" | jval "sale.id")" ] \
+  || fail "the replayed sale created a second row"
+
+SALE_COUNT_FOR_CLIENT_ID="$(curl -s "$BASE/api/collections/sales/records?filter=client_id%3D%22$IDEMPOTENCY_CLIENT_ID%22" \
+  -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$SALE_COUNT_FOR_CLIENT_ID" = "1" ] || fail "client_id '$IDEMPOTENCY_CLIENT_ID' matches $SALE_COUNT_FOR_CLIENT_ID sales rows, expected 1"
+ok "two identical sale completions with one client_id create a single sale and return the same number"
+
+# --- 19h. Stock count close: variance, a move, roles and a second close -
+STOCK_COUNT_LOCATION_ID="$(curl -s "$BASE/api/collections/locations/records?filter=name%3D%27Storeroom%27" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$STOCK_COUNT_LOCATION_ID" ] || fail "seeded location 'Storeroom' not found"
+
+EXPECTED_STOCK_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\"}" | jval id)"
+UNEXPECTED_STOCK_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\"}" | jval id)"
+[ -n "$EXPECTED_STOCK_ITEM_ID" ] && [ -n "$UNEXPECTED_STOCK_ITEM_ID" ] || fail "could not create the stock count check's items"
+
+STOCK_COUNT_ID="$(curl -s -X POST "$BASE/api/collections/stock_counts/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"location\":\"$STOCK_COUNT_LOCATION_ID\",\"status\":\"open\"}" | jval id)"
+[ -n "$STOCK_COUNT_ID" ] || fail "could not create the stock count"
+
+LINE_EXPECTED_ID="$(curl -s -X POST "$BASE/api/collections/stock_count_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"stock_count\":\"$STOCK_COUNT_ID\",\"item\":\"$EXPECTED_STOCK_ITEM_ID\",\"expected_qty\":1,\"scanned_qty\":1}" | jval id)"
+LINE_UNEXPECTED_ID="$(curl -s -X POST "$BASE/api/collections/stock_count_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"stock_count\":\"$STOCK_COUNT_ID\",\"item\":\"$UNEXPECTED_STOCK_ITEM_ID\",\"expected_qty\":0,\"scanned_qty\":1}" | jval id)"
+[ -n "$LINE_EXPECTED_ID" ] && [ -n "$LINE_UNEXPECTED_ID" ] || fail "could not create the stock count lines"
+
+STATUS_BLOCK_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/stock_counts/records/$STOCK_COUNT_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"status":"closed"}')"
+[ "$STATUS_BLOCK_STATUS" != "200" ] || fail "a staff token was able to set stock_counts.status directly through the collection API"
+ok "stock_counts.status cannot be set through the collection API (got $STATUS_BLOCK_STATUS)"
+
+CLOSE_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/stock-counts/$STOCK_COUNT_ID/close" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" -d '{"move_unexpected":true}')"
+[ "$CLOSE_NONADMIN_STATUS" = "403" ] || fail "a non-admin closing a stock count returned $CLOSE_NONADMIN_STATUS, expected 403"
+ok "a non-admin staff token cannot close a stock count (403)"
+
+CLOSE_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/stock-counts/$STOCK_COUNT_ID/close" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"move_unexpected":true}')"
+CLOSE_STATUS="$(echo "$CLOSE_RESP" | tail -n1)"
+CLOSE_BODY="$(echo "$CLOSE_RESP" | sed '$d')"
+[ "$CLOSE_STATUS" = "200" ] || fail "closing the stock count returned $CLOSE_STATUS: $CLOSE_BODY"
+[ "$(echo "$CLOSE_BODY" | jval "stock_count.status")" = "closed" ] || fail "the close response's status is not closed: $CLOSE_BODY"
+[ "$(echo "$CLOSE_BODY" | jval lines)" = "2" ] || fail "closing the stock count reported '$(echo "$CLOSE_BODY" | jval lines)' lines, expected 2"
+echo "$CLOSE_BODY" | grep -qF "$UNEXPECTED_STOCK_ITEM_ID" || fail "the close response does not list the unexpected item as moved: $CLOSE_BODY"
+
+LINE_EXPECTED_VARIANCE="$(curl -s "$BASE/api/collections/stock_count_lines/records/$LINE_EXPECTED_ID" -H "Authorization: $STAFF_TOKEN" | jval variance)"
+[ "$LINE_EXPECTED_VARIANCE" = "0" ] || fail "the expected line's variance is '$LINE_EXPECTED_VARIANCE', expected 0"
+LINE_UNEXPECTED_VARIANCE="$(curl -s "$BASE/api/collections/stock_count_lines/records/$LINE_UNEXPECTED_ID" -H "Authorization: $STAFF_TOKEN" | jval variance)"
+[ "$LINE_UNEXPECTED_VARIANCE" = "1" ] || fail "the unexpected line's variance is '$LINE_UNEXPECTED_VARIANCE', expected 1"
+
+MOVED_ITEM_LOCATION="$(curl -s "$BASE/api/collections/items/records/$UNEXPECTED_STOCK_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval location)"
+[ "$MOVED_ITEM_LOCATION" = "$STOCK_COUNT_LOCATION_ID" ] || fail "the unexpected item's location is '$MOVED_ITEM_LOCATION', expected it moved to $STOCK_COUNT_LOCATION_ID"
+EXPECTED_ITEM_LOCATION_AFTER="$(curl -s "$BASE/api/collections/items/records/$EXPECTED_STOCK_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval location)"
+[ -z "$EXPECTED_ITEM_LOCATION_AFTER" ] || fail "an expected item's location changed when it should not have: '$EXPECTED_ITEM_LOCATION_AFTER'"
+ok "closing a stock count with move_unexpected sets every line's variance and moves only the unexpected item"
+
+CLOSE_AGAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/stock-counts/$STOCK_COUNT_ID/close" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"move_unexpected":false}')"
+[ "$CLOSE_AGAIN_STATUS" = "409" ] || fail "closing an already-closed stock count returned $CLOSE_AGAIN_STATUS, expected 409"
+ok "closing an already-closed stock count is refused with 409"
+
 echo
 echo "All checks passed ($PASS_COUNT)."

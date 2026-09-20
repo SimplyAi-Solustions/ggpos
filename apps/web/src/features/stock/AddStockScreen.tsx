@@ -5,7 +5,13 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { MinusIcon, PlusIcon } from "lucide-react"
-import { displayCode, formatGBP, parseDecimalToMinor } from "@gg/shared"
+import {
+  adjustForCondition,
+  displayCode,
+  formatGBP,
+  parseDecimalToMinor,
+  type CardCondition,
+} from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
@@ -28,6 +34,8 @@ import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
 import { CameraSheet } from "@/features/scan/CameraSheet"
 import { CardSearchField } from "@/features/stock/CardSearchField"
+import { PriceSources } from "@/features/pricing"
+import { suggestedSellPrice } from "@/features/pricing/suggest"
 import {
   addStockSchema,
   CARD_KINDS,
@@ -47,6 +55,8 @@ import {
   type CardHit,
   type ItemRecord,
 } from "@/lib/api"
+import { useCardPrices, usePricingSettings } from "@/lib/api/prices"
+import type { PriceSource } from "@gg/shared"
 
 export interface AddStockScreenProps {
   /** Prefilled from the command palette or a card search elsewhere. */
@@ -203,9 +213,47 @@ export function AddStockScreen({
   // the React compiler can memoise around it.
   const kind = useWatch({ control, name: "kind" })
   const gameId = useWatch({ control, name: "gameId" })
+  const finish = useWatch({ control, name: "finish" })
+  const condition = useWatch({ control, name: "condition" })
   const gameKey = games.find((game) => game.id === gameId)?.key
   const isCard = CARD_KINDS.has(kind)
   const fixedQty = SINGLE_QTY_KINDS.has(kind)
+
+  // ---- What the card is worth ------------------------------------------
+  // The chips above the search box set the same field the Game select does,
+  // because every lookup route takes a game key.
+  function chooseGameKey(key: string) {
+    setValue("gameId", games.find((game) => game.key === key)?.id ?? "", {
+      shouldValidate: formState.isSubmitted,
+    })
+  }
+
+  const pricing = usePricingSettings()
+  const prices = useCardPrices(card?.id, finish ?? "", condition ?? "NM")
+  // A source a staff member picked over the one the rules chose. On Add stock
+  // it only changes the figure the suggestion is worked out from; nothing
+  // records it, because nothing here is an offer to anybody.
+  const [picked, setPicked] = React.useState<{ source: PriceSource; gbp: number } | null>(
+    null
+  )
+  React.useEffect(() => setPicked(null), [card?.id, finish])
+
+  const market = picked?.gbp ?? prices.data?.chosen?.gbp_market ?? null
+  const adjustedMarket =
+    market === null
+      ? null
+      : condition
+        ? adjustForCondition(market, condition as CardCondition, pricing.conditionMultipliers)
+        : market
+  const suggested = suggestedSellPrice(adjustedMarket, pricing)
+
+  // The suggestion fills the price field until somebody types their own, and
+  // "Use suggested" puts it back after they have.
+  const priceTyped = Boolean(formState.dirtyFields.price)
+  React.useEffect(() => {
+    if (suggested === null || priceTyped) return
+    setValue("price", formatGBP(suggested).replace("£", "").replace(/,/g, ""))
+  }, [suggested, priceTyped, setValue])
 
   // `/` focuses this screen's search box rather than opening the palette.
   React.useEffect(() => registerSearchField(searchRef.current), [isCard])
@@ -439,6 +487,7 @@ export function AddStockScreen({
                 <CardSearchField
                   id="stock-card"
                   gameKey={gameKey}
+                  onGameChange={chooseGameKey}
                   value={card}
                   onChange={chooseCard}
                   invalid={!!errors.cardId}
@@ -565,7 +614,12 @@ export function AddStockScreen({
               />
             </Field>
 
-            <Field label="Price" htmlFor="stock-price" error={errors.price?.message}>
+            <Field
+              label="Price"
+              htmlFor="stock-price"
+              hint={suggested !== null ? `Suggested ${formatGBP(suggested)}` : undefined}
+              error={errors.price?.message}
+            >
               <Controller
                 control={control}
                 name="price"
@@ -674,6 +728,60 @@ export function AddStockScreen({
               </div>
             </Field>
           </FieldRow>
+
+          {/* ---- What the market says ------------------------------------
+              Every source side by side, the chosen one marked, and the sell
+              price the shop's own markup bands suggest from it. */}
+          {isCard && card ? (
+            <section className="mt-16" aria-label="Market">
+              <MicroLabel tone="ink" className="mb-5">
+                Market
+              </MicroLabel>
+              <PriceSources
+                subject={{
+                  kind: "card",
+                  id: card.id,
+                  finish: finish ?? "",
+                  condition: condition ?? "NM",
+                  gameKey: card.gameKey,
+                  title: card.name,
+                }}
+                picked={picked?.source ?? null}
+                onPick={(choice) => setPicked({ source: choice.source, gbp: choice.gbp })}
+              />
+              {suggested !== null ? (
+                <div className="mt-8 flex flex-wrap items-baseline gap-x-10 gap-y-4">
+                  <span className="flex items-baseline gap-3">
+                    <MicroLabel>Suggested</MicroLabel>
+                    <span
+                      data-testid="suggested-price"
+                      className="tnum text-[20px] leading-none font-medium text-foreground"
+                    >
+                      {formatGBP(suggested)}
+                    </span>
+                  </span>
+                  <Button
+                    variant="text"
+                    type="button"
+                    onClick={() =>
+                      setValue(
+                        "price",
+                        formatGBP(suggested).replace("£", "").replace(/,/g, ""),
+                        { shouldDirty: false }
+                      )
+                    }
+                  >
+                    Use suggested
+                  </Button>
+                </div>
+              ) : (
+                <p className="mt-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+                  No source has a value for this one yet. Refresh, add a UK
+                  comp, or price it by hand.
+                </p>
+              )}
+            </section>
+          ) : null}
 
           {save.isError ? (
             <p role="alert" className="mt-10 text-[13px] text-destructive">

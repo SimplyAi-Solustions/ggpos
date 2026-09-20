@@ -11,12 +11,11 @@ import { createPortal } from "react-dom"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  DEFAULT_MARKUP_BANDS,
+  adjustForCondition,
   displayCode,
   formatGBP,
   parseDecimalToMinor,
-  roundToRetailEnding,
-  suggestSellPrice,
+  type CardCondition,
 } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
@@ -48,15 +47,19 @@ import { CustomerSearchSheet } from "@/features/sell/CustomerSearchSheet"
 import { MoneyInput } from "@/features/sell/money-input"
 import { penceToField } from "@/features/sell/money"
 import { addItemToBasket } from "@/features/sell/basket-store"
+import { PriceSources } from "@/features/pricing"
+import { suggestedSellPrice } from "@/features/pricing/suggest"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   getItem,
+  listGames,
   listLocations,
   queueLabels,
   reserveItem,
   updateItem,
   writeOffItem,
 } from "@/lib/api"
+import { useCardPrices, usePricingSettings, useRetroPrices } from "@/lib/api/prices"
 import type { ItemDetail, ItemStatus } from "@/lib/api/types"
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
@@ -120,21 +123,22 @@ function Row({
  */
 function PriceForm({
   item,
+  market,
+  suggested,
   pending,
   onSave,
   onCancel,
 }: {
   item: ItemDetail
+  /** The condition-adjusted market from the price routes, or null. */
+  market: number | null
+  suggested: number | null
   pending: boolean
   onSave: (pence: number) => void
   onCancel: () => void
 }) {
   const [value, setValue] = React.useState(() => penceToField(item.price ?? 0))
   const [error, setError] = React.useState<string | null>(null)
-
-  const suggested = item.market_at_intake
-    ? suggestSellPrice(item.market_at_intake, DEFAULT_MARKUP_BANDS, roundToRetailEnding)
-    : null
 
   return (
     <>
@@ -155,8 +159,7 @@ function PriceForm({
         {suggested !== null ? (
           <div className="mt-6 flex flex-wrap items-center gap-6">
             <Hint>
-              Market at intake {formatGBP(item.market_at_intake ?? 0)}, suggested{" "}
-              {formatGBP(suggested)}
+              Market {formatGBP(market ?? 0)}, suggested {formatGBP(suggested)}
             </Hint>
             <Button variant="text" onClick={() => setValue(penceToField(suggested))}>
               Use suggested
@@ -191,12 +194,16 @@ function PriceSheet({
   open,
   onOpenChange,
   item,
+  market,
+  suggested,
   pending,
   onSave,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   item: ItemDetail
+  market: number | null
+  suggested: number | null
   pending: boolean
   onSave: (pence: number) => void
 }) {
@@ -209,6 +216,8 @@ function PriceSheet({
         </SheetHeader>
         <PriceForm
           item={item}
+          market={market}
+          suggested={suggested}
           pending={pending}
           onSave={onSave}
           onCancel={() => onOpenChange(false)}
@@ -639,6 +648,8 @@ export function ItemPage({ sku }: { sku: string }) {
         open={priceOpen}
         onOpenChange={setPriceOpen}
         item={item}
+        market={adjustedMarket}
+        suggested={suggested}
         pending={save.isPending}
         onSave={(price) => save.mutate({ price })}
       />

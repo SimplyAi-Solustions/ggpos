@@ -25,7 +25,40 @@ import type {
   SettingsRecord,
 } from "@/lib/api/types"
 
-/** The fields the Settings screen shows, and no others. */
+/**
+ * The fields the Settings screen shows, and no others.
+ *
+ * The same list is sent to PocketBase as `fields`, so `api_keys`, the mail
+ * key and the VAPID keys are never put on the wire in the first place;
+ * `pick` then drops anything a future column adds. Belt and braces, in that
+ * order: a key that never leaves the server cannot leak from the browser.
+ */
+export const SETTINGS_FIELDS = [
+  "id",
+  "cash_cap",
+  "cash_variance_alert",
+  "min_single_offer",
+  "bulk_rate_pct",
+  "offer",
+  "source_priority",
+  "retro_source_priority",
+  "condition_multipliers",
+  "markup_bands",
+  "sell_rounding",
+  "label_default_template",
+  "default_intake_location",
+  "quote_expiry_days",
+  "id_photo_retention_months",
+  "vat_registered",
+  "shop_name",
+  "shop_address",
+  "shop_town",
+  "shop_postcode",
+  "shop_phone",
+  "shop_email",
+  "receipt_terms",
+].join(",")
+
 function pick(row: SettingsRecord): SettingsRecord {
   return {
     id: row.id,
@@ -60,7 +93,9 @@ export async function getSettings(): Promise<SettingsRecord> {
   // One row, read as a page of one rather than through a filter: the
   // singleton is enforced by pb_hooks/singletons.pb.js, so there is nothing
   // to filter on.
-  const page = await pb.collection("settings").getList<SettingsRecord>(1, 1)
+  const page = await pb
+    .collection("settings")
+    .getList<SettingsRecord>(1, 1, { fields: SETTINGS_FIELDS })
   const row = page.items[0]
   if (!row) {
     throw new Error("This shop has no settings record yet. Run the migrations first.")
@@ -74,7 +109,9 @@ export async function saveSettings(
   patch: Partial<SettingsRecord>
 ): Promise<SettingsRecord> {
   if (isDemo()) return pick(demoSaveSettings(patch))
-  const row = await pb.collection("settings").update<SettingsRecord>(id, patch)
+  const row = await pb
+    .collection("settings")
+    .update<SettingsRecord>(id, patch, { fields: SETTINGS_FIELDS })
   return pick(row)
 }
 

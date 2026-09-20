@@ -56,7 +56,10 @@ concern per file:
 | `..._phase2_refunds_and_protection.js` | `sale_lines.refunded_qty`, `sales.refunded_total` and `trade_ins.id_document`; makes `trade_ins.signature` and `quotes.photos` `protected`; and adds the partial unique index that allows only one open `cash_sessions` row (`WHERE closed_at = ''`) |
 | `..._single_bands_any_condition.js` | Data fix: the seeded single `pricing_rules` bands were NM-only, so every other condition matched no rule. Condition is applied by `adjustForCondition` before a rule is chosen, so the bands are condition wildcards |
 | `..._trade_in_line_overrides.js` | `trade_in_lines.override_reason` (which is also the override flag), `.override_cash`, `.override_credit` and `.cosmetic_grade` |
-| `..._phase3_adapter_state.js` | `adapter_state` (new, superuser-only: OAuth tokens and small caches the catalogue and price adapters need between requests); `cards.image_file` (a cached local copy of a card's artwork, re-hosted by `pb_hooks/adapters/images.js`); `settings.ebay_haircut_pct` (percent, default 15) |
+| `..._phase3_adapter_state.js` | `adapter_state` (new, superuser-only: OAuth tokens and small caches the catalogue and price adapters need between requests); `cards.image_file` (a cached local copy of a card's artwork, re-hosted by `pb_hooks/adapters/images.js`); merges `ebayHaircutPct: 15` into the existing seeded `settings.offer` JSON |
+| `..._batch_api_settings.js` | Turns on PocketBase's own Batch API (app-level `settings.batch`, not this app's `settings` collection): `enabled: true`, `maxRequests: 200`, `maxBodySize` 128 MB, `timeout` 60s, so `services/pricesync`'s nightly sync needs no manual dashboard step on a fresh install. |
+| `..._sales_client_id.js` | `sales.client_id` (the offline queue's idempotency key) with a partial unique index, same shape as `trade_ins.number` |
+| `..._stock_counts_close_rule.js` | `stock_counts.updateRule` gains `&& @request.body.status:isset = false`, so `status` can only ever be set at create time or by `stockcounts.pb.js`'s close route |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -159,6 +162,7 @@ retrying `e.next()` on a unique-constraint failure.
 | `lookup.pb.js` | `GET /api/vault/lookup`, `GET /api/vault/lookup/:game/:set/:number`, `GET /api/vault/retro/lookup` - see "Card and price adapters" below and `docs/api-contract.md`'s Phase 3 section. |
 | `prices.pb.js` | `GET`/`POST /api/vault/cards/:id/prices` and `:id/refresh-prices` and `:id/uk-comp`, `GET /api/vault/retro/:id/prices`. |
 | `fx.pb.js` | `GET /api/vault/fx` - reads the latest `fx_rates` row; never calls Frankfurter itself. |
+| `stockcounts.pb.js` | `POST /api/vault/stock-counts/:id/close` (admin) - see "Custom API routes" below. |
 
 ## Custom API routes (`/api/vault/*`)
 
@@ -184,6 +188,7 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/lookup`, `/lookup/:game/:set/:number`, `/retro/lookup` | Catalogue and retro-title search, writing through to `cards`/`card_sets`/`retro_titles`. See "Card and price adapters" below. |
 | `GET`/`POST /api/vault/cards/:id/prices`, `/refresh-prices`, `/uk-comp`; `GET /api/vault/retro/:id/prices` | Valuation, reading (GET) or writing (POST) `price_snapshots`. See "Card and price adapters" below. |
 | `GET /api/vault/fx` | The latest `fx_rates` row. |
+| `POST /api/vault/stock-counts/:id/close` | **admin**. Variance per line, an optional move of unexpected stock, `status = "closed"`. The only way `status` ever reaches `"closed"` - see "API rules" below. |
 | `GET /api/vault/config` | The read-only window onto `settings`, `pricing_rules` and the `loyalty_*` rows, which are admin-only collections an ordinary staff member still has to price against. Every settings field named `api_keys`, `email`, or containing "key" or "secret", is dropped. No audit row: every counter screen loads it. |
 | `GET /api/vault/customers/{id}/id-document` | The newest `id_documents` row for that customer whose photo file is still present, as ids and timestamps only. `id_documents` has every rule null, so this is the app's only way to know whether the cash ID gate will pass. |
 | `POST /api/vault/customers/{id}/merge` | **step-up**. Folds a duplicate customer into the one being kept: every relation re-pointed, `perk_usage` counts summed where the two records clash on its unique `(customer, perk_type, period)` index, `customer_private` gaps filled, balances recomputed from the moved ledgers, the duplicate deleted. |
@@ -293,7 +298,7 @@ files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
 | `lorcast.js` | Disney Lorcana: Lorcast, no key, under 10 req/s. |
 | `igdb.js` | Retro titles: IGDB v4 over Twitch client-credentials auth. Behind `settings.api_keys.igdb` being set. |
 | `pricecharting.js` | Retro prices: PriceCharting, a paid API ($49/month). PAL category searched first, NTSC only when PAL has no entry; prices are integer US cents, never a string. Behind `settings.api_keys.pricecharting` being set. |
-| `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then `settings.ebay_haircut_pct` (default 15) off. Behind `settings.api_keys.ebay` being set. |
+| `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then a haircut off (`haircutPctFromSettings(app)` reads `settings.offer.ebayHaircutPct`, default 15 - the one home for this figure). Behind `settings.api_keys.ebay` being set. |
 | `frankfurter.js` | FX: the ECB reference rate, base GBP. No key. Inverts Frankfurter's own "units of X per GBP" into "GBP per unit of X" once, here - see `docs/api-contract.md`'s Phase 3 section. |
 | `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit and a `qs(params)` query-string builder. Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). Throws immediately, naming the call, when `GG_ADAPTER_TRANSPORT_MODE=offline_fail` is set (see "Environment variables" above). |
 | `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens and eBay's 24-hour price cache. `forApp(app)` for PocketBase, `memory()` for tests. |
