@@ -24,7 +24,13 @@ import {
   DEMO_SETTINGS,
   DEMO_TIER_ROWS,
 } from "@/lib/api/demo/store"
-import type { CounterConfig, LoyaltyTierRow, VaultConfig } from "@/lib/api/types"
+import { demoSettings } from "@/lib/api/demo/settings"
+import type {
+  CounterConfig,
+  DisplaySettings,
+  LoyaltyTierRow,
+  VaultConfig,
+} from "@/lib/api/types"
 
 /** Five minutes: a shop changes its settings between customers, not between sales. */
 export const CONFIG_STALE_MS = 5 * 60_000
@@ -82,6 +88,24 @@ async function wireConfig(): Promise<VaultConfig> {
       })),
       tiers: DEMO_TIER_ROWS,
     },
+    // The demo Settings screen writes `display` to its own settings record,
+    // so an admin can switch the customer screen on and watch it follow the
+    // till without a server.
+    display: demoSettings().display,
+  }
+}
+
+/**
+ * `settings.display`, with the seed's own defaults filling in anything a
+ * shop has not set. The ticker is the marketing site's line, and the QR
+ * points at the public estimate page, which is what drives sign-ups.
+ */
+export function displayFrom(config: VaultConfig): DisplaySettings {
+  const display = config.settings.display ?? {}
+  return {
+    enabled: display.enabled === true,
+    ticker: display.ticker ?? "Game · Trade · Play",
+    signup_url: display.signup_url ?? "/estimate",
   }
 }
 
@@ -102,6 +126,7 @@ export async function getCounterConfig(): Promise<CounterConfig> {
       rules: loyaltyRulesFrom(config),
       tiers: tiersFrom(config),
     },
+    display: displayFrom(config),
   }
 }
 

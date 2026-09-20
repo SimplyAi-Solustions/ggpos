@@ -38,6 +38,9 @@ export const DEMO_SETTINGS_RECORD: SettingsRecord = {
   email_provider: "none",
   push: { vapid_public_key: "" },
   holds: { hours: 48 },
+  // The customer-facing screen, off until an admin turns it on, exactly as
+  // the Phase 6 migration seeds it.
+  display: { enabled: false, ticker: "Game · Trade · Play", signup_url: "/estimate" },
   id_photo_retention_months: 12,
   vat_registered: false,
   shop_name: "GG Entertainment",

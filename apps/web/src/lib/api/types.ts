@@ -1089,6 +1089,12 @@ export interface CounterConfig {
   sumupMerchantCode: string
   /** The programme, its live rules and its tiers. */
   loyalty: LoyaltySetup
+  /**
+   * `settings.display`: whether the counter publishes to the customer-facing
+   * screen at all, the ticker it scrolls while idle, and where its sign-up
+   * QR points. Defaulted here, so no screen invents its own.
+   */
+  display: DisplaySettings
 }
 
 // ---------------------------------------------------------------------------
