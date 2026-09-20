@@ -191,11 +191,16 @@ function IdleScreen({ ticker, signupUrl }: { ticker: string; signupUrl: string }
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-14 text-center sm:px-10">
         <GGLogo className="h-20 w-auto sm:h-28" />
         <PageTitle className="mt-10">Join GG Guild</PageTitle>
-        <QrCode
-          text={signupLink(signupUrl)}
-          title="Join GG Guild"
-          className="mt-12 size-52 sm:size-64"
-        />
+        {/* A QR is dark modules on a light field with a quiet zone around
+            them, or a camera will not read it: in night mode that field has
+            to be drawn rather than inherited from the canvas. */}
+        <div className="mt-12 rounded-[var(--radius)] bg-gg-paper p-4">
+          <QrCode
+            text={signupLink(signupUrl)}
+            title="Join GG Guild"
+            className="size-48 sm:size-60"
+          />
+        </div>
         <p className="mt-7 max-w-[44ch] text-[18px] leading-[1.45] text-foreground sm:text-[20px]">
           Scan it, or join at the counter
         </p>

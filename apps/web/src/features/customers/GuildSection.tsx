@@ -391,7 +391,11 @@ export function GuildSection({
       </MicroLabel>
       {guild.membership ? (
         <div className="flex max-w-[40rem] flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-4">
-          <Badge variant="volt">{guild.membership.tierName}</Badge>
+          {/* The tier badge is on the header, once: this row names the plan
+              rather than awarding the tier a second time. */}
+          <span className="text-[15px] text-foreground">
+            {guild.membership.tierName}
+          </span>
           <Hint className="tnum">{planLine(guild.membership)}</Hint>
           <span className="tnum text-[15px] text-foreground">
             {formatGBP(guild.membership.price)}

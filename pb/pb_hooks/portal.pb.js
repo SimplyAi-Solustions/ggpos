@@ -123,6 +123,14 @@ routerAdd(
 
 // ---------------------------------------------------------------------
 // GET /api/vault/me/export   (customer)
+//
+// Everything the shop holds that is the caller's own, as one JSON file:
+// their record, both ledgers, trade-ins and the sales linked to them,
+// quotes without their photos, the want list, notifications, and (Phase 6)
+// the Guild - tier, window points, vouchers, memberships, this year's
+// perk counts and their referrals. Never an ID field or a photo, and
+// never the other party of a referral: that person is somebody else's
+// customer record, and a subject access request is not a way to read one.
 // ---------------------------------------------------------------------
 routerAdd(
   "GET",

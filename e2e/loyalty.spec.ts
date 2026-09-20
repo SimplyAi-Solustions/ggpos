@@ -22,8 +22,9 @@ const DEMO_SKU = buildCode("single", "7F3K2")
 /** Jasmine's £5 money-off reward, and Tom's free sleeve pack. */
 const MONEY_OFF = buildCode("voucher", "3H7K9")
 const FREE_ITEM = buildCode("voucher", "8P2RT")
-/** Jasmine's own card code, which is also her referral code. */
+/** Jasmine's own card code, which is also her referral code, and Tom's. */
 const JASMINE_CODE = "GGC-4K7M2S"
+const TOM_CODE = buildCode("customer", "9QB3X").display
 
 async function signIn(page: Page) {
   await page.goto("/login?demo=1")
@@ -139,6 +140,14 @@ test.describe("the Guild at the counter", () => {
     await openCustomer(page, "Tom Bradbury")
     await expect(page.getByTestId("guild-tier")).toHaveText("Guild Pass")
     await expect(page.getByTestId("guild-section")).toContainText("Renews")
+
+    // And the till prices against the tier he now holds, with its perks.
+    await go(page, "Sell")
+    const field = page.getByTestId("sell-scan-field")
+    await field.fill(TOM_CODE)
+    await field.press("Enter")
+    await expect(page.getByTestId("basket-customer")).toContainText("Tom Bradbury")
+    await expect(page.getByTestId("basket-customer")).toContainText("Guild Pass")
   })
 
   test("uses a perk and moves the counter", async ({ page }) => {

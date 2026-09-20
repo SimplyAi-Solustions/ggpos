@@ -47,7 +47,7 @@ You can ask us to:
 - delete your customer profile, "erasure", which we will do except where the law requires us to keep a record, such as a numbered trade-in or sale, for its full retention period; we cannot do this while you still have store credit on your account, so use it or ask us to pay it out first;
 - stop using your data for marketing, at any time.
 
-Use "Download my data" or "Delete my account" in My Vault for the first two, any time, without asking a member of staff. Downloading gives you a file with your trade-ins, sales, credit and points history, quotes and want list; it never includes an ID number, expiry date, date of birth, address or photo, which stay on our own records only.
+Use "Download my data" or "Delete my account" in My Vault for the first two, any time, without asking a member of staff. Downloading gives you a file with your trade-ins, sales, credit and points history, quotes, want list, your GG Guild tier and points, your vouchers, memberships and this month's perks, and your referrals as a date and whether the bonus was paid. It never includes an ID number, expiry date, date of birth, address or photo, which stay on our own records only, and it never names the other person on a referral, because their record is theirs, not yours.
 
 ## How to complain
 
