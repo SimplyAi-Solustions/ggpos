@@ -196,7 +196,7 @@ describe("runOnce", () => {
     }
   });
 
-  test("a transient failure (not gone) is warned about, the subscription survives, and the notification is still marked pushed", async () => {
+  test("a transient failure (not gone) is warned about, the subscription survives, and the notification is left unmarked for a retry", async () => {
     const fake = createFakePocketBase({
       notifications: [{ id: "n1", customer: "cust1", staff: "", title: "t", body: "b", link: "/account/notifications", pushed_at: "" }],
       subscriptions: [{ id: "sub1", customer: "cust1", staff: "", endpoint: "https://push.example.test/flaky", keys: {} }],
@@ -212,10 +212,84 @@ describe("runOnce", () => {
       });
       const warnings = [];
       const result = await runOnce(baseEnv(`http://127.0.0.1:${port}`), { webpushImpl: webpush, log: () => {}, warn: (m) => warnings.push(m) });
-      assert.deepEqual(result, { total: 1, pushed: 1, removed: 0, skippedNoSubscription: 0 });
+      // Not pushed: 1 (fix round, finding 6) - a transient failure must
+      // never be recorded as delivered, or it would never be retried.
+      assert.deepEqual(result, { total: 1, pushed: 0, removed: 0, skippedNoSubscription: 0 });
+      assert.equal(fake.notifications[0].pushed_at, "", "pushed_at must stay empty so the next pass retries this notification");
       assert.equal(fake.subscriptions.length, 1, "a merely-failed send must not remove the subscription");
       assert.equal(warnings.length, 1);
       assert.doesNotMatch(warnings[0], /push\.example\.test/, "a warned failure must never log the subscription's own endpoint");
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test("a customer with notify_push off is never sent to, and the notification is left unmarked (fix round, finding 5)", async () => {
+    const fake = createFakePocketBase({
+      notifications: [{ id: "n1", customer: "cust-opted-out", staff: "", title: "t", body: "b", link: "/account/notifications", pushed_at: "" }],
+      subscriptions: [
+        {
+          id: "sub1",
+          customer: "cust-opted-out",
+          staff: "",
+          endpoint: "https://push.example.test/opted-out",
+          keys: {},
+          expand: { customer: { id: "cust-opted-out", notify_push: false } },
+        },
+      ],
+    });
+    const port = await listenOnFreePort(fake.server);
+    try {
+      const sent = [];
+      const webpush = fakeWebpush({ onSend: (sub) => (sent.push(sub), { statusCode: 201 }) });
+      const result = await runOnce(baseEnv(`http://127.0.0.1:${port}`), { webpushImpl: webpush, log: () => {}, warn: () => {} });
+      assert.deepEqual(result, { total: 1, pushed: 0, removed: 0, skippedNoSubscription: 1 });
+      assert.equal(sent.length, 0, "a subscription for an opted-out customer must never be sent to");
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test("a customer with notify_push on (the explicit true, not just unset) is still sent to", async () => {
+    const fake = createFakePocketBase({
+      notifications: [{ id: "n1", customer: "cust-opted-in", staff: "", title: "t", body: "b", link: "/account/notifications", pushed_at: "" }],
+      subscriptions: [
+        {
+          id: "sub1",
+          customer: "cust-opted-in",
+          staff: "",
+          endpoint: "https://push.example.test/opted-in",
+          keys: {},
+          expand: { customer: { id: "cust-opted-in", notify_push: true } },
+        },
+      ],
+    });
+    const port = await listenOnFreePort(fake.server);
+    try {
+      const sent = [];
+      const webpush = fakeWebpush({ onSend: (sub) => (sent.push(sub), { statusCode: 201 }) });
+      const result = await runOnce(baseEnv(`http://127.0.0.1:${port}`), { webpushImpl: webpush, log: () => {}, warn: () => {} });
+      assert.deepEqual(result, { total: 1, pushed: 1, removed: 0, skippedNoSubscription: 0 });
+      assert.equal(sent.length, 1);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test("a subscription whose customer expand cannot be resolved fails open (still sent to), rather than silently going quiet", async () => {
+    const fake = createFakePocketBase({
+      notifications: [{ id: "n1", customer: "cust-unresolved", staff: "", title: "t", body: "b", link: "/account/notifications", pushed_at: "" }],
+      subscriptions: [
+        { id: "sub1", customer: "cust-unresolved", staff: "", endpoint: "https://push.example.test/no-expand", keys: {} },
+      ],
+    });
+    const port = await listenOnFreePort(fake.server);
+    try {
+      const sent = [];
+      const webpush = fakeWebpush({ onSend: (sub) => (sent.push(sub), { statusCode: 201 }) });
+      const result = await runOnce(baseEnv(`http://127.0.0.1:${port}`), { webpushImpl: webpush, log: () => {}, warn: () => {} });
+      assert.deepEqual(result, { total: 1, pushed: 1, removed: 0, skippedNoSubscription: 0 });
+      assert.equal(sent.length, 1);
     } finally {
       fake.server.close();
     }
