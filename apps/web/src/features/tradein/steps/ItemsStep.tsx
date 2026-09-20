@@ -99,19 +99,40 @@ function LineRow({
   const view = line.cardId ? cardPrices.data : retroPrices.data
   const waiting = line.marketSource === PENDING_SOURCE
 
-  // The figure lands on the line once, and only while nobody has typed over
-  // it: the offer, the totals and the saved draft all read `marketPence`, so
-  // it has to be on the line rather than only on screen.
+  // The figure has to be on the line, not just on screen: the offer, the
+  // totals and the saved draft all read `marketPence`. It is written when the
+  // route first answers and again when the finish changes the answer, but
+  // never over a figure a staff member typed or a source they picked by hand.
+  const typed = line.marketSource === MANUAL_SOURCE
+  const held = Boolean(line.overrideReason)
   React.useEffect(() => {
-    if (!waiting || !view) return
+    if (!priced || typed || held) return
+    if (!view) return
     const chosen = view.chosen
-    onUpdate(
-      line.key,
-      chosen
-        ? { marketPence: chosen.gbp_market, marketSource: chosen.source }
-        : { marketSource: MANUAL_SOURCE }
-    )
-  }, [waiting, view, line.key, onUpdate])
+    if (!chosen) {
+      // Nothing to price it from: the field becomes the only way, which is
+      // what the line then says under it.
+      if (waiting) onUpdate(line.key, { marketSource: MANUAL_SOURCE })
+      return
+    }
+    if (chosen.gbp_market === line.marketPence && chosen.source === line.marketSource) {
+      return
+    }
+    onUpdate(line.key, {
+      marketPence: chosen.gbp_market,
+      marketSource: chosen.source,
+    })
+  }, [
+    priced,
+    typed,
+    held,
+    waiting,
+    view,
+    line.key,
+    line.marketPence,
+    line.marketSource,
+    onUpdate,
+  ])
 
   /** A lot's count lives in its title as well, so the two move together. */
   function setCount(count: number) {

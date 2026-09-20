@@ -70,7 +70,7 @@ describe("reading and writing the settings record", () => {
   })
 
   it("drops a key the server sent anyway", async () => {
-    const row = (await getSettings()) as Record<string, unknown>
+    const row = (await getSettings()) as unknown as Record<string, unknown>
 
     expect(row.api_keys).toBeUndefined()
     expect(row.email_api_key).toBeUndefined()
@@ -87,7 +87,7 @@ describe("reading and writing the settings record", () => {
   it("hands the demo counter a record with no key on it", async () => {
     setDataMode(true)
 
-    const row = (await getSettings()) as Record<string, unknown>
+    const row = (await getSettings()) as unknown as Record<string, unknown>
 
     expect(Object.keys(row).join(" ")).not.toMatch(/key|secret/)
     expect(row.shop_name).toBe("GG Entertainment")
