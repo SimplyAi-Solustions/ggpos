@@ -18,7 +18,7 @@
  * disposal's price less that quantity's share of the cost.
  *
  * The sale price on a row is the line's net (its share of the sale-level
- * discount already taken off, see lib/saleline.js) less whatever has
+ * discount already taken off, see lib/shared/saleline.js) less whatever has
  * already been refunded off it, so the register and the refunds agree to
  * the penny. A fully refunded line is left out: nothing was sold.
  *

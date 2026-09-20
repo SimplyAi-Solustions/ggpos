@@ -29,7 +29,6 @@ directory.
    the first time migrations run - see "Migrations and seeds" below.
 
 Environment variables:
-
 | Variable | Purpose |
 |---|---|
 | `PB_VERSION` | Pins the binary `pb/scripts/dev.sh` downloads (default `0.40.4`). Also the version baked into `pb/Dockerfile`'s `PB_VERSION` build arg and the literal in `pb_hooks/routes.pb.js`'s `/api/vault/health` response - keep the three in step if it ever changes. |
@@ -42,7 +41,6 @@ Environment variables:
 `pb_migrations/*.js` run in filename order (PocketBase sorts them, hence
 the timestamp prefixes) and are split the way the brief asked, one
 concern per file:
-
 | File | Collections |
 |---|---|
 | `..._auth_collections.js` | `staff`, `customers`, `customer_private`, `id_documents` |
@@ -128,17 +126,15 @@ needs a unique random value (SKUs, customer codes, voucher codes)
 therefore checks uniqueness itself with `findFirstRecordByFilter` in a
 retry loop *before* calling `e.next()` exactly once, rather than
 retrying `e.next()` on a unique-constraint failure.
-
 | File | What it does |
 |---|---|
-| `lib/shared/{sku,money,pricing,loyalty}.js` | **Generated, do not edit.** A CommonJS build of `packages/shared/src/{sku,money,pricing,loyalty}.ts` via `pnpm --filter @gg/shared build:hooks`, so the hooks, the frontend and the admin loyalty-rule preview all share one implementation. `sku.js` is the one used here: `generateCode(kind, randomByte)`, `parseCode`, `buildCode`, `CROCKFORD_ALPHABET`, `CODE_KINDS`. |
+| `lib/shared/{sku,money,pricing,loyalty,saleline}.js` | **Generated, do not edit.** A CommonJS build of `packages/shared/src/{sku,money,pricing,loyalty,saleline}.ts` via `pnpm --filter @gg/shared build:hooks`, so the hooks, the frontend and the admin loyalty-rule preview all share one implementation. `sku.js` is the one used here: `generateCode(kind, randomByte)`, `parseCode`, `buildCode`, `CROCKFORD_ALPHABET`, `CODE_KINDS`. |
 | `lib/audit.js` | `writeAuditLog(app, { actor, action, collection, record, meta, ip })` - one row in `audit_log`. |
 | `lib/counters.js` | `nextNumber(app, "trade_in" \| "sale" \| "redemption")` - atomically bumps the matching row in `counters` and returns `GG-BI-000123` / `GG-S-000456` / `GG-V-000012`. Transaction-agnostic: pass `$app`, `e.app`, or a `txApp` from `$app.runInTransaction`. |
 | `lib/balances.js` | `recompute(app, customerId)`, `creditBalance`, `pointsBalance` - the cached `customer_private.credit_balance` / `.points_balance` recomputed by **summing the ledgers**, never by adding a delta, so a cache that has drifted repairs itself on the next write. |
 | `lib/vaultutil.js` | Route plumbing: request body and query reading (`body`, `asInt`, `asStr`, `asBool`, `jsonField`), `requireAdmin`, the `settings` / `offerSettings` / `emailSettings` / `programme` / `loyaltyRules` / `tier` loaders in the shapes `packages/shared`'s evaluators expect, `openCashSession` / `sessionMovements` / `sessionExpected`, date helpers (`addMonths`, `ageAt`, `isPast`) and CSV escaping. |
 | `lib/stepup.js` | `issue(staff)` and `requireStepUp(e)` - see "Step-up" below. |
 | `lib/base64.js` | `encode`, `decode`, `fromDataUrl`. goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, so the signature data URL carries its own codec. Both directions are linear (accumulate into an array, join once). ID photos no longer come through here at all - see "ID photos" below. |
-| `lib/saleline.js` | `breakdown(app, sale)`, `cumNet`, `pointsCum`, `spread` - what each sale line was actually paid, from the as-sold `unit_price`, `qty` and `discount` plus the line's pro rata share of `sales.discount`. The refund route and the stock book both price from it, so they agree to the penny. |
 | `lib/receipts.js` | `build(app, tradeIn, settings, fileToken)` (the receipt JSON) and `render(receipt)` (the plain-text and HTML email bodies), so the print page and the email can never drift. |
 | `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
@@ -165,7 +161,6 @@ of truth for the request and response shapes; this section is the
 server-side notes that go with them. Every route needs a `staff` token;
 **admin** also needs `role = "admin"`, **step-up** also needs a live
 `X-Step-Up` header.
-
 | Route | Notes |
 |---|---|
 | `POST /api/vault/step-up` | Re-checks the caller's own password, returns `{ token, expires_at }` good for 10 minutes. |

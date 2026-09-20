@@ -93,6 +93,7 @@ routerAdd(
       { collection: "quotes", field: "customer" },
       { collection: "want_list", field: "customer" },
       { collection: "notifications", field: "customer" },
+      { collection: "push_subscriptions", field: "customer" },
       { collection: "reward_redemptions", field: "customer" },
       { collection: "referrals", field: "referrer" },
       { collection: "referrals", field: "referee" },
@@ -165,6 +166,51 @@ routerAdd(
           }
           count(rel.collection, n);
         }
+
+        // perk_usage cannot simply be re-pointed: it carries a unique index
+        // on (customer, perk_type, period), so a duplicate who used the same
+        // perk in the same month as the record being kept would collide. The
+        // two counts are added together instead, and the duplicate's row
+        // goes. Where the record being kept has no row for that perk and
+        // month, the duplicate's row is re-pointed, which is the same thing
+        // as creating one and keeps its own history.
+        let perkRows = [];
+        try {
+          perkRows = txApp.findRecordsByFilter("perk_usage", "customer = {:id}", "created", 0, 0, {
+            id: duplicateId,
+          });
+        } catch (err) {
+          perkRows = [];
+        }
+        let perkMoved = 0;
+        for (let i = 0; i < perkRows.length; i++) {
+          const row = perkRows[i];
+          if (!row) continue;
+          let existing = null;
+          try {
+            existing = txApp.findFirstRecordByFilter(
+              "perk_usage",
+              "customer = {:customer} && perk_type = {:perk} && period = {:period}",
+              {
+                customer: targetId,
+                perk: row.getString("perk_type"),
+                period: row.getString("period"),
+              }
+            );
+          } catch (err) {
+            existing = null;
+          }
+          if (existing) {
+            existing.set("used_count", existing.getInt("used_count") + row.getInt("used_count"));
+            txApp.save(existing);
+            txApp.delete(row);
+          } else {
+            row.set("customer", targetId);
+            txApp.save(row);
+          }
+          perkMoved += 1;
+        }
+        count("perk_usage", perkMoved);
 
         // Staff notes written against the duplicate follow it across.
         let noteRows = [];

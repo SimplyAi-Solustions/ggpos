@@ -15,7 +15,7 @@
  * A refund never rewrites what was sold. `sale_lines.qty` and `.discount`
  * are the as-sold figures for good; a refund moves
  * `sale_lines.refunded_qty` and `sales.refunded_total` only, and prices
- * itself from the immutable numbers through lib/saleline.js, so any
+ * itself from the immutable numbers through lib/shared/saleline.js, so any
  * sequence of partial refunds adds back up to exactly what was taken.
  *
  * Each registered handler runs in its own isolated goja context, so every

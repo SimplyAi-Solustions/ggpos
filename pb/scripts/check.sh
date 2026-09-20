@@ -1477,6 +1477,24 @@ DUPE_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
 curl -s -o /dev/null -X POST "$BASE/api/collections/notifications/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$DUPE_ID\",\"type\":\"quote_offer\",\"title\":\"Merge check\",\"body\":\"Body\"}"
+# push_subscriptions createRule only lets a caller create their own row, so
+# these go in as the superuser.
+curl -s -o /dev/null -X POST "$BASE/api/collections/push_subscriptions/records" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"endpoint\":\"https://push.example.test/merge-check\"}"
+
+# perk_usage has a unique index on (customer, perk_type, period): the shared
+# September row has to be summed into the kept record's, and the row it has
+# no counterpart for has to move across whole.
+curl -s -o /dev/null -X POST "$BASE/api/collections/perk_usage/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"perk_type\":\"free_event_entries\",\"period\":\"2026-09\",\"used_count\":2}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/perk_usage/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"perk_type\":\"lounge_hours\",\"period\":\"2026-09\",\"used_count\":3}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/perk_usage/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$KEEP_ID\",\"perk_type\":\"free_event_entries\",\"period\":\"2026-09\",\"used_count\":1}"
 
 MERGE_SELF="$(curl -s -o "$TMP_DIR/merge-self.json" -w '%{http_code}' \
   -X POST "$BASE/api/vault/customers/$DUPE_ID/merge" \
@@ -1501,10 +1519,12 @@ MERGE_STATUS="$(curl -s -o "$TMP_DIR/merge.json" -w '%{http_code}' \
   -d "{\"into\":\"$KEEP_ID\"}")"
 [ "$MERGE_STATUS" = "200" ] || fail "the merge returned $MERGE_STATUS: $(cat "$TMP_DIR/merge.json")"
 [ "$(jval "customer.id" <"$TMP_DIR/merge.json")" = "$KEEP_ID" ] || fail "the merge returned the wrong customer"
-for MOVED_KEY in trade_ins credit_ledger points_ledger notifications; do
+for MOVED_KEY in trade_ins credit_ledger points_ledger notifications push_subscriptions; do
   [ "$(jval "moved.$MOVED_KEY" <"$TMP_DIR/merge.json")" = "1" ] \
     || fail "the merge moved '$(jval "moved.$MOVED_KEY" <"$TMP_DIR/merge.json")' $MOVED_KEY rows, expected 1"
 done
+[ "$(jval "moved.perk_usage" <"$TMP_DIR/merge.json")" = "2" ] \
+  || fail "the merge moved '$(jval "moved.perk_usage" <"$TMP_DIR/merge.json")' perk_usage rows, expected 2"
 DUPE_AFTER="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/customers/records/$DUPE_ID" -H "Authorization: $STAFF_TOKEN")"
 [ "$DUPE_AFTER" = "404" ] || fail "the duplicate customer is still there after the merge (got $DUPE_AFTER)"
 MERGED_TRADE_CUSTOMER="$(curl -s "$BASE/api/collections/trade_ins/records/$DUPE_TRADE_ID" -H "Authorization: $STAFF_TOKEN" | jval customer)"
