@@ -25,12 +25,12 @@ const PHOTO = join(__dirname, "fixtures", "id-sample.png")
 /**
  * No service worker for these specs.
  *
- * The built app registers one, and with two workers hitting a single
- * `vite preview` a navigation served out of its precache occasionally comes
- * back as an error page (`ERR_HTTP_RESPONSE_CODE_FAILURE`) when the entry it
- * holds was written by an earlier build. Nothing here tests the worker, so
- * it is blocked rather than raced: the push handler has its own unit-level
- * coverage and is exercised by hand.
+ * The built app registers one, and a navigation answered out of its precache
+ * is a navigation this suite did not ask the server for: if the precache was
+ * written by a different build than the one being previewed, the page comes
+ * back as an error rather than as itself. Nothing here tests the worker, so
+ * it is blocked rather than raced; the push handler it carries is covered by
+ * unit tests and by hand.
  */
 test.use({ serviceWorkers: "block" })
 

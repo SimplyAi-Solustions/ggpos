@@ -12,6 +12,11 @@ const executablePath = existsSync(chromium.executablePath())
 
 const port = Number(process.env.E2E_PORT ?? 4173)
 
+/** `E2E_SKIP_BUILD=1` previews the existing `dist` instead of rebuilding it. */
+const build = process.env.E2E_SKIP_BUILD
+  ? ""
+  : "VITE_DEMO_SWITCH=1 pnpm --filter web build && "
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
@@ -44,7 +49,13 @@ export default defineConfig({
     // the query string. So the suite builds with that flag itself rather
     // than previewing whatever `dist` happens to hold, and the shop's own
     // production build (.github/workflows/deploy.yml) never carries it.
-    command: `VITE_DEMO_SWITCH=1 pnpm --filter web build && pnpm --filter web exec vite preview --port ${port} --strictPort`,
+    //
+    // That build writes `apps/web/dist`, which every run on this machine
+    // shares: two suites at once will pull the files out from under each
+    // other and fail with 404s that look like application bugs. Run one at a
+    // time, or set `E2E_SKIP_BUILD=1` on the second to preview what the
+    // first one built.
+    command: `${build}pnpm --filter web exec vite preview --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

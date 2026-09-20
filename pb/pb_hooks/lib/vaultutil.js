@@ -254,6 +254,13 @@ function tierSummary(app, priv) {
 function meShapeFor(app, customer) {
   var balances = require(`${__hooks}/lib/balances.js`);
 
+  // GET /api/vault/config, the only other place push.vapid_public_key is
+  // served, is staff-only ($apis.requireAuth("staff")) - a customer token
+  // can never call it, so the portal could never turn push on at all
+  // without this (fix round, finding 2). Read the same settings.push field
+  // config.pb.js does, not widened, just also handed to a customer here.
+  var pushSettings = jsonField(settings(app), "push", {}) || {};
+
   var priv = null;
   try {
     priv = app.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
@@ -293,6 +300,7 @@ function meShapeFor(app, customer) {
     },
     tier: tierSummary(app, priv),
     id_status: priv ? priv.getString("id_status") || "none" : "none",
+    push: { vapid_public_key: pushSettings.vapid_public_key || "" },
     counts: {
       trade_ins: count("trade_ins", "customer = {:c}", { c: customer.id }),
       open_quotes: count(

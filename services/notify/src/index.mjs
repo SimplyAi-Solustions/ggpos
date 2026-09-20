@@ -75,12 +75,26 @@ export async function runOnce(
   // notification - a small table, read whole, the same reasoning
   // pb_hooks/lib/reports/query.js's own batched lookups use for a child
   // collection keyed by a handful of parent ids.
+  //
+  // A customer subscription whose own customer has notify_push off is left
+  // out of the grouping entirely (fix round, finding 5): pb-client.mjs's
+  // own listPushSubscriptions expands `customer` for exactly this, the
+  // same asymmetry lib/notify.js's own email side already has (only a
+  // customer's own preference is ever checked; staff have no such
+  // opt-out). Fails open (keeps the subscription) when the expand cannot
+  // be resolved at all, rather than silently going quiet - the same
+  // "unreadable is not the same as opted out" reasoning lib/notify.js's
+  // own notify_email check already documents.
   const byCustomer = new Map();
   const byStaff = new Map();
   for (const sub of subscriptions) {
     if (sub.customer) {
-      if (!byCustomer.has(sub.customer)) byCustomer.set(sub.customer, []);
-      byCustomer.get(sub.customer).push(sub);
+      const expandedCustomer = sub.expand && sub.expand.customer;
+      const pushAllowed = !expandedCustomer || expandedCustomer.notify_push !== false;
+      if (pushAllowed) {
+        if (!byCustomer.has(sub.customer)) byCustomer.set(sub.customer, []);
+        byCustomer.get(sub.customer).push(sub);
+      }
     }
     if (sub.staff) {
       if (!byStaff.has(sub.staff)) byStaff.set(sub.staff, []);
@@ -109,6 +123,14 @@ export async function runOnce(
       continue;
     }
 
+    // hadTransientFailure tracks a send that was neither delivered nor
+    // confirmed gone (a 500, a timeout, anything but 404/410) - the one
+    // case this notification must NOT be marked pushed for (fix round,
+    // finding 6): pushed_at is meant to mean "this was actually
+    // delivered, or every device it could have gone to is confirmed gone",
+    // not "an attempt was made". Left unmarked, it is picked up again on
+    // this sidecar's next pass - retried, not lost.
+    let hadTransientFailure = false;
     for (const sub of targetSubs) {
       const result = await sendPush(webpushImpl, sub, notification);
       if (result.gone) {
@@ -119,6 +141,7 @@ export async function runOnce(
           warn(`[notify] could not remove a dead subscription: ${err.message}`);
         }
       } else if (!result.sent) {
+        hadTransientFailure = true;
         // Never the endpoint or the keys - push.mjs's own sendPush only
         // ever hands back web-push's fixed error message, never the
         // endpoint or response body it also carries.
@@ -126,11 +149,15 @@ export async function runOnce(
       }
     }
 
+    if (hadTransientFailure) {
+      continue;
+    }
+
     // Marked pushed once every subscription for this target has been
-    // tried, whatever the individual outcomes - a transient failure on one
-    // device is not retried forever, the same "best effort, not a queue"
-    // reasoning the email side of lib/notify.js already follows (a failed
-    // send there is logged, not retried, either).
+    // tried and none of them merely failed transiently - a send that
+    // actually succeeded, or one whose only failures were confirmed-gone
+    // subscriptions just removed above, is exactly "delivered or as
+    // delivered as this notification is ever going to get".
     try {
       await markPushed(pbUrl, token, notification.id, now().toISOString());
       pushed += 1;

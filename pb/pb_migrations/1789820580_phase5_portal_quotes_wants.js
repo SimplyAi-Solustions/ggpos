@@ -44,33 +44,72 @@
  *    were not purged yet; this is that field.
  *
  * Changed:
- *  - `want_list.updateRule` gains a customer-own carve-out: a customer may
- *    set `status` to `"closed"` on their own row and touch nothing else
- *    (POST /api/vault/want-list/:id/close, wants.pb.js) - staff keep full
- *    access as before.
  *  - `customers.otp.emailTemplate`: PocketBase's own default OTP email
  *    ("OTP for {APP_NAME}" / "Your one-time password is: ...") is replaced
  *    with a GG-branded subject and a plain-text body naming the code and
  *    how long it lasts, matching CLAUDE.md's copy rules (no exclamation
  *    marks, no emoji, short and specific).
- *  - `app.settings().rateLimits`: three rules for the two public estimate
- *    routes (no auth, so IP is the only throttle available) and the OTP
+ *  - `app.settings().rateLimits`: four rules - the two public estimate
+ *    routes (no auth, so IP is the only throttle available), the OTP
  *    request every customer's first sign-in and every subsequent one goes
  *    through (docs/PLAN.md, "Security, GDPR and record keeping": "rate
- *    limits on ... customers:requestOTP and /api/vault/*"). PocketBase's
- *    rate limiter is a real, general setting (confirmed against this
- *    binary's own `RateLimitsConfig`/`RateLimitRule` - see pb/README.md's
- *    Phase 5 notes), so this is not a "say so if not" case.
+ *    limits on ... customers:requestOTP and /api/vault/*"), and a per-IP
+ *    `*:auth` brute-force guard sized for this deploy's own one shared
+ *    Caddy IP rather than PocketBase's own tighter bundled default (fix
+ *    round, finding 4 - see below). PocketBase's rate limiter is a real,
+ *    general setting (confirmed against this binary's own
+ *    `RateLimitsConfig`/`RateLimitRule` - see pb/README.md's Phase 5
+ *    notes), so this is not a "say so if not" case.
+ *  - `app.settings().trustedProxy`: set so a rate limit, and every
+ *    `e.realIP()` call elsewhere in `pb_hooks`, reads the real client
+ *    address this deploy's own Caddy forwards, not Caddy's own address
+ *    shared by every visitor (fix round, finding 4 - see below).
+ *  - `quotes.createRule` tightened to staff-only (fix round, finding 1 -
+ *    see below).
+ *  - `settings.push_vapid_public_key` / `.push_vapid_private_key`
+ *    (`1789819560_ops_collections.js`'s own unused Phase 1 fields)
+ *    removed: nothing ever read either one, and `settings.push` above is
+ *    now the public half's one home (fix round, finding 16, the
+ *    orchestrator's own - see below).
  *
- * Not changed here: `quotes.createRule` stays as Phase 2 left it (staff, or
- * a customer creating their own row directly) rather than tightening to
- * staff-only as the Phase 5 brief describes ("customers submit through the
- * route"). Tightening it would refuse pb/scripts/check.sh's own section 8
- * (`POST /api/collections/quotes/records` as a customer token, part of the
- * sections this round leaves alone), so the new `POST /api/vault/quotes`
- * route (quotes.pb.js) is additive: it is the documented way a real photo
- * upload happens, but the collection itself is not narrowed. See this
- * package's report for the full note.
+ * `quotes.createRule` is tightened to staff-only (fix round, finding 1): a
+ * customer's own token could otherwise create a `quotes` row directly with
+ * any `status`, `lines` and `offer_total` it liked - `received` copies
+ * those lines into a draft trade-in exactly as given, and completion pays
+ * them out, so a forged `accepted` row with priced lines was a real path to
+ * money. Customers now submit only through `POST /api/vault/quotes`
+ * (quotes.pb.js), which always creates `submitted` with empty lines and a
+ * zero total; `pb/scripts/check.sh` section 8's own customer-create
+ * assertion was updated to expect this 403 (see the report for the fix
+ * round). The update rule is untouched: a customer may still reply, accept
+ * or decline their own quote through the collection API, guarded by its
+ * own `:isset = false` clauses exactly as before.
+ *
+ * `want_list.updateRule` is NOT given the customer-own-close carve-out an
+ * earlier draft of this migration added (fix round, finding 11): a
+ * declarative API rule can only ever affect the one collection a request
+ * writes to, so it cannot also put a matched `items` row back in stock as
+ * part of that same write - only a route can. `POST /api/vault/want-list/
+ * :id/close` (wants.pb.js) is therefore the only way a customer closes
+ * their own row, and it does the item release itself, in the same
+ * transaction. `want_list.updateRule` stays exactly as
+ * `1789819320_stock_collections.js` left it (staff only).
+ *
+ * `app.settings().rateLimits` is set explicitly (fix round, finding 4),
+ * not merely turned on: `rateLimits.enabled = true` on its own also
+ * activates PocketBase's own bundled default rules (`*:auth` 2 requests /
+ * 3 seconds, `*:create` 20/5s, `/api/batch` 3/1s, `/api/*` 300/10s) for
+ * every caller behind this deploy's one Caddy IP (deploy/README.md), which
+ * is far tighter than this shop's own three rules were ever reviewed
+ * against. `rateLimits.rules` is replaced outright with only what this
+ * app actually wants: the three rules below, plus a per-IP `*:auth` rule
+ * at a level a genuine brute-force loop still trips but a shop's own
+ * traffic behind one shared IP does not. `app.settings().trustedProxy` is
+ * set alongside it so a rate limit (and `e.realIP()` everywhere else in
+ * this codebase) is keyed on the caller's own address forwarded by this
+ * deploy's Caddy, not on Caddy's own proxy IP shared by every visitor -
+ * see deploy/README.md's Caddy section for the header this expects Caddy
+ * to already send.
  */
 migrate(
   (app) => {
@@ -141,24 +180,28 @@ migrate(
     app.save(quoteMessages);
 
     // ---------------------------------------------------------------------
-    // want_list.updateRule: a customer may close their own row and nothing
-    // else on it.
+    // quotes.createRule: staff only from here (fix round, finding 1) - see
+    // this file's own header comment for why. down() restores the exact
+    // expression 1789819380_trading_collections.js originally gave it.
     // ---------------------------------------------------------------------
-    const wantList = app.findCollectionByNameOrId("want_list");
-    wantList.updateRule =
-      `${STAFF_ONLY} || (@request.auth.collectionName = "customers" && customer = @request.auth.id && ` +
-      `@request.body.status = "closed" && @request.body.customer:isset = false && ` +
-      `@request.body.card:isset = false && @request.body.free_text:isset = false && ` +
-      `@request.body.max_price:isset = false && @request.body.matched_item:isset = false && ` +
-      `@request.body.notified_at:isset = false)`;
-    app.save(wantList);
+    quotes.createRule = STAFF_ONLY;
+    app.save(quotes);
 
     // ---------------------------------------------------------------------
-    // settings.push / settings.holds
+    // settings.push / settings.holds. The Phase 1 migration's own
+    // push_vapid_public_key / push_vapid_private_key text fields
+    // (1789819560_ops_collections.js) are removed in the same breath (fix
+    // round, finding 16, the orchestrator's own): nothing has ever read
+    // either one, and settings.push.vapid_public_key above is now the
+    // public half's one home. The private half never gets a settings field
+    // at all, on either name - it lives only in services/notify's own
+    // GG_VAPID_PRIVATE_KEY environment variable and always has.
     // ---------------------------------------------------------------------
     const settings = app.findCollectionByNameOrId("settings");
     settings.fields.add(new Field({ name: "push", type: "json", maxSize: 2000 }));
     settings.fields.add(new Field({ name: "holds", type: "json", maxSize: 2000 }));
+    settings.fields.removeByName("push_vapid_public_key");
+    settings.fields.removeByName("push_vapid_private_key");
     app.save(settings);
 
     let settingsRow = null;
@@ -183,28 +226,73 @@ migrate(
 
     // ---------------------------------------------------------------------
     // Rate limits: the two public estimate routes (guests only, by IP - the
-    // one throttle available with no token) and the OTP request every
-    // customer sign-in goes through. Values are generous enough that a
-    // legitimate customer, or pb/scripts/check.sh's own handful of calls,
-    // never trips them, while still stopping a scraping or guessing loop.
+    // one throttle available with no token), the OTP request every
+    // customer sign-in goes through, and a per-IP auth brute-force guard.
+    // Values are generous enough that a legitimate customer, or
+    // pb/scripts/check.sh's own handful of calls, never trips them, while
+    // still stopping a scraping or guessing loop.
+    //
+    // `rateLimits.rules` is assigned outright, not pushed onto (fix round,
+    // finding 4): `rateLimits.enabled = true` alone also activates every
+    // one of PocketBase's own bundled default rules (`*:auth` 2 requests /
+    // 3 seconds, `*:create` 20/5s, `/api/batch` 3/1s, `/api/*` 300/10s),
+    // which were never reviewed against this shop's own one shared Caddy
+    // IP and are far tighter than this app actually wants - `*:auth` at
+    // 2/3s in particular would fail ordinary counter use within a minute
+    // of two staff signing in close together. The four rules below are
+    // the complete, deliberate list; nothing else is enabled.
     // ---------------------------------------------------------------------
     const rl = app.settings();
     rl.rateLimits.enabled = true;
-    rl.rateLimits.rules.push(
+    rl.rateLimits.rules = [
       { label: "customers:requestOTP", audience: "@guest", duration: 300, maxRequests: 20 },
       { label: "GET /api/vault/estimate/search", audience: "@guest", duration: 60, maxRequests: 60 },
-      { label: "GET /api/vault/estimate", audience: "@guest", duration: 60, maxRequests: 60 }
-    );
+      { label: "GET /api/vault/estimate", audience: "@guest", duration: 60, maxRequests: 60 },
+      // A real brute-force loop still trips this well inside a minute; a
+      // shop's own traffic (counter staff signing in, a customer's OTP
+      // request/claim, pb/scripts/check.sh's own many logins across its
+      // whole run) never does, all sharing this one deploy's Caddy IP.
+      // `audience: ""` matches PocketBase's own shipped default for this
+      // exact label (confirmed against a freshly started, unmigrated
+      // instance's own `/api/settings`) rather than this app's own
+      // `"@guest"` convention used above - every `*:auth` route is
+      // necessarily pre-authentication anyway, so there is no
+      // authenticated-caller case for an audience to narrow.
+      { label: "*:auth", audience: "", duration: 60, maxRequests: 10 },
+    ];
+    app.save(rl);
+
+    // ---------------------------------------------------------------------
+    // settings.trustedProxy: without this, every rate limit above (and
+    // every e.realIP() call elsewhere in pb_hooks) sees this deploy's own
+    // Caddy as the caller, the same one address for every visitor to the
+    // shop's site (deploy/README.md's Caddy section) - a limit "per IP"
+    // would then really mean "shared by the whole shop's traffic through
+    // one proxy", tripping for one visitor because of another entirely.
+    // Caddy already sends the real client address on X-Forwarded-For by
+    // default; this just tells PocketBase to trust and read it back off
+    // that one deploy's own reverse proxy, not off the leftmost (client-
+    // supplied, spoofable) entry a chain of untrusted proxies would need
+    // instead.
+    // ---------------------------------------------------------------------
+    rl.trustedProxy = { headers: ["X-Forwarded-For"], useLeftmostIP: false };
     app.save(rl);
   },
   (app) => {
+    // Restored to PocketBase's own factory defaults, confirmed against a
+    // freshly started, unmigrated instance's own /api/settings (fix round,
+    // finding 4) - not derived by filtering this migration's own rules back
+    // out of whatever is live, which would lose the bundled defaults
+    // `up()`'s wholesale rules assignment replaced rather than appended to.
     const rl = app.settings();
-    const dropLabels = [
-      "customers:requestOTP",
-      "GET /api/vault/estimate/search",
-      "GET /api/vault/estimate",
+    rl.rateLimits.enabled = false;
+    rl.rateLimits.rules = [
+      { label: "*:auth", audience: "", duration: 3, maxRequests: 2 },
+      { label: "*:create", audience: "", duration: 5, maxRequests: 20 },
+      { label: "/api/batch", audience: "", duration: 1, maxRequests: 3 },
+      { label: "/api/", audience: "", duration: 10, maxRequests: 300 },
     ];
-    rl.rateLimits.rules = (rl.rateLimits.rules || []).filter((r) => dropLabels.indexOf(r.label) < 0);
+    rl.trustedProxy = { headers: [], useLeftmostIP: false };
     app.save(rl);
 
     const customers = app.findCollectionByNameOrId("customers");
@@ -222,22 +310,29 @@ migrate(
     if (settingsRow) {
       settingsRow.set("push", null);
       settingsRow.set("holds", null);
+      settingsRow.set("push_vapid_public_key", "");
+      settingsRow.set("push_vapid_private_key", "");
       app.save(settingsRow);
     }
 
     const settings = app.findCollectionByNameOrId("settings");
     settings.fields.removeByName("holds");
     settings.fields.removeByName("push");
+    // Re-added exactly as 1789819560_ops_collections.js originally defined
+    // them (fix round, finding 16, the orchestrator's own).
+    settings.fields.add(new Field({ name: "push_vapid_public_key", type: "text", max: 500 }));
+    settings.fields.add(new Field({ name: "push_vapid_private_key", type: "text", max: 500 }));
     app.save(settings);
-
-    const wantList = app.findCollectionByNameOrId("want_list");
-    wantList.updateRule = '@request.auth.collectionName = "staff"';
-    app.save(wantList);
 
     app.delete(app.findCollectionByNameOrId("quote_messages"));
 
     const quotes = app.findCollectionByNameOrId("quotes");
     quotes.fields.removeByName("closed_at");
+    // The exact original expression from 1789819380_trading_collections.js
+    // - STAFF_ONLY is up()'s own local const, not visible here, so this is
+    // the same literal written out in full rather than referencing it.
+    quotes.createRule =
+      '@request.auth.collectionName = "staff" || (@request.auth.collectionName = "customers" && customer = @request.auth.id)';
     app.save(quotes);
 
     customers.fields.removeByName("notify_push");

@@ -111,6 +111,7 @@ routerAdd(
     }
 
     let result = null;
+    let pending = [];
     e.app.runInTransaction((txApp) => {
       const quote = new Record(txApp.findCollectionByNameOrId("quotes"), {
         customer: customer.id,
@@ -123,7 +124,7 @@ routerAdd(
       quote.set("photos", files);
       txApp.save(quote);
 
-      notifyLib.notify(txApp, {
+      const n = notifyLib.notify(txApp, {
         staffAll: true,
         type: "quote_submitted",
         title: "New quote submitted",
@@ -131,6 +132,7 @@ routerAdd(
         link: `/counter/quotes/${quote.id}`,
         email: true,
       });
+      pending = n.pending;
 
       auditLib.writeAuditLog(txApp, {
         actor: customer.id,
@@ -143,6 +145,7 @@ routerAdd(
 
       result = { quote: quote };
     });
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -302,6 +305,7 @@ routerAdd(
     }
 
     let result = null;
+    let pending = [];
     e.app.runInTransaction((txApp) => {
       const record = new Record(txApp.findCollectionByNameOrId("quote_messages"), {
         quote: quoteId,
@@ -316,7 +320,7 @@ routerAdd(
       txApp.save(record);
 
       if (isStaff) {
-        notifyLib.notify(txApp, {
+        const n = notifyLib.notify(txApp, {
           customer: quote.getString("customer"),
           type: "quote_message",
           title: "A message about your quote",
@@ -324,6 +328,7 @@ routerAdd(
           link: `/account/quotes/${quoteId}`,
           email: true,
         });
+        pending = n.pending;
       } else {
         notifyLib.notify(txApp, {
           staffAll: true,
@@ -353,6 +358,7 @@ routerAdd(
         },
       };
     });
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -387,7 +393,7 @@ routerAdd(
     }
 
     const body = util.body(e);
-    const normalized = quotesLib.normalizeOfferLines(util, body.lines);
+    const normalized = quotesLib.normalizeOfferLines(e.app, util, body.lines);
     if (!normalized.ok) {
       throw e.badRequestError(normalized.message, null);
     }
@@ -398,6 +404,7 @@ routerAdd(
 
     let halt = null;
     let result = null;
+    let pending = [];
     try {
       e.app.runInTransaction((txApp) => {
         const live = txApp.findRecordById("quotes", quoteId);
@@ -424,7 +431,7 @@ routerAdd(
           );
         }
 
-        notifyLib.notify(txApp, {
+        const n = notifyLib.notify(txApp, {
           customer: live.getString("customer"),
           type: "quote_offered",
           title: `Your quote offer, ${money.formatGBP(normalized.offerTotal)}`,
@@ -434,6 +441,7 @@ routerAdd(
           link: `/account/quotes/${quoteId}`,
           email: true,
         });
+        pending = n.pending;
 
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
@@ -450,6 +458,7 @@ routerAdd(
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -563,6 +572,7 @@ routerAdd(
 
     let halt = null;
     let result = null;
+    let pending = [];
     try {
       e.app.runInTransaction((txApp) => {
         const live = txApp.findRecordById("quotes", quoteId);
@@ -583,7 +593,7 @@ routerAdd(
         if (dropOff) live.set("drop_off", dropOff);
         txApp.save(live);
 
-        notifyLib.notify(txApp, {
+        const n = notifyLib.notify(txApp, {
           staffAll: true,
           type: actionName,
           title: "A quote was accepted",
@@ -591,6 +601,7 @@ routerAdd(
           link: `/counter/quotes/${quoteId}`,
           email: false,
         });
+        pending = n.pending;
 
         auditLib.writeAuditLog(txApp, {
           actor: customer.id,
@@ -607,6 +618,7 @@ routerAdd(
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -656,6 +668,7 @@ routerAdd(
 
     let halt = null;
     let result = null;
+    let pending = [];
     try {
       e.app.runInTransaction((txApp) => {
         const live = txApp.findRecordById("quotes", quoteId);
@@ -676,7 +689,7 @@ routerAdd(
         if (dropOff) live.set("drop_off", dropOff);
         txApp.save(live);
 
-        notifyLib.notify(txApp, {
+        const n = notifyLib.notify(txApp, {
           staffAll: true,
           type: actionName,
           title: "A quote was declined",
@@ -684,6 +697,7 @@ routerAdd(
           link: `/counter/quotes/${quoteId}`,
           email: false,
         });
+        pending = n.pending;
 
         auditLib.writeAuditLog(txApp, {
           actor: customer.id,
@@ -700,6 +714,7 @@ routerAdd(
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -746,14 +761,57 @@ routerAdd(
         });
         txApp.save(tradeIn);
 
+        // kind/game inferred exactly the way tradeins.pb.js's own
+        // completion route infers them for a card or retro line (fix
+        // round, finding 9): without this, a free-text quote line (no
+        // card, no retro_title) landed on its trade_in_line with neither
+        // field set, and completion refused it with "Line N has no game
+        // set" - a quote that could be accepted and received could still
+        // never actually be paid out. A free-text line's own kind/game, if
+        // the offer set them, ride straight through from
+        // normalizeOfferLines (lib/quotes.js); only a card or retro line
+        // is ever re-inferred here.
+        let retroGameId = "";
+        try {
+          retroGameId = txApp.findFirstRecordByFilter("games", "key = 'retro'").id;
+        } catch (err) {
+          retroGameId = "";
+        }
+
         const rawLines = util.jsonField(live, "lines", []) || [];
         const tradeInLines = txApp.findCollectionByNameOrId("trade_in_lines");
         for (let i = 0; i < rawLines.length; i++) {
           const l = rawLines[i] || {};
+          const cardId = util.asStr(l.card);
+          const retroTitleId = util.asStr(l.retro_title);
+
+          let kind = util.asStr(l.kind);
+          if (!kind) kind = cardId ? "single" : retroTitleId ? "retro" : "other";
+
+          let card = null;
+          if (cardId) {
+            try {
+              card = txApp.findRecordById("cards", cardId);
+            } catch (err) {
+              card = null;
+            }
+          }
+
+          let gameId = util.asStr(l.game);
+          if (!gameId && card) gameId = card.getString("game");
+          if (!gameId && kind === "retro") gameId = retroGameId;
+          if (!gameId) {
+            halt = {
+              status: 422,
+              message: `Line ${i + 1} has no game set. Add a game to the offer line and try again.`,
+            };
+            throw new Error(halt.message);
+          }
+
           const line = new Record(tradeInLines, {
             trade_in: tradeIn.id,
-            card: util.asStr(l.card),
-            retro_title: util.asStr(l.retro_title),
+            card: cardId,
+            retro_title: retroTitleId,
             free_text_title: util.asStr(l.title),
             finish: util.asStr(l.finish),
             condition: util.asStr(l.condition),
@@ -763,6 +821,8 @@ routerAdd(
             market_source: util.asStr(l.market_source),
             offer_price: util.asInt(l.offer_price, 0),
             accepted: true,
+            kind: kind,
+            game: gameId,
           });
           txApp.save(line);
         }
@@ -825,6 +885,7 @@ routerAdd(
 
     let halt = null;
     let result = null;
+    let pending = [];
     try {
       e.app.runInTransaction((txApp) => {
         const live = txApp.findRecordById("quotes", quoteId);
@@ -845,7 +906,7 @@ routerAdd(
           })
         );
 
-        notifyLib.notify(txApp, {
+        const n = notifyLib.notify(txApp, {
           customer: live.getString("customer"),
           type: "quote_declined",
           title: "Your quote was declined",
@@ -853,6 +914,7 @@ routerAdd(
           link: `/account/quotes/${quoteId}`,
           email: true,
         });
+        pending = n.pending;
 
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
@@ -869,6 +931,7 @@ routerAdd(
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -946,6 +1009,11 @@ cronAdd("quotes_expire", "0 * * * *", () => {
     offered = [];
   }
 
+  // Each quote's own write (plus its notification) is one
+  // $app.runInTransaction, not a bare $app.save (fix round, finding 13:
+  // "quote expiry plus its notification" must not be two independent
+  // writes); the email itself goes out only once that transaction has
+  // committed (finding 7 - see lib/notify.js's own comment on why).
   let expiredCount = 0;
   let warnedCount = 0;
   for (let i = 0; i < offered.length; i++) {
@@ -953,17 +1021,23 @@ cronAdd("quotes_expire", "0 * * * *", () => {
     if (!quote) continue;
     const expiresAt = quote.getString("offer_expires_at");
     if (util.isPast(expiresAt, now)) {
-      quote.set("status", "expired");
-      $app.save(quote);
-      expiredCount += 1;
-      notifyLib.notify($app, {
-        customer: quote.getString("customer"),
-        type: "quote_expired",
-        title: "Your quote offer has expired",
-        body: `The offer on your quote expired on ${quotesLib.ukDateShort(expiresAt)}. Ask for a new one any time.`,
-        link: `/account/quotes/${quote.id}`,
-        email: true,
+      let pending = [];
+      $app.runInTransaction((txApp) => {
+        const live = txApp.findRecordById("quotes", quote.id);
+        live.set("status", "expired");
+        txApp.save(live);
+        const n = notifyLib.notify(txApp, {
+          customer: live.getString("customer"),
+          type: "quote_expired",
+          title: "Your quote offer has expired",
+          body: `The offer on your quote expired on ${quotesLib.ukDateShort(expiresAt)}. Ask for a new one any time.`,
+          link: `/account/quotes/${live.id}`,
+          email: true,
+        });
+        pending = n.pending;
       });
+      notifyLib.sendPending($app, pending);
+      expiredCount += 1;
       continue;
     }
 
@@ -992,14 +1066,19 @@ cronAdd("quotes_expire", "0 * * * *", () => {
         alreadyWarned = false;
       }
       if (!alreadyWarned) {
-        notifyLib.notify($app, {
-          customer: quote.getString("customer"),
-          type: "quote_expiring",
-          title: "Your quote offer expires soon",
-          body: `Your quote offer expires on ${quotesLib.ukDateShort(expiresAt)}. Sign in to accept or decline.`,
-          link: `/account/quotes/${quote.id}`,
-          email: true,
+        let pending = [];
+        $app.runInTransaction((txApp) => {
+          const n = notifyLib.notify(txApp, {
+            customer: quote.getString("customer"),
+            type: "quote_expiring",
+            title: "Your quote offer expires soon",
+            body: `Your quote offer expires on ${quotesLib.ukDateShort(expiresAt)}. Sign in to accept or decline.`,
+            link: `/account/quotes/${quote.id}`,
+            email: true,
+          });
+          pending = n.pending;
         });
+        notifyLib.sendPending($app, pending);
         warnedCount += 1;
       }
     }

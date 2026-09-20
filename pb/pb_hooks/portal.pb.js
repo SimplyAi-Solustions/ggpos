@@ -504,7 +504,19 @@ routerAdd(
       } catch (err) {
         row = null;
       }
-      if (!row) {
+      // A row found by endpoint but owned by someone else is left alone -
+      // re-pointing it would silently steal another customer's or staff
+      // member's subscription (fix round, finding 8: no ownership check
+      // meant any caller who happened to send the same endpoint could take
+      // over that row). A brand new row for this caller is created
+      // instead; `endpoint` carries no unique index, so two rows sharing
+      // one value is a row PocketBase itself has no objection to.
+      const ownedByCaller = row
+        ? isStaff
+          ? row.getString("staff") === auth.id
+          : row.getString("customer") === auth.id
+        : false;
+      if (!row || !ownedByCaller) {
         row = new Record(txApp.findCollectionByNameOrId("push_subscriptions"), { endpoint: endpoint });
       }
       row.set("keys", { p256dh: p256dh, auth: authKey });
@@ -543,33 +555,53 @@ routerAdd(
     const auditLib = require(`${__hooks}/lib/audit.js`);
 
     const auth = e.auth;
+    const isStaff = auth.collection().name === "staff";
     const body = util.body(e);
     const endpoint = util.asStr(body.endpoint);
     if (!endpoint) {
       throw e.badRequestError("A push endpoint is required.", null);
     }
 
+    let halt = null;
     let result = null;
-    e.app.runInTransaction((txApp) => {
-      let row = null;
-      try {
-        row = txApp.findFirstRecordByFilter("push_subscriptions", "endpoint = {:e}", { e: endpoint });
-      } catch (err) {
-        row = null;
-      }
-      if (row) {
-        txApp.delete(row);
-        auditLib.writeAuditLog(txApp, {
-          actor: auth.id,
-          action: "push_unsubscribe",
-          collection: "push_subscriptions",
-          record: row.id,
-          meta: {},
-          ip: e.realIP(),
-        });
-      }
-      result = { unsubscribed: true };
-    });
+    try {
+      e.app.runInTransaction((txApp) => {
+        let row = null;
+        try {
+          row = txApp.findFirstRecordByFilter("push_subscriptions", "endpoint = {:e}", { e: endpoint });
+        } catch (err) {
+          row = null;
+        }
+        if (row) {
+          // Only ever the caller's own row (fix round, finding 8): without
+          // this, any signed-in caller who knew (or guessed, or copied
+          // from a shared device) another endpoint could delete a
+          // stranger's subscription. No row at all for this endpoint stays
+          // a quiet, idempotent success below - the caller's own goal (not
+          // being pushed to at this endpoint) is already true either way.
+          const ownedByCaller = isStaff
+            ? row.getString("staff") === auth.id
+            : row.getString("customer") === auth.id;
+          if (!ownedByCaller) {
+            halt = { message: "Push subscription not found." };
+            throw new Error(halt.message);
+          }
+          txApp.delete(row);
+          auditLib.writeAuditLog(txApp, {
+            actor: auth.id,
+            action: "push_unsubscribe",
+            collection: "push_subscriptions",
+            record: row.id,
+            meta: {},
+            ip: e.realIP(),
+          });
+        }
+        result = { unsubscribed: true };
+      });
+    } catch (err) {
+      if (halt) throw e.notFoundError(halt.message, null);
+      throw err;
+    }
 
     return e.json(200, result);
   },

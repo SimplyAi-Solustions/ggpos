@@ -152,8 +152,34 @@ routerAdd(
           halt = { status: 404, message: "Want-list entry not found." };
           throw new Error(halt.message);
         }
+
+        // A matched row's own item is still reserved for this customer -
+        // closing the row without releasing it would leave the item held
+        // for good, on the shelf for nobody (fix round, finding 11).
+        // want_list.updateRule carries no such carve-out any more (see the
+        // migration's own comment): a declarative API rule can only ever
+        // touch the one collection a request writes to, so this route is
+        // now the only way a customer closes their own row.
+        const wasMatched = live.getString("status") === "matched";
+        const matchedItemId = live.getString("matched_item");
+
         live.set("status", "closed");
         txApp.save(live);
+
+        if (wasMatched && matchedItemId) {
+          try {
+            const item = txApp.findRecordById("items", matchedItemId);
+            if (item.getString("status") === "reserved") {
+              item.set("status", "in_stock");
+              item.set("reserved_for", "");
+              item.set("reserved_until", "");
+              txApp.save(item);
+            }
+          } catch (err) {
+            // The item may already be gone (sold, deleted) - closing the
+            // want-list row itself must still succeed either way.
+          }
+        }
 
         auditLib.writeAuditLog(txApp, {
           actor: customer.id,

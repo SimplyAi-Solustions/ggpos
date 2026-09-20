@@ -64,14 +64,54 @@ function offerExpiry(app, settingsRow, from) {
   return new Date(from.getTime() + days * 86400000);
 }
 
+/** trade_in_lines.kind's own select values (1789819320_stock_collections.js)
+ * - a free-text quote line's own optional kind (see normalizeOfferLines)
+ * is validated against exactly this list, the same values tradeins.pb.js's
+ * completion route already infers a card or retro line's own kind from. */
+var TRADE_IN_LINE_KINDS = ["single", "graded", "retro", "sealed", "accessory", "other"];
+
+/**
+ * A whole number of pence, zero or more, or `null` when `raw` is present
+ * but is not exactly that - refused rather than rounded into shape
+ * (CLAUDE.md's Money rule: "never a float ... once it is stored", which
+ * `util.asInt`'s own `Math.round` would otherwise quietly violate for a
+ * client-sent 49.5). Omitted or blank defaults to 0, unlike an
+ * out-of-shape value, which is refused outright.
+ */
+function parseMoneyPence(raw) {
+  if (raw === null || raw === undefined || raw === "") return 0;
+  var n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return null;
+  return n;
+}
+
+/** A whole quantity of 1 or more, or `null` when `raw` is present but is
+ * not exactly that. Omitted or blank defaults to 1, the same convention
+ * parseMoneyPence uses for a price. */
+function parseWholeQty(raw) {
+  if (raw === null || raw === undefined || raw === "") return 1;
+  var n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return n;
+}
+
 /**
  * Validate and normalise POST /api/vault/quotes/:id/offer's `lines` into
  * the shape quotes.lines stores, recomputing offer_total server-side (the
  * brief: "recomputed server-side", never trusted from the request).
  * Returns `{ok:false,message}` on the first bad line, or
  * `{ok:true,lines,offerTotal}`.
+ *
+ * A free-text line (no `card`, no `retro_title` - nothing tradeins.pb.js's
+ * own completion route could otherwise infer a kind or a game from) may
+ * also carry `kind` and `game`: optional here, but `POST /:id/received`
+ * (quotes.pb.js) needs one or the other of card/retro/these to build a
+ * `trade_in_lines` row completion can actually price (fix round, finding
+ * 9) - `kind` validated against trade_in_lines' own select values, `game`
+ * against a real `games` row, both the same way a bad value anywhere else
+ * in this codebase is refused rather than silently dropped.
  */
-function normalizeOfferLines(util, rawLines) {
+function normalizeOfferLines(app, util, rawLines) {
   if (!rawLines || !rawLines.length) {
     return { ok: false, message: "Add at least one line before making an offer." };
   }
@@ -85,15 +125,37 @@ function normalizeOfferLines(util, rawLines) {
     if (!title && !card && !retroTitle) {
       return { ok: false, message: `Line ${i + 1} needs a card, a retro title, or a plain title.` };
     }
-    var qty = util.asInt(raw.qty, 1);
-    if (qty < 1) {
-      return { ok: false, message: `Line ${i + 1}'s quantity must be at least 1.` };
+
+    var qty = parseWholeQty(raw.qty);
+    if (qty === null) {
+      return { ok: false, message: `Line ${i + 1}'s quantity must be a whole number of 1 or more.` };
     }
-    var marketPrice = util.asInt(raw.market_price, 0);
-    var offerPrice = util.asInt(raw.offer_price, -1);
-    if (marketPrice < 0 || offerPrice < 0) {
-      return { ok: false, message: `Line ${i + 1}'s prices must be in pence, zero or more.` };
+    var marketPrice = parseMoneyPence(raw.market_price);
+    if (marketPrice === null) {
+      return { ok: false, message: `Line ${i + 1}'s market price must be a whole number of pence, zero or more.` };
     }
+    var offerPrice = parseMoneyPence(raw.offer_price);
+    if (offerPrice === null) {
+      return { ok: false, message: `Line ${i + 1}'s offer price must be a whole number of pence, zero or more.` };
+    }
+
+    var kind = "";
+    var gameId = "";
+    if (!card && !retroTitle) {
+      kind = util.asStr(raw.kind);
+      if (kind && TRADE_IN_LINE_KINDS.indexOf(kind) < 0) {
+        return { ok: false, message: `Line ${i + 1}'s kind must be one of ${TRADE_IN_LINE_KINDS.join(", ")}.` };
+      }
+      gameId = util.asStr(raw.game);
+      if (gameId) {
+        try {
+          app.findRecordById("games", gameId);
+        } catch (err) {
+          return { ok: false, message: `Line ${i + 1}'s game was not found.` };
+        }
+      }
+    }
+
     var line = {
       card: card,
       retro_title: retroTitle,
@@ -104,6 +166,8 @@ function normalizeOfferLines(util, rawLines) {
       market_price: marketPrice,
       market_source: util.asStr(raw.market_source),
       offer_price: offerPrice,
+      kind: kind,
+      game: gameId,
     };
     lines.push(line);
     offerTotal += offerPrice * qty;
@@ -116,5 +180,6 @@ module.exports = {
   photoFileName: photoFileName,
   ukDateShort: ukDateShort,
   offerExpiry: offerExpiry,
+  TRADE_IN_LINE_KINDS: TRADE_IN_LINE_KINDS,
   normalizeOfferLines: normalizeOfferLines,
 };

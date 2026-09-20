@@ -28,6 +28,7 @@ onRecordCreateRequest((e) => {
 
 onRecordCreate((e) => {
   const sku = require(`${__hooks}/lib/shared/sku.js`);
+  const util = require(`${__hooks}/lib/vaultutil.js`);
 
   /**
    * Same retry-by-precheck approach as items.pb.js's SKU assignment (see
@@ -57,14 +58,23 @@ onRecordCreate((e) => {
     e.record.set("qr_token", $security.randomString(32));
   }
   // Portal delivery preferences (Phase 5, PATCH /api/vault/me): a bool
-  // field has no unset state, so a create request that leaves these out
-  // reads as false here, same as any other create - defaulted to true so a
-  // customer is not silently opted out of every notification the moment
-  // their record is made.
-  if (!e.record.get("notify_email")) {
+  // field has no unset state once bound onto the record, so
+  // e.record.get("notify_email") alone cannot tell "the request left this
+  // out" apart from "the request explicitly sent false" - both read back
+  // false. Reading the raw request body instead (fix round, finding 15)
+  // tells them apart: left out defaults to true, so a customer is not
+  // silently opted out of every notification the moment their record is
+  // made; sent explicitly (even false) is trusted as-is, so a member of
+  // staff can create a customer already opted out on their own say-so.
+  const body = util.body(e);
+  if (body.notify_email !== undefined) {
+    e.record.set("notify_email", util.asBool(body.notify_email));
+  } else if (!e.record.get("notify_email")) {
     e.record.set("notify_email", true);
   }
-  if (!e.record.get("notify_push")) {
+  if (body.notify_push !== undefined) {
+    e.record.set("notify_push", util.asBool(body.notify_push));
+  } else if (!e.record.get("notify_push")) {
     e.record.set("notify_push", true);
   }
 

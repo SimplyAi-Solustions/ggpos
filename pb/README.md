@@ -338,7 +338,11 @@ product imagery for the shop front.
 audit row carrying the collection and the record id and nothing else: an
 erased record whose identifying fields survive in a permanent,
 superuser-only table is not really erased. Quote photos ninety days after
-their quote closes still wait on a "closed at" field on `quotes`.
+their quote closes are cleared by a separate cron, `quote_photos_retention`
+(`quotes.pb.js`, Phase 5), driven by `quotes.closed_at` - a field that
+cron's own `onRecordUpdate` hook stamps the moment `status` first reaches
+`completed`, `declined` or `expired`, so a later reply never pushes the
+90-day clock back the way `updated` would.
 
 ### The image queue cron
 

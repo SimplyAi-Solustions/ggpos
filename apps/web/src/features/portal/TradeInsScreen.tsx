@@ -18,6 +18,22 @@ const PAYOUT_LABEL: Record<string, string> = {
   mixed: "Cash and store credit",
 }
 
+/**
+ * What to say about a trade-in that is not finished.
+ *
+ * The list carries every status, not only the completed ones: a quote that
+ * has been accepted sits here as a draft for days before it is paid, and a
+ * customer looking for it should find it rather than wonder where it went.
+ * A completed one says nothing, because its payout line already does.
+ */
+const STATUS_LABEL: Record<string, string> = {
+  draft: "Waiting for your items",
+  offered: "Offer made",
+  accepted: "Accepted",
+  declined: "Declined",
+  cancelled: "Cancelled",
+}
+
 /** Everything this customer has sold us, newest first. */
 export function TradeInsScreen() {
   const { data: rows, isPending, isError, error, refetch } = useQuery({
@@ -67,13 +83,24 @@ export function TradeInsScreen() {
                     {row.number}
                   </span>
                   <Note>
-                    {[formatDate(row.at), PAYOUT_LABEL[row.payoutType ?? ""]]
+                    {[
+                      formatDate(row.at),
+                      row.status === "completed"
+                        ? PAYOUT_LABEL[row.payoutType ?? ""]
+                        : (STATUS_LABEL[row.status] ?? "In progress"),
+                    ]
                       .filter(Boolean)
                       .join(" · ")}
                   </Note>
                 </span>
+                {/* A draft has not paid anything yet, so it shows what was
+                    offered rather than a £0.00 that would read as a payout. */}
                 <span className="tnum shrink-0 text-[20px] leading-none font-medium">
-                  {formatGBP(row.payoutCash + row.payoutCredit)}
+                  {formatGBP(
+                    row.status === "completed"
+                      ? row.payoutCash + row.payoutCredit
+                      : row.totalOffer
+                  )}
                 </span>
               </Link>
             </li>
@@ -131,7 +158,18 @@ export function TradeInDetailScreen({ id }: { id: string }) {
     <section className="pt-12 sm:pt-20">
       <PageTitle>Trade-in</PageTitle>
       <p className="mt-3 text-base leading-[1.5] text-muted-foreground">
-        <span className="tnum font-mono text-[13px] text-foreground">{data.number}</span>, {formatDate(data.at)}
+        {data.number ? (
+          <>
+            <span className="tnum font-mono text-[13px] text-foreground">
+              {data.number}
+            </span>
+            {", "}
+          </>
+        ) : null}
+        {formatDate(data.at)}
+        {data.status !== "completed"
+          ? `, ${STATUS_LABEL[data.status] ?? "in progress"}`
+          : ""}
       </p>
 
       <SectionHeading className="mt-14">What you sold</SectionHeading>

@@ -59,12 +59,20 @@ export async function listUnpushedNotifications(pbUrl, token, { perPage = 200 } 
 
 /** Every push_subscriptions row - a small table (one per device per
  * customer/staff member), so one unpaged-in-practice read is fine; still
- * pages defensively in case it ever grows past one page. */
+ * pages defensively in case it ever grows past one page.
+ *
+ * `expand=customer` inlines each row's own customer (`notify_push`
+ * included) in this same response, so index.mjs can honour a customer's
+ * opt-out without a second round trip per subscription or a separate
+ * whole-collection customers fetch. A row with no `customer` (a staff
+ * subscription) simply has no `expand.customer` - staff have no push
+ * opt-out to check, the same asymmetry lib/notify.js's own email side
+ * already has (only a customer's `notify_email` is ever checked). */
 export async function listPushSubscriptions(pbUrl, token) {
   const items = [];
   let page = 1;
   for (;;) {
-    const qs = new URLSearchParams({ page: String(page), perPage: "200" });
+    const qs = new URLSearchParams({ page: String(page), perPage: "200", expand: "customer" });
     const res = await pbFetch(pbUrl, token, `/api/collections/push_subscriptions/records?${qs}`);
     if (!res.ok) throw new Error(`listing push_subscriptions failed: HTTP ${res.status}`);
     const json = await res.json();

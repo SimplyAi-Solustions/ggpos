@@ -136,6 +136,14 @@ function findOpenWant(app, item) {
  * open want-list row, marks that row matched, and notifies the customer.
  * A no-op when nothing matches. Never throws - a matching failure must
  * never block the item write that triggered it.
+ *
+ * The item's own reservation, the want row's own match, and the
+ * notification are one `app.runInTransaction` (fix round, finding 13:
+ * "want row plus item plus notification" must not be three independent
+ * writes that a crash between them could leave half-done); the email
+ * itself is sent only once that transaction has actually committed (fix
+ * round, finding 7: sending mail while a write lock is held risks holding
+ * it open for as long as the outbound send takes).
  */
 function matchOnStock(app, item) {
   try {
@@ -148,26 +156,37 @@ function matchOnStock(app, item) {
     var settingsRow = util.settings(app);
     var now = new Date();
     var until = new Date(now.getTime() + holdHours(app, settingsRow) * 3600 * 1000);
+    var untilIso = until.toISOString();
+    var itemId = item.id;
+    var wantId = want.id;
 
-    item.set("status", "reserved");
-    item.set("reserved_for", want.getString("customer"));
-    item.set("reserved_until", until.toISOString());
-    app.save(item);
+    var pending = [];
+    app.runInTransaction(function (txApp) {
+      var txItem = txApp.findRecordById("items", itemId);
+      var txWant = txApp.findRecordById("want_list", wantId);
 
-    want.set("status", "matched");
-    want.set("matched_item", item.id);
-    want.set("notified_at", now.toISOString());
-    app.save(want);
+      txItem.set("status", "reserved");
+      txItem.set("reserved_for", txWant.getString("customer"));
+      txItem.set("reserved_until", untilIso);
+      txApp.save(txItem);
 
-    var title = item.getString("title") || "An item on your want list";
-    notifyLib.notify(app, {
-      customer: want.getString("customer"),
-      type: "want_match",
-      title: "It is in and held for you",
-      body: `${title} is in. Held for you until ${ukDateTime(until.toISOString())}.`,
-      link: "/account/wants",
-      email: true,
+      txWant.set("status", "matched");
+      txWant.set("matched_item", txItem.id);
+      txWant.set("notified_at", now.toISOString());
+      txApp.save(txWant);
+
+      var title = txItem.getString("title") || "An item on your want list";
+      var n = notifyLib.notify(txApp, {
+        customer: txWant.getString("customer"),
+        type: "want_match",
+        title: "It is in and held for you",
+        body: `${title} is in. Held for you until ${ukDateTime(untilIso)}.`,
+        link: "/account/wants",
+        email: true,
+      });
+      pending = pending.concat(n.pending || []);
     });
+    notifyLib.sendPending(app, pending);
   } catch (err) {
     console.log(`[wants] matchOnStock failed for item ${item.id}: ${err}`);
   }
@@ -210,11 +229,33 @@ function fulfilOnSale(app, item) {
  * immediately tries to match the next oldest open want-list row for that
  * card), its want-list row closes, and its customer is told the hold has
  * gone. Returns how many holds were released.
+ *
+ * Only releases an item that a `matched` want_list row actually points at
+ * (fix round, finding 12): `reserved_for`/`reserved_until` are Phase 1/2
+ * fields on `items` (`1789819320_stock_collections.js`), general enough for
+ * a member of staff to reserve an item for a customer by hand outside any
+ * want-list flow at all, and this cron must never undo that just because
+ * its own `reserved_until` also happens to have passed - a want-list match
+ * is the only kind of hold this cron is allowed to end.
+ *
+ * The query itself compares `reserved_until` (a PocketBase-stored date,
+ * space-separated) against `{:now}` as text, so `{:now}` has to be written
+ * the same way - an ISO "T" separator sorts as *greater* than every stored
+ * value on the same calendar day (`"T"` > any digit > `" "` in ASCII),
+ * which used to make every hold due today read as already expired the
+ * moment the clock passed midnight UTC, regardless of what time later that
+ * day it actually was due (pb_hooks/crons.pb.js's own `pbDate` comment
+ * documents this exact trap; this file just was not yet following it).
+ *
+ * Each item's own release (item, want row, notification) is one
+ * `app.runInTransaction`, the same reasoning matchOnStock's own comment
+ * gives (fix round, finding 13); the email for each is sent only once that
+ * item's own transaction has committed (finding 7).
  */
 function releaseExpiredHolds(app) {
   var util = require(`${__hooks}/lib/vaultutil.js`);
   var notifyLib = require(`${__hooks}/lib/notify.js`);
-  var nowIso = new Date().toISOString();
+  var nowPb = new Date().toISOString().replace("T", " ");
 
   var items = [];
   try {
@@ -224,7 +265,7 @@ function releaseExpiredHolds(app) {
       "",
       0,
       0,
-      { now: nowIso }
+      { now: nowPb }
     );
   } catch (err) {
     items = [];
@@ -249,33 +290,42 @@ function releaseExpiredHolds(app) {
         wantRows = [];
       }
       var want = wantRows && wantRows.length ? wantRows[0] : null;
-      var customerId = want ? want.getString("customer") : item.getString("reserved_for");
+      // No matching want-list row: this is a staff reservation, not a
+      // want-list hold, and this cron has no business touching it.
+      if (!want) continue;
 
-      if (want) {
-        want.set("status", "closed");
-        app.save(want);
-      }
+      var itemId = item.id;
+      var wantId = want.id;
+      var customerId = want.getString("customer");
+      var itemTitle = item.getString("title") || "The item you had on hold";
 
-      // Saving the item back to in_stock re-fires the same items hook that
-      // matched it in the first place, which is what lets the next open
-      // want-list row for this card take it immediately.
-      item.set("status", "in_stock");
-      item.set("reserved_for", "");
-      item.set("reserved_until", "");
-      app.save(item);
-      released += 1;
+      var pending = [];
+      app.runInTransaction(function (txApp) {
+        var txWant = txApp.findRecordById("want_list", wantId);
+        txWant.set("status", "closed");
+        txApp.save(txWant);
 
-      if (customerId) {
-        var title = item.getString("title") || "The item you had on hold";
-        notifyLib.notify(app, {
+        // Saving the item back to in_stock re-fires the same items hook
+        // that matched it in the first place, which is what lets the next
+        // open want-list row for this card take it immediately.
+        var txItem = txApp.findRecordById("items", itemId);
+        txItem.set("status", "in_stock");
+        txItem.set("reserved_for", "");
+        txItem.set("reserved_until", "");
+        txApp.save(txItem);
+
+        var n = notifyLib.notify(txApp, {
           customer: customerId,
           type: "hold_released",
           title: "Hold released",
-          body: `The hold on ${title} has ended, so it is back on the shelf. Ask at the counter if you would still like it.`,
+          body: `The hold on ${itemTitle} has ended, so it is back on the shelf. Ask at the counter if you would still like it.`,
           link: "/account/wants",
           email: true,
         });
-      }
+        pending = pending.concat(n.pending || []);
+      });
+      notifyLib.sendPending(app, pending);
+      released += 1;
     } catch (err) {
       console.log(`[wants] releaseExpiredHolds failed for item ${item.id}: ${err}`);
     }

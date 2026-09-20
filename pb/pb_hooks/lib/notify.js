@@ -10,7 +10,22 @@
  * `push_subscriptions` row, sends through Web Push, and stamps `pushed_at`.
  * That is what "email and push" means throughout docs/api-contract.md's
  * Phase 5 section: this module writes the row (which is push-eligible the
- * moment it exists) and, when `email: true`, also sends the email inline.
+ * moment it exists) and, when `email: true`, *builds* the email to send.
+ *
+ * `notify()` never actually sends mail itself (fix round, finding 7): every
+ * call site in this package calls it from inside an `app.runInTransaction`,
+ * and PocketBase holds that transaction's write lock for as long as the
+ * callback runs - an outbound SMTP call blocking or hanging in there would
+ * hold up every other write to the database for no reason a customer would
+ * ever see, and a mail send is not something that needs to be atomic with
+ * the row it is about anyway. `notify()` instead returns
+ * `{ records, pending }`, and the caller sends `pending` through
+ * `sendPending()` once its own `runInTransaction` has returned (the same
+ * "write inside the transaction, act on the outside world after it
+ * commits" shape as `tradeins.pb.js`'s own routes already use for a
+ * receipt's own email route). A cron with no transaction of its own opens
+ * one per item it touches, for the same reason (see quotes.pb.js's
+ * `quotes_expire` and lib/wants.js's `matchOnStock`/`releaseExpiredHolds`).
  *
  * Email honours `settings.email.test_mode` exactly the way
  * lib/receipts.js's own email route does: a plain-text body, the shop name
@@ -69,6 +84,30 @@ function sendEmail(app, settingsRow, to, subject, text) {
 }
 
 /**
+ * `path` (an in-app path such as `/account/quotes/xyz`) made absolute
+ * against this instance's own configured app URL, so a link inside an
+ * email is actually clickable rather than a bare path with nothing to
+ * resolve it against (fix round, finding 15). `app.settings().meta.appURL`
+ * is the same real PocketBase platform setting `adapters/images.js`'s own
+ * `publicFileUrl` already builds an absolute URL from - not a new
+ * `settings.shop.portal_url` field, since PocketBase already has a home
+ * for "what is this instance's own base URL" and nothing here needs a
+ * second one. Falls back to the bare path when appURL was never set
+ * (a fresh, not-yet-configured install), rather than sending no link at
+ * all.
+ */
+function absoluteLink(app, path) {
+  if (!path) return path;
+  var base = "";
+  try {
+    base = app.settings().meta.appURL || "";
+  } catch (err) {
+    base = "";
+  }
+  return base ? base.replace(/\/+$/, "") + path : path;
+}
+
+/**
  * @param {any} app
  * @param {{
  *   customer?: string,
@@ -84,13 +123,15 @@ function sendEmail(app, settingsRow, to, subject, text) {
  *   always carries an in-app path to open. A `staffAll` row has no such
  *   fallback - every call in this package already sets its own
  *   `/counter/...` link.
- * @returns {Array<any>} the notification record(s) written.
+ * @returns {{records: Array<any>, pending: Array<{to:string,subject:string,text:string}>}}
+ *   `records` is every `notifications` row written. `pending` is every
+ *   email this call would send - never sent here; the caller passes it to
+ *   `sendPending()` once its own transaction (if any) has committed.
  */
 function notify(app, opts) {
   opts = opts || {};
   var util = require(`${__hooks}/lib/vaultutil.js`);
   var notifications = app.findCollectionByNameOrId("notifications");
-  var settingsRow = util.settings(app);
 
   var targets = []; // {customer?, staff?, emailTo}
   if (opts.staffAll) {
@@ -135,6 +176,7 @@ function notify(app, opts) {
   var fallbackLink = opts.customer ? "/account/notifications" : "";
 
   var written = [];
+  var pending = [];
   for (var t = 0; t < targets.length; t++) {
     var record = new Record(notifications, {
       type: opts.type || "",
@@ -147,15 +189,35 @@ function notify(app, opts) {
     app.save(record);
     written.push(record);
 
-    if (opts.email) {
+    if (opts.email && targets[t].emailTo) {
       var text = opts.body || "";
       var emailLink = opts.link || fallbackLink;
-      if (emailLink) text += "\n\n" + emailLink;
-      sendEmail(app, settingsRow, targets[t].emailTo, opts.title || "", text);
+      if (emailLink) text += "\n\n" + absoluteLink(app, emailLink);
+      pending.push({ to: targets[t].emailTo, subject: opts.title || "", text: text });
     }
   }
 
-  return written;
+  return { records: written, pending: pending };
 }
 
-module.exports = { notify: notify, sendEmail: sendEmail };
+/**
+ * Actually deliver every pending email a `notify()` call (or several)
+ * built - called once, after the caller's own `runInTransaction` has
+ * returned, never from inside one (fix round, finding 7). Resolves
+ * `settings` itself, right before sending, since nothing before this point
+ * needed it. Never throws: a bad address, a down mail transport or
+ * test_mode are exactly what `sendEmail`'s own log line already covers,
+ * one call at a time, so one failed send in a batch never stops the rest.
+ */
+function sendPending(app, pending) {
+  if (!pending || !pending.length) return;
+  var util = require(`${__hooks}/lib/vaultutil.js`);
+  var settingsRow = util.settings(app);
+  for (var i = 0; i < pending.length; i++) {
+    var p = pending[i];
+    if (!p) continue;
+    sendEmail(app, settingsRow, p.to, p.subject, p.text);
+  }
+}
+
+module.exports = { notify: notify, sendEmail: sendEmail, sendPending: sendPending };
