@@ -201,10 +201,69 @@ cronAdd("retention", "30 3 * * *", () => {
   );
 });
 
-// Nightly daily_stats build, scheduled after pricesync so the day's
-// stock-at-market figures use fresh prices.
-cronAdd("stats", "30 4 * * *", () => {
-  console.log("[cron:stats] placeholder - build daily_stats for yesterday");
+// Nightly daily_stats build for yesterday (UTC), straight from the ledgers
+// and rows - never a cached balance (CLAUDE.md; docs/PLAN.md's Phase 4
+// "Reporting" brief). 00:30 UTC, comfortably clear of midnight so
+// "yesterday" is unambiguous. POST /api/vault/stats/rebuild (stats.pb.js)
+// is the on-demand, admin-facing equivalent for a backfill or a
+// correction; both call pb_hooks/lib/reports/daily.js's upsertDayRow, so
+// neither can ever produce two rows for the same date.
+cronAdd("stats", "30 0 * * *", () => {
+  const dates = require(`${__hooks}/lib/reports/dates.js`);
+  const daily = require(`${__hooks}/lib/reports/daily.js`);
+  try {
+    const yesterday = dates.addDays(dates.todayUtc(), -1);
+    daily.upsertDayRow($app, yesterday);
+    console.log(`[cron:stats] built daily_stats for ${yesterday}`);
+  } catch (err) {
+    console.log(`[cron:stats] failed: ${err}`);
+  }
+});
+
+// Weekly saved_reports sends: every Monday at 08:00 UTC, alongside the
+// admin digest below, every schedule:"weekly" saved report is emailed for
+// the Monday-to-Sunday week that just ended (docs/PLAN.md, "Reporting" and
+// "Notifications and receipts"; docs/api-contract.md, Phase 4). The cron
+// expression itself is what "every Monday" means here - the handler sends
+// unconditionally, so PocketBase's own "run this job now" route
+// (POST /api/crons/scheduled_reports_weekly) is a faithful, day-independent
+// way to exercise it, which is what pb/scripts/check.sh does.
+cronAdd("scheduled_reports_weekly", "0 8 * * 1", () => {
+  const scheduled = require(`${__hooks}/lib/reports/scheduled.js`);
+  try {
+    const sent = scheduled.sendBySchedule($app, "weekly", new Date());
+    console.log(`[cron:scheduled_reports_weekly] sent or logged ${sent} saved report(s)`);
+  } catch (err) {
+    console.log(`[cron:scheduled_reports_weekly] failed: ${err}`);
+  }
+});
+
+// Monthly saved_reports sends: the 1st of the month at 08:00 UTC, every
+// schedule:"monthly" saved report is emailed for the calendar month that
+// just ended - the cron expression, not an internal date check, is what
+// "on the 1st" means here, for the same reason as the weekly job above.
+cronAdd("scheduled_reports_monthly", "0 8 1 * *", () => {
+  const scheduled = require(`${__hooks}/lib/reports/scheduled.js`);
+  try {
+    const sent = scheduled.sendBySchedule($app, "monthly", new Date());
+    console.log(`[cron:scheduled_reports_monthly] sent or logged ${sent} saved report(s)`);
+  } catch (err) {
+    console.log(`[cron:scheduled_reports_monthly] failed: ${err}`);
+  }
+});
+
+// The Monday 08:00 UTC admin digest: sales, buy-ins, margin, new customers,
+// cash variance and the three biggest price movers over 15 percent, to
+// every admin with an email on file (docs/PLAN.md, "Notifications and
+// receipts").
+cronAdd("weekly_digest", "0 8 * * 1", () => {
+  const digest = require(`${__hooks}/lib/reports/digest.js`);
+  try {
+    const result = digest.send($app, new Date());
+    console.log(`[cron:weekly_digest] sent to ${result.sent} admin(s), movers: ${result.movers.join(", ")}`);
+  } catch (err) {
+    console.log(`[cron:weekly_digest] failed: ${err}`);
+  }
 });
 
 // Drains adapters/images.js's "image_queue" (see items.pb.js's onRecordCreate

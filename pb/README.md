@@ -62,6 +62,7 @@ concern per file:
 | `..._stock_counts_close_rule.js` | `stock_counts.updateRule` gains `&& @request.body.status:isset = false`, so `status` can only ever be set at create time or by `stockcounts.pb.js`'s close route |
 | `..._image_limits_and_fx_date.js` | `cards.image_file` / `retro_titles.cover` gain `mimeTypes` (`image/jpeg`, `.png`, `.webp`, `.avif`) and a 2 MB `maxSize`, matching `pb_hooks/adapters/images.js`'s own `MAX_IMAGE_BYTES`; `fx_rates.date`, the ECB rate's own date (see "Card and price adapters" below) |
 | `..._stock_counts_one_open.js` | A partial unique index, `stock_counts (location) WHERE status = 'open'` - only one count may be open per location at once, same shape as `cash_sessions`' one-open-session index. The unique violation this can raise on create is mapped to a plain 409 by `stockcounts.pb.js`'s own `onRecordCreateRequest` hook |
+| `..._phase4_exports_imports_sumup.js` | `sales.channel` (`counter` \| `ebay`) and `sales.external_ref`; `settings.import_mappings` (seeded with the Card Uploader and eBay orders mapping skeletons from `docs/csv-formats.md`) and `settings.sumup` (`{ merchant_code }`); merges an empty `api_keys.sumup` into the existing `api_keys` blob, same pattern as `..._phase3_adapter_state.js`'s `offer.ebayHaircutPct` |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -144,6 +145,9 @@ retrying `e.next()` on a unique-constraint failure.
 | `lib/stepup.js` | `issue(staff)` and `requireStepUp(e)` - see "Step-up" below. |
 | `lib/base64.js` | `encode`, `decode`, `fromDataUrl`. goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, so the signature data URL carries its own codec. Both directions are linear (accumulate into an array, join once). ID photos no longer come through here at all - see "ID photos" below. |
 | `lib/receipts.js` | `build(app, tradeIn, settings, fileToken)` (the receipt JSON) and `render(receipt)` (the plain-text and HTML email bodies), so the print page and the email can never drift. |
+| `lib/csv.js` | The one place every Phase 4 export or import route builds or reads a CSV through. `row()`/`cell()`/`pounds()` wrap `lib/vaultutil.js`'s own `csvRow`/`csvCell`/`poundsCell`; `parse()` is a small RFC 4180 reader (quoted fields, embedded commas and newlines, CRLF or LF); `mapRows()` resolves a parsed file's header row against a mapping config's own header-name aliases (`docs/csv-formats.md`); `queryParam()`/`dateParam()` read a GET route's own query string - kept here rather than in `lib/vaultutil.js` because a `routerAdd` handler cannot see a plain function declared at the top of its own `.pb.js` file (see above), and `exports.pb.js` now has six handlers that all need one. |
+| `lib/imports.js` | Row-level matching and writes for the two CSV importers in `imports.pb.js`: the seeded default mapping for each (a fallback for the settings row's own `import_mappings`), `readCsvUpload(e)` and `declaredType(e)` (the shared multipart plumbing, required rather than duplicated across the two routes for the same isolation reason as `lib/csv.js` above), and `processCardUploaderRows` / `processEbayOrdersRows`, the row-by-row logic `docs/api-contract.md`'s Phase 4 section documents. |
+| `lib/sumup.js` | PocketBase-specific glue behind `sumup.pb.js` and `crons_sumup.pb.js`: `pull(app, actorId, ip)` upserts `sumup_transactions` from `adapters/sumup.js` and matches each to a sale (by a SKU-prefixed product name, then by amount and a three-minute time window), and `reconcile(app, date)` builds the Cash screen's day-by-day comparison. See `docs/api-contract.md`'s Phase 4 section for the matching rules and response shapes. |
 | `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty; after the item is saved, opportunistically re-hosts its card's image through `adapters/images.js` if it is still a bare third-party URL - never blocks the create on a failure. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
 | `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
@@ -159,8 +163,11 @@ retrying `e.next()` on a unique-constraint failure.
 | `customerops.pb.js` | The latest ID document lookup, the duplicate-customer merge and the GDPR erasure. |
 | `sales.pb.js` | Sale completion and refunds. |
 | `cash.pb.js` | Cash sessions. |
-| `exports.pb.js` | The stock book CSV. |
+| `exports.pb.js` | The stock book CSV (Phase 2), plus Phase 4's SumUp, eBay listing, inventory, sales, buy-in register and end-listings CSVs, and `POST /api/vault/items/end-listings`. |
+| `imports.pb.js` | Phase 4: `POST /api/vault/imports/card-uploader`, `POST /api/vault/imports/ebay-orders`, `GET /api/vault/imports/:id`. Also carries a small `onRecordCreate` hook on `sales` that defaults an empty `channel` to `"counter"` - see `docs/api-contract.md`'s Phase 4 section for why it lives here rather than in `sales.pb.js`. |
+| `sumup.pb.js` | Phase 4: `POST /api/vault/sumup/pull` (admin) and `GET /api/vault/sumup/reconcile` (staff), both thin wrappers over `lib/sumup.js`. |
 | `crons.pb.js` | Registers `fx`, `prices`, `retention` and `stats`. `fx` (daily 07:00) fetches today's GBP rate from Frankfurter and writes it to `fx_rates` - `GET /api/vault/fx` only ever reads that row. `prices` (weekly, Sunday 03:00, despite its name) syncs `card_sets` from TCGdex, Scryfall, Lorcast and OPTCG's own set listings; day-to-day *price* ingestion still runs in `services/pricesync`, not here (hooks cannot stream the 15-26 MB Cardmarket files). `retention` does real work (see below); `stats` still only logs, because `daily_stats` is a later phase. |
+| `crons_sumup.pb.js` | Registers `sumup_pull` (`:15` past every hour, 08:00-22:00 UTC): `lib/sumup.js`'s `pull($app, "system", "")`. Kept separate from `crons.pb.js` (another package's file this round) - see `docs/api-contract.md`'s Phase 4 section. |
 | `lookup.pb.js` | `GET /api/vault/lookup`, `GET /api/vault/lookup/:game/:set/:number`, `GET /api/vault/retro/lookup` - see "Card and price adapters" below and `docs/api-contract.md`'s Phase 3 section. |
 | `prices.pb.js` | `GET`/`POST /api/vault/cards/:id/prices` and `:id/refresh-prices` and `:id/uk-comp`, `GET /api/vault/retro/:id/prices`. |
 | `fx.pb.js` | `GET /api/vault/fx` - reads the latest `fx_rates` row; never calls Frankfurter itself. |
@@ -187,6 +194,16 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/cash-sessions/current` | `{ session, expected, movements }`, `null` session when none is open. |
 | `POST /api/vault/cash-sessions/{id}/close` | Expected, counted, variance; audited as `cash_session_variance` when the variance is over `settings.cash_variance_alert`. |
 | `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. One row per sale line for what is still sold, plus one for what is still on the shelf. |
+| `GET /api/vault/exports/sumup.csv?since&dry_run` | SumUp's own item-import layout for `retro`/`sealed`/`accessory`/`other` stock, and sets `items.sumup_synced_at` unless `dry_run=1`. |
+| `GET /api/vault/exports/ebay-listings.csv?ids` | A listing file for the given in-stock items; marks nothing. |
+| `GET /api/vault/exports/inventory.csv?status&game&kind`, `/sales.csv?from&to` | Plain CSV listings of `items` and of `sales`/`sale_lines`. |
+| `GET /api/vault/exports/buy-in-register.csv?from&to` | **admin**. Seller snapshots included. |
+| `GET /api/vault/exports/end-listings.csv` | Sold items that still carry an `ebay_listing_id`. |
+| `POST /api/vault/items/end-listings` | `{ ids }` - clears `ebay_listing_id`/`ebay_sku` on each and audits. |
+| `POST /api/vault/imports/card-uploader`, `/imports/ebay-orders` | Multipart CSV imports; one `$app.runInTransaction` per file. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
+| `GET /api/vault/imports/:id` | The `csv_imports` row with its `errors`, for the review screen. |
+| `POST /api/vault/sumup/pull` | **admin**. Also runs hourly - see `crons_sumup.pb.js`. |
+| `GET /api/vault/sumup/reconcile?date` | The day's SumUp transactions beside the day's card sales, for the Cash screen. |
 | `GET /api/vault/lookup`, `/lookup/:game/:set/:number`, `/retro/lookup` | Catalogue and retro-title search, writing through to `cards`/`card_sets`/`retro_titles`. See "Card and price adapters" below. |
 | `GET`/`POST /api/vault/cards/:id/prices`, `/refresh-prices`, `/uk-comp`; `GET /api/vault/retro/:id/prices` | Valuation, reading (GET) or writing (POST) `price_snapshots`. See "Card and price adapters" below. |
 | `GET /api/vault/fx` | The latest `fx_rates` row. |
@@ -318,6 +335,7 @@ files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
 | `pricecharting.js` | Retro prices: PriceCharting, a paid API ($49/month). PAL category searched first, NTSC only when PAL has no entry; prices are integer US cents, never a string. Behind `settings.api_keys.pricecharting` being set. |
 | `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then a haircut off (`haircutPctFromSettings(app)` reads `settings.offer.ebayHaircutPct`, default 15 - the one home for this figure). Behind `settings.api_keys.ebay` being set. |
 | `frankfurter.js` | FX: the ECB reference rate, base GBP. No key. Inverts Frankfurter's own "units of X per GBP" into "GBP per unit of X" once, here - see `docs/api-contract.md`'s Phase 3 section. |
+| `sumup.js` | SumUp Transactions API: `GET .../transactions/history` (paged via the response's own `links`) then `GET .../transactions?id=` per transaction for `products[]`. A plain `Authorization: Bearer <key>` - a merchant API key, not OAuth, so unlike `ebay.js`/`igdb.js` there is no token to cache. Behind `settings.api_keys.sumup` and `settings.sumup.merchant_code` both being set; used by `lib/sumup.js`, not called directly from any route. |
 | `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit, a `qs(params)` query-string builder and `stripQuery(url)` (never let a key or a token reach a log line or an error message). Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). `GG_ADAPTER_TRANSPORT_MODE` (see "Environment variables" above) changes this: `offline_fail` throws immediately, naming the call; `fixture` hands the call to `fixture_transport.js` instead. |
 | `fixture_transport.js` | Answers a fixed set of known adapter calls from `pb_hooks/adapters/fixtures/` - the same files `pb/scripts/check-adapters.mjs` unit-tests each adapter against - and throws for anything it has no mapping for, same as `offline_fail`. This is what `pb/scripts/check.sh` runs its whole throwaway server under, so its route-level checks exercise a real search, an exact lookup, `refresh-prices` and the image queue end to end with no live network call. Goja-only (`$os.readFile` to load a fixture's JSON off disk) - never required under plain Node. |
 | `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens, eBay's 24-hour price cache, and `images.js`'s image queue. `forApp(app)` for PocketBase, `memory()` for tests. |
@@ -556,6 +574,31 @@ transport refuses on purpose); and the `image_queue` cron
 refusing one over the 2 MB cap and one that answers 200 with bytes that
 are not a recognised image format, in both refusal cases leaving the
 card's `image_large` exactly as it was.
+
+Section 21 is reserved for another package this round (`daily_stats` and
+the reports suite); its own agent adds it in place of the placeholder
+comment.
+
+Section 22 is Phase 4's: the SumUp export's header row, its SKU-prefixed
+item name, 0% tax on a margin-scheme item, and `sumup_synced_at` set on
+export but not under `dry_run=1`; the eBay listing CSV for two ids; the
+inventory, sales and buy-in register exports' header rows, the last being
+admin only; `end-listings.csv` listing a sold, still-listed item and
+`POST /api/vault/items/end-listings` clearing it with an audit row; a
+Card Uploader file with one id-matched row (creating one `listed_ebay`
+item) and one name-only row (one review entry), read back through
+`GET /api/vault/imports/:id`; a malformed file and the wrong declared
+`type` both refused with 400; an eBay orders file selling a listed item
+into a `channel: "ebay"` sale with `external_ref` set, a second run of
+the same file reporting `"already sold"` rather than selling it twice, and
+an ordinary counter sale still defaulting `channel` to `"counter"`; and
+the SumUp pull (still under `GG_ADAPTER_TRANSPORT_MODE=fixture`, against
+hand-written `sumup_HANDWRITTEN_*.json` fixtures) matching one transaction
+by a SKU-prefixed product name and another by amount and a three-minute
+time window, a second pull (run as the `sumup_pull` cron,
+`POST /api/crons/sumup_pull`) upserting in place rather than duplicating
+either, `GET /api/vault/sumup/reconcile` returning matched and unmatched
+lists with totals, and a non-admin refused the pull but not the reconcile.
 
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),

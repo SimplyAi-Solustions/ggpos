@@ -2303,5 +2303,668 @@ IMG_NOTIMAGE_LARGE="$(curl -s "$BASE/api/collections/cards/records/$IMG_NOTIMAGE
   || fail "a non-image response was cached anyway (image_large is now '$IMG_NOTIMAGE_LARGE'), expected the mime sniff to refuse it and leave image_large untouched"
 ok "a 200 response that is not a recognised image format is refused; image_large is left exactly as it was"
 
+# -----------------------------------------------------------------------
+# 21. Phase 4: stats and reports. Runs on top of everything sections 1-20
+#     have already created today (sales, trade-ins, cash sessions and
+#     refunds) - the daily row and the reports are cross-checked against
+#     numbers computed independently, straight from the raw collections,
+#     rather than against a hand-tracked running total, so this holds
+#     however many earlier sections ran first.
+# -----------------------------------------------------------------------
+
+# --- 21a. A small scenario of its own: a sale with a full-line refund (so
+#     items_out has a refund to net off), and a credit-only buy-in (no cash
+#     session needed) ------------------------------------------------------
+STATS_CUSTOMER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Stats Check Customer"}' | jval id)"
+[ -n "$STATS_CUSTOMER_ID" ] || fail "could not create the stats-check customer"
+
+STATS_ITEM_A="$(make_item "Stats Item A" 1 500 2000)"
+STATS_ITEM_B="$(make_item "Stats Item B" 1 300 1000)"
+[ -n "$STATS_ITEM_A" ] && [ -n "$STATS_ITEM_B" ] || fail "could not create the stats-check items"
+
+STATS_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$STATS_ITEM_A\",\"qty\":1,\"unit_price\":2000,\"discount\":0},{\"item\":\"$STATS_ITEM_B\",\"qty\":1,\"unit_price\":1000,\"discount\":0}],\"customer\":\"$STATS_CUSTOMER_ID\",\"payment\":\"sumup_card\"}")"
+STATS_SALE_STATUS="$(echo "$STATS_SALE_JSON" | tail -n1)"
+echo "$STATS_SALE_JSON" | head -n -1 >"$TMP_DIR/stats-sale.json"
+[ "$STATS_SALE_STATUS" = "200" ] || fail "the stats-check sale returned $STATS_SALE_STATUS: $(cat "$TMP_DIR/stats-sale.json")"
+STATS_SALE_ID="$(jval "sale.id" <"$TMP_DIR/stats-sale.json")"
+
+STATS_STEPUP_TOKEN="$(curl -s -X POST "$BASE/api/vault/step-up" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"password\":\"$STAFF_PASSWORD\"}" | jval token)"
+[ -n "$STATS_STEPUP_TOKEN" ] || fail "could not mint a step-up token for the stats check"
+
+STATS_SALE_LINES_JSON="$(curl -s "$BASE/api/collections/sale_lines/records?perPage=50&sort=created,id&filter=sale%3D%22$STATS_SALE_ID%22" -H "Authorization: $STAFF_TOKEN")"
+STATS_REFUND_LINE_ID="$(echo "$STATS_SALE_LINES_JSON" | jval "items.1.id")"
+[ -n "$STATS_REFUND_LINE_ID" ] || fail "could not find the second stats-check sale line to refund"
+STATS_REFUND_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/$STATS_SALE_ID/refund" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STATS_STEPUP_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"sale_line\":\"$STATS_REFUND_LINE_ID\",\"qty\":1}],\"reason\":\"Stats check refund\",\"refund_method\":\"sumup_card\"}")"
+STATS_REFUND_STATUS="$(echo "$STATS_REFUND_JSON" | tail -n1)"
+[ "$STATS_REFUND_STATUS" = "200" ] || fail "the stats-check refund returned $STATS_REFUND_STATUS: $(echo "$STATS_REFUND_JSON" | head -n -1)"
+
+STATS_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Stats Check Seller"}' | jval id)"
+STATS_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$STATS_SELLER_ID\",\"channel\":\"counter\",\"status\":\"draft\"}" | jval id)"
+STATS_LINE_ID="$(curl -s -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$STATS_TRADE_ID\",\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"free_text_title\":\"Stats Buy-in Line\",\"qty\":1,\"market_price\":1000,\"market_currency\":\"GBP\",\"offer_pct\":50,\"offer_price\":500,\"accepted\":true}" | jval id)"
+[ -n "$STATS_LINE_ID" ] || fail "could not create the stats-check trade-in line"
+STATS_COMPLETE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/trade-ins/$STATS_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":500,"terms_accepted":true}')"
+STATS_COMPLETE_STATUS="$(echo "$STATS_COMPLETE_JSON" | tail -n1)"
+[ "$STATS_COMPLETE_STATUS" = "200" ] || fail "the stats-check buy-in returned $STATS_COMPLETE_STATUS: $(echo "$STATS_COMPLETE_JSON" | head -n -1)"
+ok "seeded a stats-check sale with a full-line refund and a credit-only buy-in for today"
+
+# --- 21b. The stats rebuild route: admin only, and idempotent -----------
+REBUILD_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $PLAIN_TOKEN")"
+[ "$REBUILD_NONADMIN_STATUS" = "403" ] || fail "a non-admin rebuilding stats got $REBUILD_NONADMIN_STATUS, expected 403"
+
+REBUILD1_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
+REBUILD1_STATUS="$(echo "$REBUILD1_JSON" | tail -n1)"
+REBUILD1_BODY="$(echo "$REBUILD1_JSON" | head -n -1)"
+[ "$REBUILD1_STATUS" = "200" ] || fail "stats/rebuild returned $REBUILD1_STATUS: $REBUILD1_BODY"
+[ "$(echo "$REBUILD1_BODY" | jval days)" = "1" ] || fail "rebuilding one day reported '$(echo "$REBUILD1_BODY" | jval days)' days, expected 1"
+
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN"
+
+DAILY_ROW_JSON="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=date>='${TODAY} 00:00:00.000Z' && date<='${TODAY} 23:59:59.999Z'" \
+  "$BASE/api/collections/daily_stats/records")"
+[ "$(echo "$DAILY_ROW_JSON" | jval totalItems)" = "1" ] \
+  || fail "expected exactly one daily_stats row for today after two rebuilds, got $(echo "$DAILY_ROW_JSON" | jval totalItems)"
+ok "the stats rebuild route is admin only and idempotent: two rebuilds leave one row for the day"
+
+# --- 21c. The daily row against numbers computed independently from the
+#     raw collections - never the daily row's own arithmetic checking
+#     itself ------------------------------------------------------------
+curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=created>='${TODAY} 00:00:00.000Z'" \
+  --data-urlencode "perPage=500" \
+  "$BASE/api/collections/sales/records" >"$TMP_DIR/stats-today-sales.json"
+curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=created>='${TODAY} 00:00:00.000Z'" \
+  --data-urlencode "perPage=500" \
+  "$BASE/api/collections/sale_lines/records" >"$TMP_DIR/stats-today-lines.json"
+curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=status='completed' && completed_at>='${TODAY} 00:00:00.000Z'" \
+  --data-urlencode "perPage=500" \
+  "$BASE/api/collections/trade_ins/records" >"$TMP_DIR/stats-today-tradeins.json"
+
+EXPECTED_JSON="$(node -e '
+  const fs = require("fs");
+  const sales = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).items || [];
+  const lines = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).items || [];
+  const tradeIns = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).items || [];
+
+  const byPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0 };
+  let salesTotal = 0;
+  for (const s of sales) {
+    const m = Object.prototype.hasOwnProperty.call(byPayment, s.payment) ? s.payment : "mixed";
+    byPayment[m] += s.total;
+    salesTotal += s.total;
+  }
+
+  let itemsOut = 0;
+  for (const l of lines) {
+    const net = l.qty - l.refunded_qty;
+    if (net > 0) itemsOut += net;
+  }
+
+  let cash = 0;
+  let credit = 0;
+  for (const t of tradeIns) {
+    cash += t.payout_cash;
+    credit += t.payout_credit;
+  }
+
+  process.stdout.write(JSON.stringify({
+    salesCount: sales.length,
+    salesTotal,
+    byPayment,
+    itemsOut,
+    buyInCount: tradeIns.length,
+    buyInCash: cash,
+    buyInCredit: credit,
+  }));
+' "$TMP_DIR/stats-today-sales.json" "$TMP_DIR/stats-today-lines.json" "$TMP_DIR/stats-today-tradeins.json")"
+
+EXPECTED_SALES_TOTAL="$(echo "$EXPECTED_JSON" | jval salesTotal)"
+EXPECTED_SALES_COUNT="$(echo "$EXPECTED_JSON" | jval salesCount)"
+EXPECTED_ITEMS_OUT="$(echo "$EXPECTED_JSON" | jval itemsOut)"
+EXPECTED_BUYIN_CASH="$(echo "$EXPECTED_JSON" | jval buyInCash)"
+EXPECTED_BUYIN_CREDIT="$(echo "$EXPECTED_JSON" | jval buyInCredit)"
+EXPECTED_BUYIN_TOTAL=$((EXPECTED_BUYIN_CASH + EXPECTED_BUYIN_CREDIT))
+
+D_SUMUP="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.sumup_card")"
+D_CASH="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.cash")"
+D_CREDIT="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.store_credit")"
+D_POINTS="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.points")"
+D_MIXED="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.mixed")"
+DAILY_SALES_TOTAL=$((${D_SUMUP:-0} + ${D_CASH:-0} + ${D_CREDIT:-0} + ${D_POINTS:-0} + ${D_MIXED:-0}))
+[ "$DAILY_SALES_TOTAL" = "$EXPECTED_SALES_TOTAL" ] \
+  || fail "daily_stats.sales_total_by_payment sums to $DAILY_SALES_TOTAL, expected $EXPECTED_SALES_TOTAL from the raw sales rows"
+[ "$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_count")" = "$EXPECTED_SALES_COUNT" ] \
+  || fail "daily_stats.sales_count is '$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_count")', expected $EXPECTED_SALES_COUNT"
+[ "$(echo "$DAILY_ROW_JSON" | jval "items.0.items_out")" = "$EXPECTED_ITEMS_OUT" ] \
+  || fail "daily_stats.items_out is '$(echo "$DAILY_ROW_JSON" | jval "items.0.items_out")', expected $EXPECTED_ITEMS_OUT (net of today's refunds)"
+DAILY_BUYIN_CASH="$(echo "$DAILY_ROW_JSON" | jval "items.0.buy_in_total_by_payout.cash")"
+DAILY_BUYIN_CREDIT="$(echo "$DAILY_ROW_JSON" | jval "items.0.buy_in_total_by_payout.credit")"
+[ "$DAILY_BUYIN_CASH" = "$EXPECTED_BUYIN_CASH" ] || fail "daily_stats buy_in_total_by_payout.cash is '$DAILY_BUYIN_CASH', expected $EXPECTED_BUYIN_CASH"
+[ "$DAILY_BUYIN_CREDIT" = "$EXPECTED_BUYIN_CREDIT" ] || fail "daily_stats buy_in_total_by_payout.credit is '$DAILY_BUYIN_CREDIT', expected $EXPECTED_BUYIN_CREDIT"
+ok "the daily row for today carries the expected sales_total, buy_in_total and items_out net of refunds"
+
+# --- 21d. reports/sales and reports/buyins agree with the same numbers --
+REPORT_SALES_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY")"
+[ "$(echo "$REPORT_SALES_JSON" | jval "totals.revenue")" = "$EXPECTED_SALES_TOTAL" ] \
+  || fail "reports/sales totals.revenue is '$(echo "$REPORT_SALES_JSON" | jval "totals.revenue")', expected $EXPECTED_SALES_TOTAL"
+[ "$(echo "$REPORT_SALES_JSON" | jval "totals.count")" = "$EXPECTED_SALES_COUNT" ] \
+  || fail "reports/sales totals.count is '$(echo "$REPORT_SALES_JSON" | jval "totals.count")', expected $EXPECTED_SALES_COUNT"
+
+REPORT_BUYINS_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/buyins?from=$TODAY&to=$TODAY")"
+[ "$(echo "$REPORT_BUYINS_JSON" | jval "totals.spend")" = "$EXPECTED_BUYIN_TOTAL" ] \
+  || fail "reports/buyins totals.spend is '$(echo "$REPORT_BUYINS_JSON" | jval "totals.spend")', expected $EXPECTED_BUYIN_TOTAL"
+[ "$(echo "$REPORT_BUYINS_JSON" | jval "totals.cash")" = "$EXPECTED_BUYIN_CASH" ] \
+  || fail "reports/buyins totals.cash is '$(echo "$REPORT_BUYINS_JSON" | jval "totals.cash")', expected $EXPECTED_BUYIN_CASH"
+[ "$(echo "$REPORT_BUYINS_JSON" | jval "totals.credit")" = "$EXPECTED_BUYIN_CREDIT" ] \
+  || fail "reports/buyins totals.credit is '$(echo "$REPORT_BUYINS_JSON" | jval "totals.credit")', expected $EXPECTED_BUYIN_CREDIT"
+ok "reports/sales and reports/buyins for the range agree with the daily row and the raw ledgers"
+
+# --- 21e. group=week labels the series with that week's Monday ----------
+WEEK_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY&group=week")"
+EXPECTED_MONDAY="$(node -e '
+  const d = new Date(process.argv[1] + "T00:00:00.000Z");
+  const back = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - back);
+  process.stdout.write(d.toISOString().slice(0, 10));
+' "$TODAY")"
+[ "$(echo "$WEEK_JSON" | jval "series.0.label")" = "$EXPECTED_MONDAY" ] \
+  || fail "group=week's series label is '$(echo "$WEEK_JSON" | jval "series.0.label")', expected the Monday $EXPECTED_MONDAY"
+ok "group=week labels the series with the week's Monday"
+
+# --- 21f. compare=previous returns a totals block; compare=none is null -
+YESTERDAY="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-1); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
+COMPARE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY&compare=previous")"
+[ "$(echo "$COMPARE_JSON" | jval "compare.from")" = "$YESTERDAY" ] || fail "compare.from is '$(echo "$COMPARE_JSON" | jval "compare.from")', expected $YESTERDAY"
+[ "$(echo "$COMPARE_JSON" | jval "compare.to")" = "$YESTERDAY" ] || fail "compare.to is '$(echo "$COMPARE_JSON" | jval "compare.to")', expected $YESTERDAY"
+[ -n "$(echo "$COMPARE_JSON" | jval "compare.totals.revenue")" ] || fail "compare=previous returned no compare.totals.revenue: $COMPARE_JSON"
+NONE_COMPARE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY&compare=none")"
+[ -z "$(echo "$NONE_COMPARE_JSON" | jval compare)" ] || fail "compare=none returned a non-null compare block: $NONE_COMPARE_JSON"
+ok "compare=previous returns a totals block for the immediately preceding period; compare=none returns null"
+
+# --- 21g. by=game splits revenue correctly across games -----------------
+MTG_GAME_ID="$(curl -s "$BASE/api/collections/games/records?filter=key%3D%27mtg%27" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$MTG_GAME_ID" ] || fail "seeded game 'mtg' not found"
+
+by_game_revenue() {
+  # $1 report JSON, $2 game id -> that game's row revenue, or 0
+  node -e '
+    const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    const row = (body.table || []).find((r) => r.key === process.argv[1]);
+    process.stdout.write(String(row ? row.revenue : 0));
+  ' "$2" <<<"$1"
+}
+
+BY_GAME_BEFORE="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY&by=game")"
+POKEMON_REVENUE_BEFORE="$(by_game_revenue "$BY_GAME_BEFORE" "$GAME_ID")"
+MTG_REVENUE_BEFORE="$(by_game_revenue "$BY_GAME_BEFORE" "$MTG_GAME_ID")"
+
+MTG_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"sealed\",\"game\":\"$MTG_GAME_ID\",\"title\":\"By-game Split Check\",\"qty\":1,\"cost\":1000,\"price\":3333,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}" | jval id)"
+[ -n "$MTG_ITEM_ID" ] || fail "could not create the by=game split-check item"
+MTG_SALE_STATUS="$(curl -s -o "$TMP_DIR/mtg-sale.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$MTG_ITEM_ID\",\"qty\":1,\"unit_price\":3333,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+[ "$MTG_SALE_STATUS" = "200" ] || fail "the by=game split-check sale returned $MTG_SALE_STATUS: $(cat "$TMP_DIR/mtg-sale.json")"
+
+BY_GAME_AFTER="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY&by=game")"
+POKEMON_REVENUE_AFTER="$(by_game_revenue "$BY_GAME_AFTER" "$GAME_ID")"
+MTG_REVENUE_AFTER="$(by_game_revenue "$BY_GAME_AFTER" "$MTG_GAME_ID")"
+
+[ "$POKEMON_REVENUE_AFTER" = "$POKEMON_REVENUE_BEFORE" ] \
+  || fail "adding an mtg-only sale changed the pokemon by=game bucket from $POKEMON_REVENUE_BEFORE to $POKEMON_REVENUE_AFTER"
+[ "$((MTG_REVENUE_AFTER - MTG_REVENUE_BEFORE))" = "3333" ] \
+  || fail "the mtg by=game bucket moved by $((MTG_REVENUE_AFTER - MTG_REVENUE_BEFORE)), expected exactly 3333"
+ok "by=game splits revenue correctly across games"
+
+# --- 21h. A range over 400 days is refused -------------------------------
+RANGE_TOO_LONG_STATUS="$(curl -s -o "$TMP_DIR/range-too-long.json" -w '%{http_code}' \
+  -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=2020-01-01&to=2021-12-31")"
+[ "$RANGE_TOO_LONG_STATUS" = "400" ] || fail "a 731-day range returned $RANGE_TOO_LONG_STATUS, expected 400: $(cat "$TMP_DIR/range-too-long.json")"
+grep -qF "Pick a range of up to 400 days." "$TMP_DIR/range-too-long.json" \
+  || fail "the 400 does not name the 400-day limit: $(cat "$TMP_DIR/range-too-long.json")"
+ok "a range over 400 days is refused with 400 naming the limit"
+
+# --- 21i. The CSV variant: a header row, and the formula-injection guard
+#     prefixes a cell starting with '=' ------------------------------------
+CSV_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"=HYPERLINK(\"y\")"}' | jval id)"
+[ -n "$CSV_SELLER_ID" ] || fail "could not create the reports-CSV formula-check customer"
+CSV_ITEM_ID="$(make_item "CSV Formula Check Item" 1 100 900)"
+CSV_SALE_STATUS="$(curl -s -o "$TMP_DIR/csv-sale.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$CSV_ITEM_ID\",\"qty\":1,\"unit_price\":900,\"discount\":0}],\"customer\":\"$CSV_SELLER_ID\",\"payment\":\"sumup_card\"}")"
+[ "$CSV_SALE_STATUS" = "200" ] || fail "the reports-CSV formula-check sale returned $CSV_SALE_STATUS: $(cat "$TMP_DIR/csv-sale.json")"
+
+curl -s -o "$TMP_DIR/customers-report.csv" -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/customers.csv?from=$TODAY&to=$TODAY"
+head -n1 "$TMP_DIR/customers-report.csv" | grep -q "Customer" \
+  || fail "reports/customers.csv has no header row: $(head -n1 "$TMP_DIR/customers-report.csv")"
+grep -qF '"'"'"'=HYPERLINK' "$TMP_DIR/customers-report.csv" \
+  || fail "a customer called =HYPERLINK(\"y\") is not prefixed in the CSV export: $(grep -F 'HYPERLINK' "$TMP_DIR/customers-report.csv" || true)"
+ok "the CSV report variant has a header row and the formula-injection guard prefixes a cell starting with '='"
+
+# --- 21j. The compliance report and the audit log CSV are admin only ----
+COMPLIANCE_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/reports/compliance?from=$TODAY&to=$TODAY")"
+[ "$COMPLIANCE_NONADMIN_STATUS" = "403" ] || fail "a non-admin fetching the compliance report got $COMPLIANCE_NONADMIN_STATUS, expected 403"
+COMPLIANCE_ADMIN_STATUS="$(curl -s -o "$TMP_DIR/compliance.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/compliance?from=$TODAY&to=$TODAY")"
+[ "$COMPLIANCE_ADMIN_STATUS" = "200" ] || fail "an admin fetching the compliance report got $COMPLIANCE_ADMIN_STATUS: $(cat "$TMP_DIR/compliance.json")"
+grep -qF "$STATS_TRADE_ID" "$TMP_DIR/compliance.json" \
+  || fail "the compliance register does not carry today's stats-check buy-in: $(cat "$TMP_DIR/compliance.json")"
+ok "the compliance report is admin only and lists today's buy-in register"
+
+AUDIT_CSV_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/reports/audit.csv?from=$TODAY&to=$TODAY")"
+[ "$AUDIT_CSV_NONADMIN_STATUS" = "403" ] || fail "a non-admin fetching the audit CSV got $AUDIT_CSV_NONADMIN_STATUS, expected 403"
+AUDIT_CSV_ADMIN_STATUS="$(curl -s -o "$TMP_DIR/audit.csv" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/audit.csv?from=$TODAY&to=$TODAY")"
+[ "$AUDIT_CSV_ADMIN_STATUS" = "200" ] || fail "an admin fetching the audit CSV got $AUDIT_CSV_ADMIN_STATUS"
+head -n1 "$TMP_DIR/audit.csv" | grep -q "Action" || fail "the audit CSV has no header row: $(head -n1 "$TMP_DIR/audit.csv")"
+ok "the audit log CSV export is admin only"
+
+# POST /api/crons/{name} (PocketBase's own "run this job now" route) queues
+# the job and returns 204 before it finishes running, confirmed against this
+# binary: a cron that does real work (building a report, sending an email)
+# can still be mid-flight when the very next request lands. Poll briefly
+# for the audit row it writes on completion rather than checking once,
+# immediately, and calling it absent.
+wait_for_audit_row() {
+  # $1 audit_log filter query string (already url-encoded) -> the response
+  # JSON once totalItems >= 1, or the last response after ~10 seconds.
+  local filter="$1"
+  local tries=0
+  local json=""
+  while [ "$tries" -lt 40 ]; do
+    json="$(curl -s "$BASE/api/collections/audit_log/records?$filter" -H "Authorization: $SUPER_TOKEN")"
+    if [ "$(echo "$json" | jval totalItems)" -ge 1 ] 2>/dev/null; then
+      echo "$json"
+      return 0
+    fi
+    sleep 0.25
+    tries=$((tries + 1))
+  done
+  echo "$json"
+}
+
+# --- 21k. The weekly scheduled-report cron, under test_mode, logs a send
+#     and writes an audit row ------------------------------------------
+STAFF_ADMIN_ID="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/me" | jval id)"
+[ -n "$STAFF_ADMIN_ID" ] || fail "could not resolve the admin's own staff id from /api/vault/me"
+
+SAVED_REPORT_ID="$(curl -s -X POST "$BASE/api/collections/saved_reports/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"owner\":\"$STAFF_ADMIN_ID\",\"report_key\":\"sales\",\"name\":\"Weekly Sales Check\",\"schedule\":\"weekly\",\"recipients\":[\"stats-check-recipient@local.test\"]}" | jval id)"
+[ -n "$SAVED_REPORT_ID" ] || fail "could not create a saved_reports row"
+
+SCHEDULED_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/scheduled_reports_weekly" -H "Authorization: $SUPER_TOKEN")"
+[ "$SCHEDULED_CRON_STATUS" = "204" ] || fail "POST /api/crons/scheduled_reports_weekly returned $SCHEDULED_CRON_STATUS, expected 204"
+
+SCHEDULED_AUDIT="$(wait_for_audit_row "perPage=50&filter=action%3D%22saved_report_sent%22%26%26record%3D%22$SAVED_REPORT_ID%22")"
+[ "$(echo "$SCHEDULED_AUDIT" | jval totalItems)" -ge 1 ] \
+  || fail "the scheduled_reports_weekly cron wrote no saved_report_sent audit row for $SAVED_REPORT_ID: $SCHEDULED_AUDIT"
+echo "$SCHEDULED_AUDIT" | grep -q '"test_mode":true' || fail "the scheduled report send did not log test_mode: $SCHEDULED_AUDIT"
+echo "$SCHEDULED_AUDIT" | grep -q '"sent":false' || fail "the scheduled report audit row does not say sent:false under test_mode: $SCHEDULED_AUDIT"
+ok "the weekly scheduled-report cron, run under settings.email.test_mode, logs a send and writes an audit row"
+
+# --- 21l. The Monday digest names the three biggest price movers --------
+MOVER_TITLES=()
+for pct in 20 30 50; do
+  MOVER_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"game\":\"$GAME_ID\",\"code\":\"mover-set-$pct\",\"name\":\"Mover Set $pct\"}" | jval id)"
+  MOVER_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"game\":\"$GAME_ID\",\"set\":\"$MOVER_SET_ID\",\"number\":\"$pct\",\"name\":\"Mover Card $pct\"}" | jval id)"
+  MOVER_MARKET=$((1000 + pct * 10))
+  MOVER_FETCHED_AT="$(node -e 'process.stdout.write(new Date().toISOString())')"
+  curl -s -o /dev/null -X POST "$BASE/api/collections/price_snapshots/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"card\":\"$MOVER_CARD_ID\",\"finish\":\"\",\"source\":\"uk_sold_manual\",\"native_currency\":\"GBP\",\"native_market\":$MOVER_MARKET,\"fx_rate\":1,\"gbp_market\":$MOVER_MARKET,\"fetched_at\":\"$MOVER_FETCHED_AT\"}"
+  MOVER_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$MOVER_CARD_ID\",\"condition\":\"NM\",\"qty\":1,\"cost\":500,\"market_at_intake\":1000,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}" | jval id)"
+  [ -n "$MOVER_ITEM_ID" ] || fail "could not create the mover-check item for $pct percent"
+  MOVER_SKU="$(curl -s "$BASE/api/collections/items/records/$MOVER_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sku)"
+  [ -n "$MOVER_SKU" ] || fail "the mover-check item for $pct percent has no sku"
+  MOVER_TITLES+=("$MOVER_SKU")
+done
+
+STOCK_MOVERS_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY")"
+[ "$(echo "$STOCK_MOVERS_JSON" | jlen table)" = "3" ] \
+  || fail "reports/stock's price-movers table has $(echo "$STOCK_MOVERS_JSON" | jlen table) rows, expected exactly the 3 seeded here"
+
+DIGEST_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/weekly_digest" -H "Authorization: $SUPER_TOKEN")"
+[ "$DIGEST_STATUS" = "204" ] || fail "POST /api/crons/weekly_digest returned $DIGEST_STATUS, expected 204"
+
+DIGEST_AUDIT="$(wait_for_audit_row "perPage=10&sort=-created&filter=action%3D%22weekly_digest_sent%22")"
+[ "$(echo "$DIGEST_AUDIT" | jval totalItems)" -ge 1 ] || fail "the weekly_digest cron wrote no weekly_digest_sent audit row: $DIGEST_AUDIT"
+for title in "${MOVER_TITLES[@]}"; do
+  echo "$DIGEST_AUDIT" | grep -qF "$title" || fail "the digest audit meta does not name mover $title: $DIGEST_AUDIT"
+done
+ok "the weekly digest names the three biggest price movers"
+
+# -----------------------------------------------------------------------
+# 22. Phase 4: exports, imports and SumUp. Still under
+#     GG_ADAPTER_TRANSPORT_MODE=fixture (see section 19's own note), so
+#     the SumUp pull below calls pb_hooks/adapters/fixture_transport.js's
+#     own SumUp mapping rather than the real network.
+# -----------------------------------------------------------------------
+
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"api_keys":{"sumup":"fixture-sumup-key"},"sumup":{"merchant_code":"MFIXTURE1"}}'
+
+# --- 22a. The SumUp export: header row, SKU prefix, 0 tax for margin,
+#     sumup_synced_at semantics ------------------------------------------
+SUMUP_ITEM_ID="$(make_item "SumUp CSV Item" 1 500 1999)"
+[ -n "$SUMUP_ITEM_ID" ] || fail "could not create the SumUp export check's item"
+SUMUP_ITEM_SKU="$(curl -s "$BASE/api/collections/items/records/$SUMUP_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sku)"
+[ -n "$SUMUP_ITEM_SKU" ] || fail "the SumUp export check's item has no sku"
+SUMUP_ITEM_SKU_DISPLAY="${SUMUP_ITEM_SKU:0:3}-${SUMUP_ITEM_SKU:3}"
+
+SUMUP_DRYRUN_CSV="$(curl -s "$BASE/api/vault/exports/sumup.csv?dry_run=1" -H "Authorization: $STAFF_TOKEN")"
+echo "$SUMUP_DRYRUN_CSV" | head -n1 | grep -qF "Item name,Description,Category,Price,SKU,Barcode,Quantity,Tax rate (%),Variations,Option set 1,Option set 2,Option set 3,Option set 4,Modifiers,Display colour" \
+  || fail "the SumUp export CSV header row is wrong: $(echo "$SUMUP_DRYRUN_CSV" | head -n1)"
+ok "the SumUp export CSV has the documented header row"
+
+echo "$SUMUP_DRYRUN_CSV" | grep -qF "$SUMUP_ITEM_SKU_DISPLAY SumUp CSV Item" \
+  || fail "the SumUp export did not prefix the item name with the display SKU: $SUMUP_DRYRUN_CSV"
+ok "the SumUp export prefixes the item name with the SKU"
+
+SUMUP_TAX_RATE="$(echo "$SUMUP_DRYRUN_CSV" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const sku = process.argv[1];
+    for (const line of d.split(/\r\n/).filter(Boolean)) {
+      const cells = line.split(",");
+      if (cells[4] === sku) { process.stdout.write(cells[7] || ""); return; }
+    }
+    process.stdout.write("");
+  });
+' "$SUMUP_ITEM_SKU")"
+[ "$SUMUP_TAX_RATE" = "0" ] || fail "the SumUp export tax rate for a margin-scheme item is '$SUMUP_TAX_RATE', expected 0"
+ok "the SumUp export writes 0 tax for a margin-scheme item"
+
+SUMUP_SYNCED_AFTER_DRYRUN="$(curl -s "$BASE/api/collections/items/records/$SUMUP_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sumup_synced_at)"
+[ -z "$SUMUP_SYNCED_AFTER_DRYRUN" ] || fail "dry_run=1 set sumup_synced_at anyway: $SUMUP_SYNCED_AFTER_DRYRUN"
+
+SUMUP_REAL_CSV="$(curl -s "$BASE/api/vault/exports/sumup.csv" -H "Authorization: $STAFF_TOKEN")"
+echo "$SUMUP_REAL_CSV" | grep -qF "$SUMUP_ITEM_SKU_DISPLAY SumUp CSV Item" \
+  || fail "the real SumUp export did not include the not-yet-synced item: $SUMUP_REAL_CSV"
+SUMUP_SYNCED_AFTER_REAL="$(curl -s "$BASE/api/collections/items/records/$SUMUP_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sumup_synced_at)"
+[ -n "$SUMUP_SYNCED_AFTER_REAL" ] || fail "the real SumUp export did not set sumup_synced_at"
+ok "the SumUp export sets sumup_synced_at on export, and dry_run=1 leaves it untouched"
+
+SUMUP_REAL_CSV_AGAIN="$(curl -s "$BASE/api/vault/exports/sumup.csv" -H "Authorization: $STAFF_TOKEN")"
+echo "$SUMUP_REAL_CSV_AGAIN" | grep -qF "$SUMUP_ITEM_SKU" && fail "an already-synced item reappeared in the SumUp export with no since parameter"
+ok "an already-synced item does not reappear in the SumUp export once sumup_synced_at is set"
+
+# --- 22b. The eBay listing CSV for two ids -------------------------------
+EBAY_LIST_A="$(make_item "Ebay List Item A" 1 200 999)"
+EBAY_LIST_B="$(make_item "Ebay List Item B" 1 200 1499)"
+[ -n "$EBAY_LIST_A" ] && [ -n "$EBAY_LIST_B" ] || fail "could not create the eBay listing check's items"
+
+EBAY_LISTING_CSV="$(curl -s "$BASE/api/vault/exports/ebay-listings.csv?ids=$EBAY_LIST_A,$EBAY_LIST_B" -H "Authorization: $STAFF_TOKEN")"
+echo "$EBAY_LISTING_CSV" | head -n1 | grep -qF "Action(SiteID=UK|Country=GB|Currency=GBP|Version=1193),Custom label (SKU),Title,Description,Category,ConditionID,Format,Duration,StartPrice,Quantity,ImageURL,Location,PostalCode" \
+  || fail "the eBay listing CSV header row is wrong: $(echo "$EBAY_LISTING_CSV" | head -n1)"
+EBAY_LISTING_ROWS="$(echo "$EBAY_LISTING_CSV" | tail -n +2 | grep -c 'Ebay List Item')"
+[ "$EBAY_LISTING_ROWS" = "2" ] || fail "the eBay listing CSV for two ids produced $EBAY_LISTING_ROWS matching rows, expected 2: $EBAY_LISTING_CSV"
+ok "the eBay listing CSV for two ids has the documented header row and one row per id"
+
+# --- 22c. Inventory, sales and register exports: header rows, register
+#     admin only -----------------------------------------------------------
+INVENTORY_CSV="$(curl -s "$BASE/api/vault/exports/inventory.csv" -H "Authorization: $STAFF_TOKEN")"
+echo "$INVENTORY_CSV" | head -n1 | grep -qF "SKU,Kind,Game,Title,Set code,Number,Finish,Language,Condition,Completeness,Cosmetic grade,Tested,Region,Grade company,Grade,Certificate number,EAN,Quantity,Cost,Market value at intake,Sell price,Tax scheme,Status,Location,Source,Acquired date,Supplier reference" \
+  || fail "the inventory export CSV header row is wrong: $(echo "$INVENTORY_CSV" | head -n1)"
+ok "the inventory export has the documented header row"
+
+SALES_CSV="$(curl -s "$BASE/api/vault/exports/sales.csv?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
+echo "$SALES_CSV" | head -n1 | grep -qF "Sale number,Date,Staff,Customer,SKU,Item title,Quantity,Unit price,Discount,VAT rate,Tax scheme,Payment method,Sale total,Line status" \
+  || fail "the sales export CSV header row is wrong: $(echo "$SALES_CSV" | head -n1)"
+ok "the sales export has the documented header row"
+
+REGISTER_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/exports/buy-in-register.csv?from=$TODAY&to=$TODAY")"
+[ "$REGISTER_NONADMIN_STATUS" = "403" ] || fail "a non-admin fetching the buy-in register returned $REGISTER_NONADMIN_STATUS, expected 403"
+
+REGISTER_CSV="$(curl -s "$BASE/api/vault/exports/buy-in-register.csv?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
+echo "$REGISTER_CSV" | head -n1 | grep -qF "Trade-in number,Date,Staff,Customer,Seller name,Seller address,ID type,ID last four digits,ID expiry,Item description,Condition,Quantity,Market price,Offer price,Payout type,Cash amount,Credit amount,Signature reference" \
+  || fail "the buy-in register export CSV header row is wrong: $(echo "$REGISTER_CSV" | head -n1)"
+ok "the inventory, sales and buy-in register exports have header rows, and the register is admin only"
+
+# --- 22d. end-listings.csv and clearing a listing -------------------------
+ENDLIST_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"title\":\"Ended Listing Item\",\"qty\":1,\"status\":\"sold\",\"ebay_listing_id\":\"EBAYLIST123\",\"ebay_sku\":\"CS-999999\"}" | jval id)"
+[ -n "$ENDLIST_ITEM_ID" ] || fail "could not create the end-listings check's item"
+
+END_LISTINGS_CSV="$(curl -s "$BASE/api/vault/exports/end-listings.csv" -H "Authorization: $STAFF_TOKEN")"
+echo "$END_LISTINGS_CSV" | grep -qF "EBAYLIST123" || fail "end-listings.csv did not list a sold item with an ebay_listing_id: $END_LISTINGS_CSV"
+ok "end-listings.csv lists a sold, still-listed item"
+
+END_LISTINGS_STATUS="$(curl -s -o "$TMP_DIR/end-listings.json" -w '%{http_code}' -X POST "$BASE/api/vault/items/end-listings" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"ids\":[\"$ENDLIST_ITEM_ID\"]}")"
+[ "$END_LISTINGS_STATUS" = "200" ] || fail "POST /api/vault/items/end-listings returned $END_LISTINGS_STATUS: $(cat "$TMP_DIR/end-listings.json")"
+[ "$(jval "ended.0" <"$TMP_DIR/end-listings.json")" = "$ENDLIST_ITEM_ID" ] || fail "end-listings did not report the ended item: $(cat "$TMP_DIR/end-listings.json")"
+
+ENDLIST_AFTER_JSON="$(curl -s "$BASE/api/collections/items/records/$ENDLIST_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$ENDLIST_AFTER_JSON" | jval ebay_listing_id)" = "" ] || fail "end-listings did not clear ebay_listing_id: $ENDLIST_AFTER_JSON"
+[ "$(echo "$ENDLIST_AFTER_JSON" | jval ebay_sku)" = "" ] || fail "end-listings did not clear ebay_sku: $ENDLIST_AFTER_JSON"
+
+END_LISTINGS_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22end_ebay_listings%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${END_LISTINGS_AUDIT:-0}" -ge 1 ] || fail "ending an eBay listing wrote no audit_log row"
+ok "POST /api/vault/items/end-listings clears the listing and writes an audit row"
+
+# --- 22e. Card Uploader import: one id-matched row, one name-only review row
+CU_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"code\":\"cu-fixture-set\",\"name\":\"Card Uploader Fixture Set\"}" | jval id)"
+CU_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$CU_SET_ID\",\"number\":\"199\",\"name\":\"Fixture Charizard\",\"tcgplayer_id\":\"TCG-FIX-001\"}" | jval id)"
+[ -n "$CU_CARD_ID" ] || fail "could not create the Card Uploader check's cards row"
+
+cat >"$TMP_DIR/card-uploader.csv" <<'EOF'
+Card Name,Set,Number,Condition,Price,Quantity,TCGplayer ID,Cardmarket ID,CS SKU
+,Scarlet & Violet 151,199,NM,12.50,1,TCG-FIX-001,,CS-000123
+Random Uncatalogued Card,Some Set,42,NM,5.00,1,,,
+EOF
+
+CU_IMPORT_STATUS="$(curl -s -o "$TMP_DIR/cu-import.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/card-uploader" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/card-uploader.csv;type=text/csv" \
+  -F "type=card_uploader")"
+[ "$CU_IMPORT_STATUS" = "200" ] || fail "the Card Uploader import returned $CU_IMPORT_STATUS: $(cat "$TMP_DIR/cu-import.json")"
+[ "$(jval matched <"$TMP_DIR/cu-import.json")" = "1" ] || fail "Card Uploader import matched count is wrong: $(cat "$TMP_DIR/cu-import.json")"
+[ "$(jval review <"$TMP_DIR/cu-import.json")" = "1" ] || fail "Card Uploader import review count is wrong: $(cat "$TMP_DIR/cu-import.json")"
+ok "a Card Uploader file with one id-matched row and one name-only row reports 1 matched, 1 review"
+
+CU_ITEM_JSON="$(curl -s "$BASE/api/collections/items/records?filter=ebay_sku%3D%22CS-000123%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$CU_ITEM_JSON" | jval totalItems)" = "1" ] || fail "the Card Uploader import did not create exactly one item for CS-000123: $CU_ITEM_JSON"
+CU_ITEM_ID="$(echo "$CU_ITEM_JSON" | jval "items.0.id")"
+[ "$(echo "$CU_ITEM_JSON" | jval "items.0.status")" = "listed_ebay" ] || fail "the Card Uploader-imported item is not listed_ebay: $CU_ITEM_JSON"
+[ "$(echo "$CU_ITEM_JSON" | jval "items.0.price")" = "1250" ] || fail "the Card Uploader-imported item price is wrong: $CU_ITEM_JSON"
+ok "the id-matched row created one listed_ebay item at the file's price"
+
+CU_IMPORT_ID="$(jval "import.id" <"$TMP_DIR/cu-import.json")"
+CU_IMPORT_GET_JSON="$(curl -s "$BASE/api/vault/imports/$CU_IMPORT_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$CU_IMPORT_GET_JSON" | jval rows_total)" = "2" ] || fail "GET the import row has the wrong rows_total: $CU_IMPORT_GET_JSON"
+echo "$CU_IMPORT_GET_JSON" | grep -qF "needs match" || fail "GET the import row does not carry the review entry: $CU_IMPORT_GET_JSON"
+ok "GET /api/vault/imports/:id returns the row with its review entries"
+
+# --- 22f. A malformed file, and the wrong declared type -------------------
+cat >"$TMP_DIR/malformed.csv" <<'EOF'
+not,a,real,header,row
+foo,bar
+EOF
+MALFORMED_STATUS="$(curl -s -o "$TMP_DIR/malformed.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/card-uploader" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/malformed.csv;type=text/csv")"
+[ "$MALFORMED_STATUS" = "400" ] || fail "a malformed CSV import returned $MALFORMED_STATUS, expected 400: $(cat "$TMP_DIR/malformed.json")"
+grep -qF "That file is not a CSV we recognise. Check the first line has the column headings." "$TMP_DIR/malformed.json" \
+  || fail "the malformed-CSV refusal message is wrong: $(cat "$TMP_DIR/malformed.json")"
+ok "a malformed CSV is refused with the documented sentence"
+
+WRONGTYPE_STATUS="$(curl -s -o "$TMP_DIR/wrongtype.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/card-uploader" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/card-uploader.csv;type=text/csv" \
+  -F "type=ebay_orders")"
+[ "$WRONGTYPE_STATUS" = "400" ] || fail "posting the wrong declared type returned $WRONGTYPE_STATUS, expected 400: $(cat "$TMP_DIR/wrongtype.json")"
+ok "posting the wrong declared type to an import route is refused with 400"
+
+# --- 22g. eBay orders import: sells a listed item, channel ebay and
+#     external_ref, a second run reports already sold ---------------------
+cat >"$TMP_DIR/ebay-orders.csv" <<'EOF'
+Custom Label,Item Number,Order Number,Sale Date,Sold For,Quantity,Sale Currency
+CS-000123,110099887766,05-12345,2026-09-20,15.00,1,GBP
+EOF
+
+EO_IMPORT_STATUS="$(curl -s -o "$TMP_DIR/eo-import.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/ebay-orders" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/ebay-orders.csv;type=text/csv" \
+  -F "type=ebay_orders")"
+[ "$EO_IMPORT_STATUS" = "200" ] || fail "the eBay orders import returned $EO_IMPORT_STATUS: $(cat "$TMP_DIR/eo-import.json")"
+[ "$(jval sold <"$TMP_DIR/eo-import.json")" = "1" ] || fail "the eBay orders import sold count is wrong: $(cat "$TMP_DIR/eo-import.json")"
+[ "$(jval already_sold <"$TMP_DIR/eo-import.json")" = "0" ] || fail "the eBay orders import already_sold count is wrong on the first run: $(cat "$TMP_DIR/eo-import.json")"
+ok "an eBay orders file sells the listed item"
+
+[ "$(curl -s "$BASE/api/collections/items/records/$CU_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval status)" = "sold" ] \
+  || fail "the eBay-orders-sold item is not marked sold"
+
+EO_SALE_JSON="$(curl -s "$BASE/api/collections/sales/records?filter=external_ref%3D%2205-12345%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$EO_SALE_JSON" | jval totalItems)" = "1" ] || fail "the eBay orders import did not create exactly one sale with that external_ref: $EO_SALE_JSON"
+[ "$(echo "$EO_SALE_JSON" | jval "items.0.channel")" = "ebay" ] || fail "the eBay-orders-created sale is not channel ebay: $EO_SALE_JSON"
+[ "$(echo "$EO_SALE_JSON" | jval "items.0.total")" = "1500" ] || fail "the eBay-orders-created sale total is wrong: $EO_SALE_JSON"
+ok "the eBay orders import creates a sale of channel ebay with the order reference as external_ref"
+
+EO_IMPORT2_STATUS="$(curl -s -o "$TMP_DIR/eo-import2.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/ebay-orders" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/ebay-orders.csv;type=text/csv")"
+[ "$EO_IMPORT2_STATUS" = "200" ] || fail "the second eBay orders import returned $EO_IMPORT2_STATUS: $(cat "$TMP_DIR/eo-import2.json")"
+[ "$(jval sold <"$TMP_DIR/eo-import2.json")" = "0" ] || fail "the second eBay orders import should sell nothing new: $(cat "$TMP_DIR/eo-import2.json")"
+[ "$(jval already_sold <"$TMP_DIR/eo-import2.json")" = "1" ] || fail "the second eBay orders import did not report already_sold: $(cat "$TMP_DIR/eo-import2.json")"
+grep -qF "already sold" "$TMP_DIR/eo-import2.json" || fail "the second run's errors do not say already sold: $(cat "$TMP_DIR/eo-import2.json")"
+ok "a second run of the same eBay orders file reports already sold rather than selling it twice"
+
+# An ordinary counter sale (sales.pb.js, untouched this round) still gets
+# channel defaulted to "counter" by imports.pb.js's own onRecordCreate hook.
+CHANNEL_ITEM_ID="$(make_item "Channel Default Item" 1 200 650)"
+CHANNEL_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$CHANNEL_ITEM_ID\",\"qty\":1,\"unit_price\":650,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+CHANNEL_SALE_ID="$(echo "$CHANNEL_SALE_JSON" | jval "sale.id")"
+[ -n "$CHANNEL_SALE_ID" ] || fail "could not create the channel-default check's sale"
+CHANNEL_ON_SALE="$(curl -s "$BASE/api/collections/sales/records/$CHANNEL_SALE_ID" -H "Authorization: $STAFF_TOKEN" | jval channel)"
+[ "$CHANNEL_ON_SALE" = "counter" ] || fail "an ordinary counter sale's channel is '$CHANNEL_ON_SALE', expected counter"
+ok "an ordinary counter sale defaults channel to counter"
+
+# --- 22h. The SumUp pull: matches by SKU prefix and by amount+time, a
+#     second pull does not duplicate, reconcile, a non-admin refused ------
+SUMUP_SKU_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"sku\":\"GGPAAAAAY\",\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"title\":\"Fixture Sku Match Item\",\"qty\":1,\"price\":3000,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\"}" | jval id)"
+[ -n "$SUMUP_SKU_ITEM_ID" ] || fail "could not create the SumUp SKU-match item"
+SUMUP_SKU_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$SUMUP_SKU_ITEM_ID\",\"qty\":1,\"unit_price\":3000,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+SUMUP_SKU_SALE_ID="$(echo "$SUMUP_SKU_SALE_JSON" | jval "sale.id")"
+[ -n "$SUMUP_SKU_SALE_ID" ] || fail "could not create the SumUp SKU-match sale"
+
+SUMUP_AMOUNT_ITEM_ID="$(make_item "SumUp Amount Match Item" 1 5000 19483)"
+SUMUP_AMOUNT_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$SUMUP_AMOUNT_ITEM_ID\",\"qty\":1,\"unit_price\":19483,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+SUMUP_AMOUNT_SALE_ID="$(echo "$SUMUP_AMOUNT_SALE_JSON" | jval "sale.id")"
+[ -n "$SUMUP_AMOUNT_SALE_ID" ] || fail "could not create the SumUp amount+time match sale"
+
+SUMUP_UNMATCHED_ITEM_ID="$(make_item "SumUp Unmatched Item" 1 300 837)"
+SUMUP_UNMATCHED_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$SUMUP_UNMATCHED_ITEM_ID\",\"qty\":1,\"unit_price\":837,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+SUMUP_UNMATCHED_SALE_ID="$(echo "$SUMUP_UNMATCHED_SALE_JSON" | jval "sale.id")"
+[ -n "$SUMUP_UNMATCHED_SALE_ID" ] || fail "could not create the SumUp reconcile check's unmatched sale"
+
+PULL_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/sumup/pull" -H "Authorization: $PLAIN_TOKEN")"
+[ "$PULL_NONADMIN_STATUS" = "403" ] || fail "a non-admin calling sumup/pull got $PULL_NONADMIN_STATUS, expected 403"
+ok "a non-admin cannot pull SumUp transactions (403)"
+
+PULL1_JSON="$(curl -s -X POST "$BASE/api/vault/sumup/pull" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$PULL1_JSON" | jval fetched)" = "2" ] || fail "the first SumUp pull's fetched count is wrong: $PULL1_JSON"
+[ "$(echo "$PULL1_JSON" | jval matched)" = "2" ] || fail "the first SumUp pull's matched count is wrong: $PULL1_JSON"
+[ "$(echo "$PULL1_JSON" | jval unmatched)" = "0" ] || fail "the first SumUp pull's unmatched count is wrong: $PULL1_JSON"
+
+SKU_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-sku-0001%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$SKU_TXN_JSON" | jval totalItems)" = "1" ] || fail "txn-sku-0001 was not upserted exactly once: $SKU_TXN_JSON"
+[ "$(echo "$SKU_TXN_JSON" | jval "items.0.matched_sale")" = "$SUMUP_SKU_SALE_ID" ] || fail "txn-sku-0001 did not match the SKU-named sale: $SKU_TXN_JSON"
+ok "the SumUp pull matches a sale by a SKU-prefixed product name"
+
+AMOUNT_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-amount-0002%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$AMOUNT_TXN_JSON" | jval totalItems)" = "1" ] || fail "txn-amount-0002 was not upserted exactly once: $AMOUNT_TXN_JSON"
+[ "$(echo "$AMOUNT_TXN_JSON" | jval "items.0.matched_sale")" = "$SUMUP_AMOUNT_SALE_ID" ] || fail "txn-amount-0002 did not match the amount+time sale: $AMOUNT_TXN_JSON"
+ok "the SumUp pull matches a sale by amount and time when the product name carries no SKU"
+
+PULL2_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/sumup_pull" -H "Authorization: $SUPER_TOKEN")"
+[ "$PULL2_CRON_STATUS" = "204" ] || fail "POST /api/crons/sumup_pull returned $PULL2_CRON_STATUS, expected 204"
+
+SKU_TXN_AFTER2="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-sku-0001%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$SKU_TXN_AFTER2" | jval totalItems)" = "1" ] || fail "a second pull duplicated txn-sku-0001: $SKU_TXN_AFTER2"
+AMOUNT_TXN_AFTER2="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-amount-0002%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$AMOUNT_TXN_AFTER2" | jval totalItems)" = "1" ] || fail "a second pull duplicated txn-amount-0002: $AMOUNT_TXN_AFTER2"
+[ "$(echo "$AMOUNT_TXN_AFTER2" | jval "items.0.matched_sale")" = "$SUMUP_AMOUNT_SALE_ID" ] || fail "a second pull changed txn-amount-0002's match: $AMOUNT_TXN_AFTER2"
+ok "a second pull (run here as the sumup_pull cron) upserts in place and does not duplicate or re-match"
+
+RECONCILE_JSON="$(curl -s "$BASE/api/vault/sumup/reconcile?date=$TODAY" -H "Authorization: $STAFF_TOKEN")"
+RECONCILE_HAS_AMOUNT_MATCH="$(echo "$RECONCILE_JSON" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    let body;
+    try { body = JSON.parse(d); } catch (e) { body = {}; }
+    const saleId = process.argv[1];
+    const found = (body.matched || []).some((m) => m.sale && m.sale.id === saleId);
+    process.stdout.write(found ? "yes" : "no");
+  });
+' "$SUMUP_AMOUNT_SALE_ID")"
+[ "$RECONCILE_HAS_AMOUNT_MATCH" = "yes" ] || fail "reconcile did not list the amount-matched sale as matched: $RECONCILE_JSON"
+
+RECONCILE_HAS_UNMATCHED_SALE="$(echo "$RECONCILE_JSON" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    let body;
+    try { body = JSON.parse(d); } catch (e) { body = {}; }
+    const saleId = process.argv[1];
+    const found = (body.unmatched_sales || []).some((s) => s.id === saleId);
+    process.stdout.write(found ? "yes" : "no");
+  });
+' "$SUMUP_UNMATCHED_SALE_ID")"
+[ "$RECONCILE_HAS_UNMATCHED_SALE" = "yes" ] || fail "reconcile did not list the unmatched card sale: $RECONCILE_JSON"
+[ -n "$(echo "$RECONCILE_JSON" | jval "totals.sales")" ] || fail "reconcile's totals.sales is missing: $RECONCILE_JSON"
+[ -n "$(echo "$RECONCILE_JSON" | jval "totals.sumup")" ] || fail "reconcile's totals.sumup is missing: $RECONCILE_JSON"
+ok "reconcile returns the day's matched and unmatched lists with totals"
+
+RECONCILE_PLAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/sumup/reconcile?date=$TODAY")"
+[ "$RECONCILE_PLAIN_STATUS" = "200" ] || fail "a non-admin staff member calling reconcile got $RECONCILE_PLAIN_STATUS, expected 200"
+ok "reconcile is available to any staff member, unlike the admin-only pull"
+
 echo
 echo "All checks passed ($PASS_COUNT)."

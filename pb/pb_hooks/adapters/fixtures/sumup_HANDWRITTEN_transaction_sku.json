@@ -1,0 +1,12 @@
+{
+  "id": "txn-sku-0001",
+  "transaction_code": "TQABCDSKU1",
+  "amount": 42.5,
+  "currency": "GBP",
+  "status": "SUCCESSFUL",
+  "payment_type": "card",
+  "timestamp": "2026-01-01T09:00:00Z",
+  "products": [
+    { "name": "GGP-AAAAAY Fixture Sku Match Item", "quantity": 1, "unit_price": 42.5 }
+  ]
+}

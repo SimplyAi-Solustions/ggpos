@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "id": "txn-sku-0001",
+      "transaction_code": "TQABCDSKU1",
+      "amount": 42.5,
+      "currency": "GBP",
+      "status": "SUCCESSFUL",
+      "payment_type": "card",
+      "timestamp": "2026-01-01T09:00:00Z"
+    },
+    {
+      "id": "txn-amount-0002",
+      "transaction_code": "TQABCDAMT2",
+      "amount": 194.83,
+      "currency": "GBP",
+      "status": "SUCCESSFUL",
+      "payment_type": "card",
+      "timestamp": "__NOW__"
+    }
+  ],
+  "links": []
+}

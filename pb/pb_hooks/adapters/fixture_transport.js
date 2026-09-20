@@ -80,6 +80,25 @@ function notImageBytes() {
   return bytes;
 }
 
+/**
+ * Replaces the literal string "__NOW__" wherever it appears as a
+ * `timestamp` field (top level, or inside a top-level `items` array) with
+ * the real current instant. See the SumUp block below for why one fixture
+ * needs this at all.
+ */
+function resolveNowPlaceholders(json) {
+  if (!json) return json;
+  if (json.timestamp === "__NOW__") json.timestamp = new Date().toISOString();
+  if (Array.isArray(json.items)) {
+    for (var i = 0; i < json.items.length; i++) {
+      if (json.items[i] && json.items[i].timestamp === "__NOW__") {
+        json.items[i].timestamp = new Date().toISOString();
+      }
+    }
+  }
+  return json;
+}
+
 function refuse(call, why) {
   var http = require(__hooks + "/adapters/http.js");
   throw new Error(
@@ -167,6 +186,33 @@ function respond(call) {
         ? loadFixture("pricecharting_HANDWRITTEN_product_pal.json")
         : loadFixture("pricecharting_HANDWRITTEN_product_ntsc.json")
     );
+  }
+
+  // -- SumUp (the transactions pull, pb_hooks/lib/sumup.js) -----------------
+  //    Two transactions in the one history page:
+  //      - "txn-sku-0001" matches by a product name prefixed with a real
+  //        SKU (GGP-AAAAAY, a hand-computed valid Crockford code - see
+  //        pb/scripts/check.sh's own SumUp section for how it is built).
+  //        Its amount and timestamp are deliberately unrelated to any real
+  //        sale, so a match here can only have come from the SKU rule,
+  //        never the amount+time one.
+  //      - "txn-amount-0002" carries no SKU in its product name at all, so
+  //        it can only match by amount and a timestamp within three
+  //        minutes of a real sale's. A static timestamp baked into a
+  //        fixture file could never land within that window when the
+  //        script actually runs, so this one's `timestamp` is the literal
+  //        string "__NOW__", resolved to the real current instant the
+  //        moment this transport actually serves it - the file itself is
+  //        still the full, real SumUp response shape; only the one field a
+  //        static file structurally cannot supply is a placeholder.
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("/transactions/history") >= 0) {
+    return ok(resolveNowPlaceholders(loadFixture("sumup_HANDWRITTEN_transactions_history.json")));
+  }
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-sku-0001") >= 0) {
+    return ok(loadFixture("sumup_HANDWRITTEN_transaction_sku.json"));
+  }
+  if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("transactions?id=txn-amount-0002") >= 0) {
+    return ok(resolveNowPlaceholders(loadFixture("sumup_HANDWRITTEN_transaction_amount.json")));
   }
 
   return refuse(call, "");

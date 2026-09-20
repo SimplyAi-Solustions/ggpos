@@ -1,0 +1,12 @@
+{
+  "id": "txn-amount-0002",
+  "transaction_code": "TQABCDAMT2",
+  "amount": 194.83,
+  "currency": "GBP",
+  "status": "SUCCESSFUL",
+  "payment_type": "card",
+  "timestamp": "__NOW__",
+  "products": [
+    { "name": "Single card", "quantity": 1, "unit_price": 194.83 }
+  ]
+}

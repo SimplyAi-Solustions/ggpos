@@ -307,3 +307,113 @@ Reads the latest `fx_rates` row only - the daily 07:00 cron (`crons.pb.js`) is t
 - **`GET /api/vault/retro/lookup`'s IGDB platform ids are hand-derived**, not confirmed against a live key (nobody on this build has one - see `pb_hooks/adapters/fixtures/igdb_HANDWRITTEN_*.json`). Confirm `pb_hooks/adapters/igdb.js`'s `PLATFORM_IGDB_IDS` against IGDB's own `/platforms` once a key exists. The same caveat applies to `pb_hooks/adapters/pricecharting.js`'s PAL/NTSC console-category slugs.
 - **`fx_rates.date` is the ECB rate's own date** (Frankfurter's `date` field, distinct from `fetched_at`), stamped by the fx cron and preferred over `fetched_at` everywhere a rate's "as of" date is shown - at a weekend or a bank holiday Frankfurter keeps answering with the last trading day's rate under a fresh `fetched_at`, so reading fetch time there would claim a rate is more current than it is. The cron writes no row at all when every quote it asked for comes back non-positive (Frankfurter's own empty-day shape) - the previous row, itself at most a day or two old, is left standing rather than replaced with a row that has nothing usable in it.
 - **`pb/scripts/check.sh` runs its whole throwaway server under `GG_ADAPTER_TRANSPORT_MODE=fixture`**, not the blanket `offline_fail` refusal Phase 3's first cut used: `pb_hooks/adapters/fixture_transport.js` answers a fixed set of known adapter calls from the same `pb_hooks/adapters/fixtures/` files `pb/scripts/check-adapters.mjs` unit-tests each adapter against, and still throws for anything it has no mapping for, so a route this build never intended to call out from still fails the check loudly rather than silently reaching the real network. This is what lets `check.sh` exercise a search, an exact lookup, `refresh-prices` and the image queue end to end, fixtures and all, rather than only the paths a fresh row's 30-day cache can serve with no call at all.
+
+## Phase 4: exports, imports and SumUp
+
+Every route below needs a `staff` token; **admin** also needs `role = "admin"`. Money and error conventions are as above. Every route writes one `audit_log` row (identifiers and counts only), the same as every other route in this contract, except the two eBay-listing/end-listing GETs and the plain exports, which follow the stock book's own precedent of auditing a bulk read (the filters used and the row count, never a customer or seller's details).
+
+### Exports
+
+All six responses below carry `Content-Disposition: attachment` and `Cache-Control: no-store`, and every CSV cell goes through the same formula-injection guard as the stock book (`lib/vaultutil.js`'s `csvCell`, reached here through the new `lib/csv.js`) - a seller, customer or title starting `=`, `+`, `-`, `@`, a tab or a carriage return reads as text, not a formula. Every money column is pounds and pence from an integer of pence, never a float in between (`lib/csv.js`'s `pounds()`, over `lib/vaultutil.js`'s `poundsCell`).
+
+`GET /api/vault/exports/sumup.csv?since=YYYY-MM-DD&dry_run=1`
+
+SumUp's own CSV import layout (docs/csv-formats.md, "SumUp item import"): `Item name, Description, Category, Price, SKU, Barcode, Quantity, Tax rate (%), Variations, Option set 1` through `4, Modifiers, Display colour`. Selects `items` of kind `retro`, `sealed`, `accessory` or `other` that are `in_stock`, and either have never been exported (`sumup_synced_at` empty) or have changed since `since` (`updated >= since`); with `since` left off, only items never exported are selected. `Item name` is the item's own SKU **display form** (with its hyphen, `GGP-7F3K2Q`) followed by the title, so a SumUp sale can be matched back by eye and by `POST /api/vault/sumup/pull`'s own SKU-prefix matching rule below; `SKU` and `Barcode` carry the **encoded** form (no hyphen), or the item's EAN in `Barcode` for `sealed`/`accessory` when one is on file. `Tax rate (%)` is `0` for a margin-scheme item, the standard rate (a hardcoded 20, the same figure `sales.pb.js` already hardcodes for a standard-scheme sale line's own `vat_rate` - `settings` carries no separate field for it) for a standard-scheme item when `settings.vat_registered`, else `0`. Every row exported sets `items.sumup_synced_at` to the export's own timestamp, **unless** the request also carries `dry_run=1`, which builds the identical file but writes nothing, so a preview does not stop those rows appearing again on the next real export.
+
+`GET /api/vault/exports/ebay-listings.csv?ids=<comma list>`
+
+A listing file for the given `in_stock` items, ebay.co.uk in GBP - docs/csv-formats.md, "eBay listing export", for the full column list and why `Category` and `ConditionID` are always left blank (no reliable source for either; Card Uploader's own eBay export, documented above, already covers this shop's primary eBay listing path for singles - this route is for whatever else gets listed directly). An id that does not exist, or is not `in_stock`, is left out of the file rather than failing the whole export. Marks nothing on any item.
+
+`GET /api/vault/exports/inventory.csv?status=&game=&kind=`
+
+Every `items` row matching the given filters, all optional (`status` and `kind` are the collection's own enum values; `game` is a `games.key` such as `pokemon`, resolved to the relation internally - an unrecognised key matches nothing rather than erroring). Columns: docs/csv-formats.md, "Inventory export".
+
+`GET /api/vault/exports/sales.csv?from=YYYY-MM-DD&to=YYYY-MM-DD`
+
+One row per `sale_lines` row (via `lib/vaultutil.js`'s `saleLineRows`, so the line order matches every other place this codebase reads them) for every `sales` row created in the range. Columns: docs/csv-formats.md, "Sales export". Unlike the stock book, this is a plain listing, not a refund-aware breakdown: `Unit price` and `Discount` are the as-sold figures straight off the line, and `Sale total` is the sale's own `total` repeated on every one of its lines - a partially or fully refunded sale still shows what was originally sold, since the stock book (not this export) is the VAT/margin record that has to account for refunds.
+
+`GET /api/vault/exports/buy-in-register.csv?from=YYYY-MM-DD&to=YYYY-MM-DD` (**admin**)
+
+One row per accepted `trade_in_lines` row (seller snapshot included) for every `trade_ins` row `completed` in the range (by `completed_at`). Columns: docs/csv-formats.md, "Buy-in register export". `Payout type`, `Cash amount` and `Credit amount` are the whole trade-in's own figures, repeated on every line of it - a mixed payout is never split per line anywhere in the data model, so repeating the total is the honest figure rather than an invented split, the same reasoning the stock book already applies to its own purchase columns.
+
+`GET /api/vault/exports/end-listings.csv`
+
+Every `items` row with an `ebay_listing_id` whose `status` is `sold`, so those listings can be ended on eBay (there is no eBay write API in this build - Seller Hub or Card Uploader's own Managed Inventory ends the listing itself). Columns: docs/csv-formats.md, "End-listings export". Marks nothing; `POST /api/vault/items/end-listings` below is the one route that clears an item off this list.
+
+`POST /api/vault/items/end-listings`
+
+Request: `{ "ids": ["<item id>", ...] }`. In one transaction, clears `ebay_listing_id` and sets `ebay_sku` to `""` on each item that has an `ebay_listing_id` to clear; an id that does not exist, or has none, is silently skipped rather than failing the whole call. 400 with no `ids`.
+
+Response 200: `{ "ended": ["<item id>", ...] }` - only the ids actually cleared.
+
+### Imports
+
+`POST /api/vault/imports/card-uploader` and `POST /api/vault/imports/ebay-orders` are both multipart: a `file` field (the CSV) and an optional `type` field (`"card_uploader"` or `"ebay_orders"`) that, when given, must match the route's own type - posting the wrong one is refused with 400 ("This is the Card Uploader import..." / "This is the eBay orders import...") rather than silently importing through the wrong mapping. Both refuse a file over 10 MB, and both refuse cleanly with **"That file is not a CSV we recognise. Check the first line has the column headings."** (400) when the header row resolves none of the mapping's own columns at all, or the file has no rows.
+
+Both run the whole import - the `csv_imports` bookkeeping row and every `items`/`sales` write it makes - inside one `$app.runInTransaction`, so a file that fails partway through a **system** error leaves nothing behind. A single bad *row* never aborts that transaction: name-only rows, unreadable prices, unknown custom labels and already-sold items are collected into the `csv_imports` row's own `errors` list instead, so the rest of the file still goes through.
+
+**Mapping configs.** Neither importer has hard-coded headers: each reads `settings.import_mappings.card_uploader` / `.ebay_orders`, the same `{ headerRow, columns: { field: [header, header, ...] } }` shape docs/csv-formats.md already sketches, the first alias present in the header row winning per field. A Phase 4 migration seeds both with exactly that skeleton (`packages/shared` is not involved - this is plain settings data). **Richard confirms the real header names once a genuine Card Uploader and eBay orders export are in hand**, by editing `settings.import_mappings` directly (there is no dedicated route for it in this phase - it is an ordinary field on the already-admin-only `settings` collection); this file and docs/csv-formats.md record what the seeded default is and where to change it. A settings row with no `import_mappings` entry for a given importer (an install that predates the migration) falls back to the same skeleton hard-coded in `pb_hooks/lib/imports.js`, so an importer never simply refuses to run for want of a mapping.
+
+`POST /api/vault/imports/card-uploader`
+
+Card Uploader's per-card export (docs/csv-formats.md, "Card Uploader import"). A row carrying a `tcgplayerId` or `cardmarketId` matches a `cards` row directly (both are indexed); a row with only a `name` goes to the review list instead of guessing - an `errors` entry `{ "row": <1-based line number>, "kind": "review", "message": "needs match", "name": "...", ... }`. A matched row creates or updates an `items` row: `kind: "single"`, `status: "listed_ebay"`, `ebay_sku` from the file's `CS-XXXXXX` custom label, `price` from the file's price column in pence, `source: "supplier"` (plus `tax_scheme: "margin"` and `acquired_at: now`) unless an item with that `ebay_sku` already exists, in which case it is updated in place rather than duplicated. A row whose price does not read as an amount, or that carries neither an id nor a name, is a hard failure - `{ "row": ..., "kind": "error", "message": "..." }` - and is not counted in `rows_ok`.
+
+Response 200: `{ "import": <csv_imports row>, "matched": <n>, "review": <n> }`. `csv_imports.rows_ok` is `matched + review` (both are a correctly-handled row, even when review means "not yet linked"); `rows_total - rows_ok` is the count of hard failures.
+
+`POST /api/vault/imports/ebay-orders`
+
+eBay's orders report (docs/csv-formats.md, "eBay orders import"). Matches each row's `customLabel` to an item's `ebay_sku`; a match still `listed_ebay` (or anything short of `sold`) gets one `sale_lines` row at the file's sold price and is itself marked `sold` (qty decremented first, for a stock line that somehow carries more than one); the created `sales` row carries `channel: "ebay"` and the order reference as `external_ref`, and leaves `payment` blank - none of `sales.payment`'s values (`sumup_card`, `cash`, `store_credit`, `points`, `mixed`) describe money that went through this shop, since eBay collected the buyer's payment on its own side, and `channel` is what actually says how the sale happened. An item already `sold` is reported rather than sold again - `{ "row": ..., "kind": "already_sold", "message": "already sold", "custom_label": "..." }` - so re-running the same export file, or a later export that overlaps an earlier one, cannot double-sell an item or create a second sale for the same order. An unmatched custom label, or an unreadable sale price, is a hard failure the same way as the Card Uploader importer's own.
+
+Response 200: `{ "import": <csv_imports row>, "sold": <n>, "already_sold": <n> }`. `rows_ok` is `sold` alone - an `already_sold` row changed nothing, so it does not count as a fresh success.
+
+`GET /api/vault/imports/:id`
+
+The `csv_imports` row as stored, `errors` included - the review screen reads this directly rather than a separate endpoint. 404 when the id does not exist.
+
+**`sales.channel` and `sales.external_ref`** (new fields, this phase's migration): `channel` is `"counter"` or `"ebay"`, `external_ref` is free text (the eBay order reference). An ordinary counter sale (`sales.pb.js`, a different package's file this round) never sets `channel` itself, so `pb_hooks/imports.pb.js` carries its own small `onRecordCreate` hook on `sales` that defaults an empty `channel` to `"counter"` - the same pattern `items.pb.js` and `customers.pb.js` already use for a field a different route's create call leaves blank. This is deliberately **not** a change to `sales.pb.js`, which stays untouched this round.
+
+### SumUp
+
+`pb_hooks/adapters/sumup.js` follows the same shape as every other adapter (`adapters/http.js`'s own header comment): plain functions, `transport` always last and optional, so `pb_hooks/adapters/fixture_transport.js` can serve `GG_ADAPTER_TRANSPORT_MODE=fixture` calls for it exactly as it already does for eBay, IGDB and PriceCharting. It calls `GET /v2.1/merchants/{code}/transactions/history?changes_since=<iso>&limit=100`, follows the response's own `links` for paging, and calls `GET /v2.1/merchants/{code}/transactions?id=<id>` per transaction for its `products[]` (absent from the history list). Authentication is a plain `Authorization: Bearer <key>` - a SumUp merchant API key is a long-lived personal access token from the merchant's own dashboard, not an OAuth client-credentials grant, so unlike `adapters/ebay.js` and `adapters/igdb.js` there is no token to fetch or cache. The key lives at `settings.api_keys.sumup` (merged into the existing `api_keys` blob, matching every other provider's key already there) and the merchant code at `settings.sumup.merchant_code` - both seeded (empty) by this phase's migration. Neither leaves the server: `api_keys` is already dropped wholesale by name from `GET /api/vault/config`, and `sumup.merchant_code` is not a key or secret, so it is fine for an ordinary staff member to see it there.
+
+`POST /api/vault/sumup/pull` (**admin**)
+
+Fetches every transaction changed since the last pull (or the last 24 hours, on a first run with nothing stored yet), upserts `sumup_transactions` by `sumup_id`, and matches each newly-seen one to a sale. With no API key or merchant code configured, returns `{ "fetched": 0, "matched": 0, "unmatched": 0 }` rather than an error - the hourly cron below runs on every install, configured or not.
+
+**Matching, in order:**
+1. A `products[]` entry whose `name` starts with one of our own SKUs (exactly the form `GET /api/vault/exports/sumup.csv` writes into `Item name` - the display form, hyphen included, or the encoded form, either parses) - the item it names is looked up directly (`items.sku`), then its most recent `sale_lines` row's `sale`.
+2. Failing that, a `sales` row with `payment` `sumup_card` or `mixed`, the same `total`, `created` within **three minutes** of the transaction's own `timestamp`, that no other transaction has matched already (so two transactions of the same amount in the same few minutes cannot both claim one sale).
+
+A transaction that already carries a `matched_sale` from an earlier pull is left alone - only its other fields (`amount`, `status`, `products`, `fetched_at`, ...) refresh - which is what keeps a repeat pull from ever re-matching, and hence from ever duplicating, a sale a previous pull already resolved. `sumup_transactions.amount` is parsed from SumUp's decimal amount through the shared money helpers (`pb_hooks/lib/shared/money.js`), never a float.
+
+Response 200: `{ "fetched": <n>, "matched": <n>, "unmatched": <n> }` - counts for this pull alone (an already-matched transaction seen again still counts as `matched`).
+
+Also runs hourly, `:15` past the hour from 08:00 to 22:00 UTC (`pb_hooks/crons_sumup.pb.js`, `cronAdd("sumup_pull", "15 8-22 * * *", ...)` - a few minutes after the hour so a sale rung through moments ago has settled on SumUp's side, and only during trading hours). Kept out of `pb_hooks/crons.pb.js` (another package's file this round) as its own small file, the same shape as every existing `cronAdd` there.
+
+`GET /api/vault/sumup/reconcile?date=YYYY-MM-DD` (staff)
+
+The day's `sumup_transactions` (by `timestamp`) beside the day's card sales (`sales` with `payment` `sumup_card` or `mixed`, by `created`), for the Cash screen.
+
+Response 200
+```json
+{
+  "date": "2026-09-20",
+  "matched": [
+    { "transaction": { "id": "...", "sumup_id": "...", "transaction_code": "...", "amount": 1999, "timestamp": "...", "status": "SUCCESSFUL" }, "sale": { "id": "...", "number": "GG-S-000123", "total": 1999 } }
+  ],
+  "unmatched_transactions": [ { "id": "...", "sumup_id": "...", "transaction_code": "...", "amount": 500, "timestamp": "...", "status": "SUCCESSFUL" } ],
+  "unmatched_sales": [ { "id": "...", "number": "GG-S-000124", "total": 500, "payment": "sumup_card", "created": "..." } ],
+  "totals": { "sumup": 2499, "sales": 2499, "difference": 0 }
+}
+```
+`totals.sumup` and `totals.sales` are the day's own transaction and sale totals (every row in range, matched or not); `difference` is `sumup - sales`. 400 with no `date`, or one not shaped `YYYY-MM-DD`.
+
+### Implementation notes (as built in Phase 4)
+
+- **`GET /api/vault/exports/sumup.csv`'s `since` filter is additive, not exclusive**: an item never exported appears regardless of `since` (it has to reach SumUp at least once), and `since` only widens the set to items that have also *changed* since then. Leaving `since` off is therefore the narrowest call (never-exported items only), not the widest.
+- **The `Item name` display-form SKU and the `SKU`/`Barcode` encoded-form SKU are deliberately different strings on the same row** - `pb_hooks/lib/shared/sku.js`'s `displayCode`/the record's own stored (encoded) value - matching docs/csv-formats.md's worked example exactly. `POST /api/vault/sumup/pull`'s SKU-matching rule accepts either, since `sku.parseCode` normalises a hyphen away before validating.
+- **`lib/csv.js` is the one place every Phase 4 route builds or reads a CSV through** - `row()`/`cell()`/`pounds()` wrap `lib/vaultutil.js`'s own `csvRow`/`csvCell`/`poundsCell` rather than duplicating the escaping rule, and `parse()`/`mapRows()` are the shared reader every importer's mapping resolves through. `queryParam()`/`dateParam()` live here too, not in `lib/vaultutil.js`: a `routerAdd` handler cannot see a plain function declared at the top of its own `.pb.js` file (pb/README.md's hook-isolation rule), and `exports.pb.js` now registers six such handlers that all need one.
+- **The eBay listing export's `Category` and `ConditionID` columns are always blank on purpose.** There is no eBay File Exchange export on hand to check a real column set against, and no reliable source in this build for either an eBay category id or an eBay condition id - Seller Hub's own matching is more reliable than a guess from `games`/`kind`/`condition`. Confirm the wider column set against a real eBay bulk-listing template once Richard has one, the same "confirm once a real export exists" caveat as the Card Uploader and eBay orders mappings.
+- **A refund is not reflected in `sales.csv`.** It is a plain listing of what was sold, at the as-sold figures - the stock book (`GET /api/vault/exports/stock-book`, Phase 2) is the one export that already accounts for refunds, and duplicating that accounting here would risk the two disagreeing.
+- **The SumUp pull writes one `audit_log` row per call, not per transaction** (`action: "sumup_pull"`, `meta: { since, fetched, matched, unmatched }`), the same way a bulk export audits its own filters and row count rather than one row per CSV line.
+- **Every Phase 4 fixture used by `pb/scripts/check.sh` is hand-written** (`pb_hooks/adapters/fixtures/sumup_HANDWRITTEN_*.json`), the same as eBay's, IGDB's and PriceCharting's own - nobody on this build has a SumUp merchant account to record a real response from. One of the two fixture transactions carries a `timestamp` of the literal string `"__NOW__"`, resolved to the real current instant by `fixture_transport.js` itself the moment it is served: a transaction meant to be matched by amount and a three-minute time window cannot be tested against a timestamp fixed at fixture-authoring time, since that will essentially never fall within three minutes of whatever wall-clock second a real test run reaches it at. Only that one field is a placeholder; the fixture's shape is otherwise the real, documented response shape.
