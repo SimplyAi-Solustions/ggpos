@@ -383,6 +383,7 @@ export type IdDocumentsRecord = {
 	customer: RecordIdString
 	expires_at?: IsoDateString
 	id: string
+	mime?: string
 	photo?: FileNameString
 	taken_at?: IsoDateString
 	taken_by?: RecordIdString
@@ -888,6 +889,7 @@ export type SaleLinesRecord = {
 	id: string
 	item: RecordIdString
 	qty?: number
+	refunded_qty?: number
 	sale: RecordIdString
 	status?: SaleLinesStatusOptions
 	tax_scheme?: SaleLinesTaxSchemeOptions
@@ -929,6 +931,7 @@ export type SalesRecord<Tpayment_split = unknown> = {
 	payment?: SalesPaymentOptions
 	payment_split?: null | Tpayment_split
 	points_earned?: number
+	refunded_total?: number
 	staff?: RecordIdString
 	status?: SalesStatusOptions
 	subtotal?: number
@@ -967,12 +970,15 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tmarkup_bands = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown> = {
+export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown> = {
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
+	cash_variance_alert?: number
 	condition_multipliers?: null | Tcondition_multipliers
 	created: IsoAutoDateString
+	default_intake_location?: RecordIdString
+	email?: null | Temail
 	email_api_key?: string
 	email_provider?: SettingsEmailProviderOptions
 	id: string
@@ -980,9 +986,11 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	label_default_template?: RecordIdString
 	markup_bands?: null | Tmarkup_bands
 	min_single_offer?: number
+	offer?: null | Toffer
 	push_vapid_private_key?: string
 	push_vapid_public_key?: string
 	quote_expiry_days?: number
+	receipt_terms?: string
 	retro_source_priority?: null | Tretro_source_priority
 	sell_rounding?: SettingsSellRoundingOptions
 	shop_address?: string
@@ -1074,21 +1082,52 @@ export const TradeInLinesMarketCurrencyOptions = {
 	"USD": "USD",
 } as const
 export type TradeInLinesMarketCurrencyOptions = typeof TradeInLinesMarketCurrencyOptions[keyof typeof TradeInLinesMarketCurrencyOptions]
+
+export const TradeInLinesKindOptions = {
+	"single": "single",
+	"graded": "graded",
+	"retro": "retro",
+	"sealed": "sealed",
+	"accessory": "accessory",
+	"other": "other",
+} as const
+export type TradeInLinesKindOptions = typeof TradeInLinesKindOptions[keyof typeof TradeInLinesKindOptions]
+
+export const TradeInLinesCompletenessOptions = {
+	"loose": "loose",
+	"boxed": "boxed",
+	"cib": "cib",
+} as const
+export type TradeInLinesCompletenessOptions = typeof TradeInLinesCompletenessOptions[keyof typeof TradeInLinesCompletenessOptions]
+
+export const TradeInLinesCosmeticGradeOptions = {
+	"A": "A",
+	"B": "B",
+	"C": "C",
+} as const
+export type TradeInLinesCosmeticGradeOptions = typeof TradeInLinesCosmeticGradeOptions[keyof typeof TradeInLinesCosmeticGradeOptions]
 export type TradeInLinesRecord = {
 	accepted?: boolean
 	card?: RecordIdString
+	completeness?: TradeInLinesCompletenessOptions
 	condition?: TradeInLinesConditionOptions
+	cosmetic_grade?: TradeInLinesCosmeticGradeOptions
 	created: IsoAutoDateString
 	finish?: string
 	free_text_title?: string
 	fx_rate?: number
+	game?: RecordIdString
 	id: string
 	item?: RecordIdString
+	kind?: TradeInLinesKindOptions
 	market_currency?: TradeInLinesMarketCurrencyOptions
 	market_price?: number
 	market_source?: string
 	offer_pct?: number
 	offer_price?: number
+	override_cash?: number
+	override_credit?: number
+	override_reason?: string
 	qty?: number
 	retro_title?: RecordIdString
 	trade_in: RecordIdString
@@ -1126,7 +1165,8 @@ export type TradeInsRecord = {
 	id: string
 	id_checked?: boolean
 	id_checked_by?: RecordIdString
-	number: string
+	id_document?: RecordIdString
+	number?: string
 	payout_cash?: number
 	payout_credit?: number
 	payout_type?: TradeInsPayoutTypeOptions
@@ -1221,7 +1261,7 @@ export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemp
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tmarkup_bands = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tmarkup_bands, Tretro_source_priority, Tsource_priority>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Temail, Tmarkup_bands, Toffer, Tretro_source_priority, Tsource_priority>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
