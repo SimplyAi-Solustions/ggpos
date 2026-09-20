@@ -249,17 +249,29 @@ test("ygoprodeck.getPrices: cardmarket EUR (overall) + tcgplayer USD (this print
   );
 });
 
-test("ygoprodeck.search: a lightweight listing that never carries a hotlinked image", () => {
+test("ygoprodeck.search: one row per printing (card_sets[]), never a hotlinked image", () => {
   const ygoprodeck = adapter("ygoprodeck.js");
   const rows = ygoprodeck.search("dark magician", () => ({
     statusCode: 200,
     json: fixture("ygoprodeck_46986414.json"),
   }));
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].name, "Dark Magician");
-  assert.equal(rows[0].rehostImage, true);
-  assert.equal(rows[0].imageSmall, "");
-  assert.equal(rows[0].imageLarge, "");
+  // The fixture's one card has 5 printings (card_sets[]) - a card has no
+  // set code of its own in YGOPRODeck's shape, only its printings do, so
+  // search() emits one row per printing, not one row per card (writing a
+  // blank-setCode row through fails card_sets' required validation).
+  assert.equal(rows.length, 5);
+  const ct13 = rows.find((r) => r.number === "CT13-EN003");
+  assert.ok(ct13, "expected the CT13-EN003 printing among the rows");
+  assert.equal(ct13.name, "Dark Magician");
+  assert.equal(ct13.setCode, "CT13");
+  assert.equal(ct13.setName, "2016 Mega-Tins");
+  assert.equal(ct13.rehostImage, true);
+  assert.equal(ct13.imageSmall, "");
+  assert.equal(ct13.imageLarge, "");
+  assert.ok(
+    rows.every((r) => r.setCode && r.number.indexOf(r.setCode) === 0),
+    "every row's number carries its own setCode as a prefix"
+  );
 });
 
 // =======================================================================
@@ -275,7 +287,12 @@ test("optcg.getBySetNumber: picks the base printing over its parallel, re-hosts 
   };
   const card = optcg.getBySetNumber("OP01", "001", transport);
   assert.equal(card.number, "OP01-001");
-  assert.equal(card.setCode, "OP-01");
+  assert.equal(
+    card.setCode,
+    "OP01",
+    "the card's own code prefix (card_set_id), not set_id's differently-punctuated OP-01 - " +
+      "getBySetNumber reconstructs OP01-001 from set+number, so a card_sets row keyed on OP-01 could never be found by a later lookup"
+  );
   assert.equal(card.setName, "Romance Dawn");
   assert.equal(card.rehostImage, true, "OPTCG images are cached locally, never hotlinked");
   assert.deepEqual(card.imageBytes, [9, 9, 9]);
@@ -340,6 +357,31 @@ test("frankfurter.fetchRates: inverts to GBP-per-unit (packages/shared's own con
   assert.equal(rates.date, "2026-09-18");
 });
 
+test("frankfurter.fetchRates: a non-positive rate is dropped, not inverted into Infinity or a negative figure", () => {
+  const frankfurter = adapter("frankfurter.js");
+  // A hand-crafted response shaped like Frankfurter's own: EUR is a normal
+  // rate, USD has come back 0 (the one shape a real weekend/bank-holiday
+  // response can take - see crons.pb.js's "fx" cron, which skips writing a
+  // row at all when every quote ends up dropped this way).
+  const transport = () => ({
+    statusCode: 200,
+    json: { amount: 1.0, base: "GBP", date: "2026-09-19", rates: { EUR: 1.1644, USD: 0 } },
+  });
+  const rates = frankfurter.fetchRates(["EUR", "USD"], transport);
+  assert.ok(rates.quotes.EUR > 0, "a normal rate is kept");
+  assert.equal(Object.prototype.hasOwnProperty.call(rates.quotes, "USD"), false, "a zero rate is dropped, not inverted to Infinity");
+});
+
+test("frankfurter.fetchRates: every quote non-positive leaves an empty quotes object", () => {
+  const frankfurter = adapter("frankfurter.js");
+  const transport = () => ({
+    statusCode: 200,
+    json: { amount: 1.0, base: "GBP", date: "2026-09-20", rates: { EUR: 0, USD: 0 } },
+  });
+  const rates = frankfurter.fetchRates(["EUR", "USD"], transport);
+  assert.deepEqual(rates.quotes, {}, "crons.pb.js's fx cron reads this as 'nothing usable' and skips the write entirely");
+});
+
 // =======================================================================
 // eBay - median of the five lowest GBP/GB asking prices, then the haircut.
 // Hand-written fixtures (no Browse API production access on this build).
@@ -380,12 +422,19 @@ test("ebay.getPrices: end to end through a stub OAuth token and search, source o
     "Test Card NM",
     "test-cache-key",
     15,
+    false, // bypassCache
     transport
   );
   assert.equal(prices.length, 1);
   assert.equal(prices[0].source, "ebay_uk_asking");
   assert.equal(prices[0].currency, "GBP");
-  assert.equal(prices[0].market, "12.75");
+  // Already an integer in pence (marketMinor), never a decimal string -
+  // pricing_policy.js's fromAdapterCandidate takes it as-is, so a GBP
+  // figure that started out exact never round-trips through a string.
+  assert.equal(prices[0].market, null);
+  assert.equal(prices[0].marketMinor, 1275);
+  assert.equal(prices[0].lowMinor, 1275);
+  assert.equal(prices[0].midMinor, 1500);
 });
 
 test("ebay.getPrices: switched off entirely with no key (PLAN.md)", () => {
@@ -427,16 +476,24 @@ test("ebay.getPrices: the 24-hour cache skips a second call entirely (globalThis
 // fixtures (no PriceCharting key on this build).
 // =======================================================================
 
-test("pricecharting.getPrices: PAL first when a PAL entry exists, integer US cents throughout", () => {
+test("pricecharting.getPrices: PAL first when a PAL entry exists, matched by console-name (never the URL), integer US cents throughout", () => {
   const pricecharting = adapter("pricecharting.js");
   const calls = [];
   const transport = (req) => {
     calls.push(req.url);
     if (req.url.indexOf("/products?") >= 0) {
-      assert.match(req.url, /pal-super-nintendo/, "PAL category must be searched first");
+      // The query is just the title now - PriceCharting keys PAL/NTSC by
+      // console-name in the response, never by a URL-shaped category slug
+      // (adapters/pricecharting.js's own searchInCategory) - so the PAL and
+      // NTSC search calls are indistinguishable at the URL, and this
+      // fixture carries both an NTSC and a PAL row deliberately, so the PAL
+      // match has to pick the right one out of several.
+      assert.ok(req.url.indexOf("Super%20Mario%20Kart") >= 0, "the title itself is the query: " + req.url);
+      assert.ok(req.url.indexOf("pal-super-nintendo") < 0, "the category must never leak into the query string");
       return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_pal.json") };
     }
     if (req.url.indexOf("/product?") >= 0) {
+      assert.match(req.url, /id=pal-/, "must fetch the PAL product, not the NTSC one also in the search results");
       return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_product_pal.json") };
     }
     throw new Error("unexpected PriceCharting URL: " + req.url);
@@ -447,7 +504,7 @@ test("pricecharting.getPrices: PAL first when a PAL entry exists, integer US cen
   assert.equal(prices[0].currency, "USD");
   assert.equal(typeof prices[0].market, "number", "PriceCharting is integer cents, never a string");
   assert.equal(prices[0].market, 2500, "cib-price, in cents");
-  assert.ok(!calls.some((u) => u.indexOf("super-nintendo") >= 0 && u.indexOf("pal-") < 0), "must never fall through to NTSC when PAL matched");
+  assert.equal(calls.filter((u) => u.indexOf("/products?") >= 0).length, 1, "must never fall through to an NTSC search once PAL matched");
 
   const money = sharedLib("money.js");
   assert.equal(money.usdCentsToGbpPence(prices[0].market, 0.75), 1875);
@@ -455,14 +512,17 @@ test("pricecharting.getPrices: PAL first when a PAL entry exists, integer US cen
 
 test("pricecharting.getPrices: falls back to NTSC only when PAL has no entry", () => {
   const pricecharting = adapter("pricecharting.js");
+  const calls = [];
   const transport = (req) => {
-    if (req.url.indexOf("/products?") >= 0 && req.url.indexOf("pal-super-nintendo") >= 0) {
-      return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_empty.json") };
-    }
+    calls.push(req.url);
     if (req.url.indexOf("/products?") >= 0) {
+      // This fixture carries only an NTSC row: the first (PAL) search call
+      // finds nothing that reads as PAL and getPrices() must try again for
+      // NTSC, hitting this identical URL a second time.
       return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_ntsc.json") };
     }
-    if (req.url.indexOf("/product?") >= 0 && req.url.indexOf("ntsc-") >= 0) {
+    if (req.url.indexOf("/product?") >= 0) {
+      assert.match(req.url, /id=ntsc-/);
       return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_product_ntsc.json") };
     }
     throw new Error("unexpected PriceCharting URL: " + req.url);
@@ -471,9 +531,17 @@ test("pricecharting.getPrices: falls back to NTSC only when PAL has no entry", (
   assert.equal(prices.length, 1);
   assert.equal(prices[0].source, "pricecharting_ntsc");
   assert.equal(prices[0].market, 1800);
+  assert.equal(calls.filter((u) => u.indexOf("/products?") >= 0).length, 2, "PAL search, then NTSC search, both against the same URL");
 
   const money = sharedLib("money.js");
   assert.equal(money.usdCentsToGbpPence(prices[0].market, 0.75), 1350);
+});
+
+test("pricecharting.getPrices: no candidate at all when neither region has an entry", () => {
+  const pricecharting = adapter("pricecharting.js");
+  const transport = () => ({ statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_empty.json") });
+  const prices = pricecharting.getPrices("key", "Some Obscure Game", "snes_pal_box", "cib", transport);
+  assert.deepEqual(prices, []);
 });
 
 test("pricecharting.getPrices: switched off entirely with no key configured", () => {
@@ -521,6 +589,60 @@ test("igdb.search: token fetched once and cached, Apicalypse body, parsed shape"
   assert.deepEqual(first[0].platformNames, ["Super Nintendo Entertainment System"]);
   assert.match(first[0].cover, /^https:\/\/images\.igdb\.com\//);
   assert.equal(second.length, 2);
+});
+
+// =======================================================================
+// registry.js - the "set number" query classifier. A minimal fake `app`
+// stands in for PocketBase: only the two methods resolveSetNumberQuery's
+// own call chain actually reaches (findRecordsByFilter for
+// ensureSetsSynced/resolveSetCode's card_sets scan) are implemented, scoped
+// to one seeded game.
+// =======================================================================
+
+test("registry.resolveSetNumberQuery: a two-word name is not misread as an exact set+number lookup", () => {
+  const registry = adapter("registry.js");
+  const GAME_ID = "game1";
+  const fakeApp = {
+    findRecordsByFilter(collection, filter, sort, limit, offset, params) {
+      if (collection !== "card_sets" || !params || params.game !== GAME_ID) return [];
+      // One seeded set, standing in for a normal, already-synced install -
+      // ensureSetsSynced's own hasSets check finds this and returns
+      // immediately, so this test needs no adapter and no statestore at all.
+      return [{ getString: (f) => (f === "code" ? "sv03.5" : "") }];
+    },
+    findFirstRecordByFilter() {
+      return null;
+    },
+  };
+
+  // "ex" does not look like a collector number, so this reads as a name
+  // search, never an exact lookup for set "charizard" (the bug this
+  // classifier exists to fix).
+  assert.equal(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "pokemon", null, "charizard ex"), null);
+  // Same shape, a different game - "bolt" is not a collector number either.
+  assert.equal(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "mtg", null, "lightning bolt"), null);
+
+  // The alias table resolves before any card_sets lookup at all.
+  assert.deepEqual(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "pokemon", null, "sv151 199"), {
+    set: "sv03.5",
+    number: "199",
+  });
+  // A real (non-aliased) set code still resolves, case-insensitively,
+  // against the seeded card_sets row.
+  assert.deepEqual(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "pokemon", null, "SV03.5 199"), {
+    set: "sv03.5",
+    number: "199",
+  });
+  // A set code with no card_sets row at all (and no alias) does not resolve.
+  assert.equal(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "pokemon", null, "unknownset 199"), null);
+
+  // One Piece and Yu-Gi-Oh still use the single hyphenated-token form and
+  // never touch `app` at all.
+  assert.deepEqual(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "onepiece", null, "OP01-001"), {
+    set: "OP01",
+    number: "001",
+  });
+  assert.equal(registry.resolveSetNumberQuery(fakeApp, GAME_ID, "onepiece", null, "one piece booster"), null);
 });
 
 // =======================================================================

@@ -315,18 +315,27 @@ routerAdd(
             name: found.name,
             external_ids: found.externalIds,
           });
+          // Saved first, unconditionally, so a title is written through
+          // even when its cover cannot be - cacheImageFromUrl only ever
+          // saves the record itself as a side effect of a successful fetch
+          // (adapters/images.js's storeValidatedBytes), so calling it
+          // before this record has ever been saved would silently drop the
+          // whole title on a dead link, a timeout, or a response that does
+          // not sniff as an image, exactly the kind of auxiliary failure
+          // that must never block the primary write (see images.js's own
+          // file banner).
+          e.app.save(record);
           // Cover art is fetched once, only for a title this database has
           // never seen before, through the same validated, sniffed path
           // every re-hosted image goes through (adapters/images.js) -
           // IGDB allows hotlinking, but `cover` is a PocketBase file field
           // (unlike cards.image_small/image_large), so it needs an actual
           // file either way, and never on every repeat hit of a search a
-          // member of staff has already resolved once.
+          // member of staff has already resolved once. Best-effort: its own
+          // failure is logged and swallowed, never thrown back up here.
           if (found.cover) {
             const images = require(`${__hooks}/adapters/images.js`);
             images.cacheImageFromUrl(e.app, record, "cover", [], found.cover, 15);
-          } else {
-            e.app.save(record);
           }
         } catch (err) {
           console.log(`[retro/lookup] could not write through "${found.name}": ${err}`);

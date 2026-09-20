@@ -20,9 +20,62 @@
  * reads the same as a line genuinely counted at zero, which is exactly
  * "found something that was not on the list".
  *
- * The handler runs in its own isolated goja context, so every require()
- * and helper lives inside the handler body - see pb/README.md.
+ * Each registered handler runs in its own isolated goja context, so every
+ * require() and helper lives inside the handler body - see pb/README.md.
  */
+
+/**
+ * Only one count may be open per location at a time (a partial unique index
+ * on `stock_counts (location) WHERE status = 'open'` -
+ * 1789820220_stock_counts_one_open.js): the counter app already offers to
+ * resume an open count rather than start a second one, and this is what
+ * makes that rule real rather than merely a UI convention. A friendly
+ * pre-check first (the ordinary case: nobody is racing), then the same
+ * unique-violation safety net cash.pb.js's cash-sessions/open route uses,
+ * for the moment two staff members start a count on the same location at
+ * once and only the index itself catches it.
+ */
+onRecordCreateRequest((e) => {
+  if (e.record.getString("status") !== "open") {
+    e.next();
+    return;
+  }
+
+  const ALREADY_OPEN =
+    "A count of this location is already open. Carry on with it or close it first.";
+
+  /** A unique-index collision, whichever shape PocketBase reports it in - same check as cash.pb.js's. */
+  function isUniqueViolation(err) {
+    const text = String((err && err.message) || err || "");
+    return /value must be unique/i.test(text) || /unique constraint/i.test(text);
+  }
+
+  // The index is a plain `(location) WHERE status = 'open'`, with no
+  // separate carve-out for a blank location - two counts opened with no
+  // location picked at all collide on it exactly the same as two opened
+  // against the same real location, so this check does not special-case
+  // an empty locationId either.
+  const locationId = e.record.getString("location");
+  let existing = null;
+  try {
+    existing = e.app.findFirstRecordByFilter("stock_counts", "location = {:location} && status = 'open'", {
+      location: locationId,
+    });
+  } catch (err) {
+    existing = null;
+  }
+  if (existing) {
+    throw e.error(409, ALREADY_OPEN, null);
+  }
+
+  try {
+    e.next();
+  } catch (err) {
+    if (isUniqueViolation(err)) throw e.error(409, ALREADY_OPEN, null);
+    throw err;
+  }
+}, "stock_counts");
+
 routerAdd(
   "POST",
   "/api/vault/stock-counts/{id}/close",

@@ -70,6 +70,29 @@ ok() {
   echo "OK: $1"
 }
 
+# Read JSON from stdin, print the length of the array at a dot-separated
+# path (or of the top-level value itself when the path is ""), or 0 when
+# that value is missing or not an array. Complements jval, which cannot
+# usefully stringify an array of objects.
+jlen() {
+  node -e '
+    let d = "";
+    process.stdin.on("data", (c) => (d += c));
+    process.stdin.on("end", () => {
+      let v;
+      try { v = JSON.parse(d || "{}"); } catch (e) { v = null; }
+      const path = process.argv[1] || "";
+      if (path) {
+        for (const key of path.split(".")) {
+          if (v == null) break;
+          v = v[key];
+        }
+      }
+      process.stdout.write(String(Array.isArray(v) ? v.length : 0));
+    });
+  ' "$1"
+}
+
 # True when a curl %{time_total} reading is under `limit` seconds.
 under_seconds() {
   awk -v t="$1" -v limit="$2" 'BEGIN { exit !(t + 0 < limit + 0) }'
@@ -104,7 +127,7 @@ echo
 "$PB" --dir "$TMP_DIR" superuser upsert "$SUPER_EMAIL" "$SUPER_PASSWORD" >/dev/null
 ok "superuser created"
 
-GG_ID_PHOTO_KEY="$ID_PHOTO_KEY" GG_ADAPTER_TRANSPORT_MODE="offline_fail" "$PB" serve \
+GG_ID_PHOTO_KEY="$ID_PHOTO_KEY" GG_ADAPTER_TRANSPORT_MODE="fixture" "$PB" serve \
   --dir "$TMP_DIR" \
   --hooksDir "$HOOKS_DIR" \
   --migrationsDir "$MIGRATIONS_DIR" \
@@ -147,6 +170,8 @@ EXPECTED_COLLECTIONS=(
   staff customers customer_private id_documents
   # Catalogue
   games platforms card_sets cards price_snapshots retro_titles fx_rates
+  # Phase 3 adapters
+  adapter_state
   # Stock
   items locations stock_counts stock_count_lines want_list
   # Trading
@@ -168,6 +193,16 @@ for name in "${EXPECTED_COLLECTIONS[@]}"; do
   echo "$ACTUAL_COLLECTIONS" | grep -qx "$name" || fail "collection missing: $name"
 done
 ok "all ${#EXPECTED_COLLECTIONS[@]} collections from the plan exist"
+
+# adapter_state holds OAuth tokens and sync stamps - every rule null
+# (superuser only), the same reasoning that keeps id_documents and
+# audit_log off the regular API entirely (1789819920_phase3_adapter_state.js).
+ADAPTER_STATE_SCHEMA="$(curl -s "$BASE/api/collections/adapter_state" -H "Authorization: $SUPER_TOKEN")"
+for rule in listRule viewRule createRule updateRule deleteRule; do
+  [ "$(echo "$ADAPTER_STATE_SCHEMA" | jval "$rule")" = "" ] \
+    || fail "adapter_state.$rule is '$(echo "$ADAPTER_STATE_SCHEMA" | jval "$rule")', expected null (superuser only)"
+done
+ok "adapter_state is superuser-only: every rule is null"
 
 # -----------------------------------------------------------------------
 # 3. Staff admin
@@ -1813,13 +1848,18 @@ echo "$OVERRIDE_AUDIT" | grep -qF "water damaged" && fail "the override reason r
 ok "the audit meta lists the overridden line ids and never the reason"
 
 # -----------------------------------------------------------------------
-# 19. Phase 3: lookup, prices and FX - route-level checks that need no
-#     network at all. The server was started above with
-#     GG_ADAPTER_TRANSPORT_MODE=offline_fail (pb_hooks/adapters/http.js),
-#     so any route that mistakenly called an adapter out to the real
-#     network would throw and this section's own status/shape assertions
-#     would catch it immediately, rather than the check silently passing
-#     because a live call happened to succeed.
+# 19. Phase 3: lookup, prices and FX. The server was started above with
+#     GG_ADAPTER_TRANSPORT_MODE=fixture (pb_hooks/adapters/http.js,
+#     pb_hooks/adapters/fixture_transport.js): every adapter call this
+#     section makes gets a canned answer from pb_hooks/adapters/fixtures/,
+#     the same recorded/hand-written fixtures pb/scripts/check-adapters.mjs
+#     unit-tests each adapter against, so these checks exercise the real
+#     routes end to end - the write-through into cards/card_sets, the GBP
+#     conversion, the audit row - without a real network call anywhere. A
+#     URL fixture_transport.js has no mapping for still throws exactly the
+#     way GG_ADAPTER_TRANSPORT_MODE=offline_fail always has, so a route
+#     this build never intended to call out from still fails loudly here
+#     rather than silently reaching the real network.
 # -----------------------------------------------------------------------
 
 # --- 19a. GET /api/vault/fx reports stale with no rows at all -----------
@@ -1847,7 +1887,7 @@ P3_FRESH_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
 LOOKUP_RESP="$(curl -s -w '\n%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup/pokemon/p3-fresh-set/199")"
 LOOKUP_STATUS="$(echo "$LOOKUP_RESP" | tail -n1)"
 LOOKUP_BODY="$(echo "$LOOKUP_RESP" | sed '$d')"
-[ "$LOOKUP_STATUS" = "200" ] || fail "a fresh cached lookup returned $LOOKUP_STATUS, expected 200 (did it try to call out under GG_ADAPTER_TRANSPORT_MODE=offline_fail?): $LOOKUP_BODY"
+[ "$LOOKUP_STATUS" = "200" ] || fail "a fresh cached lookup returned $LOOKUP_STATUS, expected 200 (did it try to call out to a URL fixture_transport.js has no mapping for?): $LOOKUP_BODY"
 [ "$(echo "$LOOKUP_BODY" | jval "cards.0.id")" = "$P3_FRESH_CARD_ID" ] || fail "the cached lookup did not return the expected card: $LOOKUP_BODY"
 [ "$(echo "$LOOKUP_BODY" | jval "cards.0.set_name")" = "Phase 3 Fresh Set" ] || fail "the cached lookup row is missing its set_name: $LOOKUP_BODY"
 ok "the lookup route serves a card whose last_synced is fresh straight from the database, with no outbound call"
@@ -2008,6 +2048,18 @@ STOCK_COUNT_ID="$(curl -s -X POST "$BASE/api/collections/stock_counts/records" \
   -d "{\"location\":\"$STOCK_COUNT_LOCATION_ID\",\"status\":\"open\"}" | jval id)"
 [ -n "$STOCK_COUNT_ID" ] || fail "could not create the stock count"
 
+# Only one open count per location (1789820220_stock_counts_one_open.js): a
+# second one against the same, still-open location is refused with 409,
+# through stockcounts.pb.js's onRecordCreateRequest hook, not a generic 400.
+SECOND_OPEN_COUNT_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/stock_counts/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"location\":\"$STOCK_COUNT_LOCATION_ID\",\"status\":\"open\"}")"
+SECOND_OPEN_COUNT_STATUS="$(echo "$SECOND_OPEN_COUNT_RESP" | tail -n1)"
+SECOND_OPEN_COUNT_BODY="$(echo "$SECOND_OPEN_COUNT_RESP" | sed '$d')"
+[ "$SECOND_OPEN_COUNT_STATUS" = "409" ] || fail "a second open count on an already-open location returned $SECOND_OPEN_COUNT_STATUS, expected 409: $SECOND_OPEN_COUNT_BODY"
+echo "$SECOND_OPEN_COUNT_BODY" | grep -qF "already open" || fail "the second-open-count refusal does not explain itself: $SECOND_OPEN_COUNT_BODY"
+ok "a second open stock count on the same location is refused with 409"
+
 LINE_EXPECTED_ID="$(curl -s -X POST "$BASE/api/collections/stock_count_lines/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"stock_count\":\"$STOCK_COUNT_ID\",\"item\":\"$EXPECTED_STOCK_ITEM_ID\",\"expected_qty\":1,\"scanned_qty\":1}" | jval id)"
@@ -2050,6 +2102,204 @@ CLOSE_AGAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"move_unexpected":false}')"
 [ "$CLOSE_AGAIN_STATUS" = "409" ] || fail "closing an already-closed stock count returned $CLOSE_AGAIN_STATUS, expected 409"
 ok "closing an already-closed stock count is refused with 409"
+
+# -----------------------------------------------------------------------
+# 20. Fixture-backed adapter checks: the real routes, real (fixture)
+#     adapter data, still with no live network call anywhere - see the
+#     GG_ADAPTER_TRANSPORT_MODE=fixture note above section 19.
+# -----------------------------------------------------------------------
+
+# --- 20a. A name search per game, through each adapter's own search fixture
+YUGIOH_SEARCH_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup?game=yugioh&q=dark%20magician")"
+[ "$(echo "$YUGIOH_SEARCH_JSON" | jval "cards.0.name")" = "Dark Magician" ] \
+  || fail "a Yu-Gi-Oh! name search for 'dark magician' did not return Dark Magician: $YUGIOH_SEARCH_JSON"
+ok "a Yu-Gi-Oh! name search ('dark magician') returns printings from the fixture"
+
+POKEMON_SEARCH_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup?game=pokemon&q=charizard%20ex")"
+POKEMON_SEARCH_COUNT="$(echo "$POKEMON_SEARCH_JSON" | jlen cards)"
+[ "$POKEMON_SEARCH_COUNT" = "5" ] \
+  || fail "a Pokemon name search for 'charizard ex' returned $POKEMON_SEARCH_COUNT cards, expected the 5-row search fixture: $POKEMON_SEARCH_JSON"
+ok "a Pokemon name search ('charizard ex') is not misread as an exact set+number lookup and returns 5 cards"
+
+MTG_SEARCH_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup?game=mtg&q=lightning%20bolt")"
+MTG_SEARCH_COUNT="$(echo "$MTG_SEARCH_JSON" | jlen cards)"
+[ "$MTG_SEARCH_COUNT" -ge 1 ] 2>/dev/null \
+  || fail "an MTG name search for 'lightning bolt' returned $MTG_SEARCH_COUNT cards, expected at least 1: $MTG_SEARCH_JSON"
+ok "an MTG name search ('lightning bolt') reaches Scryfall's search fixture and returns cards"
+
+# --- 20b. The fx cron stores the rate's own date, distinct from fetched_at
+FX_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/fx" -H "Authorization: $SUPER_TOKEN")"
+[ "$FX_CRON_STATUS" = "204" ] || fail "POST /api/crons/fx returned $FX_CRON_STATUS, expected 204"
+
+FX_ROW_JSON="$(curl -s "$BASE/api/collections/fx_rates/records?perPage=1&sort=-fetched_at" -H "Authorization: $STAFF_TOKEN")"
+FX_ROW_DATE="$(echo "$FX_ROW_JSON" | jval "items.0.date")"
+[ "$FX_ROW_DATE" = "2026-09-18" ] || fail "the fx cron's stored row has date '$FX_ROW_DATE', expected the fixture's own 2026-09-18 (frankfurter_gbp_latest.json)"
+FX_ROW_BASE="$(echo "$FX_ROW_JSON" | jval "items.0.base")"
+[ "$FX_ROW_BASE" = "GBP" ] || fail "the fx cron's stored row has base '$FX_ROW_BASE', expected GBP"
+ok "the fx cron stores the ECB rate's own date (2026-09-18), not just when this server happened to fetch it"
+
+FX_LIVE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/fx")"
+[ "$(echo "$FX_LIVE_JSON" | jval stale)" = "false" ] || fail "GET /api/vault/fx reports stale right after the fx cron ran: $FX_LIVE_JSON"
+FX_EUR_RATE="$(echo "$FX_LIVE_JSON" | jval "rates.EUR")"
+FX_USD_RATE="$(echo "$FX_LIVE_JSON" | jval "rates.USD")"
+node -e 'if (!(Number(process.argv[1]) > 0)) { console.error("EUR rate not positive: " + process.argv[1]); process.exit(1); }' "$FX_EUR_RATE" \
+  || fail "GET /api/vault/fx's EUR rate is not a positive number: $FX_LIVE_JSON"
+ok "GET /api/vault/fx reports the fresh rate, fed only by the cron, never by a route calling Frankfurter itself"
+
+# --- 20c. The set-number alias resolves with no network, and a stale row -
+#     (over 30 days old) correctly triggers a real call-out under the
+#     fixture transport, refreshing it -------------------------------------
+ALIAS_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"code\":\"sv03.5\",\"name\":\"151 Alias Set\"}" | jval id)"
+[ -n "$ALIAS_SET_ID" ] || fail "could not create the alias check's card_sets row"
+
+ALIAS_NOW_ISO="$(node -e 'process.stdout.write(new Date().toISOString())')"
+ALIAS_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$ALIAS_SET_ID\",\"number\":\"199\",\"name\":\"Cached Charizard Alias\",\"last_synced\":\"$ALIAS_NOW_ISO\"}" | jval id)"
+[ -n "$ALIAS_CARD_ID" ] || fail "could not create the alias check's cards row"
+
+ALIAS_LOOKUP_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup?game=pokemon&q=sv151%20199")"
+[ "$(echo "$ALIAS_LOOKUP_JSON" | jval "cards.0.id")" = "$ALIAS_CARD_ID" ] \
+  || fail "the 'sv151' alias did not resolve to sv03.5 with the card fresh in the database: $ALIAS_LOOKUP_JSON"
+[ "$(echo "$ALIAS_LOOKUP_JSON" | jval "cards.0.name")" = "Cached Charizard Alias" ] \
+  || fail "the alias lookup did not serve the cached row straight from the database: $ALIAS_LOOKUP_JSON"
+ok "'sv151 199' resolves the alias table and serves a fresh row with no outbound call"
+
+FORTY_DAYS_AGO_ISO="$(node -e 'const d = new Date(); d.setUTCDate(d.getUTCDate() - 40); process.stdout.write(d.toISOString())')"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/cards/records/$ALIAS_CARD_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"last_synced\":\"$FORTY_DAYS_AGO_ISO\"}"
+
+STALE_ALIAS_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup/pokemon/sv03.5/199")"
+[ "$(echo "$STALE_ALIAS_JSON" | jval "cards.0.id")" = "$ALIAS_CARD_ID" ] \
+  || fail "the stale exact lookup did not refresh the same row: $STALE_ALIAS_JSON"
+[ "$(echo "$STALE_ALIAS_JSON" | jval "cards.0.name")" = "Charizard ex" ] \
+  || fail "a card_sets row over 30 days old did not call out to refresh - got name '$(echo "$STALE_ALIAS_JSON" | jval "cards.0.name")', expected the fixture's own 'Charizard ex'"
+ok "a last_synced over 30 days old triggers a real call-out (through the fixture transport) that refreshes the row"
+
+# --- 20d. Condition validation on GET .../prices: case-insensitive, and a
+#     value outside NM/LP/MP/HP/DMG is refused with 400 --------------------
+CONDITION_LOWER_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" \
+  "$BASE/api/vault/cards/$P3_GBP_CARD_ID/prices?condition=nm")"
+[ "$CONDITION_LOWER_STATUS" = "200" ] || fail "condition=nm (lowercase) returned $CONDITION_LOWER_STATUS, expected 200"
+ok "a lowercase condition ('nm') is accepted"
+
+CONDITION_BAD_RESP="$(curl -s -w '\n%{http_code}' -H "Authorization: $STAFF_TOKEN" \
+  "$BASE/api/vault/cards/$P3_GBP_CARD_ID/prices?condition=EX")"
+CONDITION_BAD_STATUS="$(echo "$CONDITION_BAD_RESP" | tail -n1)"
+CONDITION_BAD_BODY="$(echo "$CONDITION_BAD_RESP" | sed '$d')"
+[ "$CONDITION_BAD_STATUS" = "400" ] || fail "condition=EX returned $CONDITION_BAD_STATUS, expected 400: $CONDITION_BAD_BODY"
+echo "$CONDITION_BAD_BODY" | grep -qF "Pick a condition: NM, LP, MP, HP or DMG." \
+  || fail "condition=EX's 400 does not name the valid conditions: $CONDITION_BAD_BODY"
+ok "an unrecognised condition ('EX') is refused with 400 and names the valid conditions"
+
+# --- 20e. refresh-prices end to end: fixture prices written as
+#     price_snapshots, GBP shown beside the native amount, and an audit row -
+REFRESH_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"203\",\"name\":\"Refresh Check Card\"}" | jval id)"
+[ -n "$REFRESH_CARD_ID" ] || fail "could not create the refresh-prices check's card"
+
+REFRESH_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/cards/$REFRESH_CARD_ID/refresh-prices" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"finish":"holo","condition":"NM"}')"
+REFRESH_STATUS="$(echo "$REFRESH_RESP" | tail -n1)"
+REFRESH_BODY="$(echo "$REFRESH_RESP" | sed '$d')"
+[ "$REFRESH_STATUS" = "200" ] || fail "refresh-prices returned $REFRESH_STATUS, expected 200: $REFRESH_BODY"
+[ "$(echo "$REFRESH_BODY" | jval "chosen.source")" = "cardmarket" ] \
+  || fail "refresh-prices did not choose cardmarket (the only source available with no uk-comp or eBay key): $REFRESH_BODY"
+[ "$(echo "$REFRESH_BODY" | jval "chosen.native_currency")" = "EUR" ] || fail "refresh-prices lost the native currency: $REFRESH_BODY"
+[ "$(echo "$REFRESH_BODY" | jval "chosen.native_market")" = "36830" ] \
+  || fail "refresh-prices' native_market is '$(echo "$REFRESH_BODY" | jval "chosen.native_market")', expected 36830 (368.30 EUR from the fixture, in minor units)"
+echo "$REFRESH_BODY" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const body = JSON.parse(d || "{}");
+    const sources = body.sources || [];
+    process.exit(sources.some((s) => s && s.source === "tcgplayer") ? 0 : 1);
+  });
+' || fail "refresh-prices did not also write a tcgplayer snapshot from the same fixture: $REFRESH_BODY"
+
+REFRESH_EXPECTED_GBP="$(node -e '
+  const rate = Number(process.argv[1]);
+  const minor = 36830;
+  process.stdout.write(String(Math.floor(Math.abs(minor * rate) + 0.5)));
+' "$FX_EUR_RATE")"
+[ "$(echo "$REFRESH_BODY" | jval "chosen.gbp_market")" = "$REFRESH_EXPECTED_GBP" ] \
+  || fail "refresh-prices' gbp_market is '$(echo "$REFRESH_BODY" | jval "chosen.gbp_market")', expected $REFRESH_EXPECTED_GBP (36830 EUR minor units at the live rate $FX_EUR_RATE, half-up)"
+ok "refresh-prices writes fixture-sourced snapshots with the GBP figure correctly converted and shown beside the native amount"
+
+REFRESH_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22refresh_prices%22%20%26%26%20collection%3D%22cards%22" -H "Authorization: $SUPER_TOKEN")"
+echo "$REFRESH_AUDIT" | grep -qF "$REFRESH_CARD_ID" || fail "no refresh_prices audit row names the refreshed card: $REFRESH_AUDIT"
+ok "refresh-prices writes an audit row naming the card and the sources that answered"
+
+# --- 20f. retro/lookup: a fixture success, then IGDB configured but this
+#     particular call has no fixture, mapped to 502 -----------------------
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"api_keys":{"igdb":{"client_id":"fixture-ok-client","client_secret":"fixture-secret"}}}'
+
+RETRO_LOOKUP_OK_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/retro/lookup?q=super%20mario&platform=snes_pal_box")"
+RETRO_LOOKUP_OK_COUNT="$(echo "$RETRO_LOOKUP_OK_JSON" | jlen titles)"
+[ "$RETRO_LOOKUP_OK_COUNT" -ge 1 ] 2>/dev/null || fail "retro/lookup with a mapped IGDB fixture returned $RETRO_LOOKUP_OK_COUNT titles, expected at least 1: $RETRO_LOOKUP_OK_JSON"
+RETRO_LOOKUP_TITLE_ID="$(echo "$RETRO_LOOKUP_OK_JSON" | jval "titles.0.id")"
+[ -n "$RETRO_LOOKUP_TITLE_ID" ] || fail "retro/lookup did not write a retro_titles row through for a platform it knows: $RETRO_LOOKUP_OK_JSON"
+ok "retro/lookup reaches IGDB's fixture and writes a title through"
+
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"api_keys":{"igdb":{"client_id":"fixture-unmapped-client","client_secret":"fixture-secret"}}}'
+
+RETRO_LOOKUP_502_STATUS="$(curl -s -o "$TMP_DIR/retro-lookup-502.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" \
+  "$BASE/api/vault/retro/lookup?q=another%20title")"
+[ "$RETRO_LOOKUP_502_STATUS" = "502" ] || fail "retro/lookup with an IGDB call the fixture transport refuses returned $RETRO_LOOKUP_502_STATUS, expected 502: $(cat "$TMP_DIR/retro-lookup-502.json")"
+grep -qF "IGDB did not answer" "$TMP_DIR/retro-lookup-502.json" || fail "retro/lookup's 502 does not explain itself: $(cat "$TMP_DIR/retro-lookup-502.json")"
+ok "retro/lookup maps an IGDB call this harness has no fixture for to a 502, not a silent empty result"
+
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"api_keys":{"igdb":{"client_id":"fixture-ok-client","client_secret":"fixture-secret"}}}'
+
+# --- 20g. The image queue: a real fixture image is cached, one over the
+#     size cap and one that is not an image at all are both refused -------
+IMG_GOOD_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"204\",\"name\":\"Image Queue Good\",\"image_large\":\"https://img.fixtures.test/good.png\"}" | jval id)"
+IMG_OVERSIZED_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"205\",\"name\":\"Image Queue Oversized\",\"image_large\":\"https://img.fixtures.test/oversized.bin\"}" | jval id)"
+IMG_NOTIMAGE_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"206\",\"name\":\"Image Queue Not Image\",\"image_large\":\"https://img.fixtures.test/not-image.txt\"}" | jval id)"
+[ -n "$IMG_GOOD_CARD_ID" ] && [ -n "$IMG_OVERSIZED_CARD_ID" ] && [ -n "$IMG_NOTIMAGE_CARD_ID" ] \
+  || fail "could not create the image-queue check's cards"
+
+for cid in "$IMG_GOOD_CARD_ID" "$IMG_OVERSIZED_CARD_ID" "$IMG_NOTIMAGE_CARD_ID"; do
+  curl -s -o /dev/null -X POST "$BASE/api/collections/items/records" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$cid\",\"condition\":\"NM\",\"qty\":1,\"status\":\"in_stock\"}"
+done
+
+IMAGE_QUEUE_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/image_queue" -H "Authorization: $SUPER_TOKEN")"
+[ "$IMAGE_QUEUE_CRON_STATUS" = "204" ] || fail "POST /api/crons/image_queue returned $IMAGE_QUEUE_CRON_STATUS, expected 204"
+
+IMG_GOOD_LARGE="$(curl -s "$BASE/api/collections/cards/records/$IMG_GOOD_CARD_ID" -H "Authorization: $STAFF_TOKEN" | jval image_large)"
+echo "$IMG_GOOD_LARGE" | grep -qF "img.fixtures.test" && fail "a good fixture image was not cached locally: still '$IMG_GOOD_LARGE'"
+echo "$IMG_GOOD_LARGE" | grep -qF "/api/files/" || fail "a good fixture image's image_large does not point at a local file: '$IMG_GOOD_LARGE'"
+ok "the image queue caches a real fixture image locally and rewrites image_large to the local file"
+
+IMG_OVERSIZED_LARGE="$(curl -s "$BASE/api/collections/cards/records/$IMG_OVERSIZED_CARD_ID" -H "Authorization: $STAFF_TOKEN" | jval image_large)"
+[ "$IMG_OVERSIZED_LARGE" = "https://img.fixtures.test/oversized.bin" ] \
+  || fail "an oversized image was cached anyway (image_large is now '$IMG_OVERSIZED_LARGE'), expected the size cap to refuse it and leave image_large untouched"
+ok "an image over the size cap is refused; image_large is left exactly as it was"
+
+IMG_NOTIMAGE_LARGE="$(curl -s "$BASE/api/collections/cards/records/$IMG_NOTIMAGE_CARD_ID" -H "Authorization: $STAFF_TOKEN" | jval image_large)"
+[ "$IMG_NOTIMAGE_LARGE" = "https://img.fixtures.test/not-image.txt" ] \
+  || fail "a non-image response was cached anyway (image_large is now '$IMG_NOTIMAGE_LARGE'), expected the mime sniff to refuse it and leave image_large untouched"
+ok "a 200 response that is not a recognised image format is refused; image_large is left exactly as it was"
 
 echo
 echo "All checks passed ($PASS_COUNT)."
