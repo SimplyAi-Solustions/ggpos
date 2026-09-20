@@ -475,6 +475,11 @@ describe("pricesync pipeline", () => {
         (r) => r.method === "POST" && r.url === "/api/collections/price_snapshots/records" && r.body.card === "cardC"
       );
       assert.ok(cardCPost, "expected a POST for cardC (no row for today existed yet)");
+
+      // Every request this run made: an identifiable User-Agent, an
+      // Authorization header on every PocketBase call, and every money
+      // field in every write staying an integer.
+      assert.deepEqual(server.violations ?? [], []);
     } finally {
       server.close();
     }

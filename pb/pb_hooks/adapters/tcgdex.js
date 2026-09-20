@@ -84,9 +84,15 @@ function normalize(raw) {
 function search(query, transport) {
   var res = get(BASE_URL + "/cards?name=" + encodeURIComponent(query), transport);
   if (res.statusCode !== 200 || !Array.isArray(res.json)) return [];
-  return res.json.map(function (row) {
+  var rows = [];
+  for (var i = 0; i < res.json.length; i++) {
+    var row = res.json[i];
     var ids = splitId(row.id);
-    return {
+    if (!ids.setId) {
+      console.log("[tcgdex] search: skipping an id with no hyphen to split a set from: " + row.id);
+      continue;
+    }
+    rows.push({
       number: row.localId || ids.localId,
       name: row.name,
       rarity: "",
@@ -100,8 +106,9 @@ function search(query, transport) {
       tcgplayerId: "",
       cardmarketId: "",
       externalIds: { tcgdex: row.id },
-    };
-  });
+    });
+  }
+  return rows;
 }
 
 function getBySetNumber(setId, number, transport) {
@@ -131,14 +138,25 @@ function getPrices(card, finish, transport) {
   // float ever represents a price (CLAUDE.md, "Pricing"; docs/PLAN.md,
   // "Currency: GBP everywhere").
   var cm = raw.pricing.cardmarket;
-  if (cm && (cm.avg || cm.low)) {
+  // TCGdex carries a second set of Cardmarket fields for the holo variant
+  // ("avg-holo", "low-holo", ...) alongside the plain ones; a holo or
+  // reverse-holo card reads from those when Cardmarket actually has them
+  // (a holo-only print's plain fields are usually null), rather than
+  // silently pricing it as if it were the non-holo print.
+  var wantsHolo = finish === "holo" || finish === "reverse";
+  var holoAvg = cm ? cm["avg-holo"] : null;
+  var cmAvg = wantsHolo && holoAvg != null ? holoAvg : cm ? cm.avg : null;
+  var cmLow = wantsHolo && cm && cm["low-holo"] != null ? cm["low-holo"] : cm ? cm.low : null;
+  var cmAvg7 = wantsHolo && cm && cm["avg7-holo"] != null ? cm["avg7-holo"] : cm ? cm.avg7 : null;
+  var cmTrend = wantsHolo && cm && cm["trend-holo"] != null ? cm["trend-holo"] : cm ? cm.trend : null;
+  if (cm && (cmAvg || cmLow)) {
     out.push({
       source: "cardmarket",
       currency: "EUR",
-      low: cm.low != null ? String(cm.low) : null,
-      mid: cm.avg7 != null ? String(cm.avg7) : cm.avg != null ? String(cm.avg) : null,
-      market: cm.avg != null ? String(cm.avg) : null,
-      trend: cm.trend != null ? String(cm.trend) : null,
+      low: cmLow != null ? String(cmLow) : null,
+      mid: cmAvg7 != null ? String(cmAvg7) : cmAvg != null ? String(cmAvg) : null,
+      market: cmAvg != null ? String(cmAvg) : null,
+      trend: cmTrend != null ? String(cmTrend) : null,
       fetchedAt: cm.updated || new Date().toISOString(),
       evidenceUrl: "",
     });
