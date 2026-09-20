@@ -197,7 +197,10 @@ function build(app, util, params) {
     csvColumns: [
       { key: "label", label: "Group" },
       { key: "spend", label: "Spend", money: true },
-      { key: "count", label: "Lines" },
+      // "Count", not "Lines": by=game counts accepted trade-in lines, but
+      // by=staff counts trade-ins themselves (one per staff bucket) - a
+      // single header has to cover both, and "Lines" is only true of one.
+      { key: "count", label: "Count" },
       { key: "avg_offer_pct", label: "Avg offer %" },
     ],
   };

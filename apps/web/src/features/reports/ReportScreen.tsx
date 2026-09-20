@@ -164,7 +164,11 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const [range, setRange] = React.useState<DateRange>(() => resolvePreset("last30", today))
   const [group, setGroup] = React.useState<ReportGroup>("day")
   const [by, setBy] = React.useState<string>(spec.dimensions[0]?.key ?? "")
-  const [compare, setCompare] = React.useState(true)
+  // Stock has nothing that can be compared with a past period, so the
+  // control is not offered there rather than offered and left doing nothing.
+  const comparable = spec.comparable !== false
+  const [compareOn, setCompareOn] = React.useState(true)
+  const compare = comparable && compareOn
   const [saveOpen, setSaveOpen] = React.useState(false)
 
   const invalid = rangeError(range)
@@ -324,17 +328,19 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
           {formatRange(range)}
           {compare ? `, ${compareLabel(range, previous)}` : ""}
         </p>
-        <span className="flex items-center gap-3">
-          <Switch
-            id="compare-toggle"
-            checked={compare}
-            onCheckedChange={(checked: boolean) => setCompare(checked)}
-            aria-label="Compare with the period before"
-          />
-          <label htmlFor="compare-toggle" className="text-[13px] text-muted-foreground-2">
-            Compare
-          </label>
-        </span>
+        {comparable ? (
+          <span className="flex items-center gap-3">
+            <Switch
+              id="compare-toggle"
+              checked={compareOn}
+              onCheckedChange={(checked: boolean) => setCompareOn(checked)}
+              aria-label="Compare with the period before"
+            />
+            <label htmlFor="compare-toggle" className="text-[13px] text-muted-foreground-2">
+              Compare
+            </label>
+          </span>
+        ) : null}
       </div>
 
       {query.error ? (
@@ -401,8 +407,8 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
                     summary={`Sales by hour and weekday ${formatWhen(range)}, darkest where most sales were rung up.`}
                   />
                   <p className="mt-6 max-w-[64ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-                    Sales by hour of the day, in shop time, for working out
-                    when to put somebody on.
+                    Sales by hour of the day, for working out when to put
+                    somebody on.
                   </p>
                 </section>
               ) : null}

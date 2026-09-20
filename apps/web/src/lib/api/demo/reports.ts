@@ -292,7 +292,7 @@ function salesReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Partia
   const revenues = split(splittable, weights)
   const counts = split(count, weights)
 
-  // Seven rows of twenty-four, Monday first, in the shop's own hours.
+  // Seven rows of twenty-four, Monday first, hours 0 to 23.
   const heatmap = Array.from({ length: 7 }, (_, day) =>
     Array.from({ length: 24 }, (_, hour) => {
       if (hour < 9 || hour > 17) return 0

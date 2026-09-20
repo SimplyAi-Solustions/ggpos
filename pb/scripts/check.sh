@@ -2763,6 +2763,455 @@ echo "$EBAY_CHANNELS_JSON" | node -e '
   process.exit(ebayRow && ebayRow.revenue >= 1234 ? 0 : 1);
 ' || fail "reports/channels did not attribute the eBay-channel sale to an 'ebay' row keyed off sales.channel: $EBAY_CHANNELS_JSON"
 ok "an eBay-import-shaped sale (channel ebay, blank payment) lands in sales_total_by_payment's 'none' bucket and the channels report's 'ebay' row"
+# --- 21n. Partial-refund proportional netting: refunding one of two units
+#     on a single line nets exactly that unit's share (saleline.js's
+#     cumNet), not the whole line - checked at the stats layer
+#     (reports/sales totals.revenue), not the refund route's own math
+#     (covered elsewhere in this script) ----------------------------------
+PARTIAL_ITEM_ID="$(make_item "Partial Refund Netting Item" 5 400 1000)"
+[ -n "$PARTIAL_ITEM_ID" ] || fail "could not create the partial-refund-netting item"
+PARTIAL_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$PARTIAL_ITEM_ID\",\"qty\":2,\"unit_price\":1000,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+PARTIAL_SALE_STATUS="$(echo "$PARTIAL_SALE_JSON" | tail -n1)"
+echo "$PARTIAL_SALE_JSON" | head -n -1 >"$TMP_DIR/partial-sale.json"
+[ "$PARTIAL_SALE_STATUS" = "200" ] || fail "the partial-refund-netting sale returned $PARTIAL_SALE_STATUS: $(cat "$TMP_DIR/partial-sale.json")"
+PARTIAL_SALE_ID="$(jval "sale.id" <"$TMP_DIR/partial-sale.json")"
+
+PARTIAL_LINE_ID="$(curl -s "$BASE/api/collections/sale_lines/records?perPage=1&filter=sale%3D%22$PARTIAL_SALE_ID%22" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$PARTIAL_LINE_ID" ] || fail "could not find the partial-refund-netting sale's own line"
+
+# reports/sales reads the stored daily_stats row when one exists (built by
+# the last /api/vault/stats/rebuild call, back in 21b) rather than always
+# computing fresh - so this sale's own revenue has to be rebuilt in before
+# "before" is read, or "before" would still be the older stored figure.
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN"
+REVENUE_BEFORE_PARTIAL="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.revenue")"
+
+PARTIAL_STEPUP_TOKEN="$(curl -s -X POST "$BASE/api/vault/step-up" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"password\":\"$STAFF_PASSWORD\"}" | jval token)"
+PARTIAL_REFUND_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/sales/$PARTIAL_SALE_ID/refund" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $PARTIAL_STEPUP_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"sale_line\":\"$PARTIAL_LINE_ID\",\"qty\":1}],\"reason\":\"Partial netting check\",\"refund_method\":\"sumup_card\"}")"
+PARTIAL_REFUND_STATUS="$(echo "$PARTIAL_REFUND_JSON" | tail -n1)"
+PARTIAL_REFUND_BODY="$(echo "$PARTIAL_REFUND_JSON" | head -n -1)"
+[ "$PARTIAL_REFUND_STATUS" = "200" ] || fail "the partial-refund-netting refund returned $PARTIAL_REFUND_STATUS: $PARTIAL_REFUND_BODY"
+PARTIAL_REFUND_AMOUNT="$(echo "$PARTIAL_REFUND_BODY" | jval refunded)"
+[ "$PARTIAL_REFUND_AMOUNT" = "1000" ] \
+  || fail "refunding one of two 1000p units refunded '$PARTIAL_REFUND_AMOUNT', expected exactly 1000 (half the 2000p line, not the whole line)"
+
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN"
+REVENUE_AFTER_PARTIAL="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.revenue")"
+[ "$((REVENUE_BEFORE_PARTIAL - REVENUE_AFTER_PARTIAL))" = "1000" ] \
+  || fail "reports/sales totals.revenue moved by $((REVENUE_BEFORE_PARTIAL - REVENUE_AFTER_PARTIAL)) after refunding one of two units, expected exactly -1000"
+ok "refunding one of two units on a line nets exactly that unit's proportional share from reports/sales revenue"
+
+# --- 21o. margin report figures: an isolated, discount-free sale's own
+#     revenue/cost/margin move totals.{revenue,cost,margin} by exactly the
+#     expected amount, computed independently from the item's own cost ----
+MARGIN_ITEM_COST=400
+MARGIN_ITEM_PRICE=1100
+MARGIN_ITEM_ID="$(make_item "Margin Figure Check Item" 1 $MARGIN_ITEM_COST $MARGIN_ITEM_PRICE)"
+[ -n "$MARGIN_ITEM_ID" ] || fail "could not create the margin-figure-check item"
+
+MARGIN_BEFORE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/margin?from=$TODAY&to=$TODAY")"
+MARGIN_REVENUE_BEFORE="$(echo "$MARGIN_BEFORE_JSON" | jval "totals.revenue")"
+MARGIN_COST_BEFORE="$(echo "$MARGIN_BEFORE_JSON" | jval "totals.cost")"
+MARGIN_MARGIN_BEFORE="$(echo "$MARGIN_BEFORE_JSON" | jval "totals.margin")"
+
+MARGIN_SALE_STATUS="$(curl -s -o "$TMP_DIR/margin-sale.json" -w '%{http_code}' -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$MARGIN_ITEM_ID\",\"qty\":1,\"unit_price\":$MARGIN_ITEM_PRICE,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+[ "$MARGIN_SALE_STATUS" = "200" ] || fail "the margin-figure-check sale returned $MARGIN_SALE_STATUS: $(cat "$TMP_DIR/margin-sale.json")"
+
+MARGIN_AFTER_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/margin?from=$TODAY&to=$TODAY")"
+MARGIN_REVENUE_AFTER="$(echo "$MARGIN_AFTER_JSON" | jval "totals.revenue")"
+MARGIN_COST_AFTER="$(echo "$MARGIN_AFTER_JSON" | jval "totals.cost")"
+MARGIN_MARGIN_AFTER="$(echo "$MARGIN_AFTER_JSON" | jval "totals.margin")"
+
+[ "$((MARGIN_REVENUE_AFTER - MARGIN_REVENUE_BEFORE))" = "$MARGIN_ITEM_PRICE" ] \
+  || fail "reports/margin totals.revenue moved by $((MARGIN_REVENUE_AFTER - MARGIN_REVENUE_BEFORE)), expected exactly $MARGIN_ITEM_PRICE"
+[ "$((MARGIN_COST_AFTER - MARGIN_COST_BEFORE))" = "$MARGIN_ITEM_COST" ] \
+  || fail "reports/margin totals.cost moved by $((MARGIN_COST_AFTER - MARGIN_COST_BEFORE)), expected exactly $MARGIN_ITEM_COST"
+[ "$((MARGIN_MARGIN_AFTER - MARGIN_MARGIN_BEFORE))" = "$((MARGIN_ITEM_PRICE - MARGIN_ITEM_COST))" ] \
+  || fail "reports/margin totals.margin moved by $((MARGIN_MARGIN_AFTER - MARGIN_MARGIN_BEFORE)), expected exactly $((MARGIN_ITEM_PRICE - MARGIN_ITEM_COST))"
+ok "reports/margin totals.revenue, cost and margin move by exactly the expected amount for an isolated, discount-free sale"
+
+# --- 21p. occurred_at day boundary: a sale dated yesterday (occurred_at),
+#     even though created today, belongs to yesterday's daily row and
+#     reports/sales range, never today's ----------------------------------
+DAYBOUND_YESTERDAY="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-1); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
+DAYBOUND_AMOUNT=4321
+# reports/sales.totals.revenue reads the stored daily_stats row when one
+# exists, not always a fresh computation - rebuild today explicitly first,
+# so "before" reflects everything real up to this point (21o's own sale
+# included) rather than whatever the last unrelated rebuild happened to
+# leave stored.
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN"
+TODAY_REVENUE_BEFORE_DAYBOUND="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.revenue")"
+
+DAYBOUND_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/sales/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"number\":\"GG-S-DAYBOUND1\",\"subtotal\":$DAYBOUND_AMOUNT,\"discount\":0,\"total\":$DAYBOUND_AMOUNT,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$DAYBOUND_YESTERDAY 12:00:00.000Z\"}")"
+DAYBOUND_SALE_STATUS="$(echo "$DAYBOUND_SALE_JSON" | tail -n1)"
+[ "$DAYBOUND_SALE_STATUS" = "200" ] || fail "creating a sale dated yesterday returned $DAYBOUND_SALE_STATUS: $(echo "$DAYBOUND_SALE_JSON" | head -n -1)"
+
+# Two separate, targeted rebuilds - yesterday and today each on their own -
+# rather than one call spanning both days, so today's own row is a genuine
+# fresh recompute (not merely an untouched older figure) that still, after
+# that recompute, excludes a sale whose occurred_at is yesterday's.
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$DAYBOUND_YESTERDAY&to=$DAYBOUND_YESTERDAY" -H "Authorization: $STAFF_TOKEN"
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN"
+
+TODAY_REVENUE_AFTER_DAYBOUND="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.revenue")"
+[ "$TODAY_REVENUE_AFTER_DAYBOUND" = "$TODAY_REVENUE_BEFORE_DAYBOUND" ] \
+  || fail "a sale dated yesterday changed today's reports/sales revenue from $TODAY_REVENUE_BEFORE_DAYBOUND to $TODAY_REVENUE_AFTER_DAYBOUND, even after a fresh rebuild of today"
+
+YESTERDAY_REPORT_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$DAYBOUND_YESTERDAY&to=$DAYBOUND_YESTERDAY")"
+YESTERDAY_REVENUE="$(echo "$YESTERDAY_REPORT_JSON" | jval "totals.revenue")"
+[ "${YESTERDAY_REVENUE:-0}" -ge "$DAYBOUND_AMOUNT" ] \
+  || fail "reports/sales for yesterday is '$YESTERDAY_REVENUE', expected at least $DAYBOUND_AMOUNT (the day-boundary sale, keyed on occurred_at)"
+ok "a sale's occurred_at, not created, decides which day's daily row and report it belongs to"
+
+# --- 21q. group=week/month produce one bucket per week/month across a wide
+#     range, each correctly labelled, and compare=previous is a same-length
+#     window immediately before the range, not the previous calendar
+#     month/week --------------------------------------------------------
+FORTYDAYS_AGO="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-40); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
+WEEK_SERIES_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$FORTYDAYS_AGO&to=$TODAY&group=week")"
+WEEK_SERIES_CHECK="$(echo "$WEEK_SERIES_JSON" | node -e '
+  const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const labels = (body.series || []).map((s) => s.label);
+  const mondayRe = /^\d{4}-\d{2}-\d{2}$/;
+  const allMondays = labels.every((l) => mondayRe.test(l));
+  const unique = new Set(labels).size === labels.length;
+  process.stdout.write(labels.length > 1 && allMondays && unique ? "ok" : "bad:" + JSON.stringify(labels));
+')"
+[ "$WEEK_SERIES_CHECK" = "ok" ] \
+  || fail "group=week over a 41-day range did not produce multiple, uniquely-labelled Monday buckets: $WEEK_SERIES_CHECK"
+
+SEVENTYDAYS_AGO="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-70); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
+MONTH_SERIES_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$SEVENTYDAYS_AGO&to=$TODAY&group=month")"
+MONTH_SERIES_CHECK="$(echo "$MONTH_SERIES_JSON" | node -e '
+  const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const labels = (body.series || []).map((s) => s.label);
+  const monthRe = /^\d{4}-\d{2}$/;
+  const allMonths = labels.every((l) => monthRe.test(l));
+  const unique = new Set(labels).size === labels.length;
+  process.stdout.write(labels.length >= 2 && allMonths && unique ? "ok" : "bad:" + JSON.stringify(labels));
+')"
+[ "$MONTH_SERIES_CHECK" = "ok" ] \
+  || fail "group=month over a 71-day range did not produce at least two, uniquely-labelled YYYY-MM buckets: $MONTH_SERIES_CHECK"
+ok "group=week and group=month each produce one correctly labelled bucket per week/month across a wide range"
+
+COMPARE_MONTH_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$SEVENTYDAYS_AGO&to=$TODAY&group=month&compare=previous")"
+COMPARE_MONTH_CHECK="$(echo "$COMPARE_MONTH_JSON" | node -e '
+  const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const days = (a, b) => Math.round((Date.parse(b + "T00:00:00.000Z") - Date.parse(a + "T00:00:00.000Z")) / 86400000) + 1;
+  const mainLen = days(body.from, body.to);
+  const prevLen = days(body.compare.from, body.compare.to);
+  const dayBefore = new Date(Date.parse(body.from + "T00:00:00.000Z"));
+  dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+  const expectedPrevTo = dayBefore.toISOString().slice(0, 10);
+  process.stdout.write(mainLen === prevLen && body.compare.to === expectedPrevTo ? "ok" : `bad: main=${mainLen} prev=${prevLen} compare.to=${body.compare.to} expected=${expectedPrevTo}`);
+')"
+[ "$COMPARE_MONTH_CHECK" = "ok" ] \
+  || fail "compare=previous with group=month is not a same-length window ending the day before 'from': $COMPARE_MONTH_CHECK"
+ok "compare=previous is a same-length window immediately before the range, not the previous calendar month"
+
+# --- 21r. The sales heatmap reads in Europe/London time, not raw UTC - a
+#     sale at 10:00 UTC today (British Summer Time, +1 hour, in September)
+#     lands in the 11:00 local bucket, not the 10:00 UTC one --------------
+HEATMAP_WEEKDAY="$(node -e '
+  const d = new Date(process.argv[1] + "T00:00:00.000Z");
+  process.stdout.write(String((d.getUTCDay() + 6) % 7));
+' "$TODAY")"
+HEATMAP_BEFORE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.heatmap.$HEATMAP_WEEKDAY.11")"
+HEATMAP_ITEM_ID="$(make_item "Heatmap London Time Item" 1 100 500)"
+[ -n "$HEATMAP_ITEM_ID" ] || fail "could not create the heatmap-check item"
+HEATMAP_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/sales/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"number\":\"GG-S-HEATMAP1\",\"subtotal\":500,\"discount\":0,\"total\":500,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$TODAY 10:00:00.000Z\"}")"
+HEATMAP_SALE_STATUS="$(echo "$HEATMAP_SALE_JSON" | tail -n1)"
+[ "$HEATMAP_SALE_STATUS" = "200" ] || fail "creating the heatmap-check sale at 10:00 UTC returned $HEATMAP_SALE_STATUS: $(echo "$HEATMAP_SALE_JSON" | head -n -1)"
+
+HEATMAP_AFTER_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY")"
+HEATMAP_AFTER_1100="$(echo "$HEATMAP_AFTER_JSON" | jval "totals.heatmap.$HEATMAP_WEEKDAY.11")"
+HEATMAP_AFTER_1000="$(echo "$HEATMAP_AFTER_JSON" | jval "totals.heatmap.$HEATMAP_WEEKDAY.10")"
+[ "$((HEATMAP_AFTER_1100 - HEATMAP_BEFORE_JSON))" = "1" ] \
+  || fail "a sale at 10:00 UTC (11:00 BST) did not add one count to the heatmap's 11:00 local bucket (before $HEATMAP_BEFORE_JSON, after $HEATMAP_AFTER_1100)"
+ok "the sales heatmap buckets a 10:00 UTC sale at 11:00, Europe/London's British Summer Time, not raw UTC"
+
+# --- 21s. Stock ageing: the 180+ bucket's max is JSON null (never
+#     Infinity, which breaks response encoding), a very old item lands in
+#     it and in dead_stock, and an item with no acquired_at at all gets its
+#     own "unknown" bucket rather than being miscounted as freshly acquired
+#     -------------------------------------------------------------------
+OLD_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"title\":\"Dead Stock Check Item\",\"qty\":1,\"cost\":500,\"price\":1000,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"2024-01-01 09:00:00.000Z\"}" | jval id)"
+[ -n "$OLD_ITEM_ID" ] || fail "could not create the dead-stock-check item"
+
+UNKNOWN_AGE_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"title\":\"Unknown Acquired Date Item\",\"qty\":1,\"cost\":200,\"price\":400,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\"}" | jval id)"
+[ -n "$UNKNOWN_AGE_ITEM_ID" ] || fail "could not create the unknown-acquired-date item"
+
+STOCK_AGEING_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY")"
+STOCK_AGEING_CHECK="$(echo "$STOCK_AGEING_JSON" | node -e '
+  const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const buckets = body.totals.ageing_buckets || [];
+  const openEnded = buckets.find((b) => b.bucket === "180+");
+  const unknown = buckets.find((b) => b.bucket === "unknown");
+  const zeroThirty = buckets.find((b) => b.bucket === "0-30");
+  const problems = [];
+  if (!openEnded || !("max" in openEnded) || openEnded.max !== null) problems.push("180+ bucket max is not JSON null: " + JSON.stringify(openEnded));
+  if (!openEnded || openEnded.count < 1) problems.push("180+ bucket count is not at least 1");
+  if (!unknown || unknown.count < 1) problems.push("unknown bucket is missing or has no items: " + JSON.stringify(unknown));
+  const deadRow = (body.totals.dead_stock || []).find((d) => d.item_id === process.argv[1]);
+  if (!deadRow) problems.push("the 2024-01-01 item is not in dead_stock");
+  process.stdout.write(problems.length ? "bad: " + problems.join("; ") : "ok");
+' "$OLD_ITEM_ID")"
+[ "$STOCK_AGEING_CHECK" = "ok" ] || fail "$STOCK_AGEING_CHECK"
+ok "the 180+ ageing bucket has a JSON null max, a very old item reaches it and dead_stock, and a blank acquired_at gets its own unknown bucket"
+
+# --- 21t. Finish-aware stock valuation: two items of the same card but
+#     different finishes are valued off their own finish's price_snapshot,
+#     never off each other's ------------------------------------------
+FINISH_CARD_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"code\":\"finish-check-set\",\"name\":\"Finish Check Set\"}" | jval id)"
+[ -n "$FINISH_CARD_SET_ID" ] || fail "could not create the finish-check card set"
+FINISH_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$FINISH_CARD_SET_ID\",\"number\":\"1\",\"name\":\"Finish Check Card\"}" | jval id)"
+[ -n "$FINISH_CARD_ID" ] || fail "could not create the finish-check card"
+
+FINISH_FETCHED_AT="$(node -e 'process.stdout.write(new Date().toISOString())')"
+FINISH_NORMAL_MARKET=1500
+FINISH_HOLO_MARKET=4200
+curl -s -o /dev/null -X POST "$BASE/api/collections/price_snapshots/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"card\":\"$FINISH_CARD_ID\",\"finish\":\"\",\"source\":\"uk_sold_manual\",\"native_currency\":\"GBP\",\"native_market\":$FINISH_NORMAL_MARKET,\"fx_rate\":1,\"gbp_market\":$FINISH_NORMAL_MARKET,\"fetched_at\":\"$FINISH_FETCHED_AT\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/price_snapshots/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"card\":\"$FINISH_CARD_ID\",\"finish\":\"holo\",\"source\":\"uk_sold_manual\",\"native_currency\":\"GBP\",\"native_market\":$FINISH_HOLO_MARKET,\"fx_rate\":1,\"gbp_market\":$FINISH_HOLO_MARKET,\"fetched_at\":\"$FINISH_FETCHED_AT\"}"
+
+STOCK_VALUE_BEFORE_FINISH="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY" | jval "totals.value_market")"
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$FINISH_CARD_ID\",\"finish\":\"\",\"condition\":\"NM\",\"qty\":1,\"cost\":100,\"market_at_intake\":$FINISH_NORMAL_MARKET,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$FINISH_CARD_ID\",\"finish\":\"holo\",\"condition\":\"NM\",\"qty\":1,\"cost\":100,\"market_at_intake\":$FINISH_HOLO_MARKET,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}"
+
+STOCK_VALUE_AFTER_FINISH="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY" | jval "totals.value_market")"
+FINISH_EXPECTED_DELTA=$((FINISH_NORMAL_MARKET + FINISH_HOLO_MARKET))
+[ "$((STOCK_VALUE_AFTER_FINISH - STOCK_VALUE_BEFORE_FINISH))" = "$FINISH_EXPECTED_DELTA" ] \
+  || fail "adding a normal and a holo copy of the same card moved totals.value_market by $((STOCK_VALUE_AFTER_FINISH - STOCK_VALUE_BEFORE_FINISH)), expected exactly $FINISH_EXPECTED_DELTA ($FINISH_NORMAL_MARKET + $FINISH_HOLO_MARKET, each priced off its own finish's snapshot)"
+ok "stock valuation prices a normal and a holo copy of the same card off their own finish's price_snapshot, not each other's"
+
+# --- 21u. cash, loyalty and customers report totals agree with the raw
+#     ledgers, independently computed - and customers' top_by_spend is net
+#     of refunds -----------------------------------------------------------
+curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=closed_at>='${TODAY} 00:00:00.000Z' && closed_at<='${TODAY} 23:59:59.999Z'" \
+  --data-urlencode "perPage=500" \
+  "$BASE/api/collections/cash_sessions/records" >"$TMP_DIR/stats-today-sessions.json"
+curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=created>='${TODAY} 00:00:00.000Z' && created<='${TODAY} 23:59:59.999Z'" \
+  --data-urlencode "perPage=500" \
+  "$BASE/api/collections/points_ledger/records" >"$TMP_DIR/stats-today-points.json"
+
+CASH_LOYALTY_EXPECTED_JSON="$(node -e '
+  const fs = require("fs");
+  const sessions = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).items || [];
+  const points = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).items || [];
+  let varianceTotal = 0;
+  for (const s of sessions) varianceTotal += s.variance;
+  let earned = 0;
+  let redeemed = 0;
+  for (const p of points) {
+    if (p.delta > 0) earned += p.delta;
+    else redeemed += -p.delta;
+  }
+  process.stdout.write(JSON.stringify({ varianceTotal, sessionCount: sessions.length, earned, redeemed }));
+' "$TMP_DIR/stats-today-sessions.json" "$TMP_DIR/stats-today-points.json")"
+
+EXPECTED_VARIANCE_TOTAL="$(echo "$CASH_LOYALTY_EXPECTED_JSON" | jval varianceTotal)"
+EXPECTED_SESSION_COUNT="$(echo "$CASH_LOYALTY_EXPECTED_JSON" | jval sessionCount)"
+EXPECTED_POINTS_EARNED="$(echo "$CASH_LOYALTY_EXPECTED_JSON" | jval earned)"
+EXPECTED_POINTS_REDEEMED="$(echo "$CASH_LOYALTY_EXPECTED_JSON" | jval redeemed)"
+
+REPORT_CASH_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/cash?from=$TODAY&to=$TODAY")"
+[ "$(echo "$REPORT_CASH_JSON" | jval "totals.variance_total")" = "$EXPECTED_VARIANCE_TOTAL" ] \
+  || fail "reports/cash totals.variance_total is '$(echo "$REPORT_CASH_JSON" | jval "totals.variance_total")', expected $EXPECTED_VARIANCE_TOTAL"
+[ "$(echo "$REPORT_CASH_JSON" | jval "totals.session_count")" = "$EXPECTED_SESSION_COUNT" ] \
+  || fail "reports/cash totals.session_count is '$(echo "$REPORT_CASH_JSON" | jval "totals.session_count")', expected $EXPECTED_SESSION_COUNT"
+
+REPORT_LOYALTY_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/loyalty?from=$TODAY&to=$TODAY")"
+[ "$(echo "$REPORT_LOYALTY_JSON" | jval "totals.points_earned")" = "$EXPECTED_POINTS_EARNED" ] \
+  || fail "reports/loyalty totals.points_earned is '$(echo "$REPORT_LOYALTY_JSON" | jval "totals.points_earned")', expected $EXPECTED_POINTS_EARNED"
+[ "$(echo "$REPORT_LOYALTY_JSON" | jval "totals.points_redeemed")" = "$EXPECTED_POINTS_REDEEMED" ] \
+  || fail "reports/loyalty totals.points_redeemed is '$(echo "$REPORT_LOYALTY_JSON" | jval "totals.points_redeemed")', expected $EXPECTED_POINTS_REDEEMED"
+ok "reports/cash and reports/loyalty totals agree with the raw cash_sessions and points_ledger rows"
+
+STATS_SALE_NOW_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/collections/sales/records/$STATS_SALE_ID")"
+STATS_SALE_TOTAL_FOR_CUSTOMER="$(echo "$STATS_SALE_NOW_JSON" | jval total)"
+STATS_SALE_REFUNDED_FOR_CUSTOMER="$(echo "$STATS_SALE_NOW_JSON" | jval refunded_total)"
+STATS_SALE_NET="$((STATS_SALE_TOTAL_FOR_CUSTOMER - STATS_SALE_REFUNDED_FOR_CUSTOMER))"
+REPORT_CUSTOMERS_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/customers?from=$TODAY&to=$TODAY")"
+CUSTOMERS_TOP_SPEND_CHECK="$(echo "$REPORT_CUSTOMERS_JSON" | node -e '
+  const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const row = (body.totals.top_by_spend || []).find((r) => r.customer === process.argv[1]);
+  process.stdout.write(row ? String(row.amount) : "missing");
+' "$STATS_CUSTOMER_ID")"
+[ "$CUSTOMERS_TOP_SPEND_CHECK" = "$STATS_SALE_NET" ] \
+  || fail "reports/customers top_by_spend for the stats-check customer is '$CUSTOMERS_TOP_SPEND_CHECK', expected $STATS_SALE_NET (net of the seeded refund)"
+ok "reports/customers top_by_spend is net of refunds"
+
+# --- 21v. CSV export formatting: attachment headers, no-store, and a money
+#     column renders in pounds, never raw pence ---------------------------
+curl -s -D "$TMP_DIR/margin-csv-headers.txt" -o "$TMP_DIR/margin-report.csv" \
+  -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/margin.csv?from=$TODAY&to=$TODAY"
+grep -qi 'Content-Disposition: attachment; filename="margin-' "$TMP_DIR/margin-csv-headers.txt" \
+  || fail "reports/margin.csv has no attachment Content-Disposition: $(cat "$TMP_DIR/margin-csv-headers.txt")"
+grep -qi 'Cache-Control: no-store' "$TMP_DIR/margin-csv-headers.txt" \
+  || fail "reports/margin.csv has no Cache-Control: no-store: $(cat "$TMP_DIR/margin-csv-headers.txt")"
+grep -qi 'Content-Type: text/csv' "$TMP_DIR/margin-csv-headers.txt" \
+  || fail "reports/margin.csv is not served as text/csv: $(cat "$TMP_DIR/margin-csv-headers.txt")"
+MARGIN_CSV_POUNDS_CHECK="$(node -e '
+  const rows = require("fs").readFileSync(process.argv[1], "utf8").trim().split(/\r\n/);
+  const header = rows[0].split(",");
+  const revenueCol = header.indexOf("Revenue");
+  if (revenueCol < 0) { process.stdout.write("no Revenue column"); process.exit(0); }
+  const dataRow = rows.slice(1).find((r) => r.split(",")[revenueCol] && r.split(",")[revenueCol] !== "0.00");
+  if (!dataRow) { process.stdout.write("ok-no-nonzero-row"); process.exit(0); }
+  const cell = dataRow.split(",")[revenueCol];
+  process.stdout.write(/^-?\d+\.\d{2}$/.test(cell) ? "ok" : "bad cell: " + cell);
+' "$TMP_DIR/margin-report.csv")"
+[ "$MARGIN_CSV_POUNDS_CHECK" = "ok" ] || [ "$MARGIN_CSV_POUNDS_CHECK" = "ok-no-nonzero-row" ] \
+  || fail "reports/margin.csv's Revenue column is not plain pounds-and-pence: $MARGIN_CSV_POUNDS_CHECK"
+ok "reports/margin.csv is served as an attachment, no-store, with money columns in plain pounds"
+
+# --- 21w. The nightly "stats" cron rebuilds the last 7 UTC days, not just
+#     today or yesterday: a sale dated 5 days ago (outside any row built so
+#     far this run) is picked up; one dated 10 days ago (outside the
+#     7-day window) is not --------------------------------------------
+FIVE_DAYS_AGO="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-5); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
+TEN_DAYS_AGO="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-10); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/sales/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"number\":\"GG-S-CRON7DAY1\",\"subtotal\":6543,\"discount\":0,\"total\":6543,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$FIVE_DAYS_AGO 12:00:00.000Z\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/sales/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"number\":\"GG-S-CRON10DAY1\",\"subtotal\":8765,\"discount\":0,\"total\":8765,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$TEN_DAYS_AGO 12:00:00.000Z\"}"
+
+# Both days start with no stored daily_stats row (never built by any
+# earlier check in this run - 5 and 10 days back are well clear of
+# anything section 1-20 or the rest of section 21 touches).
+CRON7_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/stats" -H "Authorization: $SUPER_TOKEN")"
+[ "$CRON7_STATUS" = "204" ] || fail "POST /api/crons/stats returned $CRON7_STATUS, expected 204"
+
+wait_for_daily_row() {
+  # $1 date -> the daily_stats row JSON once it exists, or the last (empty) response after ~10 seconds.
+  local date="$1"
+  local tries=0
+  local json=""
+  while [ "$tries" -lt 40 ]; do
+    json="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+      --data-urlencode "filter=date>='${date} 00:00:00.000Z' && date<='${date} 23:59:59.999Z'" \
+      "$BASE/api/collections/daily_stats/records")"
+    if [ "$(echo "$json" | jval totalItems)" -ge 1 ] 2>/dev/null; then
+      echo "$json"
+      return 0
+    fi
+    sleep 0.25
+    tries=$((tries + 1))
+  done
+  echo "$json"
+}
+
+CRON7_FIVE_DAYS_ROW="$(wait_for_daily_row "$FIVE_DAYS_AGO")"
+[ "$(echo "$CRON7_FIVE_DAYS_ROW" | jval totalItems)" -ge 1 ] \
+  || fail "the nightly stats cron did not build a daily_stats row for 5 days ago ($FIVE_DAYS_AGO): $CRON7_FIVE_DAYS_ROW"
+[ "$(echo "$CRON7_FIVE_DAYS_ROW" | jval "items.0.sales_total_by_payment.cash")" -ge 6543 ] \
+  || fail "the 5-days-ago daily row's cash total is '$(echo "$CRON7_FIVE_DAYS_ROW" | jval "items.0.sales_total_by_payment.cash")', expected at least 6543"
+
+CRON7_TEN_DAYS_ROW="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=date>='${TEN_DAYS_AGO} 00:00:00.000Z' && date<='${TEN_DAYS_AGO} 23:59:59.999Z'" \
+  "$BASE/api/collections/daily_stats/records")"
+[ "$(echo "$CRON7_TEN_DAYS_ROW" | jval totalItems)" = "0" ] \
+  || fail "the nightly stats cron (last 7 UTC days) built a row for 10 days ago, outside its own window: $CRON7_TEN_DAYS_ROW"
+ok "the nightly stats cron rebuilds the last 7 UTC days (picks up a sale from 5 days ago, leaves 10 days ago untouched)"
+
+# --- 21x. Admin-only saved reports: a non-admin-owned compliance schedule
+#     is skipped (never sent, however it was saved) and audited as such;
+#     an admin-owned one still sends (under test_mode) - the cron re-checks
+#     this itself rather than trusting the collection rules alone --------
+SCHEDADMIN_ADMIN_ID="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/me" | jval id)"
+SCHEDADMIN_PLAIN_STAFF_ID="$(curl -s -G -H "Authorization: $SUPER_TOKEN" --data-urlencode "filter=email='$PLAIN_EMAIL'" "$BASE/api/collections/staff/records" | jval "items.0.id")"
+[ -n "$SCHEDADMIN_PLAIN_STAFF_ID" ] || fail "could not resolve the plain staff member's own id"
+
+# Written with the superuser token, bypassing saved_reports' own rules -
+# exactly the "row written straight against the database" case
+# lib/reports/scheduled.js's own admin re-check exists for.
+SCHEDADMIN_NONADMIN_ROW="$(curl -s -X POST "$BASE/api/collections/saved_reports/records" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"owner\":\"$SCHEDADMIN_PLAIN_STAFF_ID\",\"report_key\":\"compliance\",\"name\":\"Nonadmin Compliance Check\",\"schedule\":\"weekly\",\"recipients\":[\"$PLAIN_EMAIL\"]}" | jval id)"
+[ -n "$SCHEDADMIN_NONADMIN_ROW" ] || fail "could not create the non-admin-owned compliance saved_reports row"
+
+SCHEDADMIN_ADMIN_ROW="$(curl -s -X POST "$BASE/api/collections/saved_reports/records" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"owner\":\"$SCHEDADMIN_ADMIN_ID\",\"report_key\":\"compliance\",\"name\":\"Admin Compliance Check\",\"schedule\":\"weekly\",\"recipients\":[\"$STAFF_EMAIL\"]}" | jval id)"
+[ -n "$SCHEDADMIN_ADMIN_ROW" ] || fail "could not create the admin-owned compliance saved_reports row"
+
+SCHEDADMIN_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/scheduled_reports_weekly" -H "Authorization: $SUPER_TOKEN")"
+[ "$SCHEDADMIN_CRON_STATUS" = "204" ] || fail "POST /api/crons/scheduled_reports_weekly (admin-gate check) returned $SCHEDADMIN_CRON_STATUS, expected 204"
+
+SCHEDADMIN_SKIPPED_AUDIT="$(wait_for_audit_row "perPage=10&filter=action%3D%22saved_report_skipped%22%26%26record%3D%22$SCHEDADMIN_NONADMIN_ROW%22")"
+[ "$(echo "$SCHEDADMIN_SKIPPED_AUDIT" | jval totalItems)" -ge 1 ] \
+  || fail "a compliance saved report owned by a non-admin was not skipped (no saved_report_skipped audit row): $SCHEDADMIN_SKIPPED_AUDIT"
+echo "$SCHEDADMIN_SKIPPED_AUDIT" | grep -q '"reason":"admin_only"' \
+  || fail "the saved_report_skipped audit row does not name admin_only as the reason: $SCHEDADMIN_SKIPPED_AUDIT"
+
+SCHEDADMIN_SENT_AUDIT="$(wait_for_audit_row "perPage=10&filter=action%3D%22saved_report_sent%22%26%26record%3D%22$SCHEDADMIN_ADMIN_ROW%22")"
+[ "$(echo "$SCHEDADMIN_SENT_AUDIT" | jval totalItems)" -ge 1 ] \
+  || fail "a compliance saved report owned by an admin was not sent: $SCHEDADMIN_SENT_AUDIT"
+ok "a compliance saved report owned by a non-admin is skipped and audited; one owned by an admin still sends"
+
+# --- 21y. An unknown report key (including the prototype-chain key
+#     "constructor") 404s cleanly; an invalid calendar date (2026-02-30,
+#     shaped right but not a real day) 400s -------------------------------
+UNKNOWN_KEY_STATUS="$(curl -s -o "$TMP_DIR/unknown-key.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/banana-report-xyz?from=$TODAY&to=$TODAY")"
+[ "$UNKNOWN_KEY_STATUS" = "404" ] || fail "an unknown report key returned $UNKNOWN_KEY_STATUS, expected 404: $(cat "$TMP_DIR/unknown-key.json")"
+
+CONSTRUCTOR_KEY_STATUS="$(curl -s -o "$TMP_DIR/constructor-key.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/constructor?from=$TODAY&to=$TODAY")"
+[ "$CONSTRUCTOR_KEY_STATUS" = "404" ] \
+  || fail "the report key 'constructor' returned $CONSTRUCTOR_KEY_STATUS, expected 404 (it must not resolve to Object.prototype.constructor): $(cat "$TMP_DIR/constructor-key.json")"
+ok "an unknown report key and the prototype-chain key 'constructor' both 404 cleanly"
+
+BAD_CALENDAR_DATE_STATUS="$(curl -s -o "$TMP_DIR/bad-calendar-date.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=2026-02-30&to=2026-02-30")"
+[ "$BAD_CALENDAR_DATE_STATUS" = "400" ] \
+  || fail "from=2026-02-30 (shaped right, not a real day) returned $BAD_CALENDAR_DATE_STATUS, expected 400: $(cat "$TMP_DIR/bad-calendar-date.json")"
+ok "an invalid calendar date that is only shaped like YYYY-MM-DD (2026-02-30) is refused with 400"
+
+# --- 21z. A plain staff token (no admin role) can read every report except
+#     the admin-only ones - compliance and audit.csv, already checked in
+#     21j -------------------------------------------------------------
+STAFFALL_CHECK="ok"
+for key in sales buyins margin stock channels customers loyalty cash; do
+  status="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/reports/$key?from=$TODAY&to=$TODAY")"
+  if [ "$status" != "200" ]; then
+    STAFFALL_CHECK="bad: $key returned $status"
+    break
+  fi
+done
+[ "$STAFFALL_CHECK" = "ok" ] || fail "a plain staff token could not read every non-admin report: $STAFFALL_CHECK"
+ok "a plain staff token (no admin role) reads all 8 non-admin reports"
 
 # -----------------------------------------------------------------------
 # 22. Phase 4: exports, imports and SumUp. Still under

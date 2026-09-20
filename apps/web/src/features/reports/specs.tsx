@@ -142,6 +142,13 @@ const ID_TYPES: Record<string, string> = {
   other: "Other",
 }
 
+const PERK_TYPES: Record<string, string> = {
+  percent_off: "Percent off",
+  points_multiplier: "Points multiplier",
+  free_event_entries: "Free event entries",
+  free_sleeve: "Free sleeve",
+}
+
 function dateColumn(key: string, label: string, summary?: ColumnSpec["summary"]): ColumnSpec {
   return {
     key,
@@ -214,6 +221,12 @@ export interface ReportSpec {
   title: string
   lede: string
   admin?: boolean
+  /**
+   * False where nothing on the report means anything over a past period.
+   * Stock is read as it stands now, so the route sends no comparable totals
+   * for it and the screen offers no comparison to turn on.
+   */
+  comparable?: boolean
   /** The `by` dimensions this report takes; the first is the route's default. */
   dimensions: { key: string; label: string }[]
   kpis: KpiSpec[]
@@ -353,6 +366,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
     key: "stock",
     title: "Stock",
     lede: "What the shop holds, what it cost and how long it has sat.",
+    comparable: false,
     dimensions: [
       { key: "game", label: "Game" },
       { key: "set", label: "Set" },
@@ -540,7 +554,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         heading: "Perks used",
         empty: "No perks were applied in this range.",
         columns: [
-          textColumn("perk_type", "Perk", "title"),
+          mappedColumn("perk_type", "Perk", PERK_TYPES, "title"),
           countColumn("used_count", "Times used", "figure"),
         ],
       },

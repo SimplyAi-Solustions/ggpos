@@ -181,7 +181,7 @@ function stepFor(value: number, max: number): number {
 }
 
 export interface HeatmapProps {
-  /** Seven rows of twenty-four counts. Index 0 is Monday, in shop time. */
+  /** Seven rows of twenty-four counts. Index 0 is Monday, hours 0 to 23. */
   rows: number[][]
   summary: string
   className?: string
