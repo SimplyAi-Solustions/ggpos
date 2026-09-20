@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  SIGNATURE_PAPER,
   exportSignature,
   isSamePoint,
   pointIn,
   type SignatureCanvas,
+  type SignatureContext,
 } from "@/features/tradein/signature"
 
 /**
@@ -12,15 +14,40 @@ import {
  * the pad is given a stand-in with the two things `exportSignature` actually
  * reads: its size, and what `toDataURL` hands back.
  */
-function fakeCanvas(
-  overrides: Partial<SignatureCanvas> = {}
-): SignatureCanvas {
-  return {
-    width: 640,
-    height: 200,
-    toDataURL: () => "data:image/png;base64,iVBORw0KGgo=",
-    ...overrides,
+interface Painted {
+  canvas: SignatureCanvas
+  /** What was painted behind the ink, in the order it happened. */
+  painted: { fill: string; mode: string; box: number[] }[]
+}
+
+function fakePad(overrides: Partial<SignatureCanvas> = {}): Painted {
+  const painted: Painted["painted"] = []
+  const context: SignatureContext = {
+    globalCompositeOperation: "source-over",
+    fillStyle: "#000000",
+    fillRect: (x, y, width, height) =>
+      painted.push({
+        fill: String(context.fillStyle),
+        mode: String(context.globalCompositeOperation),
+        box: [x, y, width, height],
+      }),
+    save: () => {},
+    restore: () => {},
   }
+  return {
+    painted,
+    canvas: {
+      width: 640,
+      height: 200,
+      toDataURL: () => "data:image/png;base64,iVBORw0KGgo=",
+      getContext: () => context,
+      ...overrides,
+    },
+  }
+}
+
+function fakeCanvas(overrides: Partial<SignatureCanvas> = {}): SignatureCanvas {
+  return fakePad(overrides).canvas
 }
 
 describe("exportSignature", () => {
@@ -44,6 +71,35 @@ describe("exportSignature", () => {
   it("refuses anything that is not a PNG, rather than sending it on", () => {
     const tainted = fakeCanvas({ toDataURL: () => "data:," })
     expect(exportSignature(tainted, true)).toBeNull()
+  })
+
+  it("paints white paper behind the ink, so the PNG is never transparent", () => {
+    const pad = fakePad()
+    exportSignature(pad.canvas, true)
+    expect(pad.painted).toEqual([
+      {
+        fill: SIGNATURE_PAPER,
+        // Behind the strokes, not over them.
+        mode: "destination-over",
+        box: [0, 0, 640, 200],
+      },
+    ])
+  })
+
+  it("paints the same paper whatever the screen is set to", () => {
+    // The pad strokes in a fixed ink and flattens onto a fixed paper, so
+    // night mode cannot produce a signature that prints blank.
+    const light = fakePad()
+    const dark = fakePad()
+    exportSignature(light.canvas, true)
+    exportSignature(dark.canvas, true)
+    expect(light.painted).toEqual(dark.painted)
+  })
+
+  it("paints nothing at all when there is no ink to protect", () => {
+    const pad = fakePad()
+    exportSignature(pad.canvas, false)
+    expect(pad.painted).toEqual([])
   })
 })
 

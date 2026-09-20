@@ -8,7 +8,8 @@ import {
   hydrate,
   initialState,
   lineOffer,
-  needsIdGate,
+  idFieldsGood,
+  idGate,
   nextStep,
   payoutFor,
   previousStep,
@@ -177,7 +178,21 @@ describe("the payout split", () => {
 
   it("never hands over more cash than the offer is worth", () => {
     expect(payoutFor("mixed", sums, 99_999).cash).toBe(6000)
-    expect(payoutFor("mixed", sums, -50).cash).toBe(0)
+  })
+
+  it("treats mixed with an empty cash box as a plain credit payout", () => {
+    // Otherwise the whole thing is paid as credit at the lower cash rate,
+    // which quietly shorts the customer the difference between the two.
+    expect(payoutFor("mixed", sums, 0)).toEqual({
+      type: "credit",
+      cash: 0,
+      credit: 7500,
+    })
+    expect(payoutFor("mixed", sums, -50)).toEqual({
+      type: "credit",
+      cash: 0,
+      credit: 7500,
+    })
   })
 })
 
@@ -205,6 +220,12 @@ describe("the cash gate", () => {
     expect(cashBlock(facts, 6000, CASH_CAP, NOW).kind).toBe("none")
   })
 
+  it("says cash is switched off when the cap is zero", () => {
+    const block = cashBlock(customer().facts, 0, 0, NOW)
+    expect(block.kind).toBe("off")
+    expect(block.message).toBe("Cash payouts are switched off in settings.")
+  })
+
   it("refuses cash over the cap and names the cap", () => {
     const block = cashBlock(customer().facts, CASH_CAP + 1, CASH_CAP, NOW)
     expect(block.kind).toBe("cap")
@@ -217,20 +238,52 @@ describe("the cash gate", () => {
 })
 
 describe("the ID gate", () => {
-  it("asks for an ID when none is on file", () => {
-    expect(needsIdGate({ flags: [], idStatus: "none" }, NOW)).toBe(true)
+  const good = {
+    flags: [] as const,
+    idStatus: "verified" as const,
+    idExpiry: "2030-01-01",
+    address: "12 Castle Street, Bolsover, S44 6PP",
+  }
+  const HAS_PHOTO = { hasPhoto: true }
+
+  it("asks for the whole check when no ID is on file", () => {
+    expect(idGate({ flags: [], idStatus: "none" }, HAS_PHOTO, NOW)).toEqual({
+      needed: true,
+      reason: "full",
+    })
   })
 
   it("asks again when the one on file has expired", () => {
-    expect(
-      needsIdGate({ flags: [], idStatus: "verified", idExpiry: "2020-01-01" }, NOW)
-    ).toBe(true)
+    expect(idFieldsGood({ ...good, idExpiry: "2020-01-01" }, NOW)).toBe(false)
+    expect(idGate({ ...good, idExpiry: "2020-01-01" }, HAS_PHOTO, NOW)).toEqual({
+      needed: true,
+      reason: "full",
+    })
   })
 
-  it("is satisfied by a verified ID still in date", () => {
-    expect(
-      needsIdGate({ flags: [], idStatus: "verified", idExpiry: "2030-01-01" }, NOW)
-    ).toBe(false)
+  it("asks again when the photo has been purged, however good the fields are", () => {
+    expect(idGate(good, { hasPhoto: false }, NOW)).toEqual({
+      needed: true,
+      reason: "full",
+    })
+  })
+
+  it("asks again while the photo lookup has not answered", () => {
+    expect(idGate(good, { hasPhoto: null }, NOW)).toEqual({
+      needed: true,
+      reason: "full",
+    })
+  })
+
+  it("asks only for the address when that is all that is missing", () => {
+    expect(idGate({ ...good, address: "" }, HAS_PHOTO, NOW)).toEqual({
+      needed: true,
+      reason: "address",
+    })
+  })
+
+  it("is satisfied by verified fields, a photo and an address", () => {
+    expect(idGate(good, HAS_PHOTO, NOW)).toEqual({ needed: false })
   })
 })
 
@@ -375,14 +428,64 @@ describe("saving", () => {
     expect(input?.kind).toBe("retro")
   })
 
-  it("turns a bulk lot into a single for the items table", () => {
+  it("sends a lot as one line, never as a price per card", () => {
+    // 400 cards at £20 the lot. A quantity of 400 here is how the server
+    // would come to owe £8,000 and refuse the whole buy-in.
+    const lot = line({ kind: "bulk", qty: 400, bulkOffer: 2000, marketPence: 2000 })
+    const input = toLineInputs([lot], RULES, SETTINGS, "cash")[0]
+    expect(input?.kind).toBe("other")
+    expect(input?.qty).toBe(1)
+    expect(input?.offerPrice).toBe(2000)
+    expect(input?.marketPrice).toBe(2000)
+    expect(input?.marketSource).toBe("Bulk lot")
+    expect(input?.title).toBe("Bulk lot, 400 cards")
+
+    // And what the server is asked to pay matches what it will work out.
+    const sums = totals([lot], RULES, SETTINGS)
+    expect(payoutFor("cash", sums, 0).cash).toBe(2000)
+    expect(sums.units).toBe(1)
+  })
+
+  it("adds a line's own quantity up under a mixed payout", () => {
+    const lines = [line({ qty: 2 }), line({ key: "k2", kind: "sealed", condition: "", marketPence: 4000, qty: 3 })]
+    const sums = totals(lines, RULES, SETTINGS)
+    const payout = payoutFor("mixed", sums, 2000)
+    expect(payout.cash + payout.credit).toBe(sums.cash)
+
+    const sent = toLineInputs(lines, RULES, SETTINGS, "mixed").reduce(
+      (total, input) => total + input.offerPrice * input.qty,
+      0
+    )
+    expect(sent).toBe(payout.cash + payout.credit)
+  })
+
+  it("carries an override and its reason to the server", () => {
     const input = toLineInputs(
-      [line({ kind: "bulk", bulkOffer: 500 })],
+      [
+        line({
+          overrideCash: 1000,
+          overrideCredit: 1500,
+          overrideReason: "Edge wear the photo does not show",
+        }),
+      ],
       RULES,
       SETTINGS,
       "cash"
     )[0]
-    expect(input?.kind).toBe("single")
+    expect(input?.offerPrice).toBe(1000)
+    expect(input?.overrideCash).toBe(1000)
+    expect(input?.overrideCredit).toBe(1500)
+    expect(input?.overrideReason).toBe("Edge wear the photo does not show")
+  })
+
+  it("carries a retro cosmetic grade", () => {
+    const input = toLineInputs(
+      [line({ kind: "retro", condition: "cib", cosmetic: "B" })],
+      RULES,
+      SETTINGS,
+      "credit"
+    )[0]
+    expect(input?.cosmeticGrade).toBe("B")
   })
 })
 
@@ -423,5 +526,86 @@ describe("reopening a draft", () => {
   it("starts on the customer step when the draft has nobody on it", () => {
     const record = { id: "t", number: "", customer: "", status: "draft" } as TradeInRecord
     expect(hydrate(record, [], null).step).toBe("customer")
+  })
+
+  it("rebuilds a lot as a lot, count and flat figure intact", () => {
+    const record = { id: "t", number: "", customer: "c", status: "draft" } as TradeInRecord
+    const state = hydrate(
+      record,
+      [
+        {
+          id: "line_lot",
+          trade_in: "t",
+          kind: "other",
+          free_text_title: "Bulk lot, 400 cards",
+          qty: 1,
+          market_price: 2000,
+          market_source: "Bulk lot",
+          offer_price: 2000,
+          accepted: true,
+        },
+      ],
+      customer()
+    )
+    expect(state.lines[0]).toMatchObject({
+      kind: "bulk",
+      qty: 400,
+      bulkOffer: 2000,
+    })
+    // And it still sends as one line, not four hundred.
+    expect(toLineInputs(state.lines, RULES, SETTINGS, "cash")[0]?.qty).toBe(1)
+  })
+
+  it("brings an override back overridden, rather than repricing it", () => {
+    const record = { id: "t", number: "", customer: "c", status: "draft" } as TradeInRecord
+    const state = hydrate(
+      record,
+      [
+        {
+          id: "line_1",
+          trade_in: "t",
+          kind: "single",
+          free_text_title: "Charizard ex",
+          condition: "NM",
+          qty: 1,
+          market_price: 10_000,
+          offer_price: 1000,
+          override_cash: 1000,
+          override_credit: 1500,
+          override_reason: "Edge wear the photo does not show",
+          accepted: true,
+        },
+      ],
+      customer()
+    )
+    expect(state.lines[0]).toMatchObject({
+      overrideCash: 1000,
+      overrideCredit: 1500,
+      overrideReason: "Edge wear the photo does not show",
+    })
+    const offer = lineOffer(state.lines[0] as TradeLine, RULES, SETTINGS)
+    expect(offer.source).toBe("override")
+    expect(offer.cash).toBe(1000)
+  })
+
+  it("brings a retro cosmetic grade back", () => {
+    const record = { id: "t", number: "", customer: "c", status: "draft" } as TradeInRecord
+    const state = hydrate(
+      record,
+      [
+        {
+          id: "line_1",
+          trade_in: "t",
+          kind: "retro",
+          completeness: "cib",
+          cosmetic_grade: "C",
+          free_text_title: "Mario Kart 64",
+          qty: 1,
+          accepted: true,
+        },
+      ],
+      customer()
+    )
+    expect(state.lines[0]?.cosmetic).toBe("C")
   })
 })

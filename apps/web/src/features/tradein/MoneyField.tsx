@@ -36,14 +36,19 @@ export function MoneyField({
   className,
 }: MoneyFieldProps) {
   const [draft, setDraft] = React.useState(() => pounds(value))
-  // A figure changed from outside (an override, a prefill) replaces what is
-  // in the box; a figure this field itself just reported does not. Adjusted
-  // during render rather than in an effect, so the box never paints once
-  // with the old number first.
-  const [seen, setSeen] = React.useState(value)
-  if (value !== seen) {
-    setSeen(value)
-    setDraft(pounds(value))
+  /**
+   * Two figures, not one: the last one this field reported upwards, and the
+   * last prop it reacted to. A figure changed from outside (an override, a
+   * prefill) replaces what is in the box; one that has merely come back down
+   * after being typed here does not, or a half-typed "12." would be wiped
+   * mid-keystroke. Adjusted during render rather than in an effect, so the
+   * box never paints once with the old number first.
+   */
+  const [reported, setReported] = React.useState(value)
+  const [incoming, setIncoming] = React.useState(value)
+  if (value !== incoming) {
+    setIncoming(value)
+    if (value !== reported) setDraft(pounds(value))
   }
 
   // An amount nobody can read is not silently ignored: the underline turns
@@ -74,16 +79,18 @@ export function MoneyField({
         // back down does not look like an outside change and overwrite the
         // half-typed "12." still in the box.
         if (pence !== null) {
-          setSeen(pence)
+          setReported(pence)
           onChange(pence)
         } else if (next.trim() === "") {
-          setSeen(0)
+          setReported(0)
           onChange(0)
         }
       }}
       onBlur={() => {
         const pence = parseDecimalToMinor(draft)
-        setDraft(pence !== null ? pounds(pence) : pounds(seen))
+        // An amount that cannot be read never becomes a figure: the box goes
+        // back to the last one that did, which is the one already reported.
+        setDraft(pence !== null ? pounds(pence) : pounds(reported))
       }}
     />
   )

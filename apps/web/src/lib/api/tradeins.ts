@@ -17,7 +17,6 @@ import type {
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
-import { findDemoCustomer } from "@/lib/api/demo/customers"
 import {
   DEMO_OFFER_LIMITS,
   DEMO_OFFER_SETTINGS,
