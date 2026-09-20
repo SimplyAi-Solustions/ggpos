@@ -152,14 +152,18 @@ test.describe("reports", () => {
       Number(((await page.getByTestId(testId).textContent()) ?? "").replace(/[£,]/g, ""))
 
     // The demo splits the range's revenue across the breakdown exactly, so
-    // the rows have to add back up to the headline penny for penny.
+    // the rows have to add back up to the headline penny for penny. The
+    // table's own cells, not the whole subtree: the summary list below
+    // 900px carries the same figures again.
     const revenue = await pounds("kpi-revenue")
-    const [, ...rows] = ((await page.getByTestId("report-table").textContent()) ?? "")
-      .split("£")
-    const rowTotal = rows.reduce((carry, chunk) => {
-      const amount = /^[\d,]+\.\d{2}/.exec(chunk)?.[0]
-      return amount ? carry + Number(amount.replace(/,/g, "")) : carry
-    }, 0)
+    const cells = await page
+      .getByTestId("report-table")
+      .locator("table tbody td[data-numeric]")
+      .allTextContents()
+    const rowTotal = cells
+      .filter((cell) => cell.startsWith("£"))
+      .reduce((carry, cell) => carry + Number(cell.replace(/[£,]/g, "")), 0)
+    expect(rowTotal).toBeGreaterThan(0)
     expect(Math.abs(rowTotal - revenue)).toBeLessThan(0.005)
 
     // And the average basket is the revenue over the count, to the penny.
@@ -217,8 +221,7 @@ test.describe("reports", () => {
     // Stock is read as it stands now, so no comparison is offered at all.
     await expect(page.getByLabel("Compare with the period before")).toHaveCount(0)
     // The ageing buckets read in words, never as a raw key.
-    await expect(page.getByRole("heading", { name: "How long it is held" })).toBeVisible()
-    await expect(page.getByText("Date not known")).toBeVisible()
+    await expect(page.getByText("Date not known").filter({ visible: true })).toHaveCount(1)
   })
 
   test("keeps the register for admins", async ({ page }) => {

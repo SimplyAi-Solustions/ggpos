@@ -45,6 +45,7 @@ import { useCounterConfig } from "@/lib/api/config"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { useToday } from "@/lib/use-today"
 import { SumUpSection } from "@/features/cash/SumUpSection"
+import { formatDay } from "@/features/reports/range"
 import {
   addCashMovement,
   closeCashSession,
@@ -83,12 +84,14 @@ function sessionDay(
   return (row.closed_at ?? row.opened_at ?? fallback).slice(0, 10)
 }
 
+/**
+ * "19 Sep 2026". Through the shared formatter rather than
+ * `toLocaleDateString`, whose en-GB short month for September is "Sept":
+ * every date in this app reads the way CLAUDE.md sets out.
+ */
 function day(iso?: string): string {
   if (!iso) return ""
-  return new Date(iso).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-  })
+  return formatDay(iso.slice(0, 10))
 }
 
 /**
