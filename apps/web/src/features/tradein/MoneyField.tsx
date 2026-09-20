@@ -46,13 +46,18 @@ export function MoneyField({
     setDraft(pounds(value))
   }
 
+  // An amount nobody can read is not silently ignored: the underline turns
+  // pop while it is unreadable, and leaving the field puts back the last
+  // figure that did parse rather than leaving a number nobody agreed to.
+  const unreadable = draft.trim() !== "" && parseDecimalToMinor(draft) === null
+
   return (
     <Input
       id={id}
       inputMode="decimal"
       autoComplete="off"
       aria-label={label}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid || unreadable || undefined}
       className={className ? `tnum ${className}` : "tnum"}
       leadingIcon={
         <span aria-hidden="true" className="text-[18px] leading-none">
@@ -78,7 +83,7 @@ export function MoneyField({
       }}
       onBlur={() => {
         const pence = parseDecimalToMinor(draft)
-        if (pence !== null) setDraft(pounds(pence))
+        setDraft(pence !== null ? pounds(pence) : pounds(seen))
       }}
     />
   )

@@ -6,6 +6,8 @@
  * on `customer_private` (PocketBase rules are per record, not per field), so
  * a profile is two reads and a patch is up to two writes.
  */
+import { normaliseCode } from "@gg/shared"
+
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
@@ -40,7 +42,9 @@ function escapeFilter(value: string): string {
 /** At least this many characters before a phone or code is worth matching. */
 const MIN_PARTIAL = 3
 
-async function privateFor(customerId: string): Promise<CustomerPrivateRecord | null> {
+async function privateOne(
+  customerId: string
+): Promise<CustomerPrivateRecord | null> {
   try {
     return await pb
       .collection("customer_private")
@@ -51,6 +55,20 @@ async function privateFor(customerId: string): Promise<CustomerPrivateRecord | n
     if (isNotFound(error)) return null
     throw error
   }
+}
+
+/** The staff-only halves for a page of customers, in one read. */
+async function privateFor(
+  customerIds: string[]
+): Promise<Map<string, CustomerPrivateRecord>> {
+  if (customerIds.length === 0) return new Map()
+  const filter = customerIds
+    .map((id) => `customer = "${escapeFilter(id)}"`)
+    .join(" || ")
+  const rows = await pb
+    .collection("customer_private")
+    .getFullList<CustomerPrivateRecord>({ filter })
+  return new Map(rows.map((row) => [row.customer, row]))
 }
 
 async function lastVisitFor(customerId: string): Promise<string | null> {
@@ -89,7 +107,17 @@ function summarise(
  * the last few digits of a number while the customer is still talking.
  */
 export async function searchCustomers(query: string): Promise<CustomerSummary[]> {
-  if (isDemo()) return demoSearchCustomers(query)
+  return (await searchCustomerPage(query)).items
+}
+
+/** The same search, with the number the server says it matched in all. */
+export async function searchCustomerPage(
+  query: string
+): Promise<{ items: CustomerSummary[]; total: number }> {
+  if (isDemo()) {
+    const items = demoSearchCustomers(query)
+    return { items, total: items.length }
+  }
 
   const raw = query.trim()
   const clauses: string[] = []
@@ -111,13 +139,15 @@ export async function searchCustomers(query: string): Promise<CustomerSummary[]>
     sort: "name",
   })
 
-  const rows = await Promise.all(
-    page.items.map(async (customer) => {
-      const priv = await privateFor(customer.id)
-      return summarise(customer, priv, null)
-    })
-  )
-  return rows
+  // One filtered read for the whole page rather than one per row: a search
+  // of 25 customers used to be 26 requests.
+  const privates = await privateFor(page.items.map((customer) => customer.id))
+  return {
+    items: page.items.map((customer) =>
+      summarise(customer, privates.get(customer.id) ?? null, null)
+    ),
+    total: page.totalItems,
+  }
 }
 
 /** Another customer on the same phone number or the same email address. */
@@ -134,7 +164,7 @@ async function duplicatesFor(customer: CustomerRecord): Promise<CustomerSummary[
     sort: "name",
   })
   return Promise.all(
-    page.items.map(async (other) => summarise(other, await privateFor(other.id), null))
+    page.items.map(async (other) => summarise(other, await privateOne(other.id), null))
   )
 }
 
@@ -148,11 +178,13 @@ export async function getCustomer(idOrCode: string): Promise<CustomerProfile | n
     customer = await pb.collection("customers").getOne<CustomerRecord>(needle)
   } catch (error) {
     if (!isNotFound(error)) throw error
+    // `normaliseCode` applies Crockford's decode rules, so a code typed
+    // with an I, an L or an O finds the card it was printed from.
     try {
       customer = await pb
         .collection("customers")
         .getFirstListItem<CustomerRecord>(
-          `code = "${escapeFilter(needle.toUpperCase().replace(/[-\s]/g, ""))}"`
+          `code = "${escapeFilter(normaliseCode(needle))}"`
         )
     } catch (codeError) {
       if (isNotFound(codeError)) return null
@@ -161,7 +193,7 @@ export async function getCustomer(idOrCode: string): Promise<CustomerProfile | n
   }
 
   const [priv, lastVisit, duplicates] = await Promise.all([
-    privateFor(customer.id),
+    privateOne(customer.id),
     lastVisitFor(customer.id),
     duplicatesFor(customer),
   ])
@@ -247,7 +279,7 @@ export async function updateCustomer(
   if (patch.notes !== undefined) priv.notes = patch.notes
   if (patch.flags !== undefined) priv.flags = patch.flags
   if (Object.keys(priv).length > 0) {
-    const existing = await privateFor(id)
+    const existing = await privateOne(id)
     if (existing) {
       await pb.collection("customer_private").update(existing.id, priv)
     } else {

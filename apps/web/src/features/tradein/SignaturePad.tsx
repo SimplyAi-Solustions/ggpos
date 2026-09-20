@@ -3,6 +3,7 @@ import * as React from "react"
 import { Button } from "@/components/ui/button"
 import { MicroLabel } from "@/components/ui/micro-label"
 import {
+  SIGNATURE_INK,
   exportSignature,
   isSamePoint,
   pointIn,
@@ -54,7 +55,10 @@ export function SignaturePad({ onChange, label = "Signature" }: SignaturePadProp
     const from = last.current
     if (!from || isSamePoint(from, point)) return
 
-    ctx.strokeStyle = getComputedStyle(canvas).color
+    // Always ink on paper, never the theme's foreground: a signature drawn
+    // in night mode would export white on transparent and print blank, and
+    // this one goes on a six-year purchase record.
+    ctx.strokeStyle = SIGNATURE_INK
     ctx.lineWidth = 2
     ctx.lineCap = "round"
     ctx.lineJoin = "round"
@@ -106,7 +110,8 @@ export function SignaturePad({ onChange, label = "Signature" }: SignaturePadProp
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
-        className="mt-3 h-[140px] w-full touch-none border border-hairline bg-background text-foreground sm:h-[180px]"
+        // White, in both modes, because that is what it exports and prints.
+        className="mt-3 h-[140px] w-full touch-none border border-hairline bg-white sm:h-[180px]"
       />
       <p className="mt-2 text-[13px] leading-[1.45] text-muted-foreground-2">
         Sign above to confirm the items are yours to sell.

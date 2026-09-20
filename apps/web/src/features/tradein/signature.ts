@@ -12,10 +12,30 @@
 export const MIN_PAD_WIDTH = 120
 export const MIN_PAD_HEIGHT = 60
 
+/** The one colour a signature is ever drawn in. */
+export const SIGNATURE_INK = "#0b0b0b"
+
+/** The paper it is flattened onto before it is exported. */
+export const SIGNATURE_PAPER = "#ffffff"
+
 export interface SignatureCanvas {
   width: number
   height: number
   toDataURL: (type?: string) => string
+  getContext: (type: "2d") => SignatureContext | null
+}
+
+/**
+ * The handful of calls `exportSignature` makes to put paper behind the ink.
+ * `fillStyle` is widened the way the DOM declares it, so a real
+ * `CanvasRenderingContext2D` satisfies this without a cast at the call site.
+ */
+export interface SignatureContext {
+  globalCompositeOperation: GlobalCompositeOperation | string
+  fillStyle: string | CanvasGradient | CanvasPattern
+  fillRect: (x: number, y: number, width: number, height: number) => void
+  save: () => void
+  restore: () => void
 }
 
 /**
@@ -30,6 +50,19 @@ export function exportSignature(
 ): string | null {
   if (!canvas || !hasInk) return null
   if (canvas.width < MIN_PAD_WIDTH || canvas.height < MIN_PAD_HEIGHT) return null
+
+  // Paint the paper behind the strokes rather than in front of them, so the
+  // PNG is opaque. A transparent signature prints as nothing on a white
+  // receipt, which is the one thing this record cannot be.
+  const context = canvas.getContext("2d")
+  if (context) {
+    context.save()
+    context.globalCompositeOperation = "destination-over"
+    context.fillStyle = SIGNATURE_PAPER
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.restore()
+  }
+
   const url = canvas.toDataURL("image/png")
   return url && url.startsWith("data:image/png") ? url : null
 }

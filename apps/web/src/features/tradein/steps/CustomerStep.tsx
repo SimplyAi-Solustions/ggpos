@@ -101,8 +101,12 @@ export function CustomerStep({
       setScanHandler((raw) => {
         // Two shapes reach here: the portal link the Guild card's QR
         // carries (docs/label-spec.md) and the GGC code printed beside it.
-        if (qrTokenFrom(raw) || parseCode(raw)?.kind === "customer") {
-          load.mutate(raw)
+        // Crockford reads I and L as 1 and O as 0, so the lookup gets the
+        // normalised code rather than whatever the scanner or the keyboard
+        // produced.
+        const parsed = parseCode(raw)
+        if (qrTokenFrom(raw) || parsed?.kind === "customer") {
+          load.mutate(parsed?.encoded ?? raw)
           return
         }
         setError("That is not a customer card. Scan the QR on their Guild card.")
@@ -222,8 +226,9 @@ export function CustomerStep({
           onKeyDown={(event) => {
             if (event.key !== "Enter") return
             event.preventDefault()
-            if (qrTokenFrom(query) || parseCode(query)?.kind === "customer") {
-              load.mutate(query)
+            const typed = parseCode(query)
+            if (qrTokenFrom(query) || typed?.kind === "customer") {
+              load.mutate(typed?.encoded ?? query)
             }
           }}
         />
@@ -331,8 +336,9 @@ export function CustomerStep({
         open={cameraOpen}
         onOpenChange={setCameraOpen}
         onResult={(value) => {
-          if (qrTokenFrom(value) || parseCode(value)?.kind === "customer") {
-            load.mutate(value)
+          const scanned = parseCode(value)
+          if (qrTokenFrom(value) || scanned?.kind === "customer") {
+            load.mutate(scanned?.encoded ?? value)
           } else {
             setError("That QR is not a Guild card. Try again, or search by name.")
           }
