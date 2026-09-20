@@ -278,7 +278,7 @@ routerAdd(
           type: "quote_message",
           title: "A message about your quote",
           body: text,
-          link: "",
+          link: `/account/quotes/${quoteId}`,
           email: true,
         });
       } else {
@@ -287,7 +287,7 @@ routerAdd(
           type: "quote_message",
           title: "A customer replied on a quote",
           body: text,
-          link: "",
+          link: `/counter/quotes/${quoteId}`,
           email: false,
         });
       }
@@ -388,7 +388,7 @@ routerAdd(
           body:
             `We have offered ${money.formatGBP(normalized.offerTotal)} for your items. ` +
             `Sign in to review and accept or decline by ${quotesLib.ukDateShort(expires.toISOString())}.`,
-          link: "",
+          link: `/account/quotes/${quoteId}`,
           email: true,
         });
 
@@ -545,7 +545,7 @@ routerAdd(
           type: actionName,
           title: "A quote was accepted",
           body: `Quote ${quoteId} was accepted by the customer.`,
-          link: "",
+          link: `/counter/quotes/${quoteId}`,
           email: false,
         });
 
@@ -638,7 +638,7 @@ routerAdd(
           type: actionName,
           title: "A quote was declined",
           body: `Quote ${quoteId} was declined by the customer.`,
-          link: "",
+          link: `/counter/quotes/${quoteId}`,
           email: false,
         });
 
@@ -807,7 +807,7 @@ routerAdd(
           type: "quote_declined",
           title: "Your quote was declined",
           body: note,
-          link: "",
+          link: `/account/quotes/${quoteId}`,
           email: true,
         });
 
@@ -918,7 +918,7 @@ cronAdd("quotes_expire", "0 * * * *", () => {
         type: "quote_expired",
         title: "Your quote offer has expired",
         body: `The offer on your quote expired on ${quotesLib.ukDateShort(expiresAt)}. Ask for a new one any time.`,
-        link: "",
+        link: `/account/quotes/${quote.id}`,
         email: true,
       });
       continue;
