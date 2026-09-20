@@ -2,6 +2,8 @@
  * Stock, answered from the demo item store. Same signatures as the live
  * implementations in `src/lib/api/items.ts`, so no screen branches on mode.
  */
+import { displayCode } from "@gg/shared"
+
 import { DEMO_GAMES, DEMO_LOCATIONS } from "@/lib/api/fixtures"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
 import {
@@ -126,6 +128,7 @@ export function getItem(sku: string): ItemDetail | null {
     sellerName: buyIn?.customerName ?? null,
     sellerCode: buyIn ? DEMO_SALE_CUSTOMERS[2]?.code ?? null : null,
     reservedForName: reservedFor?.name ?? null,
+    reservedForCode: reservedFor?.code ? displayCode(reservedFor.code) : null,
     reservedUntil: item.reserved_until ?? null,
     history: historyFor(item),
   }

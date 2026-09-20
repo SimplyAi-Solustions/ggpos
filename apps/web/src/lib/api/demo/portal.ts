@@ -1,4 +1,4 @@
-import { formatGBP } from "@gg/shared"
+import { displayCode, formatGBP } from "@gg/shared"
 
 import { boxArt, cardArt } from "@/kit/placeholder-art"
 import { PLATFORMS } from "@/design/platforms"
@@ -7,7 +7,14 @@ import {
   demoCreditLedgerFor,
   findDemoCustomer,
 } from "@/lib/api/demo/customers"
-import { demoGetLines, demoTradeInsFor } from "@/lib/api/demo/tradeins"
+import {
+  demoCreateDraft,
+  demoGetLines,
+  demoSaveLines,
+  demoTradeIns,
+  demoTradeInsFor,
+} from "@/lib/api/demo/tradeins"
+import { ensureSeeded, itemStore } from "@/lib/api/demo/store"
 import {
   DEMO_PORTAL_CODE,
   DEMO_PORTAL_CUSTOMER_ID,
@@ -15,12 +22,16 @@ import {
 } from "@/lib/api/demo/portal-seed"
 import type {
   CardLanding,
+  HoldRow,
   NewQuoteInput,
   NewWantInput,
   NotificationRow,
   QuoteDetail,
+  QuoteLine,
   QuoteMessage,
+  QuoteQueueRow,
   QuoteRecord,
+  StaffQuoteDetail,
   VaultMe,
   VaultMePatch,
   VaultTradeIn,
@@ -664,4 +675,201 @@ export function demoListNotifications(): NotificationRow[] {
 export function demoMarkNotificationRead(id: string) {
   const row = demoNotifications.find((entry) => entry.id === id)
   if (row && !row.read_at) row.read_at = new Date().toISOString()
+}
+
+// ---------------------------------------------------------------------------
+// The counter's side of the demo shop
+//
+// The same quotes, want-list holds and customers My Vault reads above, seen
+// from behind the counter: one queue across every customer, the five staff
+// actions on a quote, and the holds that run out today. One store, so a
+// demo offer sent at the counter is the offer the portal then shows.
+// ---------------------------------------------------------------------------
+
+function demoCustomerFor(id: string) {
+  return findDemoCustomer(id)?.customer ?? null
+}
+
+/** The whole queue, newest first, exactly as the collection read returns it. */
+export function demoQuoteQueue(): QuoteQueueRow[] {
+  return [...demoQuotes]
+    .sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""))
+    .map((quote) => {
+      const customer = demoCustomerFor(quote.customer)
+      return {
+        id: quote.id,
+        status: quote.status,
+        customerId: quote.customer,
+        customerName: customer?.name ?? "",
+        customerCode: customer?.code ? displayCode(customer.code) : "",
+        photoCount: quote.photos.length,
+        message: quote.message ?? "",
+        dropOff: quote.drop_off ?? null,
+        offerTotal: quote.offer_total ?? null,
+        offerExpiresAt: quote.offer_expires_at ?? null,
+        created: quote.created ?? "",
+      }
+    })
+}
+
+export function demoStaffQuote(id: string): StaffQuoteDetail {
+  const { messages, photos, ...quote } = findQuote(id)
+  const customer = demoCustomerFor(quote.customer)
+  return {
+    quote,
+    messages: [...messages],
+    photos: [...photos],
+    customer: customer
+      ? {
+          id: customer.id,
+          name: customer.name,
+          code: displayCode(customer.code),
+          email: customer.email ?? "",
+        }
+      : null,
+    tradeInId: demoTradeInForQuote(id),
+  }
+}
+
+/** The buy-in a received demo quote became, by the link the route writes. */
+export function demoTradeInForQuote(id: string): string | null {
+  const quote = demoQuotes.find((entry) => entry.id === id)
+  return quote?.trade_in ?? null
+}
+
+export function demoQuoteReviewing(id: string): QuoteRecord {
+  const quote = findQuote(id)
+  if (quote.status !== "submitted") {
+    throw new Error(`This quote is ${quote.status} and cannot be picked up now.`)
+  }
+  quote.status = "reviewing"
+  return toQuoteRecord(quote)
+}
+
+export function demoStaffQuoteMessage(id: string, body: string): QuoteMessage {
+  const quote = findQuote(id)
+  const message: QuoteMessage = {
+    id: randomId("msg"),
+    author: "staff",
+    body,
+    created: new Date().toISOString(),
+  }
+  quote.messages.push(message)
+  return message
+}
+
+/** The offer, with the total recomputed from the lines as the route does. */
+export function demoSendQuoteOffer(
+  id: string,
+  lines: QuoteLine[],
+  message?: string
+): QuoteRecord {
+  const quote = findQuote(id)
+  if (quote.status !== "submitted" && quote.status !== "reviewing") {
+    throw new Error(`This quote is ${quote.status} and cannot be offered on.`)
+  }
+  const now = new Date()
+  const expires = new Date(now.getTime() + 7 * DAY)
+  quote.lines = lines.map((line) => ({ ...line }))
+  quote.offer_total = lines.reduce(
+    (sum, line) => sum + line.offer_price * line.qty,
+    0
+  )
+  quote.offer_expires_at = expires.toISOString()
+  quote.status = "offered"
+  if (message?.trim()) {
+    quote.messages.push({
+      id: randomId("msg"),
+      author: "staff",
+      body: message.trim(),
+      created: now.toISOString(),
+    })
+  }
+  return toQuoteRecord(quote)
+}
+
+/**
+ * The items have arrived: a draft buy-in with the quote's lines on it, and
+ * the quote marked received. The same two steps the route takes, so the
+ * wizard opens on a real draft in demo mode too.
+ */
+export function demoQuoteReceived(id: string): {
+  trade_in_id: string
+  number: string
+} {
+  const quote = findQuote(id)
+  if (quote.status !== "accepted") {
+    throw new Error(`This quote is ${quote.status}, not ready to receive.`)
+  }
+  const draft = demoCreateDraft(quote.customer)
+  const entry = demoTradeIns.find((row) => row.record.id === draft.id)
+  if (entry) entry.record.channel = "remote"
+  demoSaveLines(
+    draft.id,
+    (quote.lines ?? []).map((line) => ({
+      kind: line.retro_title || line.condition === "cib" ? "retro" : "single",
+      title: line.title,
+      cardId: line.card,
+      retroTitleId: line.retro_title,
+      finish: line.finish,
+      condition: line.condition,
+      qty: line.qty,
+      marketPrice: line.market_price,
+      marketSource: line.market_source ?? "",
+      offerPrice: line.offer_price,
+      accepted: true,
+    }))
+  )
+  quote.status = "received"
+  quote.trade_in = draft.id
+  return { trade_in_id: draft.id, number: draft.number }
+}
+
+export function demoCancelQuote(id: string, note: string): QuoteRecord {
+  const quote = findQuote(id)
+  if (["declined", "expired", "completed", "received"].includes(quote.status)) {
+    throw new Error(`This quote is already ${quote.status}.`)
+  }
+  quote.status = "declined"
+  quote.staff_note = note
+  quote.messages.push({
+    id: randomId("msg"),
+    author: "staff",
+    body: note,
+    created: new Date().toISOString(),
+  })
+  return toQuoteRecord(quote)
+}
+
+/**
+ * The holds running out today, soonest first.
+ *
+ * Read from the demo item store rather than the want list, the same way the
+ * live call reads `items`: a hold is a reserved item whoever put it there.
+ */
+export function demoHoldsEndingToday(now: Date = new Date()): HoldRow[] {
+  ensureSeeded()
+  const end = new Date(now)
+  end.setHours(23, 59, 59, 999)
+  return itemStore()
+    .filter(
+      (item) =>
+        item.status === "reserved" &&
+        Boolean(item.reserved_until) &&
+        new Date(item.reserved_until as string).getTime() <= end.getTime()
+    )
+    .sort((a, b) => (a.reserved_until ?? "").localeCompare(b.reserved_until ?? ""))
+    .map((item) => {
+      const customer = demoCustomerFor(item.reserved_for ?? "")
+      return {
+        itemId: item.id,
+        sku: item.sku,
+        title: item.title || "Item",
+        price: item.price ?? 0,
+        customerId: item.reserved_for ?? "",
+        customerName: customer?.name ?? "",
+        customerCode: customer?.code ? displayCode(customer.code) : "",
+        until: item.reserved_until ?? "",
+      }
+    })
 }

@@ -275,7 +275,37 @@ export function ensureSeeded() {
     source: "trade_in",
     created: todayAt(10, 12),
   }
-  items.push(soldCharizard, soldLlanowar)
+  /**
+   * A want-list match, held for the customer it matched until this
+   * afternoon: the one hold Home's waiting line counts and the item page's
+   * hold line is drawn from. Binder B rather than the Showcase or Binder A,
+   * so it does not change what a demo stock count at either of those
+   * expects.
+   */
+  const heldPidgeot: StockItemRecord = {
+    id: "item_demo_held_1",
+    sku: buildCode("single", "R3X9K").encoded,
+    kind: "single",
+    game: "game_pokemon",
+    card: "card_sv8_113",
+    title: "Pidgeot ex",
+    set_code: "sv8",
+    number: "113/191",
+    finish: "holo",
+    condition: "NM",
+    qty: 1,
+    cost: 900,
+    market_at_intake: 2400,
+    price: 2299,
+    status: "reserved",
+    reserved_for: "cust_demo_2",
+    reserved_until: todayAt(17, 0),
+    location: "loc_binder_b",
+    source: "trade_in",
+    created: yesterdayAt(16, 20),
+  }
+
+  items.push(soldCharizard, soldLlanowar, heldPidgeot)
 
   demoSales.push(
     {

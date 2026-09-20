@@ -6,6 +6,7 @@
  * store Add stock appends to. Screens call these, never `pb` directly.
  */
 import { ClientResponseError } from "pocketbase"
+import { displayCode } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -39,7 +40,7 @@ type ExpandedItem = StockItemRecord & {
     card?: CardRecord
     game?: GameRecord
     location?: LocationRecord
-    reserved_for?: { id: string; name?: string }
+    reserved_for?: { id: string; name?: string; code?: string }
     trade_in_line?: {
       id: string
       expand?: { trade_in?: { number?: string; expand?: { customer?: { name?: string; code?: string } } } }
@@ -145,6 +146,10 @@ async function toDetail(item: ExpandedItem): Promise<ItemDetail> {
     sellerName: seller?.name ?? null,
     sellerCode: seller?.code ?? null,
     reservedForName: item.expand?.reserved_for?.name ?? null,
+    // Display form, so the hold line can link straight to the customer.
+    reservedForCode: item.expand?.reserved_for?.code
+      ? displayCode(item.expand.reserved_for.code)
+      : null,
     reservedUntil: item.reserved_until ?? null,
     history: await historyFor(item),
   }
