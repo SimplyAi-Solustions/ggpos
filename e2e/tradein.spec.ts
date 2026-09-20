@@ -52,6 +52,17 @@ async function sign(page: Page) {
   await expect(page.getByText("Signature captured")).toBeVisible()
 }
 
+/** The counter's one step-up dialog, shared with refunds on the Sell screen. */
+async function confirmPassword(page: Page) {
+  const dialog = page.getByRole("dialog", {
+    name: "Confirm your password to continue",
+  })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel("Password").fill(DEMO_PASSWORD)
+  await dialog.getByRole("button", { name: "Continue" }).click()
+  await expect(dialog).toBeHidden()
+}
+
 test.describe("the buy-in wizard", () => {
   test("takes a new customer from nothing to a sealed number", async ({ page }) => {
     await signIn(page)
@@ -250,6 +261,49 @@ test.describe("the customers area", () => {
     await expect(
       page.getByRole("img", { name: "Guild card QR for Jasmine Okafor" })
     ).toBeVisible()
+  })
+
+
+  test("merges a duplicate card into the one that is kept", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/counter/customers")
+
+    // T Bradbury shares Tom's phone number, so the profile offers the merge.
+    await page.getByLabel("Search customers").fill("Tom Bradbury")
+    await page.getByRole("link", { name: "Tom Bradbury" }).click()
+
+    await expect(page.getByText("Duplicates")).toBeVisible()
+    await page.getByRole("button", { name: "Merge into this" }).click()
+
+    const dialog = page.getByRole("dialog", { name: "Merge customers" })
+    await expect(dialog).toContainText("cannot be undone")
+    await dialog.getByRole("button", { name: "Merge" }).click()
+
+    await confirmPassword(page)
+
+    await expect(page.getByText("Duplicates")).toBeHidden()
+    await expect(page.getByRole("status")).toContainText(/cards are now one|Moved/)
+  })
+
+  test("refuses to erase a customer who still holds store credit", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/counter/customers")
+    await page.getByLabel("Search customers").fill("Jasmine")
+    await page.getByRole("link", { name: "Jasmine Okafor" }).click()
+
+    await page.getByRole("button", { name: "Erase" }).click()
+    const dialog = page.getByRole("dialog", { name: "Erase this customer" })
+    await expect(dialog).toContainText("six years")
+    await dialog.getByRole("button", { name: "Erase", exact: true }).click()
+
+    await confirmPassword(page)
+
+    await expect(page.getByRole("status")).toContainText(
+      "This customer still has £45.00 store credit."
+    )
+    await expect(page.getByRole("heading", { name: "Jasmine Okafor" })).toBeVisible()
   })
 
   test("warns about a duplicate while a known number is typed", async ({ page }) => {

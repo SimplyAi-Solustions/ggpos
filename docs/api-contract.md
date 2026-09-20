@@ -59,9 +59,15 @@ Response 200
 
 Server: reads the photo bytes, encrypts them with `$security.encrypt` and the `GG_ID_PHOTO_KEY` environment variable (refuses with 500 "ID photo key is not configured" when the variable is missing), stores the ciphertext as the `photo` file on a new `id_documents` row with `taken_by`, `taken_at`, `expires_at = now + settings.id_photo_retention_months`; updates `customer_private` (`id_status = "verified"`, `id_type`, `id_expiry`, `id_ref_last4`, `dob`, `address`, `id_verified_by`, `id_verified_at`); audit.
 
+The MIME type is sniffed from the file's first bytes (JPEG, PNG, WebP, HEIC/HEIF); a `mime` form field is ignored. Anything else is 400 "That file is not a photo. Take a JPEG or PNG photo of the ID." The upload is capped at 8 MB: 400 "That photo is over 8 MB. Take it again at a lower resolution."
+
 Response 200: `{ "id_document": "<id>", "id_status": "verified", "id_expiry": "2028-06-30", "expires_at": "2027-09-20T..." }`.
 
 `GET /api/vault/id-photo/:id` (**admin**, **step-up**): writes the audit row first, decrypts, and streams the image with `Content-Type` from the stored MIME, `Cache-Control: no-store`, `Content-Disposition: inline`. 404 when purged.
+
+`GET /api/vault/customers/:id/id-document` (staff): the newest `id_documents` row for that customer whose photo file is still on disk, so the buy-in screen can tell whether the ID gate will pass without being able to read `id_documents` itself (its API rules are all null). Never returns the photo or anything else off the row.
+
+Response 200: `{ "document": { "id": "...", "taken_at": "...", "expires_at": "...", "taken_by": "<staff id>" } | null }`. 404 when the customer does not exist.
 
 ## Sales
 
@@ -97,13 +103,17 @@ Response 200
 }
 ```
 
+A `reward_code` needs a customer on the sale and must belong to them; `discount_source` must be `"reward"`; the reward's type must be `money_off` and `discount` must equal its value in pence. Each of those is a 422.
+
 `POST /api/vault/sales/:id/refund` (**step-up**)
 
 Request: `{ "lines": [ { "sale_line": "<id>", "qty": 1 } ], "reason": "...", "refund_method": "cash" | "store_credit" | "sumup_card" }`.
 
-Server, in one transaction: items back to `in_stock` (or `qty` incremented), `sale_lines.status = "refunded"`, `sales.status` to `refunded` or `part_refunded`, reversing `credit_ledger` and `cash_movements` rows, a `points_ledger` row with reason `refund_reverse` for the points that sale earned on those lines, audit with the reason.
+Server, in one transaction: items back to `in_stock` (or `qty` incremented), `sale_lines.refunded_qty` moved up and `status = "refunded"` once it reaches `qty`, `sales.refunded_total` moved up and `sales.status` set to `refunded` or `part_refunded`, reversing `credit_ledger` and `cash_movements` rows, a `points_ledger` row with reason `refund_reverse` for the points that sale earned on those units, the reason saved as a `notes` row against the sale, audit.
 
-Response 200: `{ "sale": { "id": "...", "status": "part_refunded" }, "refunded": 32499 }`.
+Amounts come from the as-sold figures, cumulatively, so any sequence of partial refunds adds back up to exactly what was charged. 409 when the line is already refunded, when fewer units are still sold than asked for, or when the item has since been deleted.
+
+Response 200: `{ "sale": { "id": "...", "status": "part_refunded" }, "refunded": 32499, "refunded_total": 32499, "points_reversed": 325, "credit_balance": 0, "points_balance": 915 }`.
 
 ## Cash sessions
 
@@ -124,6 +134,41 @@ Label jobs are ordinary `label_jobs` rows (staff create rule). The print page is
 
 `GET /api/vault/exports/stock-book?from=YYYY-MM-DD&to=YYYY-MM-DD` (**admin**): CSV of margin scheme items acquired in the range with the columns in `docs/csv-formats.md` (stock number, purchase date and ref, seller name and address, description, cost, sale date and ref, sale price, margin). `Content-Disposition: attachment`.
 
+## Config
+
+`GET /api/vault/config` (staff): the read-only window onto the admin-only reference collections, so an ordinary staff member at the counter can price an item, see the cash variance threshold and show a customer their tier.
+
+Response 200
+```json
+{
+  "settings": { "cash_cap": 800000, "offer": { "bulkThreshold": 100, "...": 0 }, "...": "" },
+  "pricing_rules": [ { "id": "...", "kind": "single", "band_min": 0, "...": 0 } ],
+  "loyalty": {
+    "programme": { "id": "...", "enabled": true, "...": 0 },
+    "rules": [ { "id": "...", "type": "multiplier", "...": 0 } ],
+    "tiers": [ { "id": "...", "name": "Member", "...": 0 } ]
+  }
+}
+```
+
+`settings` is every field of the settings record except `api_keys`, `email` and anything whose name contains "key" or "secret", so the third-party API keys, the mail key and the VAPID keys never leave the server. `pricing_rules` and `loyalty.rules` are the active rows, highest priority first (the order the evaluators break ties in); `loyalty.tiers` is every tier by `sort`. 401 without a staff token. No audit row: every counter screen loads this.
+
+## Customer records
+
+`POST /api/vault/customers/:id/merge` (**step-up**) with `{ "into": "<id>" }`, where `:id` is the duplicate to fold in and `into` is the record to keep.
+
+In one transaction every relation is re-pointed at the record being kept (`trade_ins`, `sales`, `credit_ledger`, `points_ledger`, `quotes`, `want_list`, `notifications`, `reward_redemptions`, `referrals` at both ends, `memberships`, `id_documents`, `items.reserved_for`, `customers.referred_by`, and `notes` rows targeting the duplicate). On `customer_private`, fields that are empty on the record being kept are filled from the duplicate (address, date of birth), flags are unioned, notes are appended on a new line, and the ID fields move over only when the record being kept has no verified ID and the duplicate has one. Both cached balances are then recomputed from the ledgers, and the duplicate's `customer_private` and `customers` rows are deleted.
+
+Response 200: `{ "customer": { ...the kept record... }, "moved": { "trade_ins": 2, "credit_ledger": 5 } }`. 400 with no `into`, 409 when the two ids are the same, 404 when either is missing. Audit carries the two ids and the counts.
+
+`POST /api/vault/customers/:id/erase` (**admin**, **step-up**), no body. The UK GDPR Article 17 erasure.
+
+422 when the customer still holds store credit: "This customer still has £15.00 store credit. Pay it out or write it off first."
+
+In one transaction: `customers` keeps its `code` and gets `name = "Erased customer"`, an empty email and phone, `marketing_consent = false`, no birthday month and a fresh `qr_token`; `customer_private` has its address, date of birth, notes, flags and every ID field cleared and `id_status = "none"`; the customer's `id_documents` rows are deleted with their files; open (`issued`) `reward_redemptions` become `cancelled`; their `want_list`, `notifications`, `push_subscriptions` and `quotes` rows are deleted, quote photos included. Trade-ins, sales and both ledgers stay untouched, seller snapshot and all: Article 17(3)(b) keeps the record the shop is required by law to hold.
+
+Response 200: `{ "erased": true, "customer": { ...the anonymised record... } }`. Audit carries the customer id and the counts.
+
 ## Demo mode
 
 The web app's `src/lib/api/` layer exposes the same functions for demo mode (in-memory fixtures) and live mode (these routes), so screens never branch on the mode.
@@ -136,7 +181,19 @@ Where the routes differ from the text above, the built behaviour is the truth an
 - `trade_ins.number` is optional with a partial unique index, so drafts can be created through the collection API; the number is assigned at completion.
 - `trade_in_lines` carry `kind`, `game` and `completeness` (items need a kind and a game, and sealed or accessory lines have no card to derive them from). The completion route still falls back to the linked card or retro title when they are empty.
 - Receipt JSON takes its terms from `settings.receipt_terms`; the signature is served through a short-lived PocketBase file token, never as a data URL. Email goes through PocketBase's own SMTP settings (`$app.newMailClient()`), so the admin UI's mail settings must be filled in; `settings.email` holds only the from name, from address, reply-to and `test_mode`.
-- Response supersets: `cash-sessions/close` adds `expected`, `variance` and `variance_alert`; `sales/:id/refund` adds `points_reversed`, `credit_balance` and `points_balance`.
-- A partial refund reduces `sale_lines.qty` (there is no refunded quantity column); a full-line refund sets `sale_lines.status = "refunded"`.
-- The retention cron purges expired `id_documents` (file included, audited by id) and notifications older than 12 months; quote photos are not purged yet because `quotes` has no closed-at timestamp (lands with the portal phase).
+- Response supersets: `cash-sessions/close` adds `expected`, `variance` and `variance_alert`; `sales/:id/refund` adds `refunded_total`, `points_reversed`, `credit_balance` and `points_balance`.
+- **A refund never rewrites what was sold.** `sale_lines.qty` and `.discount` are the as-sold figures for good; a refund moves `sale_lines.refunded_qty` and `sales.refunded_total`, and sets `sale_lines.status = "refunded"` once `refunded_qty` reaches `qty`. Amounts are worked out from the immutable figures: `lineGross = unit_price * qty - discount`, the sale-level discount is allocated across the lines pro rata with the last line (by created, then id) absorbing the rounding remainder, `lineNet = lineGross - allocation`, and refunding `r` more units of a line pays `roundHalfUp(lineNet * (refunded_qty + r) / qty) - roundHalfUp(lineNet * refunded_qty / qty)`. Any sequence of partial refunds therefore sums to exactly `sales.total`. Points reverse the same way, cumulatively over `refunded_total`, and the points ledger is allowed to go negative.
+- **The refund reason is a `notes` row** against the sale (`target_collection = "sales"`), not audit meta; the audit row carries only the note's id. `audit_log` is permanent and superuser-only, and a refund reason is free text about a named customer.
+- **`trade_ins.signature` and `quotes.photos` are protected files.** They are only served with a short-lived PocketBase file token, and that token is minted from the **calling staff auth record** (`e.auth.newFileToken()`): `record.newFileToken()` throws "not an auth collection record" on an ordinary record. The receipt route mints one and appends it to `signature.url`. `items.photos` stays public: that is product imagery.
+- **The cash ID gate needs a photo, not just fields.** A cash payout requires an `id_documents` row for that customer whose photo file is still present, or an `id_check.id_document` in the same call belonging to them; otherwise 422 "Take a photo of the customer's ID before paying cash." The document's id goes on `trade_ins.id_document`, and its `expires_at` is pushed out to now plus `settings.id_photo_retention_months` on every cash completion, so a photo lives twelve months from the last cash buy-in rather than from the day it was taken. `customer_private.flags` is honoured first: `no_cash` is 422 "This customer is marked no cash. Pay as store credit." and `under_18` is 422 "This customer is recorded as under 18, so we cannot buy for cash."
+- **`settings.cash_cap` of 0 means no cash at all**, not "no limit": 422 "Cash payouts are switched off in settings." on a buy-in and "Cash sales are switched off in settings." on a sale.
+- Completion also validates before it writes: `id_check.id_ref_last4` must be 1 to 4 characters, and a supplied signature must be a PNG under 2 MB.
+- **Points earned spread the sale-level discount across the lines** before the evaluator sees them, so the gross it earns on is the amount actually charged. A sale with no customer has `points_earned` 0.
+- **One open cash session is enforced by a partial unique index**, not just by a read: `cash_sessions (closed_at) WHERE closed_at = ''`. Opening runs in a transaction and a collision on that index comes back as the same 409.
+- Every CSV cell that opens with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with a single quote and quoted, so a seller called `=HYPERLINK("x")` reads as text in a spreadsheet. Money columns stay numeric, negative margins included.
+- The stock book is **one row per sale line** for the quantity still sold (cost is the unit cost times that quantity, sale price is the line's net less what has been refunded off it, margin is the difference), plus one row for the quantity still on the shelf with the sale columns blank. A fully refunded line produces no row. The purchase columns repeat on every row of an item.
+- `GET /api/vault/config` and `GET /api/vault/customers/:id/id-document` write no audit row: both are loaded by ordinary counter screens and neither returns anything sensitive.
+- The retention cron purges expired `id_documents` (file included, audited by id) and notifications older than 12 months; quote photos are not purged yet because `quotes` has no closed-at timestamp (lands with the portal phase). Its cutoffs are formatted the way PocketBase stores a date (a space, not a `T`), so they compare correctly as text.
 - `GG_ID_PHOTO_KEY` (exactly 32 characters) is required in production; without it the ID check route refuses with 500 and photos cannot be stored.
+- ID photo bytes go into `$security.encrypt` as an array of numbers and come back through `toBytes($security.decrypt(...))`, so nothing on that path is base64'd. `pb_hooks/lib/base64.js` is now only the signature data URL's codec.
+- The seeded `pricing_rules` single bands are condition wildcards. Condition is applied by `adjustForCondition` before a rule is picked, so a condition on the band would leave every non-NM single matching no rule at all.

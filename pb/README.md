@@ -221,19 +221,38 @@ every step-up token they hold stops working at once.
 
 ### ID photos
 
-The photo bytes are base64'd, encrypted with `$security.encrypt` and
-`GG_ID_PHOTO_KEY`, and written as a `.enc` file on `id_documents.photo`;
-the original MIME type goes in `id_documents.mime` so the view route can
-serve the decrypted bytes correctly. Without the key the upload route
-refuses with 500 rather than storing a photo in the clear. The view route
-writes its `id_photo_view` audit row **before** decrypting anything, so a
-view that then fails is still on the record as an attempt, and serves the
-bytes with `Cache-Control: no-store`, `Content-Disposition: inline` and
-`X-Content-Type-Options: nosniff`.
+The photo bytes go straight into `$security.encrypt` as an
+`Array<number>` (its `data` parameter takes one, and `$security.decrypt`'s
+result goes back to bytes through `toBytes()`, byte-exact both ways), and
+the ciphertext is written as a `.enc` file on `id_documents.photo`. The
+MIME type is **sniffed from the first bytes** (JPEG, PNG, WebP,
+HEIC/HEIF) and stored in `id_documents.mime`, so a client-supplied `mime`
+field and the file's own extension are both ignored and a page of HTML
+named `photo.jpg` cannot be stored and later served back as an image.
+Uploads are capped at 8 MB, read with `toBytes(reader, cap + 1)` so an
+upload that lies about its size is still refused. Without the key the
+upload route refuses with 500 rather than storing a photo in the clear.
+The view route writes its `id_photo_view` audit row **before** decrypting
+anything, so a view that then fails is still on the record as an attempt,
+and serves the bytes with `Cache-Control: no-store`,
+`Content-Disposition: inline` and `X-Content-Type-Options: nosniff`.
 
-goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, hence
-`lib/base64.js`. The signature on a trade-in arrives as a
-`data:image/png;base64,...` data URL and goes through the same codec.
+Nothing on the photo path is base64'd. It was, and `lib/base64.js`'s
+`encode` built its result one character at a time, which goja turns into a
+fresh string allocation per character: 200 KB took about 15 seconds.
+Encoding and decoding are both linear now (accumulate into an array, join
+once), but the photo does not go near them either way; a 320 KB photo
+encrypts in about 20 ms. `lib/base64.js` is still needed for the
+signature on a trade-in, which arrives as a `data:image/png;base64,...`
+data URL.
+
+`trade_ins.signature` and `quotes.photos` are **protected** file fields,
+so PocketBase only serves them with a short-lived file token. That token
+has to be minted from the **calling staff auth record**
+(`e.auth.newFileToken()`): `record.newFileToken()` throws "not an auth
+collection record" on an ordinary record, which is how the receipt's
+signature URL came to be served bare. `items.photos` is left public: it is
+product imagery for the shop front.
 
 ### The retention cron
 
