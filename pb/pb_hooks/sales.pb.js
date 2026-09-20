@@ -56,6 +56,8 @@ routerAdd(
     const counters = require(`${__hooks}/lib/counters.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
+    const referralsLib = require(`${__hooks}/lib/referrals.js`);
+    const notifyLib = require(`${__hooks}/lib/notify.js`);
     const saleline = require(`${__hooks}/lib/shared/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
@@ -428,6 +430,7 @@ routerAdd(
     // -----------------------------------------------------------------
     let halt = null;
     let result = null;
+    let referralOutcome = { pending: [] };
 
     try {
       e.app.runInTransaction((txApp) => {
@@ -577,6 +580,16 @@ routerAdd(
           );
         }
 
+        // Phase 6: a pending referral where this customer is the referee
+        // becomes earned on their first completed sale or buy-in, paying
+        // both sides. One call, in this route's own transaction, so the
+        // two bonus rows are atomic with the sale that earned them
+        // (lib/referrals.js). A walk-in sale, or a customer with no
+        // pending referral, is a no-op.
+        if (customerId) {
+          referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+        }
+
         if (split.cash > 0 && session) {
           txApp.save(
             new Record(txApp.findCollectionByNameOrId("cash_movements"), {
@@ -638,6 +651,9 @@ routerAdd(
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+
+    // After the transaction has committed, never inside it (lib/notify.js).
+    notifyLib.sendPending(e.app, referralOutcome.pending || []);
 
     return e.json(200, result);
   },

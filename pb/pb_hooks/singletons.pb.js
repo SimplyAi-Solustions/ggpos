@@ -4,10 +4,12 @@
  * singletons.pb.js
  *
  * `settings` and `loyalty_programme` are single-record collections
- * (PLAN.md). PocketBase has no built-in notion of that, so this refuses a
- * second create for either one. It fires for both the seed migration's
- * own insert and any later API create - the very first row always
- * succeeds; a second attempt is refused with a clear error.
+ * (PLAN.md), and so is `display_state` (Phase 6: one customer-facing
+ * display, one row the tablet subscribes to). PocketBase has no built-in
+ * notion of that, so this refuses a second create for any of them. It
+ * fires for the seed migration's own insert and any later API create -
+ * the very first row always succeeds; a second attempt is refused with a
+ * clear error.
  */
 onRecordCreate((e) => {
   const name = e.record.collection().name;
@@ -24,4 +26,4 @@ onRecordCreate((e) => {
   }
 
   e.next();
-}, "settings", "loyalty_programme");
+}, "settings", "loyalty_programme", "display_state");
