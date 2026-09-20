@@ -10,7 +10,9 @@ import {
   DEMO_PORTAL_CUSTOMER_ID,
   demoPortalCustomerId,
 } from "@/lib/api/demo/portal-seed"
+import { programme as demoProgramme } from "@/lib/api/demo/loyalty"
 import { DEMO_TIERS } from "@/lib/api/demo/store"
+import { PROGRAMME_OFF } from "@/features/portal/guild"
 import type {
   GuildSummary,
   PortalReward,
@@ -607,12 +609,38 @@ function perCustomerRemainingFor(
   return Math.max(0, seed.per_customer_limit - mine)
 }
 
+/**
+ * Is the whole programme switched off?
+ *
+ * `demo/loyalty.ts` holds the one programme record the counter's Loyalty
+ * screen edits, so turning the programme off there puts this screen into
+ * its `off` state in the same tab. Read inside the call rather than at
+ * module scope: two demo modules load in whichever order the bundler picks.
+ *
+ * `?demo_rewards=off` reaches the same state by address, the way
+ * `?demo_as=` reaches a signed-in session, so the screenshot script and the
+ * detector can open it without driving the counter first. Demo fixtures
+ * only, and demo mode itself cannot be switched on in a shop's own build.
+ */
+function programmeOff(): boolean {
+  if (demoProgramme.enabled === false) return true
+  try {
+    return (
+      new URLSearchParams(window.location.search).get("demo_rewards") === "off"
+    )
+  } catch {
+    return false
+  }
+}
+
 /** The same order of checks the route makes, so the words never disagree. */
 function reasonFor(
   seed: DemoRewardSeed,
   customerId: string,
   balance: number
 ): RewardReason {
+  // Nothing about the reward itself: the shop has the programme off.
+  if (programmeOff()) return "off"
   if (seed.starts_at && new Date(seed.starts_at).getTime() > Date.now()) {
     return "not_yet"
   }
@@ -655,6 +683,8 @@ export function demoRewards(): PortalReward[] {
 /** The route's own 422 sentences, so the demo refuses in the same words. */
 function refusal(reason: RewardReason, seed: DemoRewardSeed, balance: number): string {
   switch (reason) {
+    case "off":
+      return PROGRAMME_OFF
     case "insufficient":
       return `You need ${seed.cost_points.toLocaleString("en-GB")} points for this and have ${balance.toLocaleString("en-GB")}.`
     case "sold_out":
@@ -677,9 +707,11 @@ export function demoRedeem(id: string): PortalVoucher {
   const balance = pointsBalanceFor(customerId)
   // The live re-check the route makes inside its transaction, which can
   // refuse a row the catalogue offered a moment ago.
-  const reason = seed.gone_on_redeem
-    ? "sold_out"
-    : reasonFor(seed, customerId, balance)
+  const reason = programmeOff()
+    ? "off"
+    : seed.gone_on_redeem
+      ? "sold_out"
+      : reasonFor(seed, customerId, balance)
   if (reason !== "ok") throw new Error(refusal(reason, seed, balance))
 
   const number = `GG-V-${String(nextRedemption).padStart(6, "0")}`

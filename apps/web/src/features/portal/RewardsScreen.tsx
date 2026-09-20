@@ -21,6 +21,8 @@ import { getMe } from "@/lib/api/portal"
 import { formatDate } from "@/features/portal/format"
 import {
   formatPoints,
+  PROGRAMME_OFF,
+  programmeIsOff,
   rewardReasonSentence,
   voucherIsLive,
   voucherStatusWord,
@@ -86,6 +88,7 @@ export function RewardsScreen() {
   const rows = rewards.data ?? []
   const myVouchers = vouchers.data ?? []
   const catalogueLoading = rewards.isPending || me.isPending
+  const programmeOff = programmeIsOff(rows)
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -106,6 +109,18 @@ export function RewardsScreen() {
         )}
       </div>
 
+      {/* Said once, above the catalogue: the shop has the programme off, so
+          every row came back refused for the same reason and repeating it
+          under each name would say nothing more. */}
+      {programmeOff ? (
+        <p
+          data-testid="rewards-off"
+          className="mt-10 max-w-[48ch] text-base leading-[1.5] text-foreground"
+        >
+          {PROGRAMME_OFF}
+        </p>
+      ) : null}
+
       {catalogueLoading ? (
         <div className="mt-12">
           <SkeletonText lines={5} />
@@ -121,7 +136,9 @@ export function RewardsScreen() {
       ) : (
         <ul data-testid="reward-list" className="mt-12 flex flex-col">
           {rows.map((reward) => {
-            const refusal = rewardReasonSentence(reward, points)
+            const refusal = programmeOff
+              ? null
+              : rewardReasonSentence(reward, points)
             return (
               <li key={reward.id} className="border-b border-hairline-soft">
                 <Link

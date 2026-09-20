@@ -46,6 +46,7 @@ const PRIVATE_ROUTES = [
   ["reward", "/account/rewards/reward_booster"],
   ["reward-refused", "/account/rewards/reward_retro"],
   ["points", "/account/points"],
+  ["rewards-off", "/account/rewards?demo_rewards=off"],
   ["profile", "/account/me"],
   ["notifications", "/account/notifications"],
 ]
@@ -80,7 +81,8 @@ async function snap(name, path, { signedIn = true, drive } = {}) {
     [signedIn ? DEMO_CUSTOMER_ID : ""]
   )
   const page = await context.newPage()
-  await page.goto(`${baseUrl}${path}?demo=1`, { waitUntil: "networkidle" })
+  const join = path.includes("?") ? "&" : "?"
+  await page.goto(`${baseUrl}${path}${join}demo=1`, { waitUntil: "networkidle" })
   await page.evaluate(() => document.fonts.ready)
   if (drive) await drive(page)
   await page.waitForTimeout(400)

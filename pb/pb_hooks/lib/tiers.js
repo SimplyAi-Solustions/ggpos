@@ -135,15 +135,39 @@ function isPromotion(previous, next) {
 }
 
 /**
+ * True when this is simply somebody joining: they had no tier at all and
+ * have landed on the first rung of the ladder. It is a promotion by the
+ * rule above, but "you are now a Member" is not news to somebody who
+ * signed up thirty seconds ago - the welcome notification (loyalty.pb.js)
+ * is what they get instead, and it names the bonus. Only the rungs above
+ * the first are worth an announcement of their own.
+ */
+function isJoiningTier(previous, next, tiers) {
+  if (previous || !next) return false;
+  var lowest = null;
+  for (var i = 0; i < (tiers || []).length; i++) {
+    var tier = tiers[i];
+    if (!tier || tier.paidPlan) continue;
+    if (!lowest || tier.sort < lowest.sort) lowest = tier;
+  }
+  return !!lowest && lowest.id === next.id;
+}
+
+/**
  * Re-evaluate and write `customer_private.tier`. A promotion notifies the
  * customer (type `tier_up`, emailed when they have email on); a demotion is
- * silent, per the contract.
+ * silent, per the contract, and so is somebody simply joining the first
+ * tier (see `isJoiningTier`).
  *
  * @param {any} app - a txApp, or $app inside the caller's own transaction.
+ * @param {{silent?: boolean}} [opts] - `silent` writes the tier and never
+ *   notifies, for a change nobody asked for: a merge folding two records
+ *   together is bookkeeping, not an achievement.
  * @returns {{tier: object|null, windowPoints: number, changed: boolean, promoted: boolean, pending: Array}}
  */
-function recompute(app, customerId, now) {
+function recompute(app, customerId, now, opts) {
   var notifyLib = require(`${__hooks}/lib/notify.js`);
+  opts = opts || {};
 
   var result = { tier: null, windowPoints: 0, changed: false, promoted: false, pending: [] };
   if (!customerId) return result;
@@ -177,8 +201,9 @@ function recompute(app, customerId, now) {
   app.save(priv);
   result.changed = true;
 
-  if (state.tier && isPromotion(previous, state.tier)) {
+  if (state.tier && isPromotion(previous, state.tier) && !isJoiningTier(previous, state.tier, state.tiers)) {
     result.promoted = true;
+    if (opts.silent) return result;
     var n = notifyLib.notify(app, {
       customer: customerId,
       type: "tier_up",
@@ -222,6 +247,7 @@ module.exports = {
   evaluate: evaluate,
   recompute: recompute,
   isPromotion: isPromotion,
+  isJoiningTier: isJoiningTier,
   formatPoints: formatPoints,
   ukDayMonth: ukDayMonth,
 };

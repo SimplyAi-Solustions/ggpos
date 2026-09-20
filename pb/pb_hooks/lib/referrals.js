@@ -108,6 +108,13 @@ function onFirstCompletion(app, customerId, staffId, ref) {
   var referral = pendingFor(app, customerId);
   if (!referral) return out;
 
+  // A row with the same customer at both ends pays two bonuses to one
+  // person. It should not exist - customers.pb.js refuses a self-referral
+  // at creation and customerops.pb.js's merge deletes a row whose two ends
+  // would fold together - but this is money, so it is refused here as well
+  // rather than trusted to the two places that stop it being written.
+  if (referral.getString("referrer") === customerId) return out;
+
   var util = require(`${__hooks}/lib/vaultutil.js`);
   var notifyLib = require(`${__hooks}/lib/notify.js`);
   var tiers = require(`${__hooks}/lib/tiers.js`);

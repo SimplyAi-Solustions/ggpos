@@ -32,13 +32,17 @@ import { PERK_LABEL, isCountedPerk, perkCountLine, perkValueLine, remaining } fr
 import { POINTS_REASON_LABEL } from "@/features/loyalty/ledger"
 import { voucherStatusWord, voucherWorth } from "@/features/loyalty/vouchers"
 import { planLine, type MembershipForm } from "@/features/loyalty/mapping"
-import { parseCount, poundsToPence } from "@/features/settings/mapping"
+import {
+  parseCount,
+  penceToPounds,
+  poundsToPence,
+} from "@/features/settings/mapping"
 import { useStaff } from "@/lib/auth"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { useCounterConfig } from "@/lib/api/config"
 import {
   cancelMembership,
   getCustomerGuild,
-  getLoyaltyAdmin,
   getPointsLedger,
   recordMembership,
   recordPerkUse,
@@ -164,13 +168,21 @@ export function GuildSection({
   })
   const guild: CustomerGuild | undefined = guildQuery.data
 
-  // Only needed when a plan is being recorded, so it waits for the sheet.
-  const { data: admin } = useQuery({
-    queryKey: ["loyalty-admin"],
-    queryFn: getLoyaltyAdmin,
-    enabled: planOpen && isAdmin,
-    staleTime: 60_000,
-  })
+  // The tiers every counter screen already shares, so recording a plan does
+  // not need the admin-only collections: `POST /api/vault/memberships` is a
+  // staff route, and this sheet matches it.
+  const { data: config } = useCounterConfig()
+  const programmeOff = config?.loyalty.programme.enabled === false
+  const paidTiers = (config?.loyalty.tiers ?? [])
+    .filter((tier) => tier.paidPlan)
+    .map((tier) => ({
+      id: tier.id,
+      name: tier.name,
+      threshold_points: tier.thresholdPoints,
+      sort: tier.sort,
+      perks: tier.perks as unknown[],
+      paid_plan: true,
+    }))
 
   function settle() {
     void queryClient.invalidateQueries({ queryKey: ["customer-guild", customerId] })
@@ -266,16 +278,24 @@ export function GuildSection({
     <div className="mt-24" data-testid="guild-section">
       <SectionHeading className="mt-0">Guild</SectionHeading>
 
+      {programmeOff ? (
+        <p className="mb-8 max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground">
+          The Guild is switched off, so nothing here earns or redeems. What is
+          on the record stays as it is.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-end gap-x-14 gap-y-6">
         <div>
           <MicroLabel className="mb-2">Tier</MicroLabel>
-          <span data-testid="guild-tier">
-            {/* Volt is the tier badge's own colour, so an absence of one is
-                not dressed up as an achievement. */}
-            <Badge variant={guild.tier ? "volt" : "outline"}>
-              {guild.tier?.name ?? "No tier yet"}
-            </Badge>
-          </span>
+          {/* The volt badge is on the customer's header, once: this is the
+              same fact, so it is a figure here rather than a second badge. */}
+          <p
+            data-testid="guild-tier"
+            className="text-[20px] leading-none font-medium text-foreground"
+          >
+            {guild.tier?.name ?? "No tier yet"}
+          </p>
         </div>
         <div>
           <MicroLabel className="mb-2">In the window</MicroLabel>
@@ -283,18 +303,30 @@ export function GuildSection({
             data-testid="guild-window"
             className="tnum text-[20px] leading-none font-medium text-foreground"
           >
-            {guild.windowPoints.toLocaleString("en-GB")}
+            {guild.windowPoints === null
+              ? "Over 100 rows"
+              : guild.windowPoints.toLocaleString("en-GB")}
           </p>
         </div>
         <div>
           <MicroLabel className="mb-2">Next tier</MicroLabel>
           <p className="tnum text-[20px] leading-none font-medium text-foreground">
-            {guild.next
-              ? `${guild.next.points.toLocaleString("en-GB")} to ${guild.next.name}`
-              : "At the top"}
+            {guild.windowPoints === null
+              ? "Not counted here"
+              : guild.next
+                ? `${guild.next.points.toLocaleString("en-GB")} to ${guild.next.name}`
+                : "At the top"}
           </p>
         </div>
       </div>
+
+      {guild.windowPoints === null ? (
+        <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+          This customer has more than 100 points rows, so the window total is
+          worked out on the server rather than here. Their tier above is the
+          shop's own answer.
+        </p>
+      ) : null}
 
       {/* ---- Perks ---- */}
       <MicroLabel tone="ink" className="mt-12 mb-4">
@@ -384,11 +416,9 @@ export function GuildSection({
           <p className="text-[15px] text-muted-foreground-2">
             No paid plan. Their tier is whatever their points earn.
           </p>
-          {isAdmin ? (
-            <Button variant="text" type="button" onClick={() => setPlanOpen(true)}>
-              Record a plan
-            </Button>
-          ) : null}
+          <Button variant="text" type="button" onClick={() => setPlanOpen(true)}>
+            Record a plan
+          </Button>
         </div>
       )}
 
@@ -491,7 +521,7 @@ export function GuildSection({
           id: customerId,
           name: customerName,
           code: customerCode,
-          pointsBalance: guild.pointsBalance || pointsBalance,
+          pointsBalance: guild.pointsBalance ?? pointsBalance,
         }}
         onDone={({ balance }) => {
           setNote(`Adjusted. They now hold ${balance.toLocaleString("en-GB")} points.`)
@@ -505,7 +535,7 @@ export function GuildSection({
         title="Record a plan"
         description={`${customerName}'s plan pins their tier until it runs out.`}
         customer={{ id: customerId, name: customerName }}
-        tiers={(admin?.tiers ?? []).filter((tier) => tier.paid_plan === true)}
+        tiers={paidTiers}
         busy={plan.isPending}
         error={error}
         saveLabel="Save plan"
@@ -528,7 +558,7 @@ export function GuildSection({
         tiers={null}
         initial={
           renewing
-            ? { price: (renewing.price / 100).toFixed(2), tier: renewing.tier }
+            ? { price: penceToPounds(renewing.price), tier: renewing.tier }
             : undefined
         }
         busy={renew.isPending}

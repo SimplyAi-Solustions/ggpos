@@ -46,6 +46,7 @@ const ROUTES = [
   ["reward", "/account/rewards/reward_booster"],
   ["reward-refused", "/account/rewards/reward_retro"],
   ["points", "/account/points"],
+  ["rewards-off", "/account/rewards?demo_rewards=off"],
   ["profile", "/account/me"],
   ["notifications", "/account/notifications"],
   ["estimate", "/account/estimate"],
@@ -62,7 +63,8 @@ const findings = []
 for (const viewport of VIEWPORTS) {
   for (const [name, path, options = {}] of ROUTES) {
     const query = options.signedOut ? "demo=1" : `demo=1&demo_as=${CUSTOMER}`
-    const url = `${baseUrl}${path}?${query}`
+    // A route can carry a demo switch of its own, so join on the right mark.
+    const url = `${baseUrl}${path}${path.includes("?") ? "&" : "?"}${query}`
     const run = spawnSync(detector, ["detect", "--viewport", viewport, "--json", url], {
       encoding: "utf8",
       env: { ...process.env, IMPECCABLE_BROWSER: browser },

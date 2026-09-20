@@ -230,6 +230,22 @@ export function referralProgressSentence(earned: number, pending: number): strin
 // ---------------------------------------------------------------------------
 
 /**
+ * The whole programme is off, which is nothing to do with any one reward.
+ *
+ * The route sends `off` on every row, so the screens say it once above the
+ * list rather than printing the same sentence under each name.
+ */
+export const PROGRAMME_OFF =
+  "The rewards programme is switched off at the moment. Ask at the counter."
+
+/** True when the catalogue came back with the programme switched off. */
+export function programmeIsOff(
+  rewards: Pick<PortalReward, "reason">[]
+): boolean {
+  return rewards.length > 0 && rewards.every((reward) => reward.reason === "off")
+}
+
+/**
  * Why this one cannot be redeemed yet, or null when it can.
  *
  * The server sends the reason as a word and refuses again on the redeem
@@ -246,6 +262,8 @@ export function rewardReasonSentence(
 ): string | null {
   if (reward.can_redeem) return null
   switch (reward.reason) {
+    case "off":
+      return PROGRAMME_OFF
     case "insufficient":
       return pointsBalance === null
         ? `You need ${formatPoints(reward.cost_points)} points for this.`

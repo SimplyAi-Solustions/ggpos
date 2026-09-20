@@ -239,25 +239,25 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   })
 
   // ---- Lines, saved as they change ---------------------------------------
-  const lineInputs = React.useMemo(
-    () =>
-      // The resolved type, so a mixed choice with nothing in the cash box
-      // stores the credit-rate prices the completion route is then told the
-      // payout is.
-      toLineInputs(state.lines, rules, settings, payout.type, conditionMultipliers),
-    [state.lines, rules, settings, payout.type, conditionMultipliers]
+  // Priced at the resolved payout, so a mixed choice with nothing in the
+  // cash box stores the credit-rate prices the completion route is then
+  // told the payout is. Left to the React Compiler to memoise: a hand-rolled
+  // memo here cannot be preserved once `payout` has been handed to a step.
+  const lineInputs = toLineInputs(
+    state.lines,
+    rules,
+    settings,
+    payout.type,
+    conditionMultipliers
   )
   // The signature leaves the ids out: adopting the ids a save hands back
-  // would otherwise look like another change and save a second time.
-  const shape = React.useMemo(
-    () =>
-      JSON.stringify(
-        lineInputs.map(({ id: _id, ...rest }) => {
-          void _id
-          return rest
-        })
-      ),
-    [lineInputs]
+  // would otherwise look like another change and save a second time. It is
+  // a string, so the debounce below only fires when a line really changed.
+  const shape = JSON.stringify(
+    lineInputs.map(({ id: _id, ...rest }) => {
+      void _id
+      return rest
+    })
   )
   const savedShape = React.useRef(
     initial

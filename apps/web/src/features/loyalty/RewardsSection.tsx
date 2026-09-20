@@ -401,7 +401,13 @@ export function RewardsSection({
                 setDraft((current) => (current ? { ...current, ...patch } : current))
               }
               onSave={() => {
-                void onSave(draft).then(() => setDraft(null))
+                // A refused save keeps the sheet open, with the reason
+                // under the footer, rather than becoming an unhandled
+                // rejection.
+                void onSave(draft).then(
+                  () => setDraft(null),
+                  () => {}
+                )
               }}
               onCancel={close}
             />

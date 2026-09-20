@@ -220,7 +220,13 @@ export function PlanSheet({
             onClick={() => {
               setShowErrors(true)
               if (Object.keys(errors).length > 0) return
-              void onSubmit(form).then(() => onOpenChange(false))
+              // The refusal is already shown in the footer by the caller's
+              // mutation, so this only has to not become an unhandled
+              // rejection: the sheet stays open with the message on it.
+              void onSubmit(form).then(
+                () => onOpenChange(false),
+                () => {}
+              )
             }}
           >
             {saveLabel}

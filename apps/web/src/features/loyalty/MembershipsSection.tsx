@@ -16,6 +16,7 @@ import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
 import { formatShortDate } from "@/features/customers/format"
 import { PlanSheet } from "@/features/loyalty/PlanSheet"
 import { planLine, type MembershipForm } from "@/features/loyalty/mapping"
+import { penceToPounds } from "@/features/settings/mapping"
 import type { LoyaltyTierRecord, MembershipRecord } from "@/lib/api/types"
 
 export interface MembershipsSectionProps {
@@ -130,7 +131,7 @@ export function MembershipsSection({
         tiers={null}
         initial={
           renewing
-            ? { price: (renewing.price / 100).toFixed(2), tier: renewing.tier }
+            ? { price: penceToPounds(renewing.price), tier: renewing.tier }
             : undefined
         }
         busy={busy}
@@ -159,7 +160,12 @@ export function MembershipsSection({
         error={error}
         onConfirm={() => {
           if (!cancelling) return
-          void onCancel(cancelling.id).then(() => setCancelling(null))
+          // A refused cancel leaves the dialog open with the message on
+          // it rather than throwing into nothing.
+          void onCancel(cancelling.id).then(
+            () => setCancelling(null),
+            () => {}
+          )
         }}
       />
     </>

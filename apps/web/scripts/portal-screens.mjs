@@ -46,6 +46,9 @@ const SCREENS = [
   { name: "reward", path: "/account/rewards/reward_booster" },
   { name: "reward-refused", path: "/account/rewards/reward_retro" },
   { name: "points", path: "/account/points" },
+  // The catalogue with the whole programme switched off, which the demo
+  // reaches by address the way `demo_as` reaches a signed-in session.
+  { name: "rewards-off", path: "/account/rewards?demo_rewards=off" },
   { name: "profile", path: "/account/me" },
   { name: "notifications", path: "/account/notifications" },
   { name: "estimate", path: "/account/estimate" },

@@ -10,6 +10,8 @@ import {
   pointsDelta,
   pointsNote,
   pointsWord,
+  PROGRAMME_OFF,
+  programmeIsOff,
   referralProgressSentence,
   referralSentence,
   rewardReasonSentence,
@@ -259,6 +261,17 @@ describe("rewardReasonSentence", () => {
     expect(rewardReasonSentence(reward(), null)).toBeNull()
   })
 
+  it("says the programme is off, whatever the row and whatever the balance", () => {
+    // `off` comes back on every row and is nothing to do with the reward,
+    // so it reads the same with a balance and without one.
+    const off = reward({ can_redeem: false, reason: "off", cost_points: 500 })
+    expect(rewardReasonSentence(off, 320)).toBe(PROGRAMME_OFF)
+    expect(rewardReasonSentence(off, null)).toBe(PROGRAMME_OFF)
+    expect(PROGRAMME_OFF).toBe(
+      "The rewards programme is switched off at the moment. Ask at the counter."
+    )
+  })
+
   it("says why in words for every other refusal", () => {
     expect(
       rewardReasonSentence(reward({ can_redeem: false, reason: "sold_out" }), 900)
@@ -275,6 +288,21 @@ describe("rewardReasonSentence", () => {
         900
       )
     ).toBe("Not available just now.")
+  })
+})
+
+describe("programmeIsOff", () => {
+  it("is the whole catalogue coming back off, not one row", () => {
+    const off = reward({ can_redeem: false, reason: "off" })
+    expect(programmeIsOff([off, off])).toBe(true)
+    expect(
+      programmeIsOff([off, reward({ can_redeem: false, reason: "sold_out" })])
+    ).toBe(false)
+    expect(programmeIsOff([reward()])).toBe(false)
+  })
+
+  it("is not an empty catalogue: nothing on offer is its own state", () => {
+    expect(programmeIsOff([])).toBe(false)
   })
 })
 

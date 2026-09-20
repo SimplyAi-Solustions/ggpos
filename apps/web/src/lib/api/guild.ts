@@ -54,13 +54,19 @@ export interface GuildSummary {
   vouchers_open: number
 }
 
-/** Why a reward cannot be redeemed, in the route's own words. */
+/**
+ * Why a reward cannot be redeemed, in the route's own words.
+ *
+ * `off` is the one that is not about the reward at all: the shop has the
+ * whole programme switched off, so it comes back on every row.
+ */
 export type RewardReason =
   | "ok"
   | "insufficient"
   | "sold_out"
   | "limit_reached"
   | "not_yet"
+  | "off"
 
 /** One row of `GET /api/vault/rewards`. */
 export interface PortalReward {

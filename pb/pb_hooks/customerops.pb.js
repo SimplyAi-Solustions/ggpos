@@ -80,11 +80,13 @@ routerAdd(
     const stepup = require(`${__hooks}/lib/stepup.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
+    const tiers = require(`${__hooks}/lib/tiers.js`);
 
     stepup.requireStepUp(e);
 
-    // Every relation that points at a customer. referrals appears twice,
-    // once per end of the referral.
+    // Every relation that points at a customer. `referrals` is handled on
+    // its own below (both ends, and a row that would fold in on itself),
+    // as is `perk_usage` (a unique index per month).
     const RELATIONS = [
       { collection: "trade_ins", field: "customer" },
       { collection: "sales", field: "customer" },
@@ -95,8 +97,6 @@ routerAdd(
       { collection: "notifications", field: "customer" },
       { collection: "push_subscriptions", field: "customer" },
       { collection: "reward_redemptions", field: "customer" },
-      { collection: "referrals", field: "referrer" },
-      { collection: "referrals", field: "referee" },
       { collection: "memberships", field: "customer" },
       { collection: "id_documents", field: "customer" },
       { collection: "items", field: "reserved_for" },
@@ -166,6 +166,44 @@ routerAdd(
           }
           count(rel.collection, n);
         }
+
+        // referrals: both ends move, except a row that would end up with
+        // the same customer at both. A customer who signed up twice and
+        // gave their own code the second time leaves exactly that, and
+        // lib/referrals.js would then pay both sides of it to one person
+        // on their next sale. Those rows go instead of moving.
+        let referralRows = [];
+        try {
+          referralRows = txApp.findRecordsByFilter(
+            "referrals",
+            "referrer = {:id} || referee = {:id}",
+            "created",
+            0,
+            0,
+            { id: duplicateId }
+          );
+        } catch (err) {
+          referralRows = [];
+        }
+        let referralsMoved = 0;
+        let referralsDropped = 0;
+        for (let i = 0; i < referralRows.length; i++) {
+          const row = referralRows[i];
+          if (!row) continue;
+          const referrer = row.getString("referrer") === duplicateId ? targetId : row.getString("referrer");
+          const referee = row.getString("referee") === duplicateId ? targetId : row.getString("referee");
+          if (referrer === referee) {
+            txApp.delete(row);
+            referralsDropped += 1;
+            continue;
+          }
+          row.set("referrer", referrer);
+          row.set("referee", referee);
+          txApp.save(row);
+          referralsMoved += 1;
+        }
+        count("referrals", referralsMoved);
+        count("referrals_dropped", referralsDropped);
 
         // perk_usage cannot simply be re-pointed: it carries a unique index
         // on (customer, perk_type, period), so a duplicate who used the same
@@ -307,6 +345,61 @@ routerAdd(
         // Both ledgers moved wholesale, so the cached balances are
         // recomputed from the ledger rather than added up by hand.
         balances.recompute(txApp, targetId);
+
+        // The tier follows the merged ledger, silently: a merge is
+        // bookkeeping, and "you are now a Legend" because two halves of
+        // one person were added together is not news anybody wants.
+        // Re-pointing an existing row fires no create hook, so nothing
+        // else would recompute it at all.
+        tiers.recompute(txApp, targetId, null, { silent: true });
+
+        // The duplicate brought their own welcome bonus across with the
+        // rest of their ledger, so the kept record now holds two. The rows
+        // stay (points_ledger is append-only) and an adjust row takes the
+        // second one back off, with a note saying why.
+        let welcomeRows = [];
+        try {
+          welcomeRows = txApp.findRecordsByFilter(
+            "points_ledger",
+            'customer = {:c} && reason = "welcome"',
+            "created",
+            0,
+            0,
+            { c: targetId }
+          );
+        } catch (err) {
+          welcomeRows = [];
+        }
+        let duplicateBonus = 0;
+        let ownBonus = 0;
+        for (let i = 0; i < welcomeRows.length; i++) {
+          if (!welcomeRows[i]) continue;
+          if (welcomeRows[i].getString("ref") === duplicateId) {
+            duplicateBonus += welcomeRows[i].getInt("delta");
+          } else {
+            ownBonus += welcomeRows[i].getInt("delta");
+          }
+        }
+        if (duplicateBonus > 0 && ownBonus > 0) {
+          txApp.save(
+            new Record(txApp.findCollectionByNameOrId("points_ledger"), {
+              customer: targetId,
+              delta: -duplicateBonus,
+              reason: "adjust",
+              ref: duplicateId,
+              staff: staff.id,
+            })
+          );
+          txApp.save(
+            new Record(txApp.findCollectionByNameOrId("notes"), {
+              target_collection: "customers",
+              target_record: targetId,
+              body: "Duplicate welcome bonus removed on merge",
+              author: staff.id,
+            })
+          );
+          moved.welcome_bonus_removed = duplicateBonus;
+        }
 
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,

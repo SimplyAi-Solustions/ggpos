@@ -19,7 +19,9 @@ vi.mock("@/lib/pb-customer", () => ({ pbCustomer: { send } }))
 vi.mock("@/lib/api/mode", () => ({ isDemo: () => false }))
 
 const { redeemReward } = await import("@/lib/api/guild")
-const { demoRedeem } = await import("@/lib/api/demo/portal-guild")
+const { demoRedeem, demoRewards } = await import("@/lib/api/demo/portal-guild")
+const { programme } = await import("@/lib/api/demo/loyalty")
+const { PROGRAMME_OFF, programmeIsOff } = await import("@/features/portal/guild")
 
 const VOUCHER = {
   id: "red_1",
@@ -81,5 +83,32 @@ describe("a redemption the shop refuses", () => {
     expect(refusalOrFallback(new TypeError("fetch failed"), "Try again.")).toBe(
       "Try again."
     )
+  })
+})
+
+describe("the programme switched off", () => {
+  it("refuses every row for the same reason, and refuses the redeem too", () => {
+    // The shop has turned the whole thing off on the counter's Loyalty
+    // screen, which is one state, not a hundred unavailable rewards.
+    programme.enabled = false
+    try {
+      const rows = demoRewards()
+      expect(rows.length).toBeGreaterThan(0)
+      expect(rows.every((row) => !row.can_redeem && row.reason === "off")).toBe(true)
+      expect(programmeIsOff(rows)).toBe(true)
+
+      let caught: unknown
+      try {
+        demoRedeem("reward_booster")
+      } catch (error) {
+        caught = error
+      }
+      expect(caught).toBeDefined()
+      expect(refusalOrFallback(caught, "That did not go through.")).toBe(
+        PROGRAMME_OFF
+      )
+    } finally {
+      programme.enabled = true
+    }
   })
 })
