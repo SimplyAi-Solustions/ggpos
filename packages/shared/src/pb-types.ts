@@ -40,6 +40,7 @@ export const Collections = {
 	PriceSnapshots: "price_snapshots",
 	PricingRules: "pricing_rules",
 	PushSubscriptions: "push_subscriptions",
+	QuoteMessages: "quote_messages",
 	Quotes: "quotes",
 	Referrals: "referrals",
 	RetroTitles: "retro_titles",
@@ -340,6 +341,8 @@ export type CustomersRecord = {
 	id: string
 	marketing_consent?: boolean
 	name: string
+	notify_email?: boolean
+	notify_push?: boolean
 	password: string
 	phone?: string
 	qr_token?: string
@@ -802,6 +805,22 @@ export type PushSubscriptionsRecord<Tkeys = unknown> = {
 	updated: IsoAutoDateString
 }
 
+export const QuoteMessagesAuthorKindOptions = {
+	"customer": "customer",
+	"staff": "staff",
+} as const
+export type QuoteMessagesAuthorKindOptions = typeof QuoteMessagesAuthorKindOptions[keyof typeof QuoteMessagesAuthorKindOptions]
+export type QuoteMessagesRecord = {
+	author_kind: QuoteMessagesAuthorKindOptions
+	body: string
+	created: IsoAutoDateString
+	customer?: RecordIdString
+	id: string
+	quote: RecordIdString
+	staff?: RecordIdString
+	updated: IsoAutoDateString
+}
+
 export const QuotesStatusOptions = {
 	"submitted": "submitted",
 	"reviewing": "reviewing",
@@ -820,6 +839,7 @@ export const QuotesDropOffOptions = {
 } as const
 export type QuotesDropOffOptions = typeof QuotesDropOffOptions[keyof typeof QuotesDropOffOptions]
 export type QuotesRecord<Tlines = unknown> = {
+	closed_at?: IsoDateString
 	created: IsoAutoDateString
 	customer: RecordIdString
 	customer_reply?: string
@@ -996,7 +1016,7 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
+export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
@@ -1007,6 +1027,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	email?: null | Temail
 	email_api_key?: string
 	email_provider?: SettingsEmailProviderOptions
+	holds?: null | Tholds
 	id: string
 	id_photo_retention_months?: number
 	import_mappings?: null | Timport_mappings
@@ -1014,6 +1035,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	markup_bands?: null | Tmarkup_bands
 	min_single_offer?: number
 	offer?: null | Toffer
+	push?: null | Tpush
 	push_vapid_private_key?: string
 	push_vapid_public_key?: string
 	quote_expiry_days?: number
@@ -1283,6 +1305,7 @@ export type PointsLedgerResponse<Texpand = unknown> = Required<PointsLedgerRecor
 export type PriceSnapshotsResponse<Texpand = unknown> = Required<PriceSnapshotsRecord> & BaseSystemFields<Texpand>
 export type PricingRulesResponse<Texpand = unknown> = Required<PricingRulesRecord> & BaseSystemFields<Texpand>
 export type PushSubscriptionsResponse<Tkeys = unknown, Texpand = unknown> = Required<PushSubscriptionsRecord<Tkeys>> & BaseSystemFields<Texpand>
+export type QuoteMessagesResponse<Texpand = unknown> = Required<QuoteMessagesRecord> & BaseSystemFields<Texpand>
 export type QuotesResponse<Tlines = unknown, Texpand = unknown> = Required<QuotesRecord<Tlines>> & BaseSystemFields<Texpand>
 export type ReferralsResponse<Texpand = unknown> = Required<ReferralsRecord> & BaseSystemFields<Texpand>
 export type RetroTitlesResponse<Texternal_ids = unknown, Texpand = unknown> = Required<RetroTitlesRecord<Texternal_ids>> & BaseSystemFields<Texpand>
@@ -1290,7 +1313,7 @@ export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemp
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Temail, Timport_mappings, Tmarkup_bands, Toffer, Tretro_source_priority, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Temail, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
@@ -1340,6 +1363,7 @@ export type CollectionRecords = {
 	price_snapshots: PriceSnapshotsRecord
 	pricing_rules: PricingRulesRecord
 	push_subscriptions: PushSubscriptionsRecord
+	quote_messages: QuoteMessagesRecord
 	quotes: QuotesRecord
 	referrals: ReferralsRecord
 	retro_titles: RetroTitlesRecord
@@ -1396,6 +1420,7 @@ export type CollectionResponses = {
 	price_snapshots: PriceSnapshotsResponse
 	pricing_rules: PricingRulesResponse
 	push_subscriptions: PushSubscriptionsResponse
+	quote_messages: QuoteMessagesResponse
 	quotes: QuotesResponse
 	referrals: ReferralsResponse
 	retro_titles: RetroTitlesResponse
