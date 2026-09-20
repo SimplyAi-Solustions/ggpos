@@ -39,7 +39,9 @@ function primary(page: Page, name: string) {
 /** The palette is the one way between screens that works at both widths. */
 async function go(page: Page, action: string) {
   await page.keyboard.press("ControlOrMeta+k")
-  const palette = page.getByRole("dialog")
+  // By name, because a sheet that is still playing its closing animation is
+  // also a dialog for a moment.
+  const palette = page.getByRole("dialog", { name: "Commands and catalogue search" })
   await expect(palette).toBeVisible()
   // Some actions are offered in two groups (the shortcut row and the
   // section), and either one goes to the same screen.

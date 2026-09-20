@@ -319,10 +319,6 @@ export async function getPerksWallet(customerId: string): Promise<PerkWallet> {
   return { tier: result.tier ?? null, perks: result.perks ?? [] }
 }
 
-export async function getPerks(customerId: string): Promise<PerkWalletEntry[]> {
-  return (await getPerksWallet(customerId)).perks
-}
-
 /** One entry or one hour off a monthly allowance. Refused when it is spent. */
 export async function recordPerkUse(
   customerId: string,

@@ -42,7 +42,9 @@ function primary(page: Page, name: string) {
 /** The palette is the one way between screens that works at both widths. */
 async function go(page: Page, action: string) {
   await page.keyboard.press("ControlOrMeta+k")
-  const palette = page.getByRole("dialog")
+  // By name, because a sheet that is still playing its closing animation is
+  // also a dialog for a moment.
+  const palette = page.getByRole("dialog", { name: "Commands and catalogue search" })
   await expect(palette).toBeVisible()
   // Some actions are offered in two groups (the shortcut row and the
   // section), and either one goes to the same screen.
@@ -88,7 +90,7 @@ test.describe("the Guild at the counter", () => {
       .getByTestId("loyalty-rules")
       .getByRole("button", { name: /Saturday double points/ })
       .click()
-    const sheet = page.getByRole("dialog")
+    const sheet = page.getByRole("dialog", { name: "Rule" })
     await expect(sheet).toBeVisible()
     await sheet.getByLabel("Multiplier").fill("3")
     await sheet.getByRole("button", { name: "Save rule" }).click()
@@ -120,7 +122,7 @@ test.describe("the Guild at the counter", () => {
 
     await go(page, "Loyalty")
     await page.getByRole("button", { name: "Record a plan" }).click()
-    const sheet = page.getByRole("dialog")
+    const sheet = page.getByRole("dialog", { name: "Record a plan" })
     await expect(sheet).toBeVisible()
 
     await sheet.getByLabel("Customer").fill("Tom Bradbury")
@@ -286,7 +288,7 @@ test.describe("the Guild at the counter", () => {
       .getByTestId("guild-section")
       .getByRole("button", { name: "Adjust points" })
       .click()
-    const sheet = page.getByRole("dialog").filter({ hasText: "Adjust points" })
+    const sheet = page.getByRole("dialog", { name: "Adjust points" })
     await expect(sheet).toBeVisible()
 
     // Callum holds 90 points, so 200 off is refused before the password is
