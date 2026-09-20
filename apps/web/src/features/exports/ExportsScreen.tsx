@@ -337,7 +337,8 @@ function EndListings({
 export function ExportsScreen() {
   const dock = useCounterDock()
   const admin = useStaff()?.role === "admin"
-  const today = React.useMemo(() => todayIso(), [])
+  const queryClient = useQueryClient()
+  const today = useToday()
 
   const [range, setRange] = React.useState(() => resolvePreset("month", today))
   const [sumupChanged, setSumupChanged] = React.useState(false)
@@ -392,6 +393,28 @@ export function ExportsScreen() {
       setChosen(null)
       return
     }
+    // Said on the spot rather than after the whole file has been read into
+    // memory and the upload refused: the size is known the moment it is
+    // chosen, and reading 40 MB to find that out helps nobody.
+    if (file.size > MAX_IMPORT_BYTES) {
+      setChosen({
+        type,
+        file,
+        mapped: null,
+        problem:
+          "That file is over 10 MB. Export a smaller range and import it in parts.",
+      })
+      return
+    }
+    if (file.size === 0) {
+      setChosen({
+        type,
+        file,
+        mapped: null,
+        problem: "That file is empty. Check the export and try again.",
+      })
+      return
+    }
     try {
       const mapping = type === "card_uploader" ? CARD_UPLOADER_MAPPING : EBAY_ORDERS_MAPPING
       const mapped = mapRows(await file.text(), mapping)
@@ -434,6 +457,12 @@ export function ExportsScreen() {
       setSummary(said)
       setChosen(null)
       void listings.refetch()
+      void unsynced.refetch()
+      // An import lists cards and sells items, so every stock read the rest
+      // of the counter holds is now stale.
+      void queryClient.invalidateQueries({ queryKey: ["items"] })
+      void queryClient.invalidateQueries({ queryKey: ["item"] })
+      void queryClient.invalidateQueries({ queryKey: ["today-stats"] })
     },
     onError: (err) =>
       setImportError(
@@ -513,6 +542,7 @@ export function ExportsScreen() {
                   : when(lastRunOf(def.key))
               }
               pending={running === def.key}
+              disabled={Boolean(def.dated && rangeProblem)}
               onRun={() => run.mutate(def)}
             >
               {def.key === "sumup" ? (
@@ -620,7 +650,9 @@ export function ExportsScreen() {
                   <span className="min-w-0 flex-1 text-[13px] text-muted-foreground-2">
                     {entry.kind === "already_sold"
                       ? `Already sold: ${entry.custom_label ?? ""}`
-                      : entry.kind === "truncated"
+                      : isZeroCostNote(entry)
+                        ? `${entry.message ?? ""}${entry.sku ? ` (${entry.sku})` : ""}`
+                        : entry.kind === "truncated"
                         ? `${entry.message ?? "More rows had problems"}`
                         : (entry.message ?? "")}
                   </span>
@@ -642,7 +674,7 @@ export function ExportsScreen() {
           <ReviewQueue
             importId={result.id}
             rows={review}
-            onChanged={(record) => setResult({ ...record })}
+            onResolved={(resolved) => setResult({ ...resolved.import })}
           />
         </section>
       ) : null}
@@ -652,6 +684,7 @@ export function ExportsScreen() {
         <SectionHeading>End these listings</SectionHeading>
         <EndListings
           rows={listings.data ?? []}
+          loading={listings.isPending}
           onEnded={() => void listings.refetch()}
         />
       </section>
