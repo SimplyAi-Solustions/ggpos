@@ -498,25 +498,22 @@ routerAdd(
 
     let result = null;
     e.app.runInTransaction((txApp) => {
+      // Looked up by endpoint AND the caller's own identity together, not
+      // by endpoint alone (fix round, finding 8): endpoint carries no
+      // unique index, so once a second caller can hold a row for the same
+      // endpoint (see below), a plain "first row with this endpoint" fetch
+      // can just as easily return someone else's row as the caller's own -
+      // re-pointing that would silently steal another customer's or staff
+      // member's subscription, and skipping past the caller's own existing
+      // row would duplicate it instead of upserting.
       let row = null;
       try {
-        row = txApp.findFirstRecordByFilter("push_subscriptions", "endpoint = {:e}", { e: endpoint });
+        const ownerFilter = isStaff ? "endpoint = {:e} && staff = {:owner}" : "endpoint = {:e} && customer = {:owner}";
+        row = txApp.findFirstRecordByFilter("push_subscriptions", ownerFilter, { e: endpoint, owner: auth.id });
       } catch (err) {
         row = null;
       }
-      // A row found by endpoint but owned by someone else is left alone -
-      // re-pointing it would silently steal another customer's or staff
-      // member's subscription (fix round, finding 8: no ownership check
-      // meant any caller who happened to send the same endpoint could take
-      // over that row). A brand new row for this caller is created
-      // instead; `endpoint` carries no unique index, so two rows sharing
-      // one value is a row PocketBase itself has no objection to.
-      const ownedByCaller = row
-        ? isStaff
-          ? row.getString("staff") === auth.id
-          : row.getString("customer") === auth.id
-        : false;
-      if (!row || !ownedByCaller) {
+      if (!row) {
         row = new Record(txApp.findCollectionByNameOrId("push_subscriptions"), { endpoint: endpoint });
       }
       row.set("keys", { p256dh: p256dh, auth: authKey });
@@ -566,32 +563,36 @@ routerAdd(
     let result = null;
     try {
       e.app.runInTransaction((txApp) => {
-        let row = null;
+        // Every row for this endpoint, not just one (fix round, finding
+        // 8): a plain findFirst by endpoint alone can just as easily
+        // return someone else's row as the caller's own once two callers
+        // can hold a row for the same endpoint (see the subscribe route
+        // above), so this looks at all of them and picks out the caller's
+        // own by its actual owner field. No row at all for this endpoint
+        // stays a quiet, idempotent success (the caller's own goal - not
+        // being pushed to at this endpoint - is already true either way);
+        // a row that exists but belongs to someone else is a 404, never
+        // silently deleted or silently ignored as if it were the caller's.
+        let rows = [];
         try {
-          row = txApp.findFirstRecordByFilter("push_subscriptions", "endpoint = {:e}", { e: endpoint });
+          rows = txApp.findRecordsByFilter("push_subscriptions", "endpoint = {:e}", "", 0, 0, { e: endpoint });
         } catch (err) {
-          row = null;
+          rows = [];
         }
-        if (row) {
-          // Only ever the caller's own row (fix round, finding 8): without
-          // this, any signed-in caller who knew (or guessed, or copied
-          // from a shared device) another endpoint could delete a
-          // stranger's subscription. No row at all for this endpoint stays
-          // a quiet, idempotent success below - the caller's own goal (not
-          // being pushed to at this endpoint) is already true either way.
-          const ownedByCaller = isStaff
-            ? row.getString("staff") === auth.id
-            : row.getString("customer") === auth.id;
-          if (!ownedByCaller) {
-            halt = { message: "Push subscription not found." };
-            throw new Error(halt.message);
-          }
-          txApp.delete(row);
+        const myRow = rows.find((r) =>
+          isStaff ? r.getString("staff") === auth.id : r.getString("customer") === auth.id
+        );
+        if (rows.length > 0 && !myRow) {
+          halt = { message: "Push subscription not found." };
+          throw new Error(halt.message);
+        }
+        if (myRow) {
+          txApp.delete(myRow);
           auditLib.writeAuditLog(txApp, {
             actor: auth.id,
             action: "push_unsubscribe",
             collection: "push_subscriptions",
-            record: row.id,
+            record: myRow.id,
             meta: {},
             ip: e.realIP(),
           });

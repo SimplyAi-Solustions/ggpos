@@ -14,6 +14,7 @@ import { pb as pbStaff } from "@/lib/pb"
 import { pbCustomer } from "@/lib/pb-customer"
 import { isDemo } from "@/lib/api/mode"
 import { escapeFilter } from "@/lib/api/filter"
+import { dayBounds } from "@/lib/dates"
 import {
   demoAddWant,
   demoCloseWant,
@@ -150,15 +151,6 @@ export async function closeWant(id: string): Promise<void> {
  */
 function pbMoment(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 19)
-}
-
-/** Midnight this morning and a minute to midnight tonight, local time. */
-export function dayBounds(now: Date = new Date()): { from: Date; to: Date } {
-  const from = new Date(now)
-  from.setHours(0, 0, 0, 0)
-  const to = new Date(now)
-  to.setHours(23, 59, 59, 999)
-  return { from, to }
 }
 
 /**

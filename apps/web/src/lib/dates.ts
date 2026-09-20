@@ -51,3 +51,18 @@ export function formatDateTime(iso: string | null | undefined): string {
   })
   return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}, ${time}`
 }
+
+/**
+ * Midnight this morning and a minute to midnight tonight, local time.
+ *
+ * "Today" on the counter is the shop's own day, not a UTC one: a hold that
+ * runs out at half past eleven tonight ends today wherever the server
+ * thinks it is.
+ */
+export function dayBounds(now: Date = new Date()): { from: Date; to: Date } {
+  const from = new Date(now)
+  from.setHours(0, 0, 0, 0)
+  const to = new Date(now)
+  to.setHours(23, 59, 59, 999)
+  return { from, to }
+}

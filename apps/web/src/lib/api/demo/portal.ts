@@ -3,7 +3,7 @@ import { displayCode, formatGBP } from "@gg/shared"
 import { boxArt, cardArt } from "@/kit/placeholder-art"
 import { PLATFORMS } from "@/design/platforms"
 import { DEMO_CARDS, DEMO_GAMES } from "@/lib/api/fixtures"
-import { formatDate } from "@/lib/dates"
+import { dayBounds, formatDate } from "@/lib/dates"
 import {
   DEMO_CUSTOMERS,
   demoCreditLedgerFor,
@@ -979,15 +979,15 @@ export function demoCancelQuote(id: string, note: string): QuoteRecord {
  */
 export function demoHoldsEndingToday(now: Date = new Date()): HoldRow[] {
   ensureSeeded()
-  const end = new Date(now)
-  end.setHours(23, 59, 59, 999)
+  const { from, to } = dayBounds(now)
   return itemStore()
-    .filter(
-      (item) =>
-        item.status === "reserved" &&
-        Boolean(item.reserved_until) &&
-        new Date(item.reserved_until as string).getTime() <= end.getTime()
-    )
+    .filter((item) => {
+      if (item.status !== "reserved" || !item.reserved_until) return false
+      const until = new Date(item.reserved_until).getTime()
+      // Both ends, exactly as the live filter is bounded: a hold that ran
+      // out yesterday is not one that ends today.
+      return until >= from.getTime() && until <= to.getTime()
+    })
     .sort((a, b) => (a.reserved_until ?? "").localeCompare(b.reserved_until ?? ""))
     .map((item) => {
       const customer = demoCustomerFor(item.reserved_for ?? "")
