@@ -80,6 +80,24 @@ export function PriceCheck({ card }: { card: CardHit }) {
               </span>
             </p>
           ) : null}
+          {/* The finish qualifies every figure below it, so it sits with the
+              card rather than down in the sources. */}
+          {finishes.length > 1 ? (
+            <ChipGroup
+              aria-label="Finish"
+              className="mt-4"
+              value={[finish]}
+              onValueChange={(next) => {
+                if (next[0]) setChosenFinish(next[0])
+              }}
+            >
+              {finishes.map((option) => (
+                <Chip key={option} value={option}>
+                  {finishWords(option)}
+                </Chip>
+              ))}
+            </ChipGroup>
+          ) : null}
         </div>
       </div>
 
@@ -87,22 +105,6 @@ export function PriceCheck({ card }: { card: CardHit }) {
         <MicroLabel tone="ink" className="mb-5">
           Sources
         </MicroLabel>
-        {finishes.length > 1 ? (
-          <ChipGroup
-            aria-label="Finish"
-            className="mb-6"
-            value={[finish]}
-            onValueChange={(next) => {
-              if (next[0]) setChosenFinish(next[0])
-            }}
-          >
-            {finishes.map((option) => (
-              <Chip key={option} value={option}>
-                {finishWords(option)}
-              </Chip>
-            ))}
-          </ChipGroup>
-        ) : null}
         <PriceSources
           subject={{
             kind: "card",
