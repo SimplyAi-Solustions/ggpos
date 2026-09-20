@@ -21,37 +21,35 @@ export interface IdPhotoSheetProps {
 }
 
 /**
- * The ID photo, for an admin who has just confirmed their password.
+ * The step-up and the photo itself.
  *
- * Two gates, in the order `docs/PLAN.md` sets out: the step-up route checks
- * the password and hands back a ten-minute token, then the photo route
- * writes its audit row, decrypts and streams the image. The blob URL is
- * revoked the moment the sheet closes, so the picture does not sit in memory
- * behind a shared counter screen.
+ * Mounted only while the sheet is open, so every open starts from a blank
+ * password box rather than resetting state on the way out, and the blob URL
+ * is revoked by this component's own unmount: an object URL holds the
+ * decrypted bytes alive until it is released, and a shared counter screen is
+ * the last place to leave them lying about.
  */
-export function IdPhotoSheet({
-  open,
-  onOpenChange,
+function IdPhotoBody({
   customerId,
   customerName,
-}: IdPhotoSheetProps) {
+}: {
+  customerId: string
+  customerName: string
+}) {
   const [password, setPassword] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [photo, setPhoto] = React.useState<string | null>(null)
+  const photoRef = React.useRef<string | null>(null)
 
-  // Revoke on the way out: an object URL holds the decrypted bytes alive
-  // until it is released.
-  React.useEffect(() => {
-    if (open) return
-    setPassword("")
-    setError(null)
-    setBusy(false)
-    setPhoto((current) => {
-      if (current?.startsWith("blob:")) URL.revokeObjectURL(current)
-      return null
-    })
-  }, [open])
+  React.useEffect(
+    () => () => {
+      if (photoRef.current?.startsWith("blob:")) {
+        URL.revokeObjectURL(photoRef.current)
+      }
+    },
+    []
+  )
 
   async function confirm(event: React.FormEvent) {
     event.preventDefault()
@@ -66,59 +64,75 @@ export function IdPhotoSheet({
         )
         return
       }
-      setPhoto(await fetchIdPhoto(documentId, token))
+      const url = await fetchIdPhoto(documentId, token)
+      photoRef.current = url
+      setPhoto(url)
     } catch (failure) {
-      setError(
-        refusalOrFallback(failure, "Confirm your password to continue.")
-      )
+      setError(refusalOrFallback(failure, "Confirm your password to continue."))
     } finally {
       setBusy(false)
     }
   }
 
   return (
+    <>
+      <SheetHeader>
+        <SheetTitle>ID photo</SheetTitle>
+        <SheetDescription>
+          {photo
+            ? `Held for ${customerName}. Opening it was recorded in the audit log.`
+            : "Confirm your password. Opening an ID photo is recorded in the audit log."}
+        </SheetDescription>
+      </SheetHeader>
+      <SheetBody>
+        {photo ? (
+          <img
+            src={photo}
+            alt={`Identity document on file for ${customerName}`}
+            className="w-full border border-hairline"
+          />
+        ) : (
+          <form onSubmit={confirm} noValidate>
+            <Field
+              label="Password"
+              htmlFor="id-photo-password"
+              layout="stacked"
+              error={error ?? undefined}
+            >
+              <Input
+                id="id-photo-password"
+                type="password"
+                autoComplete="current-password"
+                aria-invalid={!!error}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </Field>
+            <div className="mt-8">
+              <Button type="submit" loading={busy} trailingArrow>
+                Continue
+              </Button>
+            </div>
+          </form>
+        )}
+      </SheetBody>
+    </>
+  )
+}
+
+/** Admin only, and only after a password: `docs/PLAN.md`, "Security". */
+export function IdPhotoSheet({
+  open,
+  onOpenChange,
+  customerId,
+  customerName,
+}: IdPhotoSheetProps) {
+  return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right">
-        <SheetHeader>
-          <SheetTitle>ID photo</SheetTitle>
-          <SheetDescription>
-            {photo
-              ? `Held for ${customerName}. Opening it was recorded in the audit log.`
-              : "Confirm your password. Opening an ID photo is recorded in the audit log."}
-          </SheetDescription>
-        </SheetHeader>
-        <SheetBody>
-          {photo ? (
-            <img
-              src={photo}
-              alt={`Identity document on file for ${customerName}`}
-              className="w-full border border-hairline"
-            />
-          ) : (
-            <form onSubmit={confirm} noValidate>
-              <Field
-                label="Password"
-                htmlFor="id-photo-password"
-                layout="stacked"
-                error={error ?? undefined}
-              >
-                <Input
-                  id="id-photo-password"
-                  type="password"
-                  autoComplete="current-password"
-                  aria-invalid={!!error}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              </Field>
-              <div className="mt-8">
-                <Button type="submit" loading={busy} trailingArrow>
-                  Continue
-                </Button>
-              </div>
-            </form>
-          )}
-        </SheetBody>
+        {open ? (
+          <IdPhotoBody customerId={customerId} customerName={customerName} />
+        ) : null}
       </SheetContent>
     </Sheet>
   )

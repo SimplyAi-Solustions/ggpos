@@ -12,6 +12,7 @@ import { createPortal } from "react-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { formatGBP, parseDecimalToMinor } from "@gg/shared"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -72,6 +73,48 @@ function day(iso?: string): string {
     day: "numeric",
     month: "short",
   })
+}
+
+/**
+ * The variance, in words and in figures.
+ *
+ * Inside tolerance it carries a volt badge, which is ink on yellow and one of
+ * the five places volt is allowed; over the alert the figure turns
+ * `--destructive` and a sentence says what to do. Volt itself is 1.3:1 on the
+ * paper canvas, so it marks the good case rather than printing it.
+ */
+function Variance({
+  variance,
+  over,
+  testId,
+}: {
+  variance: number
+  over: boolean
+  testId: string
+}) {
+  const word =
+    variance === 0
+      ? "Spot on"
+      : `${variance > 0 ? "Over" : "Short"} ${formatGBP(Math.abs(variance))}`
+
+  return (
+    <p data-testid={testId} className="mt-8 flex flex-wrap items-center gap-4">
+      <span
+        className={
+          over
+            ? "tnum font-display text-[28px] leading-none text-destructive"
+            : "tnum font-display text-[28px] leading-none text-foreground"
+        }
+      >
+        {word}
+      </span>
+      {over ? (
+        <Badge variant="outline">Over the alert</Badge>
+      ) : (
+        <Badge variant="volt">In tolerance</Badge>
+      )}
+    </p>
+  )
 }
 
 /** One sheet, two jobs: a bank drop leaves the drawer, an adjustment corrects it. */
@@ -389,18 +432,11 @@ export function CashScreen() {
             </Field>
 
             {liveVariance !== null ? (
-              <p
-                data-testid="cash-variance"
-                className={
-                  overAlert
-                    ? "tnum mt-8 font-display text-[28px] leading-none text-[var(--pop)]"
-                    : "tnum mt-8 font-display text-[28px] leading-none text-volt-deep"
-                }
-              >
-                {liveVariance === 0
-                  ? "Spot on"
-                  : `${liveVariance > 0 ? "Over" : "Short"} ${formatGBP(Math.abs(liveVariance))}`}
-              </p>
+              <Variance
+                testId="cash-variance"
+                variance={liveVariance}
+                over={overAlert}
+              />
             ) : null}
             {overAlert ? (
               <p className="mt-3 text-[13px] text-destructive">
