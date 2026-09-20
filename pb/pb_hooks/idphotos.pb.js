@@ -140,58 +140,55 @@ routerAdd(
     const retentionMonths = settings ? settings.getInt("id_photo_retention_months") || 12 : 12;
     const expiresAt = util.addMonths(now, retentionMonths).toISOString();
 
+    // Nothing in here can refuse for a business reason (every check above
+    // has already run), so there is no `halt` to carry back out the way the
+    // trade-in and sale routes do.
     let result = null;
-    let halt = null;
-    try {
-      e.app.runInTransaction((txApp) => {
-        const doc = new Record(txApp.findCollectionByNameOrId("id_documents"), {
-          customer: customerId,
-          taken_by: staff.id,
-          taken_at: nowIso,
-          expires_at: expiresAt,
-          mime: mime,
-        });
-        doc.set(
-          "photo",
-          $filesystem.fileFromBytes(cipherText, `id-${$security.randomString(12)}.enc`)
-        );
-        txApp.save(doc);
-
-        if (priv) {
-          const livePriv = txApp.findRecordById("customer_private", priv.id);
-          livePriv.set("id_status", "verified");
-          livePriv.set("id_type", idType);
-          livePriv.set("id_expiry", idExpiry);
-          if (idRefLast4) livePriv.set("id_ref_last4", idRefLast4);
-          if (dob) livePriv.set("dob", dob);
-          if (address) livePriv.set("address", address);
-          livePriv.set("id_verified_by", staff.id);
-          livePriv.set("id_verified_at", nowIso);
-          txApp.save(livePriv);
-        }
-
-        // Identifiers only: never the ID number, the address or the photo
-        // path (pb/README.md, and audit.pb.js's note on the same rule).
-        auditLib.writeAuditLog(txApp, {
-          actor: staff.id,
-          action: "id_check",
-          collection: "id_documents",
-          record: doc.id,
-          meta: { customer: customerId, expires_at: expiresAt },
-          ip: e.realIP(),
-        });
-
-        result = {
-          id_document: doc.id,
-          id_status: "verified",
-          id_expiry: idExpiry,
-          expires_at: expiresAt,
-        };
+    e.app.runInTransaction((txApp) => {
+      const doc = new Record(txApp.findCollectionByNameOrId("id_documents"), {
+        customer: customerId,
+        taken_by: staff.id,
+        taken_at: nowIso,
+        expires_at: expiresAt,
+        mime: mime,
       });
-    } catch (err) {
-      if (halt) throw e.error(halt.status, halt.message, null);
-      throw err;
-    }
+      doc.set(
+        "photo",
+        $filesystem.fileFromBytes(cipherText, `id-${$security.randomString(12)}.enc`)
+      );
+      txApp.save(doc);
+
+      if (priv) {
+        const livePriv = txApp.findRecordById("customer_private", priv.id);
+        livePriv.set("id_status", "verified");
+        livePriv.set("id_type", idType);
+        livePriv.set("id_expiry", idExpiry);
+        if (idRefLast4) livePriv.set("id_ref_last4", idRefLast4);
+        if (dob) livePriv.set("dob", dob);
+        if (address) livePriv.set("address", address);
+        livePriv.set("id_verified_by", staff.id);
+        livePriv.set("id_verified_at", nowIso);
+        txApp.save(livePriv);
+      }
+
+      // Identifiers only: never the ID number, the address or the photo
+      // path (pb/README.md, and audit.pb.js's note on the same rule).
+      auditLib.writeAuditLog(txApp, {
+        actor: staff.id,
+        action: "id_check",
+        collection: "id_documents",
+        record: doc.id,
+        meta: { customer: customerId, expires_at: expiresAt },
+        ip: e.realIP(),
+      });
+
+      result = {
+        id_document: doc.id,
+        id_status: "verified",
+        id_expiry: idExpiry,
+        expires_at: expiresAt,
+      };
+    });
 
     return e.json(200, result);
   },
