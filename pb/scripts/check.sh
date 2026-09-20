@@ -3117,7 +3117,10 @@ CHANNEL_ON_SALE="$(curl -s "$BASE/api/collections/sales/records/$CHANNEL_SALE_ID
 [ "$CHANNEL_ON_SALE" = "counter" ] || fail "an ordinary counter sale's channel is '$CHANNEL_ON_SALE', expected counter"
 ok "an ordinary counter sale defaults channel to counter"
 
-# --- 22h. The SumUp pull: matches by SKU prefix and by amount+time, a
+# --- 22h. The SumUp pull: matches by SKU prefix and by amount+time
+#     (including a mixed sale's own card share, not its total), stores a
+#     FAILED transaction without matching or counting it, leaves a
+#     same-amount transaction outside the three-minute window unmatched, a
 #     second pull does not duplicate, reconcile, a non-admin refused ------
 SUMUP_SKU_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
@@ -3143,14 +3146,49 @@ SUMUP_UNMATCHED_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
 SUMUP_UNMATCHED_SALE_ID="$(echo "$SUMUP_UNMATCHED_SALE_JSON" | jval "sale.id")"
 [ -n "$SUMUP_UNMATCHED_SALE_ID" ] || fail "could not create the SumUp reconcile check's unmatched sale"
 
+# A same-amount sale that must NOT match txn-outside-window-0004: that
+# fixture transaction's own timestamp is fixed months in the past, well
+# outside the three-minute window around this sale's real (today) created
+# time, even though both are exactly 246p.
+SUMUP_OUTSIDE_ITEM_ID="$(make_item "SumUp Outside Window Item" 1 100 246)"
+SUMUP_OUTSIDE_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$SUMUP_OUTSIDE_ITEM_ID\",\"qty\":1,\"unit_price\":246,\"discount\":0}],\"payment\":\"sumup_card\"}")"
+SUMUP_OUTSIDE_SALE_ID="$(echo "$SUMUP_OUTSIDE_SALE_JSON" | jval "sale.id")"
+[ -n "$SUMUP_OUTSIDE_SALE_ID" ] || fail "could not create the SumUp outside-window check's sale"
+
+# A mixed-payment sale matched by its card share (payment_split.sumup_card
+# = 1288), not its total (2000) - the bug finding 1 fixed. Reuses an
+# already-open cash session if section 21 or an earlier section left one,
+# opens a fresh one otherwise; nothing downstream needs it closed again.
+MIXED_SESSION_ID="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/cash-sessions/current" | jval "session.id")"
+if [ -z "$MIXED_SESSION_ID" ]; then
+  MIXED_SESSION_ID="$(curl -s -X POST "$BASE/api/vault/cash-sessions/open" \
+    -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"float":10000}' | jval id)"
+fi
+[ -n "$MIXED_SESSION_ID" ] || fail "could not obtain an open cash session for the mixed-payment SumUp check"
+SUMUP_MIXED_ITEM_ID="$(make_item "SumUp Mixed Payment Item" 1 500 2000)"
+SUMUP_MIXED_SALE_JSON="$(curl -s -X POST "$BASE/api/vault/sales/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"lines\":[{\"item\":\"$SUMUP_MIXED_ITEM_ID\",\"qty\":1,\"unit_price\":2000,\"discount\":0}],\"payment\":\"mixed\",\"payment_split\":{\"sumup_card\":1288,\"cash\":712,\"store_credit\":0,\"points\":0},\"cash_session\":\"$MIXED_SESSION_ID\"}")"
+SUMUP_MIXED_SALE_ID="$(echo "$SUMUP_MIXED_SALE_JSON" | jval "sale.id")"
+[ -n "$SUMUP_MIXED_SALE_ID" ] || fail "could not create the SumUp mixed-payment check's sale: $SUMUP_MIXED_SALE_JSON"
+
 PULL_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/sumup/pull" -H "Authorization: $PLAIN_TOKEN")"
 [ "$PULL_NONADMIN_STATUS" = "403" ] || fail "a non-admin calling sumup/pull got $PULL_NONADMIN_STATUS, expected 403"
 ok "a non-admin cannot pull SumUp transactions (403)"
 
+# Five fixture transactions this pull sees: txn-sku-0001 (SKU match),
+# txn-amount-0002 (amount+time match), txn-failed-0003 (FAILED - stored,
+# never matched or counted), txn-outside-window-0004 (SUCCESSFUL, same
+# amount as a real sale but outside the time window - unmatched),
+# txn-mixed-0005 (amount+time match, by card share).
 PULL1_JSON="$(curl -s -X POST "$BASE/api/vault/sumup/pull" -H "Authorization: $STAFF_TOKEN")"
-[ "$(echo "$PULL1_JSON" | jval fetched)" = "2" ] || fail "the first SumUp pull's fetched count is wrong: $PULL1_JSON"
-[ "$(echo "$PULL1_JSON" | jval matched)" = "2" ] || fail "the first SumUp pull's matched count is wrong: $PULL1_JSON"
-[ "$(echo "$PULL1_JSON" | jval unmatched)" = "0" ] || fail "the first SumUp pull's unmatched count is wrong: $PULL1_JSON"
+[ "$(echo "$PULL1_JSON" | jval fetched)" = "5" ] || fail "the first SumUp pull's fetched count is wrong: $PULL1_JSON"
+[ "$(echo "$PULL1_JSON" | jval matched)" = "3" ] || fail "the first SumUp pull's matched count is wrong: $PULL1_JSON"
+[ "$(echo "$PULL1_JSON" | jval unmatched)" = "1" ] || fail "the first SumUp pull's unmatched count is wrong: $PULL1_JSON"
+[ "$(echo "$PULL1_JSON" | jval refunded)" = "0" ] || fail "the first SumUp pull's refunded count is wrong: $PULL1_JSON"
+ok "the first SumUp pull fetches all five fixture transactions and buckets FAILED/unmatched/matched correctly"
 
 SKU_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-sku-0001%22" -H "Authorization: $STAFF_TOKEN")"
 [ "$(echo "$SKU_TXN_JSON" | jval totalItems)" = "1" ] || fail "txn-sku-0001 was not upserted exactly once: $SKU_TXN_JSON"
@@ -3162,6 +3200,22 @@ AMOUNT_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?fil
 [ "$(echo "$AMOUNT_TXN_JSON" | jval "items.0.matched_sale")" = "$SUMUP_AMOUNT_SALE_ID" ] || fail "txn-amount-0002 did not match the amount+time sale: $AMOUNT_TXN_JSON"
 ok "the SumUp pull matches a sale by amount and time when the product name carries no SKU"
 
+MIXED_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-mixed-0005%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$MIXED_TXN_JSON" | jval totalItems)" = "1" ] || fail "txn-mixed-0005 was not upserted exactly once: $MIXED_TXN_JSON"
+[ "$(echo "$MIXED_TXN_JSON" | jval "items.0.matched_sale")" = "$SUMUP_MIXED_SALE_ID" ] || fail "txn-mixed-0005 (12.88) did not match the mixed sale by its card share (12.88 of a 20.00 total): $MIXED_TXN_JSON"
+ok "the SumUp pull matches a mixed-payment sale by its card share (payment_split.sumup_card), not its total"
+
+FAILED_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-failed-0003%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$FAILED_TXN_JSON" | jval totalItems)" = "1" ] || fail "txn-failed-0003 was not stored: $FAILED_TXN_JSON"
+[ "$(echo "$FAILED_TXN_JSON" | jval "items.0.status")" = "FAILED" ] || fail "txn-failed-0003's stored status is wrong: $FAILED_TXN_JSON"
+[ "$(echo "$FAILED_TXN_JSON" | jval "items.0.matched_sale")" = "" ] || fail "a FAILED transaction was matched to a sale: $FAILED_TXN_JSON"
+ok "a FAILED transaction is stored but never matched (and did not count toward matched/unmatched above)"
+
+OUTSIDE_TXN_JSON="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-outside-window-0004%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$OUTSIDE_TXN_JSON" | jval totalItems)" = "1" ] || fail "txn-outside-window-0004 was not stored: $OUTSIDE_TXN_JSON"
+[ "$(echo "$OUTSIDE_TXN_JSON" | jval "items.0.matched_sale")" = "" ] || fail "txn-outside-window-0004 matched a sale despite being outside the three-minute window: $OUTSIDE_TXN_JSON"
+ok "a same-amount transaction outside the three-minute window is left unmatched"
+
 PULL2_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/sumup_pull" -H "Authorization: $SUPER_TOKEN")"
 [ "$PULL2_CRON_STATUS" = "204" ] || fail "POST /api/crons/sumup_pull returned $PULL2_CRON_STATUS, expected 204"
 
@@ -3170,37 +3224,50 @@ SKU_TXN_AFTER2="$(curl -s "$BASE/api/collections/sumup_transactions/records?filt
 AMOUNT_TXN_AFTER2="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-amount-0002%22" -H "Authorization: $STAFF_TOKEN")"
 [ "$(echo "$AMOUNT_TXN_AFTER2" | jval totalItems)" = "1" ] || fail "a second pull duplicated txn-amount-0002: $AMOUNT_TXN_AFTER2"
 [ "$(echo "$AMOUNT_TXN_AFTER2" | jval "items.0.matched_sale")" = "$SUMUP_AMOUNT_SALE_ID" ] || fail "a second pull changed txn-amount-0002's match: $AMOUNT_TXN_AFTER2"
-ok "a second pull (run here as the sumup_pull cron) upserts in place and does not duplicate or re-match"
+MIXED_TXN_AFTER2="$(curl -s "$BASE/api/collections/sumup_transactions/records?filter=sumup_id%3D%22txn-mixed-0005%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$MIXED_TXN_AFTER2" | jval totalItems)" = "1" ] || fail "a second pull duplicated txn-mixed-0005: $MIXED_TXN_AFTER2"
+SUMUP_TXN_TOTAL_AFTER2="$(curl -s "$BASE/api/collections/sumup_transactions/records?perPage=1" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$SUMUP_TXN_TOTAL_AFTER2" -ge 5 ] || fail "fewer than 5 sumup_transactions rows exist after two pulls: $SUMUP_TXN_TOTAL_AFTER2"
+ok "a second pull (run here as the sumup_pull cron, with an ISO changes_since - fixture_transport.js itself asserts this on every call) upserts in place and does not duplicate or re-match"
 
 RECONCILE_JSON="$(curl -s "$BASE/api/vault/sumup/reconcile?date=$TODAY" -H "Authorization: $STAFF_TOKEN")"
-RECONCILE_HAS_AMOUNT_MATCH="$(echo "$RECONCILE_JSON" | node -e '
+RECONCILE_CHECK="$(echo "$RECONCILE_JSON" | node -e '
   let d = "";
   process.stdin.on("data", (c) => (d += c));
   process.stdin.on("end", () => {
     let body;
-    try { body = JSON.parse(d); } catch (e) { body = {}; }
-    const saleId = process.argv[1];
-    const found = (body.matched || []).some((m) => m.sale && m.sale.id === saleId);
-    process.stdout.write(found ? "yes" : "no");
-  });
-' "$SUMUP_AMOUNT_SALE_ID")"
-[ "$RECONCILE_HAS_AMOUNT_MATCH" = "yes" ] || fail "reconcile did not list the amount-matched sale as matched: $RECONCILE_JSON"
+    try { body = JSON.parse(d); } catch (e) { console.log("PARSE_ERROR"); return; }
+    const [amountSaleId, mixedSaleId, unmatchedSaleId] = process.argv.slice(1);
 
-RECONCILE_HAS_UNMATCHED_SALE="$(echo "$RECONCILE_JSON" | node -e '
-  let d = "";
-  process.stdin.on("data", (c) => (d += c));
-  process.stdin.on("end", () => {
-    let body;
-    try { body = JSON.parse(d); } catch (e) { body = {}; }
-    const saleId = process.argv[1];
-    const found = (body.unmatched_sales || []).some((s) => s.id === saleId);
-    process.stdout.write(found ? "yes" : "no");
+    const hasAmountMatch = (body.matched || []).some((m) => m.sale && m.sale.id === amountSaleId);
+    const mixedEntry = (body.matched || []).find((m) => m.sale && m.sale.id === mixedSaleId);
+    const hasUnmatchedSale = (body.unmatched_sales || []).some((s) => s.id === unmatchedSaleId);
+
+    // Arithmetic: the summary totals must equal the sum of the detail
+    // rows they summarise, not a separately (and possibly wrongly)
+    // computed figure.
+    const sumupFromRows =
+      (body.matched || []).reduce((n, m) => n + (m.transaction ? m.transaction.amount : 0), 0) +
+      (body.unmatched_transactions || []).reduce((n, t) => n + t.amount, 0);
+    const salesFromRows =
+      (body.matched || []).reduce((n, m) => n + (m.sale ? m.sale.card_share : 0), 0) +
+      (body.unmatched_sales || []).reduce((n, s) => n + s.card_share, 0);
+
+    const problems = [];
+    if (!hasAmountMatch) problems.push("amount-matched sale missing from matched[]");
+    if (!mixedEntry) problems.push("mixed sale missing from matched[]");
+    else if (mixedEntry.sale.card_share !== 1288) problems.push("mixed sale card_share is " + mixedEntry.sale.card_share + ", expected 1288");
+    else if (mixedEntry.sale.total !== 2000) problems.push("mixed sale total is " + mixedEntry.sale.total + ", expected 2000 (unchanged)");
+    if (!hasUnmatchedSale) problems.push("unmatched sale missing from unmatched_sales[]");
+    if (sumupFromRows !== body.totals.sumup) problems.push("totals.sumup (" + body.totals.sumup + ") != sum of row amounts (" + sumupFromRows + ")");
+    if (salesFromRows !== body.totals.sales) problems.push("totals.sales (" + body.totals.sales + ") != sum of row card_shares (" + salesFromRows + ")");
+    if (body.totals.difference !== body.totals.sumup - body.totals.sales) problems.push("totals.difference is not sumup - sales");
+
+    process.stdout.write(problems.length ? "PROBLEMS: " + problems.join("; ") : "OK");
   });
-' "$SUMUP_UNMATCHED_SALE_ID")"
-[ "$RECONCILE_HAS_UNMATCHED_SALE" = "yes" ] || fail "reconcile did not list the unmatched card sale: $RECONCILE_JSON"
-[ -n "$(echo "$RECONCILE_JSON" | jval "totals.sales")" ] || fail "reconcile's totals.sales is missing: $RECONCILE_JSON"
-[ -n "$(echo "$RECONCILE_JSON" | jval "totals.sumup")" ] || fail "reconcile's totals.sumup is missing: $RECONCILE_JSON"
-ok "reconcile returns the day's matched and unmatched lists with totals"
+' "$SUMUP_AMOUNT_SALE_ID" "$SUMUP_MIXED_SALE_ID" "$SUMUP_UNMATCHED_SALE_ID")"
+[ "$RECONCILE_CHECK" = "OK" ] || fail "reconcile check failed ($RECONCILE_CHECK): $RECONCILE_JSON"
+ok "reconcile lists the mixed sale by its card share (not total), the unmatched sale, and its totals sum arithmetically from the detail rows"
 
 RECONCILE_PLAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
   -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/sumup/reconcile?date=$TODAY")"

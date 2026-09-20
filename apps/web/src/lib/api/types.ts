@@ -1298,7 +1298,10 @@ export interface DailyStatRow {
   /** The UTC day, `YYYY-MM-DD` on the way in and a timestamp on the way out. */
   date: string
   sales_count?: number
+  /** Gross, by payment method: the split is never net of refunds. */
   sales_total_by_payment?: Record<string, number>
+  /** What has been refunded against sales booked on this day. */
+  sales_refunded?: number
   buy_in_count?: number
   buy_in_total_by_payout?: { cash?: number; credit?: number }
   items_in?: number
