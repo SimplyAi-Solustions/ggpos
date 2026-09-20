@@ -53,8 +53,15 @@ function InlineField({
   numeric?: boolean
   onSave: (next: string) => void
 }) {
+  // Adjusted during render rather than in an effect: when the saved value
+  // comes back changed, the box catches up on the same pass, with no extra
+  // paint showing the old text.
   const [draft, setDraft] = React.useState(value)
-  React.useEffect(() => setDraft(value), [value])
+  const [saved, setSaved] = React.useState(value)
+  if (value !== saved) {
+    setSaved(value)
+    setDraft(value)
+  }
 
   return (
     <div className="flex flex-col gap-1">

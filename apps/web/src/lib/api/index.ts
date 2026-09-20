@@ -314,9 +314,11 @@ export async function verifyPassword(
 export {
   createCustomer,
   eraseCustomer,
+  findCustomerByScan,
   getCreditLedger,
   getCustomer,
   mergeCustomers,
+  qrTokenFrom,
   searchCustomers,
   updateCustomer,
 } from "@/lib/api/customers"

@@ -168,6 +168,50 @@ export async function getCustomer(idOrCode: string): Promise<CustomerProfile | n
   return { customer, private: priv, lastVisit, duplicates }
 }
 
+/**
+ * The token out of a scanned Guild-card QR.
+ *
+ * The card's QR carries the whole portal link, not the GGC code
+ * (docs/label-spec.md), so a wedge scan at the counter arrives as
+ * `https://vault.ggentertainment.co.uk/c/abc123`. A bare token is accepted
+ * too, so a hand-typed one works.
+ */
+export function qrTokenFrom(raw: string): string | null {
+  const value = raw.trim()
+  if (!value) return null
+  const match = /\/c\/([A-Za-z0-9_-]{8,64})\/?$/.exec(value)
+  if (match) return match[1] ?? null
+  if (/^[A-Za-z0-9_-]{16,64}$/.test(value) && !/^GG/i.test(value)) return value
+  return null
+}
+
+/** A customer from anything the counter can scan or type at them. */
+export async function findCustomerByScan(
+  raw: string
+): Promise<CustomerProfile | null> {
+  const token = qrTokenFrom(raw)
+  if (!token) return getCustomer(raw)
+
+  if (isDemo()) {
+    const match = demoSearchCustomers("")
+    for (const summary of match) {
+      const profile = demoGetCustomer(summary.id)
+      if (profile?.customer.qr_token === token) return profile
+    }
+    return null
+  }
+
+  try {
+    const customer = await pb
+      .collection("customers")
+      .getFirstListItem<CustomerRecord>(`qr_token = "${escapeFilter(token)}"`)
+    return getCustomer(customer.id)
+  } catch (error) {
+    if (isNotFound(error)) return null
+    throw error
+  }
+}
+
 /** The server assigns `code` and `qr_token` in pb_hooks/customers.pb.js. */
 export async function createCustomer(input: NewCustomerInput): Promise<CustomerRecord> {
   if (isDemo()) return demoCreateCustomer(input)
