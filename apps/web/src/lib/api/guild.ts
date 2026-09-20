@@ -90,7 +90,8 @@ export interface PortalVoucher {
   reward: { name: string; type: RewardType; value: number }
   status: VoucherStatus
   expires_at: string | null
-  created?: string
+  /** `reward_redemptions.created`: when the points were spent on it. */
+  created: string
 }
 
 /**
@@ -171,6 +172,12 @@ export async function listMyPoints(): Promise<PointsLedgerRow[]> {
  * live rows inside its own transaction, so the catalogue's `can_redeem` is
  * only ever what the screen shows, never what it relies on: a 422 comes back
  * with the sentence to put in front of the customer.
+ *
+ * The contract's answer is `{ voucher }` and nothing else is accepted: the
+ * points have already gone by the time this body arrives, so guessing at a
+ * shape would put a half-read object on screen as somebody's voucher. A body
+ * without one raises a sentence the sheet can show instead, which sends the
+ * customer to the one screen that always has the real row on it.
  */
 export async function redeemReward(id: string): Promise<PortalVoucher> {
   if (isDemo()) return demoRedeem(id)
@@ -178,7 +185,11 @@ export async function redeemReward(id: string): Promise<PortalVoucher> {
     `/api/vault/rewards/${encodeURIComponent(id)}/redeem`,
     { method: "POST" }
   )
-  const body = (result ?? {}) as Record<string, unknown>
-  const voucher = (body.voucher ?? body.redemption ?? body) as PortalVoucher
-  return voucher
+  const voucher = ((result ?? {}) as Record<string, unknown>).voucher
+  if (!voucher || typeof voucher !== "object") {
+    throw new Error(
+      "The voucher did not come back as expected. Check My vouchers before trying again."
+    )
+  }
+  return voucher as PortalVoucher
 }

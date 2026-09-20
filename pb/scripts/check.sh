@@ -5236,7 +5236,15 @@ P6_VOUCHER_NUMBER="$(jval "voucher.number" <"$TMP_DIR/p6-redeem.json")"
 echo "$P6_VOUCHER_NUMBER" | grep -Eq '^GG-V-[0-9]{6}$' || fail "the voucher number is '$P6_VOUCHER_NUMBER', expected the GG-V-000001 form"
 echo "$P6_VOUCHER_CODE" | grep -Eq '^GGV[0-9A-HJKMNP-TV-Z]{6}$' || fail "the voucher code is '$P6_VOUCHER_CODE', expected the GGV… form"
 [ "$(jval "voucher.status" <"$TMP_DIR/p6-redeem.json")" = "issued" ] || fail "a new voucher is not issued"
-[ -n "$(jval "voucher.expires_at" <"$TMP_DIR/p6-redeem.json")" ] || fail "a new voucher has no expiry"
+# Both dates go out as strict ISO 8601, with the "T" - PocketBase stores a
+# date with a space instead, which only some engines will parse, and a
+# voucher is read by a customer's own browser (lib/rewards.js's isoDate).
+P6_VOUCHER_EXPIRES="$(jval "voucher.expires_at" <"$TMP_DIR/p6-redeem.json")"
+P6_VOUCHER_CREATED="$(jval "voucher.created" <"$TMP_DIR/p6-redeem.json")"
+echo "$P6_VOUCHER_EXPIRES" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' \
+  || fail "a new voucher's expires_at is '$P6_VOUCHER_EXPIRES', expected an ISO 8601 timestamp"
+echo "$P6_VOUCHER_CREATED" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' \
+  || fail "a new voucher's created is '$P6_VOUCHER_CREATED', expected an ISO 8601 timestamp"
 P6_REDEEM_ROW="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
   --data-urlencode "filter=customer='$P6_SHOPPER_ID' && reason='redeem' && ref='$P6_VOUCHER_ID'" \
   "$BASE/api/collections/points_ledger/records")"
@@ -5265,6 +5273,8 @@ P6_VOUCHER_LOOKUP="$(curl -s -o "$TMP_DIR/p6-voucher.json" -w '%{http_code}' "$B
   || fail "the voucher lookup does not name the customer holding it"
 [ "$(jval "voucher.reward.name" <"$TMP_DIR/p6-voucher.json")" = "P6 Free booster" ] \
   || fail "the voucher lookup does not name the reward"
+[ "$(jval "voucher.created" <"$TMP_DIR/p6-voucher.json")" = "$P6_VOUCHER_CREATED" ] \
+  || fail "the voucher lookup's created is '$(jval "voucher.created" <"$TMP_DIR/p6-voucher.json")', expected the same ISO timestamp the redemption returned"
 P6_VOUCHER_UNKNOWN="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/vouchers/GGVZZZZZZ" -H "Authorization: $STAFF_TOKEN")"
 [ "$P6_VOUCHER_UNKNOWN" = "404" ] || fail "an unknown voucher code returned $P6_VOUCHER_UNKNOWN, expected 404"
 ok "staff can look a voucher up by its code, and an unknown code is a 404"
@@ -5332,7 +5342,29 @@ P6_OTHERS_VOUCHER_SEEN="$(echo "$P6_MY_VOUCHERS" | node -e '
   });
 ')"
 [ "$P6_OTHERS_VOUCHER_SEEN" = "false" ] || fail "GET /api/vault/me/vouchers returned another customer's voucher"
-ok "a customer's own voucher list is theirs alone"
+P6_VOUCHER_DATES="$(echo "$P6_MY_VOUCHERS" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const rows = (JSON.parse(d || "{}").vouchers) || [];
+    const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+    const bad = rows.filter((v) => !iso.test(String(v.created || "")));
+    process.stdout.write(bad.length ? "bad: " + JSON.stringify(bad.map((v) => v.created)) : "ok");
+  });
+')"
+[ "$P6_VOUCHER_DATES" = "ok" ] \
+  || fail "GET /api/vault/me/vouchers returned a voucher without an ISO 8601 created ($P6_VOUCHER_DATES)"
+[ "$(echo "$P6_MY_VOUCHERS" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const rows = (JSON.parse(d || "{}").vouchers) || [];
+    const mine = rows.find((v) => v.id === process.argv[1]) || {};
+    process.stdout.write(String(mine.created || ""));
+  });
+' "$P6_VOUCHER_ID")" = "$P6_VOUCHER_CREATED" ] \
+  || fail "the same voucher reads back with a different created in GET /api/vault/me/vouchers"
+ok "a customer's own voucher list is theirs alone, every row dated in ISO 8601"
 
 # --- 24f. The perks wallet, and using one ------------------------------
 P6_LEGEND_ID="$(p6_customer "P6 Legend" "p6-legend@local.test")"

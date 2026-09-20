@@ -235,15 +235,21 @@ export function referralProgressSentence(earned: number, pending: number): strin
  * The server sends the reason as a word and refuses again on the redeem
  * itself; this is the same refusal said in front of the customer before they
  * press anything, so the button and the sentence under it never disagree.
+ *
+ * `pointsBalance` is null while the balance is still being read. The
+ * sentence then says what the reward costs and stops: "and have 0" would be
+ * a statement about somebody's own points that is not true yet.
  */
 export function rewardReasonSentence(
   reward: Pick<PortalReward, "can_redeem" | "reason" | "cost_points">,
-  pointsBalance: number
+  pointsBalance: number | null
 ): string | null {
   if (reward.can_redeem) return null
   switch (reward.reason) {
     case "insufficient":
-      return `You need ${formatPoints(reward.cost_points)} points and have ${formatPoints(pointsBalance)}.`
+      return pointsBalance === null
+        ? `You need ${formatPoints(reward.cost_points)} points for this.`
+        : `You need ${formatPoints(reward.cost_points)} points and have ${formatPoints(pointsBalance)}.`
     case "sold_out":
       return "None left at the moment."
     case "limit_reached":

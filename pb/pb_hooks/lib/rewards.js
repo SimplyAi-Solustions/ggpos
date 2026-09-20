@@ -140,6 +140,21 @@ function listFor(app, customerId, auth, now) {
   return out;
 }
 
+/**
+ * A stored date as strict ISO 8601. PocketBase stores a date as
+ * "2026-09-20 21:42:00.123Z", a space rather than a "T", which V8 happens
+ * to parse and other engines refuse outright. A voucher is read by a
+ * customer's own browser and by the counter's, both of which do nothing
+ * more than `new Date(voucher.expires_at)`, so the two dates on it go out
+ * in the form every engine accepts.
+ */
+function isoDate(value) {
+  var raw = String(value || "").trim();
+  if (!raw) return "";
+  var parsed = new Date(raw.replace(" ", "T"));
+  return isNaN(parsed.getTime()) ? raw : parsed.toISOString();
+}
+
 /** One voucher in the shape every route in this phase returns it. */
 function voucherShape(app, redemption) {
   var reward = null;
@@ -156,9 +171,9 @@ function voucherShape(app, redemption) {
       ? { name: reward.getString("name"), type: reward.getString("type"), value: reward.getInt("value") }
       : { name: "", type: "", value: 0 },
     status: redemption.getString("status"),
-    expires_at: redemption.getString("expires_at"),
+    expires_at: isoDate(redemption.getString("expires_at")),
     points_spent: redemption.getInt("points_spent"),
-    created: redemption.getString("created"),
+    created: isoDate(redemption.getString("created")),
   };
 }
 
@@ -219,6 +234,7 @@ function expireVouchers(app, now) {
 }
 
 module.exports = {
+  isoDate: isoDate,
   voucherDays: voucherDays,
   takenCount: takenCount,
   fileTokenFor: fileTokenFor,
