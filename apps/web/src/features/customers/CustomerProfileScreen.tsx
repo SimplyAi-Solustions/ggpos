@@ -13,6 +13,7 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useStaff } from "@/lib/auth"
+import { movedSentence } from "@/features/customers/merge-words"
 import { StepUpDialog } from "@/features/customers/StepUpDialog"
 import { IdPhotoSheet } from "@/features/customers/IdPhotoSheet"
 import {
@@ -100,29 +101,6 @@ function Row({
       <span className="text-[15px] text-foreground">{children}</span>
     </div>
   )
-}
-
-const MOVED_LABEL: Record<string, string> = {
-  trade_ins: "trade-in",
-  sales: "sale",
-  quotes: "quote",
-  credit_ledger: "credit entry",
-  points_ledger: "points entry",
-  want_list: "want list row",
-}
-
-/** "Moved 3 trade-ins and 1 credit entry." Nothing at zero is listed. */
-export function movedSentence(moved: Record<string, number>): string {
-  const parts = Object.entries(moved)
-    .filter(([, count]) => count > 0)
-    .map(([key, count]) => {
-      const word = MOVED_LABEL[key] ?? key.replace(/_/g, " ")
-      return `${count} ${word}${count === 1 ? "" : "s"}`
-    })
-  if (parts.length === 0) return "The two cards are now one. There was nothing to move."
-  if (parts.length === 1) return `Moved ${parts[0]}.`
-  const last = parts[parts.length - 1]
-  return `Moved ${parts.slice(0, -1).join(", ")} and ${last}.`
 }
 
 function idBadge(status: IdStatus) {
