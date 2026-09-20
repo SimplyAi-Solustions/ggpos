@@ -1449,11 +1449,15 @@ export interface SumUpSale {
   id: string
   number: string
   total: number
+  /**
+   * What actually went through SumUp: the whole total for a `sumup_card`
+   * sale, `payment_split.sumup_card` for a mixed one. This, never `total`,
+   * is what the card takings compare against.
+   */
+  card_share: number
   payment?: string
   created?: string
   occurred_at?: string
-  /** A mixed sale's card share, which is what the card totals compare. */
-  card_amount?: number
 }
 
 export interface SumUpMatch {
@@ -1461,15 +1465,18 @@ export interface SumUpMatch {
   sale: SumUpSale
 }
 
-/** `GET /api/vault/sumup/reconcile?date=YYYY-MM-DD`. */
+/**
+ * `GET /api/vault/sumup/reconcile?date=YYYY-MM-DD`.
+ *
+ * Only `SUCCESSFUL` transactions appear at all: a refund, a failed or
+ * pending transaction and one whose amount could not be read are stored on
+ * the server but are in none of these lists and in neither total.
+ */
 export interface SumUpReconcile {
   date: string
   matched: SumUpMatch[]
   unmatched_transactions: SumUpTransaction[]
   unmatched_sales: SumUpSale[]
-  /** Refunds and anything not SUCCESSFUL are counted apart from the takings. */
-  refunds?: SumUpTransaction[]
-  other?: SumUpTransaction[]
   totals: { sumup: number; sales: number; difference: number }
 }
 
@@ -1478,4 +1485,5 @@ export interface SumUpPullResult {
   fetched: number
   matched: number
   unmatched: number
+  refunded: number
 }

@@ -40,13 +40,17 @@ function build(app, util, params) {
   var valueMarket = 0;
   // max: null (never Infinity, which is not a JSON value and breaks
   // response encoding) means "no upper bound" for the open-ended 180+
-  // bucket - see the matching loop below.
+  // bucket - see the matching loop below. "unknown" is not a dated bucket
+  // at all (min/max null, matched by acquired_at being blank, never by a
+  // day count) - see the loop's own comment.
   var buckets = [
     { bucket: "0-30", min: 0, max: 30, count: 0, value_cost: 0, value_market: 0 },
     { bucket: "31-90", min: 31, max: 90, count: 0, value_cost: 0, value_market: 0 },
     { bucket: "91-180", min: 91, max: 180, count: 0, value_cost: 0, value_market: 0 },
     { bucket: "180+", min: 181, max: null, count: 0, value_cost: 0, value_market: 0 },
+    { bucket: "unknown", min: null, max: null, count: 0, value_cost: 0, value_market: 0 },
   ];
+  var unknownBucket = buckets[buckets.length - 1];
   var deadStock = [];
   var movers = [];
 
@@ -60,16 +64,26 @@ function build(app, util, params) {
     valueCost += cost;
     valueMarket += marketValue;
 
-    var days = query.daysSince(item.getString("acquired_at"), now);
-    for (var b = 0; b < buckets.length; b++) {
-      if (days >= buckets[b].min && (buckets[b].max === null || days <= buckets[b].max)) {
-        buckets[b].count += 1;
-        buckets[b].value_cost += cost;
-        buckets[b].value_market += marketValue;
-        break;
+    // A blank acquired_at is unknown, not "acquired today": defaulting it
+    // to 0 days would both misplace it in the freshest bucket and hide it
+    // from dead_stock forever, so it gets its own bucket instead and is
+    // left out of the dead-stock check below (days is null there too).
+    var days = query.daysSinceOrNull(item.getString("acquired_at"), now);
+    if (days === null) {
+      unknownBucket.count += 1;
+      unknownBucket.value_cost += cost;
+      unknownBucket.value_market += marketValue;
+    } else {
+      for (var b = 0; b < buckets.length - 1; b++) {
+        if (days >= buckets[b].min && (buckets[b].max === null || days <= buckets[b].max)) {
+          buckets[b].count += 1;
+          buckets[b].value_cost += cost;
+          buckets[b].value_market += marketValue;
+          break;
+        }
       }
     }
-    if (days > DEAD_STOCK_DAYS) {
+    if (days !== null && days > DEAD_STOCK_DAYS) {
       deadStock.push({
         item_id: item.id,
         sku: item.getString("sku"),
@@ -90,7 +104,7 @@ function build(app, util, params) {
           title: item.getString("title"),
           market_at_intake: intake,
           latest_market: market.perUnit,
-          pct_change: Math.round(pct * 10) / 10,
+          pct_change: query.roundPct(pct),
         });
       }
     }
@@ -143,7 +157,7 @@ function build(app, util, params) {
   var sellThrough = groups.rows();
   for (var st = 0; st < sellThrough.length; st++) {
     sellThrough[st].rate =
-      sellThrough[st].acquired > 0 ? Math.round((sellThrough[st].sold / sellThrough[st].acquired) * 1000) / 1000 : 0;
+      sellThrough[st].acquired > 0 ? query.roundRatio(sellThrough[st].sold / sellThrough[st].acquired) : 0;
   }
 
   var totals = {
