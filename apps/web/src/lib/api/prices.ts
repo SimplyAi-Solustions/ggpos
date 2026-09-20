@@ -147,15 +147,23 @@ export async function getPrices(
   })
 }
 
-/** Asks every adapter again, writes what they answer, and hands back the lot. */
-export async function refreshPrices(cardId: string, finish = ""): Promise<PriceView> {
+/**
+ * Asks every adapter again, writes what they answer, and hands back the lot.
+ * The condition travels with it: the eBay adapter searches for the condition
+ * words, so refreshing an LP card on "NM" would price the wrong thing.
+ */
+export async function refreshPrices(
+  cardId: string,
+  finish = "",
+  condition: CardCondition | string = "NM"
+): Promise<PriceView> {
   if (isDemo()) {
     demo.refreshPrices(cardId, finish)
-    return getPrices(cardId, finish)
+    return getPrices(cardId, finish, condition)
   }
   return pb.send<PriceView>(
     `/api/vault/cards/${encodeURIComponent(cardId)}/refresh-prices`,
-    { method: "POST", body: { finish } }
+    { method: "POST", body: { finish, condition: condition || "NM" } }
   )
 }
 
@@ -170,7 +178,13 @@ export async function addUkComp(cardId: string, body: UkCompInput): Promise<Pric
   }
   return pb.send<PriceView>(`/api/vault/cards/${encodeURIComponent(cardId)}/uk-comp`, {
     method: "POST",
-    body,
+    body: {
+      finish: body.finish ?? "",
+      condition: body.condition ?? "NM",
+      price: body.price,
+      url: body.url,
+      sold_at: body.sold_at,
+    },
   })
 }
 
@@ -205,17 +219,28 @@ export async function refreshRetroPrices(
   )
 }
 
+/**
+ * A retro comp files under `completeness`, which is the only shape that
+ * route reads: `finish` and `condition` are a card's idea, and a comp sent
+ * with them lands against no completeness at all.
+ */
 export async function addRetroUkComp(
   id: string,
   body: UkCompInput
 ): Promise<PriceView> {
+  const completeness = body.completeness ?? ""
   if (isDemo()) {
-    demo.addUkComp(id, body)
-    return getRetroPrices(id, body.finish ?? "")
+    demo.addUkComp(id, { ...body, completeness })
+    return getRetroPrices(id, completeness)
   }
   return pb.send<PriceView>(`/api/vault/retro/${encodeURIComponent(id)}/uk-comp`, {
     method: "POST",
-    body,
+    body: {
+      completeness,
+      price: body.price,
+      url: body.url,
+      sold_at: body.sold_at,
+    },
   })
 }
 
@@ -231,8 +256,14 @@ export async function getFx(): Promise<FxRatesView> {
 
 /** Keys are shaped so one card's prices invalidate together after a write. */
 export const priceKeys = {
-  card: (cardId: string, finish: string, condition: string) =>
-    ["prices", "card", cardId, finish, condition] as const,
+  /**
+   * The condition is deliberately not part of the key. It changes nothing
+   * the screens read (`condition_adjusted` is worked out on the client with
+   * the shared helper, so it follows a source picked by hand too), and
+   * keying on it made every condition tap empty the cache and flash "No
+   * price yet" over a figure that had not moved.
+   */
+  card: (cardId: string, finish: string) => ["prices", "card", cardId, finish] as const,
   cardAll: (cardId: string) => ["prices", "card", cardId] as const,
   retro: (id: string, completeness: string) =>
     ["prices", "retro", id, completeness] as const,
@@ -248,10 +279,13 @@ export function cardPricesQuery(
   condition: CardCondition | string = "NM"
 ): PricesQuery {
   return {
-    queryKey: priceKeys.card(cardId ?? "", finish, String(condition)),
+    queryKey: priceKeys.card(cardId ?? "", finish),
     queryFn: () => getPrices(cardId as string, finish, condition),
     enabled: Boolean(cardId),
     staleTime: PRICES_STALE_MS,
+    // A card that is not in the catalogue, or a route that refused, has
+    // said so: retrying three times only delays the sentence.
+    retry: false,
   }
 }
 
@@ -264,6 +298,7 @@ export function retroPricesQuery(
     queryFn: () => getRetroPrices(id as string, completeness),
     enabled: Boolean(id),
     staleTime: PRICES_STALE_MS,
+    retry: false,
   }
 }
 
@@ -283,6 +318,7 @@ export const fxQuery = {
   queryKey: priceKeys.fx(),
   queryFn: getFx,
   staleTime: LOOKUP_STALE_MS,
+  retry: false,
 }
 
 export function useFx() {

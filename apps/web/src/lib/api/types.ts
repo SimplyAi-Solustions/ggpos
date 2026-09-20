@@ -148,6 +148,12 @@ export interface CardHit {
 
 /** What Add stock sends to `createItem`. */
 export interface NewItemInput {
+  /**
+   * What the market said when the item was added, in integer GBP pence. The
+   * trade-in completion route records the same thing for a bought-in item;
+   * without it an item added by hand reads "Not recorded" for ever.
+   */
+  marketAtIntake?: number
   kind: ItemKind
   gameId: string
   cardId?: string
@@ -333,6 +339,11 @@ export interface TradeInLineInput {
   kind: ItemKind
   gameId?: string
   cardId?: string
+  /**
+   * The `retro_titles` row a retro line was priced against, so the item the
+   * completion route creates keeps the link and can be repriced later.
+   */
+  retroTitleId?: string
   title?: string
   finish?: string
   condition?: string
@@ -1187,10 +1198,17 @@ export interface PriceView {
   condition_adjusted: number | null
 }
 
-/** What the "Add UK comp" sheet sends. `price` is integer GBP pence. */
+/**
+ * What the "Add UK comp" sheet sends. `price` is integer GBP pence.
+ *
+ * A card's comp carries the finish and condition it was seen in; a retro
+ * title's carries its completeness instead, which is the only thing that
+ * route reads. Sending the wrong one files the comp against the wrong row.
+ */
 export interface UkCompInput {
   finish?: string
   condition?: string
+  completeness?: string
   price: number
   url: string
   /** YYYY-MM-DD. */

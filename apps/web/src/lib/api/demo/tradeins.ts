@@ -364,6 +364,7 @@ export function demoSaveLines(
     kind: line.kind,
     game: line.gameId,
     card: line.cardId,
+    retro_title: line.retroTitleId,
     free_text_title: line.title,
     finish: line.finish,
     condition: (line.condition ?? "") as TradeInLineRecord["condition"],

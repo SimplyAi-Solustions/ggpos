@@ -277,6 +277,7 @@ function toLineBody(tradeInId: string, line: TradeInLineInput) {
     kind: line.kind,
     game: line.gameId || undefined,
     card: line.cardId || undefined,
+    retro_title: line.retroTitleId || undefined,
     free_text_title: line.title || undefined,
     finish: line.finish || undefined,
     condition: line.condition || undefined,
