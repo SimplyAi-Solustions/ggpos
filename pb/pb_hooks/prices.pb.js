@@ -5,21 +5,27 @@
  * (docs/api-contract.md, "Phase 3: lookup, prices and FX"):
  *
  *   GET  /api/vault/cards/:id/prices?finish=&condition=
- *   POST /api/vault/cards/:id/refresh-prices   { finish }
+ *   POST /api/vault/cards/:id/refresh-prices   { finish, condition }
  *   POST /api/vault/cards/:id/uk-comp          { finish, condition, price, url, sold_at }
  *   GET  /api/vault/retro/:id/prices?completeness=
+ *   POST /api/vault/retro/:id/refresh-prices   { completeness }
+ *   POST /api/vault/retro/:id/uk-comp          { completeness, price, url, sold_at }
  *
  * The GET routes only ever read `price_snapshots` - no adapter is called,
  * so a normal price check never makes an outbound call (pb/scripts/check.sh
- * runs these under GG_ADAPTER_TRANSPORT_MODE=offline_fail to prove it).
- * Only `refresh-prices` and `uk-comp` write anything: refresh-prices calls
- * every enabled adapter for the card's game plus eBay, and uk-comp is a
- * staff-entered row that needs no adapter at all.
+ * runs these under a transport override to prove it). Only the
+ * `refresh-prices` and `uk-comp` routes write anything: refresh-prices
+ * calls every enabled adapter for the card's game (or PriceCharting for
+ * retro) plus eBay, and uk-comp is a staff-entered row that needs no
+ * adapter at all.
  *
  * `price_snapshots.finish` is reused for retro's "completeness"
  * (loose/boxed/cib) rather than adding a second column that would mean the
  * same thing for the other kind of row - see docs/PLAN.md's data model,
- * which gives price_snapshots one such column, not two.
+ * which gives price_snapshots one such column, not two. Every filter on it
+ * below matches the exact value (`""` when the caller sends none), rather
+ * than leaving it out of the filter: an unfiltered read would mix every
+ * finish's snapshots together into one chosen price.
  *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
@@ -34,7 +40,6 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
-    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
 
     function queryParam(name) {
       let value = "";
@@ -55,38 +60,27 @@ routerAdd(
     }
 
     const cardId = e.request.pathValue("id");
-    let card = null;
     try {
-      card = e.app.findRecordById("cards", cardId);
+      e.app.findRecordById("cards", cardId);
     } catch (err) {
       throw e.notFoundError("Card not found. Check the id or add it manually.", null);
     }
 
     const finish = queryParam("finish");
-    const condition = queryParam("condition") || "NM";
-
-    const settingsRow = util.settings(e.app);
-    const priority =
-      (settingsRow && util.jsonField(settingsRow, "source_priority", null)) ||
-      pricingShared.DEFAULT_TCG_PRIORITY;
-    const multipliers =
-      (settingsRow && util.jsonField(settingsRow, "condition_multipliers", null)) ||
-      pricingShared.DEFAULT_CONDITION_MULTIPLIERS;
-
-    const filter = finish ? "card = {:card} && finish = {:finish}" : "card = {:card}";
-    const params = finish ? { card: cardId, finish: finish } : { card: cardId };
-    let rows = [];
-    try {
-      rows = e.app.findRecordsByFilter("price_snapshots", filter, "-fetched_at", 100, 0, params);
-    } catch (err) {
-      rows = [];
+    const condition = policy.normalizeCondition(queryParam("condition"));
+    if (condition === null) {
+      throw e.badRequestError("Pick a condition: NM, LP, MP, HP or DMG.", null);
     }
 
-    const candidates = rows.map(policy.candidateFromSnapshot);
+    const settingsRow = util.settings(e.app);
+    const priority = pricingPriority(util, settingsRow);
+    const multipliers = conditionMultipliers(util, settingsRow);
+
+    const candidates = snapshotsFor(e.app, policy, "card", cardId, finish);
     const now = new Date();
     const result = policy.choose(candidates, priority, now);
     const conditionAdjusted = result.chosen
-      ? pricingShared.adjustForCondition(result.chosen.gbp_market, condition, multipliers)
+      ? policy.adjustForConditionSafe(result.chosen.gbp_market, condition, multipliers)
       : null;
 
     return e.json(200, {
@@ -99,16 +93,16 @@ routerAdd(
 );
 
 // ---------------------------------------------------------------------
-// POST /api/vault/cards/{id}/refresh-prices   { finish }
+// POST /api/vault/cards/{id}/refresh-prices   { finish, condition }
 // ---------------------------------------------------------------------
 routerAdd(
   "POST",
   "/api/vault/cards/{id}/refresh-prices",
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
     const registry = require(`${__hooks}/adapters/registry.js`);
-    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
 
     const cardId = e.request.pathValue("id");
     let card = null;
@@ -133,6 +127,10 @@ routerAdd(
 
     const body = util.body(e);
     const finish = util.asStr(body.finish);
+    const condition = policy.normalizeCondition(util.asStr(body.condition));
+    if (condition === null) {
+      throw e.badRequestError("Pick a condition: NM, LP, MP, HP or DMG.", null);
+    }
 
     const settingsRow = util.settings(e.app);
     const apiKeys = (settingsRow && util.jsonField(settingsRow, "api_keys", {})) || {};
@@ -160,16 +158,23 @@ routerAdd(
       try {
         const ebay = require(`${__hooks}/adapters/ebay.js`);
         const statestore = require(`${__hooks}/adapters/statestore.js`);
-        const queryText = [card.getString("name"), cardSet ? cardSet.getString("name") : "", card.getString("number"), finish]
+        const queryText = [
+          card.getString("name"),
+          cardSet ? cardSet.getString("name") : "",
+          card.getString("number"),
+          finish,
+          condition,
+        ]
           .filter(Boolean)
           .join(" ");
-        const cacheKey = `card:${cardId}:${finish}`;
+        const cacheKey = `card:${cardId}:${finish}:${condition}`;
         const ebayRows = ebay.getPrices(
           statestore.forApp(e.app),
           apiKeys.ebay,
           queryText,
           cacheKey,
-          ebay.haircutPctFromSettings(e.app)
+          ebay.haircutPctFromSettings(e.app),
+          true // refresh-prices bypasses eBay's own 24-hour cache
         );
         raw = raw.concat(ebayRows);
       } catch (err) {
@@ -177,10 +182,11 @@ routerAdd(
       }
     }
 
+    const sourcesWritten = [];
     for (let i = 0; i < raw.length; i++) {
       const snapshot = policy.fromAdapterCandidate(raw[i], fxRates, now);
       if (!snapshot) continue;
-      policy.writeSnapshot(e.app, {
+      const written = policy.writeSnapshotSafely(e.app, {
         card: cardId,
         finish: finish,
         source: snapshot.source,
@@ -195,27 +201,25 @@ routerAdd(
         fetchedAt: snapshot.fetchedAt,
         evidenceUrl: snapshot.evidenceUrl,
       });
+      if (written) sourcesWritten.push(snapshot.source);
     }
 
+    auditLib.writeAuditLog(e.app, {
+      actor: e.auth.id,
+      action: "refresh_prices",
+      collection: "cards",
+      record: cardId,
+      meta: { finish: finish, sources: sourcesWritten },
+      ip: e.realIP(),
+    });
+
     // Same body as the GET, read straight back from what was just written.
-    const priority =
-      (settingsRow && util.jsonField(settingsRow, "source_priority", null)) ||
-      pricingShared.DEFAULT_TCG_PRIORITY;
-    const multipliers =
-      (settingsRow && util.jsonField(settingsRow, "condition_multipliers", null)) ||
-      pricingShared.DEFAULT_CONDITION_MULTIPLIERS;
-    const filter = finish ? "card = {:card} && finish = {:finish}" : "card = {:card}";
-    const params = finish ? { card: cardId, finish: finish } : { card: cardId };
-    let rows = [];
-    try {
-      rows = e.app.findRecordsByFilter("price_snapshots", filter, "-fetched_at", 100, 0, params);
-    } catch (err) {
-      rows = [];
-    }
-    const candidates = rows.map(policy.candidateFromSnapshot);
+    const priority = pricingPriority(util, settingsRow);
+    const multipliers = conditionMultipliers(util, settingsRow);
+    const candidates = snapshotsFor(e.app, policy, "card", cardId, finish);
     const result = policy.choose(candidates, priority, now);
     const conditionAdjusted = result.chosen
-      ? pricingShared.adjustForCondition(result.chosen.gbp_market, "NM", multipliers)
+      ? policy.adjustForConditionSafe(result.chosen.gbp_market, condition, multipliers)
       : null;
 
     return e.json(200, {
@@ -237,48 +241,23 @@ routerAdd(
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
-    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
 
     const staff = e.auth;
     const cardId = e.request.pathValue("id");
-    let card = null;
     try {
-      card = e.app.findRecordById("cards", cardId);
+      e.app.findRecordById("cards", cardId);
     } catch (err) {
       throw e.notFoundError("Card not found. Check the id or add it manually.", null);
     }
 
     const body = util.body(e);
     const finish = util.asStr(body.finish);
-    const condition = util.asStr(body.condition) || "NM";
-    const price = util.asInt(body.price, -1);
-    const url = util.asStr(body.url);
-    const soldAt = util.asStr(body.sold_at);
+    const condition = policy.normalizeCondition(util.asStr(body.condition));
+    if (condition === null) {
+      throw e.badRequestError("Pick a condition: NM, LP, MP, HP or DMG.", null);
+    }
 
-    if (price < 0) {
-      throw e.badRequestError("Enter the sold price in pence.", null);
-    }
-    if (!/^https:\/\/(www\.)?ebay\.co\.uk\/itm\//i.test(url)) {
-      throw e.badRequestError(
-        "That is not an ebay.co.uk item link. Paste the listing's own URL (ebay.co.uk/itm/...).",
-        null
-      );
-    }
-    const soldDate = new Date(soldAt + "T00:00:00.000Z");
-    if (isNaN(soldDate.getTime())) {
-      throw e.badRequestError("Enter the date it sold, as YYYY-MM-DD.", null);
-    }
-    const now = new Date();
-    if (soldDate.getTime() > now.getTime()) {
-      throw e.badRequestError("That sale date is in the future.", null);
-    }
-    const daysOld = (now.getTime() - soldDate.getTime()) / 86400000;
-    if (daysOld > 30) {
-      throw e.badRequestError(
-        "That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days.",
-        null
-      );
-    }
+    const ukComp = validateUkComp(e, util, body);
 
     let snapshot = null;
     e.app.runInTransaction((txApp) => {
@@ -287,15 +266,15 @@ routerAdd(
         finish: finish,
         source: "uk_sold_manual",
         nativeCurrency: "GBP",
-        nativeLow: price,
-        nativeMid: price,
-        nativeMarket: price,
-        nativeTrend: price,
+        nativeLow: ukComp.price,
+        nativeMid: ukComp.price,
+        nativeMarket: ukComp.price,
+        nativeTrend: ukComp.price,
         fxRate: 1,
-        fxDate: soldAt,
-        gbpMarket: price,
-        fetchedAt: soldDate.toISOString(),
-        evidenceUrl: url,
+        fxDate: ukComp.soldAt,
+        gbpMarket: ukComp.price,
+        fetchedAt: ukComp.soldDate.toISOString(),
+        evidenceUrl: ukComp.url,
       });
 
       auditLib.writeAuditLog(txApp, {
@@ -303,30 +282,19 @@ routerAdd(
         action: "uk_comp",
         collection: "price_snapshots",
         record: snapshot.id,
-        meta: { card: cardId, finish: finish, condition: condition, price: price },
+        meta: { card: cardId, finish: finish, condition: condition, price: ukComp.price },
         ip: e.realIP(),
       });
     });
 
     const settingsRow = util.settings(e.app);
-    const priority =
-      (settingsRow && util.jsonField(settingsRow, "source_priority", null)) ||
-      pricingShared.DEFAULT_TCG_PRIORITY;
-    const multipliers =
-      (settingsRow && util.jsonField(settingsRow, "condition_multipliers", null)) ||
-      pricingShared.DEFAULT_CONDITION_MULTIPLIERS;
-    const filter = finish ? "card = {:card} && finish = {:finish}" : "card = {:card}";
-    const params = finish ? { card: cardId, finish: finish } : { card: cardId };
-    let rows = [];
-    try {
-      rows = e.app.findRecordsByFilter("price_snapshots", filter, "-fetched_at", 100, 0, params);
-    } catch (err) {
-      rows = [];
-    }
-    const candidates = rows.map(policy.candidateFromSnapshot);
+    const priority = pricingPriority(util, settingsRow);
+    const multipliers = conditionMultipliers(util, settingsRow);
+    const candidates = snapshotsFor(e.app, policy, "card", cardId, finish);
+    const now = new Date();
     const result = policy.choose(candidates, priority, now);
     const conditionAdjusted = result.chosen
-      ? pricingShared.adjustForCondition(result.chosen.gbp_market, condition, multipliers)
+      ? policy.adjustForConditionSafe(result.chosen.gbp_market, condition, multipliers)
       : null;
 
     return e.json(200, {
@@ -347,7 +315,6 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
-    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
 
     function queryParam(name) {
       let value = "";
@@ -376,22 +343,9 @@ routerAdd(
 
     const completeness = queryParam("completeness");
     const settingsRow = util.settings(e.app);
-    const priority =
-      (settingsRow && util.jsonField(settingsRow, "retro_source_priority", null)) ||
-      pricingShared.DEFAULT_RETRO_PRIORITY;
+    const priority = retroPriority(util, settingsRow);
 
-    const filter = completeness
-      ? "retro_title = {:id} && finish = {:completeness}"
-      : "retro_title = {:id}";
-    const params = completeness ? { id: retroId, completeness: completeness } : { id: retroId };
-    let rows = [];
-    try {
-      rows = e.app.findRecordsByFilter("price_snapshots", filter, "-fetched_at", 100, 0, params);
-    } catch (err) {
-      rows = [];
-    }
-
-    const candidates = rows.map(policy.candidateFromSnapshot);
+    const candidates = snapshotsFor(e.app, policy, "retro_title", retroId, completeness);
     const now = new Date();
     const result = policy.choose(candidates, priority, now);
 
@@ -408,8 +362,8 @@ routerAdd(
   "/api/vault/retro/{id}/refresh-prices",
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
-    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
 
     const retroId = e.request.pathValue("id");
     let title = null;
@@ -470,7 +424,8 @@ routerAdd(
           apiKeys.ebay,
           queryText,
           cacheKey,
-          ebay.haircutPctFromSettings(e.app)
+          ebay.haircutPctFromSettings(e.app),
+          true // refresh-prices bypasses eBay's own 24-hour cache
         );
         raw = raw.concat(ebayRows);
       } catch (err) {
@@ -478,10 +433,11 @@ routerAdd(
       }
     }
 
+    const sourcesWritten = [];
     for (let i = 0; i < raw.length; i++) {
       const snapshot = policy.fromAdapterCandidate(raw[i], fxRates, now);
       if (!snapshot) continue;
-      policy.writeSnapshot(e.app, {
+      const written = policy.writeSnapshotSafely(e.app, {
         retroTitle: retroId,
         finish: completeness,
         source: snapshot.source,
@@ -496,26 +452,21 @@ routerAdd(
         fetchedAt: snapshot.fetchedAt,
         evidenceUrl: snapshot.evidenceUrl,
       });
+      if (written) sourcesWritten.push(snapshot.source);
     }
 
+    auditLib.writeAuditLog(e.app, {
+      actor: e.auth.id,
+      action: "refresh_prices",
+      collection: "retro_titles",
+      record: retroId,
+      meta: { completeness: completeness, sources: sourcesWritten },
+      ip: e.realIP(),
+    });
+
     // Same body as the GET, read straight back from what was just written.
-    const priority =
-      (settingsRow && util.jsonField(settingsRow, "retro_source_priority", null)) ||
-      pricingShared.DEFAULT_RETRO_PRIORITY;
-    let rows = [];
-    try {
-      rows = e.app.findRecordsByFilter(
-        "price_snapshots",
-        "retro_title = {:id} && finish = {:completeness}",
-        "-fetched_at",
-        100,
-        0,
-        { id: retroId, completeness: completeness }
-      );
-    } catch (err) {
-      rows = [];
-    }
-    const candidates = rows.map(policy.candidateFromSnapshot);
+    const priority = retroPriority(util, settingsRow);
+    const candidates = snapshotsFor(e.app, policy, "retro_title", retroId, completeness);
     const result = policy.choose(candidates, priority, now);
 
     return e.json(200, { chosen: result.chosen, sources: result.sources, condition_adjusted: null });
@@ -533,7 +484,6 @@ routerAdd(
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
-    const pricingShared = require(`${__hooks}/lib/shared/pricing.js`);
 
     const staff = e.auth;
     const retroId = e.request.pathValue("id");
@@ -547,34 +497,7 @@ routerAdd(
     // completeness stands in for finish/condition here - retro has neither
     // (docs/api-contract.md's Phase 3 section).
     const completeness = util.asStr(body.completeness) || "loose";
-    const price = util.asInt(body.price, -1);
-    const url = util.asStr(body.url);
-    const soldAt = util.asStr(body.sold_at);
-
-    if (price < 0) {
-      throw e.badRequestError("Enter the sold price in pence.", null);
-    }
-    if (!/^https:\/\/(www\.)?ebay\.co\.uk\/itm\//i.test(url)) {
-      throw e.badRequestError(
-        "That is not an ebay.co.uk item link. Paste the listing's own URL (ebay.co.uk/itm/...).",
-        null
-      );
-    }
-    const soldDate = new Date(soldAt + "T00:00:00.000Z");
-    if (isNaN(soldDate.getTime())) {
-      throw e.badRequestError("Enter the date it sold, as YYYY-MM-DD.", null);
-    }
-    const now = new Date();
-    if (soldDate.getTime() > now.getTime()) {
-      throw e.badRequestError("That sale date is in the future.", null);
-    }
-    const daysOld = (now.getTime() - soldDate.getTime()) / 86400000;
-    if (daysOld > 30) {
-      throw e.badRequestError(
-        "That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days.",
-        null
-      );
-    }
+    const ukComp = validateUkComp(e, util, body);
 
     let snapshot = null;
     e.app.runInTransaction((txApp) => {
@@ -583,15 +506,15 @@ routerAdd(
         finish: completeness,
         source: "uk_sold_manual",
         nativeCurrency: "GBP",
-        nativeLow: price,
-        nativeMid: price,
-        nativeMarket: price,
-        nativeTrend: price,
+        nativeLow: ukComp.price,
+        nativeMid: ukComp.price,
+        nativeMarket: ukComp.price,
+        nativeTrend: ukComp.price,
         fxRate: 1,
-        fxDate: soldAt,
-        gbpMarket: price,
-        fetchedAt: soldDate.toISOString(),
-        evidenceUrl: url,
+        fxDate: ukComp.soldAt,
+        gbpMarket: ukComp.price,
+        fetchedAt: ukComp.soldDate.toISOString(),
+        evidenceUrl: ukComp.url,
       });
 
       auditLib.writeAuditLog(txApp, {
@@ -599,29 +522,15 @@ routerAdd(
         action: "uk_comp",
         collection: "price_snapshots",
         record: snapshot.id,
-        meta: { retro_title: retroId, completeness: completeness, price: price },
+        meta: { retro_title: retroId, completeness: completeness, price: ukComp.price },
         ip: e.realIP(),
       });
     });
 
     const settingsRow = util.settings(e.app);
-    const priority =
-      (settingsRow && util.jsonField(settingsRow, "retro_source_priority", null)) ||
-      pricingShared.DEFAULT_RETRO_PRIORITY;
-    let rows = [];
-    try {
-      rows = e.app.findRecordsByFilter(
-        "price_snapshots",
-        "retro_title = {:id} && finish = {:completeness}",
-        "-fetched_at",
-        100,
-        0,
-        { id: retroId, completeness: completeness }
-      );
-    } catch (err) {
-      rows = [];
-    }
-    const candidates = rows.map(policy.candidateFromSnapshot);
+    const priority = retroPriority(util, settingsRow);
+    const candidates = snapshotsFor(e.app, policy, "retro_title", retroId, completeness);
+    const now = new Date();
     const result = policy.choose(candidates, priority, now);
 
     return e.json(200, { chosen: result.chosen, sources: result.sources, condition_adjusted: null });

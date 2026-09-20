@@ -28,6 +28,16 @@ const VIEWPORTS = [
 ]
 const MODES = ["light", "dark"]
 
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+function ggCode(letter, body) {
+  let sum = 0
+  const chars = letter + body
+  for (let i = 0; i < chars.length; i++) sum += CROCKFORD.indexOf(chars[i]) * (i + 1)
+  return `GG${letter}${body}${CROCKFORD[sum % 32]}`
+}
+/** The demo Charizard, which is on the shelf and has a full price book. */
+const SKU = ggCode("S", "7F3K2")
+
 /** The same shape lib/auth.ts persists, so the guard lets us straight in. */
 const DEMO_STAFF = {
   id: "staff_demo",
@@ -98,6 +108,16 @@ for (const mode of MODES) {
       await page.getByRole("dialog").waitFor()
       await page.waitForTimeout(300)
       await page.screenshot({ path: join(outDir, `uk-comp-${tag}.png`) })
+      await context.close()
+    }
+
+    // --- The item page's Market section -------------------------------
+    {
+      const { context, page } = await open(mode, viewport, `/counter/stock/${SKU}`)
+      await page.getByTestId("price-sources").waitFor()
+      await page.getByTestId("price-sources").scrollIntoViewIfNeeded()
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: join(outDir, `item-market-${tag}.png`) })
       await context.close()
     }
 
