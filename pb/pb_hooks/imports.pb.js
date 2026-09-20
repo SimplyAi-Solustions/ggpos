@@ -218,3 +218,107 @@ routerAdd(
   },
   $apis.requireAuth("staff")
 );
+
+// ---------------------------------------------------------------------
+// POST /api/vault/imports/:id/link
+// ---------------------------------------------------------------------
+//
+// The counter screen's own Card Uploader review queue used to link a
+// "needs match" row by creating an items row itself through the
+// collection API, bypassing the three-path matching rule below
+// (lib/imports.js's applyCardMatch, the same one processCardUploaderRows
+// runs automatically) and risking a duplicate, zero-cost item for a card
+// already on the shelf. This route runs that exact rule for one row by
+// hand instead, so a manual match can never drift from the automatic one.
+//
+// Body `{ "row": <1-based row number from the import's own errors
+// entry>, "card": "<cards id>" }` links the row; `{ "row": <n>, "skip":
+// true }` dismisses it without listing anything. See
+// docs/api-contract.md's Phase 4 section for the full rule and every
+// refusal below.
+routerAdd(
+  "POST",
+  "/api/vault/imports/{id}/link",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const importsLib = require(`${__hooks}/lib/imports.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+
+    const staff = e.auth;
+    const body = util.body(e);
+    const rowNumber = util.asInt(body.row, 0);
+    const skip = util.asBool(body.skip);
+    const cardId = util.asStr(body.card);
+    const NOT_WAITING = "That row is not waiting for a match.";
+
+    if (!(rowNumber > 0)) {
+      throw e.badRequestError("Give the row number to link or skip.", null);
+    }
+    if (!skip && !cardId) {
+      throw e.badRequestError("Give the card id to link this row to, or set skip.", null);
+    }
+
+    // Read-only lookup, before any transaction opens, so an import id
+    // that does not exist gets this route's own 404 wording rather than
+    // the generic transaction-failure 400 below.
+    let importId = "";
+    try {
+      importId = e.app.findRecordById("csv_imports", e.request.pathValue("id")).id;
+    } catch (err) {
+      throw e.notFoundError(NOT_WAITING, null);
+    }
+
+    let outcome = null;
+    let importRow = null;
+    try {
+      e.app.runInTransaction((txApp) => {
+        const record = txApp.findRecordById("csv_imports", importId);
+        const settingsRow = util.settings(txApp);
+        const defaultLocation = settingsRow ? settingsRow.getString("default_intake_location") : "";
+
+        outcome = importsLib.resolveReviewRow(txApp, staff.id, record, rowNumber, cardId, skip, defaultLocation);
+        if (outcome.status !== "ok") return;
+
+        txApp.save(record);
+        auditLib.writeAuditLog(txApp, {
+          actor: staff.id,
+          action: "import_link",
+          collection: "csv_imports",
+          record: record.id,
+          meta: {
+            row: rowNumber,
+            card: skip ? "" : cardId,
+            item: outcome.item ? outcome.item.id : "",
+            path: outcome.path,
+          },
+          ip: e.realIP(),
+        });
+        importRow = record;
+      });
+    } catch (err) {
+      throw e.badRequestError("This row could not be linked. Check it and try again.", null);
+    }
+
+    if (!outcome || outcome.status === "not_found") {
+      throw e.notFoundError(NOT_WAITING, null);
+    }
+    if (outcome.status === "already_resolved") {
+      throw e.error(409, "This row has already been linked or skipped.", null);
+    }
+    if (outcome.status === "bad_card") {
+      throw e.badRequestError("Card not found. Check the id.", null);
+    }
+    if (outcome.status === "bad_price") {
+      throw e.badRequestError(
+        "This row's price could not be read as an amount. Re-import the file with a valid price.",
+        null
+      );
+    }
+    if (outcome.status === "already_sold") {
+      throw e.error(409, "That listing has already sold, been returned or been written off.", null);
+    }
+
+    return e.json(200, { import: importRow, item: outcome.item, path: outcome.path });
+  },
+  $apis.requireAuth("staff")
+);

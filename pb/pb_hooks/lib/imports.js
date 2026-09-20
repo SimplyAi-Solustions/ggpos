@@ -160,34 +160,135 @@ function capErrors(errors) {
 }
 
 /**
- * Process every mapped Card Uploader row inside `txApp`. A row carrying a
- * `tcgplayerId` or `cardmarketId` matches `cards` directly (both are
- * indexed - PLAN.md's "Card Uploader and the eBay round trip"); a
- * name-only row goes to the review list instead of guessing.
- *
- * Once a card is matched, in order (docs/api-contract.md's Phase 4
+ * The three-path matching rule shared by the automatic Card Uploader
+ * import below and `POST /api/vault/imports/:id/link` (a staff member
+ * resolving one "needs match" row by hand). Given a `card` the caller has
+ * already matched (by id in the automatic path, by a human's own pick in
+ * the manual one) and that row's own `price` (pence), `quantity`,
+ * `condition` and `ebaySku`, in order (docs/api-contract.md's Phase 4
  * section, "Card Uploader import matching"):
- *  (a) an existing `items` row already carrying this `ebay_sku` is
- *      updated in place (status, price, qty) - unless it has since sold,
- *      been returned or been written off, in which case the row is
- *      reported as `already_sold` rather than resurrecting a disposed
- *      item;
+ *  (a) an existing `items` row already carrying this `ebaySku` is updated
+ *      in place (status, price, qty) - unless it has since sold, been
+ *      returned or been written off, in which case `{ path: "already_sold" }`
+ *      is returned rather than resurrecting a disposed item;
  *  (b) failing that, the oldest still-`in_stock` item already linked to
- *      this exact card (narrowed by `condition` when the file gives one,
- *      and by `finish`/`language` when the mapping itself carries those
- *      columns) is the same physical card already on the shelf, so it is
- *      connected to this listing (`status`, `ebay_sku`, `price` set;
+ *      this exact card (narrowed by `condition` when the caller gives
+ *      one, and by `finish`/`language` when the caller gives those too -
+ *      the manual link route never has them, only the file-driven import
+ *      does) is the same physical card already on the shelf, so it is
+ *      connected to this listing (`status`, `ebaySku`, `price` set;
  *      `cost`, `source`, `acquired_at`, `trade_in_line` and `location`
  *      are never touched);
  *  (c) only when neither exists is a brand new `source: "supplier"` item
  *      created (its `cost` is left unset - a listing with nothing already
- *      in stock behind it), and a `kind: "review"` entry is added
- *      alongside the create so the zero cost is visible on the review
- *      screen without holding the item back from being listed.
+ *      in stock behind it).
  *
- * Every row's writes are wrapped in try/catch: a row this build cannot
- * write for some unexpected reason becomes an `errors` entry, never an
- * exception that would abort the whole file's transaction.
+ * Returns `{ path: "ebay_sku" | "in_stock" | "created" | "already_sold", item }` -
+ * `item` is the matched or created record, except for `already_sold`,
+ * where it is the disposed-of item the caller is reporting on, untouched.
+ * Never saves anything for `already_sold`; the caller decides what to do
+ * (an `errors` entry for the file import, a 400 for the manual link).
+ *
+ * `defaultLocation` (a `locations` id, or "") is `settings.default_intake_location` -
+ * only the (c) path uses it, on a genuinely new item; (a) and (b) update
+ * an item that already has its own location, which is never touched.
+ */
+function applyCardMatch(txApp, staffId, card, fields, defaultLocation) {
+  var pricePence = fields.price;
+  var qty = fields.quantity > 0 ? fields.quantity : 1;
+  var condition = fields.condition || "";
+  var csSku = fields.ebaySku || "";
+
+  // (a) an existing item already carrying this ebaySku.
+  var byEbaySku = null;
+  if (csSku) {
+    try {
+      byEbaySku = txApp.findFirstRecordByFilter("items", "ebay_sku = {:sku}", { sku: csSku });
+    } catch (err) {
+      byEbaySku = null;
+    }
+  }
+  if (byEbaySku) {
+    if (STOCK_TERMINAL_STATUSES.indexOf(byEbaySku.getString("status")) >= 0) {
+      return { path: "already_sold", item: byEbaySku };
+    }
+    byEbaySku.set("status", "listed_ebay");
+    byEbaySku.set("price", pricePence);
+    byEbaySku.set("qty", qty);
+    if (condition) byEbaySku.set("condition", condition);
+    txApp.save(byEbaySku);
+    return { path: "ebay_sku", item: byEbaySku };
+  }
+
+  // (b) the oldest matching item already physically in stock, narrowed by
+  // condition, and by finish/language only when the caller gives them
+  // (the file-driven import passes those on when its mapping carries
+  // those columns; the manual link route has neither, so never narrows
+  // by them - docs/api-contract.md's Phase 4 section).
+  var stockFilter = 'card = {:card} && status = "in_stock"';
+  var stockParams = { card: card.id };
+  if (condition) {
+    stockFilter += " && condition = {:condition}";
+    stockParams.condition = condition;
+  }
+  if (fields.finish) {
+    stockFilter += " && finish = {:finish}";
+    stockParams.finish = fields.finish;
+  }
+  if (fields.language) {
+    stockFilter += " && language = {:language}";
+    stockParams.language = fields.language;
+  }
+  var inStockMatches = [];
+  try {
+    inStockMatches = txApp.findRecordsByFilter("items", stockFilter, "created", 1, 0, stockParams);
+  } catch (err) {
+    inStockMatches = [];
+  }
+  var inStock = inStockMatches && inStockMatches.length ? inStockMatches[0] : null;
+  if (inStock) {
+    inStock.set("status", "listed_ebay");
+    if (csSku) inStock.set("ebay_sku", csSku);
+    inStock.set("price", pricePence);
+    txApp.save(inStock);
+    return { path: "in_stock", item: inStock };
+  }
+
+  // (c) nothing on hand for this card anywhere - a fresh supplier item.
+  var record = new Record(txApp.findCollectionByNameOrId("items"), {});
+  record.set("kind", "single");
+  record.set("game", card.getString("game"));
+  record.set("card", card.id);
+  record.set("status", "listed_ebay");
+  record.set("price", pricePence);
+  record.set("qty", qty);
+  if (condition) record.set("condition", condition);
+  if (csSku) record.set("ebay_sku", csSku);
+  record.set("source", "supplier");
+  record.set("acquired_at", new Date().toISOString());
+  record.set("tax_scheme", "margin");
+  if (staffId) record.set("created_by", staffId);
+  if (defaultLocation) record.set("location", defaultLocation);
+  txApp.save(record);
+  return { path: "created", item: record };
+}
+
+/**
+ * Process every mapped Card Uploader row inside `txApp`. A row carrying a
+ * `tcgplayerId` or `cardmarketId` matches `cards` directly (both are
+ * indexed - PLAN.md's "Card Uploader and the eBay round trip"); a
+ * name-only row goes to the review list instead of guessing, and so does
+ * one whose id does not match any `cards` row. Either way the review
+ * entry carries this row's own `price`, `quantity`, `condition` and
+ * `ebay_sku` (whatever it parsed to, even if blank or unreadable)
+ * alongside the name/id fields a human matches by, so a later
+ * `POST /api/vault/imports/:id/link` has everything `applyCardMatch`
+ * above needs without re-reading the original file.
+ *
+ * Once a card is matched, `applyCardMatch` above runs the three-path
+ * rule. Every row's writes are wrapped in try/catch: a row this build
+ * cannot write for some unexpected reason becomes an `errors` entry,
+ * never an exception that would abort the whole file's transaction.
  *
  * Returns `{ matched, review, errors }` - `errors` entries are
  * `{ row, kind: "review" | "error" | "already_sold", message, ... }`, the
@@ -196,16 +297,11 @@ function capErrors(errors) {
  * the (c) case above still counts as `matched` (an item really was
  * created) even though it also adds a review-kind note to `errors`, so
  * `rows_ok` (matched + review) never double-counts a single row.
- *
- * `defaultLocation` (a `locations` id, or "") is `settings.default_intake_location` -
- * only the (c) path uses it, on a genuinely new item; (a) and (b) update
- * an item that already has its own location, which is never touched.
  */
 function processCardUploaderRows(txApp, staffId, records, defaultLocation) {
   var errors = [];
   var matched = 0;
   var review = 0;
-  var nowIso = new Date().toISOString();
 
   for (var i = 0; i < records.length; i++) {
     var r = records[i];
@@ -213,6 +309,11 @@ function processCardUploaderRows(txApp, staffId, records, defaultLocation) {
       var tcgId = String(r.tcgplayerId || "").trim();
       var cmId = String(r.cardmarketId || "").trim();
       var name = String(r.name || "").trim();
+      var pricePenceRaw = toPence(r.price);
+      var qty = parseInt(String(r.quantity || "").trim(), 10);
+      if (!(qty > 0)) qty = 1;
+      var condition = normaliseCondition(r.condition);
+      var csSku = String(r.csSku || "").trim();
 
       if (!tcgId && !cmId) {
         if (!name) {
@@ -226,6 +327,10 @@ function processCardUploaderRows(txApp, staffId, records, defaultLocation) {
           name: name,
           set: String(r.set || "").trim(),
           number: String(r.number || "").trim(),
+          price: pricePenceRaw,
+          quantity: qty,
+          condition: condition,
+          ebay_sku: csSku,
         });
         review += 1;
         continue;
@@ -254,110 +359,168 @@ function processCardUploaderRows(txApp, staffId, records, defaultLocation) {
           name: name,
           tcgplayer_id: tcgId,
           cardmarket_id: cmId,
+          price: pricePenceRaw,
+          quantity: qty,
+          condition: condition,
+          ebay_sku: csSku,
         });
         review += 1;
         continue;
       }
 
-      var pricePence = toPence(r.price);
-      if (pricePence === null || pricePence < 0) {
+      if (pricePenceRaw === null || pricePenceRaw < 0) {
         errors.push({ row: r._row, kind: "error", message: "Price could not be read as an amount." });
         continue;
       }
 
-      var qty = parseInt(String(r.quantity || "").trim(), 10);
-      if (!(qty > 0)) qty = 1;
+      var outcome = applyCardMatch(
+        txApp,
+        staffId,
+        card,
+        {
+          price: pricePenceRaw,
+          quantity: qty,
+          condition: condition,
+          ebaySku: csSku,
+          finish: Object.prototype.hasOwnProperty.call(r, "finish") ? String(r.finish || "").trim() : "",
+          language: Object.prototype.hasOwnProperty.call(r, "language") ? String(r.language || "").trim() : "",
+        },
+        defaultLocation
+      );
 
-      var condition = normaliseCondition(r.condition);
-      var csSku = String(r.csSku || "").trim();
-
-      // (a) an existing item already carrying this ebay_sku.
-      var byEbaySku = null;
-      if (csSku) {
-        try {
-          byEbaySku = txApp.findFirstRecordByFilter("items", "ebay_sku = {:sku}", { sku: csSku });
-        } catch (err) {
-          byEbaySku = null;
-        }
-      }
-      if (byEbaySku) {
-        if (STOCK_TERMINAL_STATUSES.indexOf(byEbaySku.getString("status")) >= 0) {
-          errors.push({ row: r._row, kind: "already_sold", message: "already sold", ebay_sku: csSku });
-          continue;
-        }
-        byEbaySku.set("status", "listed_ebay");
-        byEbaySku.set("price", pricePence);
-        byEbaySku.set("qty", qty);
-        if (condition) byEbaySku.set("condition", condition);
-        txApp.save(byEbaySku);
-        matched += 1;
+      if (outcome.path === "already_sold") {
+        errors.push({ row: r._row, kind: "already_sold", message: "already sold", ebay_sku: csSku });
         continue;
       }
 
-      // (b) the oldest matching item already physically in stock, narrowed
-      // by condition when the file gives one and by finish/language only
-      // when the configured mapping actually maps those columns (so a
-      // field absent from a mapping is never a false "must be blank").
-      var stockFilter = 'card = {:card} && status = "in_stock"';
-      var stockParams = { card: card.id };
-      if (condition) {
-        stockFilter += " && condition = {:condition}";
-        stockParams.condition = condition;
-      }
-      if (Object.prototype.hasOwnProperty.call(r, "finish") && String(r.finish || "").trim()) {
-        stockFilter += " && finish = {:finish}";
-        stockParams.finish = String(r.finish).trim();
-      }
-      if (Object.prototype.hasOwnProperty.call(r, "language") && String(r.language || "").trim()) {
-        stockFilter += " && language = {:language}";
-        stockParams.language = String(r.language).trim();
-      }
-      var inStockMatches = [];
-      try {
-        inStockMatches = txApp.findRecordsByFilter("items", stockFilter, "created", 1, 0, stockParams);
-      } catch (err) {
-        inStockMatches = [];
-      }
-      var inStock = inStockMatches && inStockMatches.length ? inStockMatches[0] : null;
-      if (inStock) {
-        inStock.set("status", "listed_ebay");
-        if (csSku) inStock.set("ebay_sku", csSku);
-        inStock.set("price", pricePence);
-        txApp.save(inStock);
-        matched += 1;
-        continue;
-      }
-
-      // (c) nothing on hand for this card anywhere - a fresh supplier item.
-      var record = new Record(txApp.findCollectionByNameOrId("items"), {});
-      record.set("kind", "single");
-      record.set("game", card.getString("game"));
-      record.set("card", card.id);
-      record.set("status", "listed_ebay");
-      record.set("price", pricePence);
-      record.set("qty", qty);
-      if (condition) record.set("condition", condition);
-      if (csSku) record.set("ebay_sku", csSku);
-      record.set("source", "supplier");
-      record.set("acquired_at", nowIso);
-      record.set("tax_scheme", "margin");
-      if (staffId) record.set("created_by", staffId);
-      if (defaultLocation) record.set("location", defaultLocation);
-      txApp.save(record);
       matched += 1;
-      errors.push({
-        row: r._row,
-        kind: "review",
-        message: "Listed card was not in stock. Created with no cost - check it.",
-        card: card.id,
-        sku: record.getString("sku"),
-      });
+      if (outcome.path === "created") {
+        errors.push({
+          row: r._row,
+          kind: "review",
+          message: "Listed card was not in stock. Created with no cost - check it.",
+          card: card.id,
+          sku: outcome.item.getString("sku"),
+        });
+      }
     } catch (err) {
       errors.push({ row: r._row, kind: "error", message: "This row could not be processed." });
     }
   }
 
   return { matched: matched, review: review, errors: capErrors(errors) };
+}
+
+/**
+ * Resolve one "needs match" review row on an import that has already run
+ * (`POST /api/vault/imports/:id/link`): either link it to a `cards` row a
+ * human picked, running the exact same `applyCardMatch` rule the
+ * automatic import above uses, or drop it as `skip`. When linking lands
+ * on `applyCardMatch`'s "created" path, the old "needs match" entry is
+ * replaced with the same zero-cost review note `processCardUploaderRows`
+ * itself would have left - the row stops needing a match, but a supplier
+ * item created with no cost behind it is still worth Richard checking,
+ * whichever path put it there. Mutates `importRecord`'s `errors`,
+ * `resolved_rows` and (for a skip) `rows_skipped` fields in place; the
+ * caller saves it, and only it, inside its own transaction, and decides
+ * what to audit.
+ *
+ * Returns one of:
+ *  - `{ status: "ok", path, item }` - `path` is `applyCardMatch`'s own,
+ *    or `"skipped"`; `item` is `null` for a skip.
+ *  - `{ status: "not_found" }` - no "needs match" entry for this row
+ *    number exists in `errors` right now.
+ *  - `{ status: "already_resolved" }` - this row number has already been
+ *    linked or skipped (its `errors` entry is gone, but `resolved_rows`
+ *    remembers it) - the caller's own row-was-here check to tell apart
+ *    from `not_found` above.
+ *  - `{ status: "bad_card" }` - `cardId` (link only) does not resolve to
+ *    a `cards` row.
+ *  - `{ status: "bad_price" }` - this row's own captured price did not
+ *    parse to a usable amount at import time, so there is nothing to
+ *    list it at (link only; a skip never needs a price).
+ *  - `{ status: "already_sold" }` - the row's own `ebay_sku` (link only)
+ *    already tags an item that has since sold, been returned or been
+ *    written off.
+ */
+function resolveReviewRow(txApp, staffId, importRecord, rowNumber, cardId, skip, defaultLocation) {
+  var util = require(__hooks + "/lib/vaultutil.js");
+
+  var resolvedRows = util.jsonField(importRecord, "resolved_rows", []);
+  if (!Array.isArray(resolvedRows)) resolvedRows = [];
+  for (var k = 0; k < resolvedRows.length; k++) {
+    if (resolvedRows[k] === rowNumber) return { status: "already_resolved" };
+  }
+
+  var errorsList = util.jsonField(importRecord, "errors", []);
+  if (!Array.isArray(errorsList)) errorsList = [];
+  var entryIndex = -1;
+  for (var i = 0; i < errorsList.length; i++) {
+    var candidate = errorsList[i];
+    if (candidate && candidate.row === rowNumber && candidate.kind === "review" && candidate.message === "needs match") {
+      entryIndex = i;
+      break;
+    }
+  }
+  if (entryIndex < 0) return { status: "not_found" };
+
+  var entry = errorsList[entryIndex];
+  var remainingErrors = errorsList.slice(0, entryIndex).concat(errorsList.slice(entryIndex + 1));
+
+  if (skip) {
+    resolvedRows.push(rowNumber);
+    importRecord.set("errors", remainingErrors);
+    importRecord.set("resolved_rows", resolvedRows);
+    importRecord.set("rows_skipped", (importRecord.getInt("rows_skipped") || 0) + 1);
+    return { status: "ok", path: "skipped", item: null };
+  }
+
+  var card = null;
+  try {
+    card = txApp.findRecordById("cards", cardId);
+  } catch (err) {
+    card = null;
+  }
+  if (!card) return { status: "bad_card" };
+
+  var pricePence = entry.price;
+  if (typeof pricePence !== "number" || isNaN(pricePence) || pricePence < 0) {
+    return { status: "bad_price" };
+  }
+
+  var outcome = applyCardMatch(
+    txApp,
+    staffId,
+    card,
+    {
+      price: pricePence,
+      quantity: entry.quantity,
+      condition: entry.condition || "",
+      ebaySku: entry.ebay_sku || "",
+    },
+    defaultLocation
+  );
+
+  if (outcome.path === "already_sold") {
+    return { status: "already_sold" };
+  }
+
+  if (outcome.path === "created") {
+    remainingErrors = remainingErrors.concat([
+      {
+        row: rowNumber,
+        kind: "review",
+        message: "Listed card was not in stock. Created with no cost - check it.",
+        card: card.id,
+        sku: outcome.item.getString("sku"),
+      },
+    ]);
+  }
+
+  resolvedRows.push(rowNumber);
+  importRecord.set("errors", remainingErrors);
+  importRecord.set("resolved_rows", resolvedRows);
+  return { status: "ok", path: outcome.path, item: outcome.item };
 }
 
 /**
@@ -575,6 +738,8 @@ module.exports = {
   cardUploaderMapping: cardUploaderMapping,
   ebayOrdersMapping: ebayOrdersMapping,
   parseFileDate: parseFileDate,
+  applyCardMatch: applyCardMatch,
   processCardUploaderRows: processCardUploaderRows,
   processEbayOrdersRows: processEbayOrdersRows,
+  resolveReviewRow: resolveReviewRow,
 };

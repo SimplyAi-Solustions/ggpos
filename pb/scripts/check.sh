@@ -3748,5 +3748,106 @@ RECONCILE_PLAIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$RECONCILE_PLAIN_STATUS" = "200" ] || fail "a non-admin staff member calling reconcile got $RECONCILE_PLAIN_STATUS, expected 200"
 ok "reconcile is available to any staff member, unlike the admin-only pull"
 
+# --- 22i. POST /api/vault/imports/:id/link: the counter screen's review
+#     queue resolves a "needs match" row through the same three-path rule
+#     the automatic import uses, rather than creating an items row itself.
+LINK_STOCK_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$CU_SET_ID\",\"number\":\"501\",\"name\":\"Link Stock Card\"}" | jval id)"
+[ -n "$LINK_STOCK_CARD_ID" ] || fail "could not create the link route's already-in-stock card"
+LINK_NEW_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$CU_SET_ID\",\"number\":\"502\",\"name\":\"Link New Card\"}" | jval id)"
+[ -n "$LINK_NEW_CARD_ID" ] || fail "could not create the link route's nothing-in-stock card"
+
+LINK_STOCK_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$LINK_STOCK_CARD_ID\",\"condition\":\"NM\",\"qty\":1,\"cost\":250,\"status\":\"in_stock\",\"source\":\"trade_in\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}" | jval id)"
+[ -n "$LINK_STOCK_ITEM_ID" ] || fail "could not create the link route's already-in-stock item"
+
+cat >"$TMP_DIR/link-route.csv" <<'EOF'
+Card Name,Set,Number,Condition,Price,Quantity,TCGplayer ID,Cardmarket ID,CS SKU
+Link To Stock Card,Some Set,501,NM,7.50,1,,,CS-LINK-STOCK
+Link Creates New Card,Some Set,502,NM,9.00,1,,,CS-LINK-NEW
+Link Skip Me Card,Some Set,503,NM,3.00,1,,,CS-LINK-SKIP
+EOF
+LINK_IMPORT_STATUS="$(curl -s -o "$TMP_DIR/link-import.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/card-uploader" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/link-route.csv;type=text/csv")"
+[ "$LINK_IMPORT_STATUS" = "200" ] || fail "the link route's own Card Uploader import returned $LINK_IMPORT_STATUS: $(cat "$TMP_DIR/link-import.json")"
+[ "$(jval matched <"$TMP_DIR/link-import.json")" = "0" ] || fail "the link route's own import should match nothing automatically: $(cat "$TMP_DIR/link-import.json")"
+[ "$(jval review <"$TMP_DIR/link-import.json")" = "3" ] || fail "the link route's own import should leave all three rows for review: $(cat "$TMP_DIR/link-import.json")"
+LINK_IMPORT_ID="$(jval "import.id" <"$TMP_DIR/link-import.json")"
+[ -n "$LINK_IMPORT_ID" ] || fail "could not read the link route's own import id"
+
+# Row 2: links to the card already in stock - no new item, cost untouched.
+LINK_A_STATUS="$(curl -s -o "$TMP_DIR/link-a.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/$LINK_IMPORT_ID/link" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"row\":2,\"card\":\"$LINK_STOCK_CARD_ID\"}")"
+[ "$LINK_A_STATUS" = "200" ] || fail "linking row 2 to the in-stock card returned $LINK_A_STATUS: $(cat "$TMP_DIR/link-a.json")"
+[ "$(jval path <"$TMP_DIR/link-a.json")" = "in_stock" ] || fail "linking row 2 returned the wrong path: $(cat "$TMP_DIR/link-a.json")"
+[ "$(jval "item.id" <"$TMP_DIR/link-a.json")" = "$LINK_STOCK_ITEM_ID" ] || fail "linking row 2 did not reuse the existing item: $(cat "$TMP_DIR/link-a.json")"
+LINK_STOCK_CARD_ITEMS="$(curl -s "$BASE/api/collections/items/records?filter=card%3D%22$LINK_STOCK_CARD_ID%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$LINK_STOCK_CARD_ITEMS" | jval totalItems)" = "1" ] || fail "linking row 2 created a duplicate item instead of reusing the one in stock: $LINK_STOCK_CARD_ITEMS"
+LINK_STOCK_ITEM_AFTER="$(curl -s "$BASE/api/collections/items/records/$LINK_STOCK_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$LINK_STOCK_ITEM_AFTER" | jval status)" = "listed_ebay" ] || fail "the row-2-linked item is not listed_ebay: $LINK_STOCK_ITEM_AFTER"
+[ "$(echo "$LINK_STOCK_ITEM_AFTER" | jval price)" = "750" ] || fail "the row-2-linked item did not get the row's price: $LINK_STOCK_ITEM_AFTER"
+[ "$(echo "$LINK_STOCK_ITEM_AFTER" | jval ebay_sku)" = "CS-LINK-STOCK" ] || fail "the row-2-linked item did not get the row's ebay_sku: $LINK_STOCK_ITEM_AFTER"
+[ "$(echo "$LINK_STOCK_ITEM_AFTER" | jval cost)" = "250" ] || fail "linking row 2 changed the item's cost, which must be left untouched: $LINK_STOCK_ITEM_AFTER"
+[ "$(echo "$LINK_STOCK_ITEM_AFTER" | jval source)" = "trade_in" ] || fail "linking row 2 changed the item's source, which must be left untouched: $LINK_STOCK_ITEM_AFTER"
+ok "linking a review row to a card already in stock connects to that item rather than creating one, leaving cost untouched"
+
+# Row 3: no stock anywhere for this card - a new supplier item, flagged
+# for review same as the automatic (c) path would leave it.
+LINK_B_STATUS="$(curl -s -o "$TMP_DIR/link-b.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/$LINK_IMPORT_ID/link" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"row\":3,\"card\":\"$LINK_NEW_CARD_ID\"}")"
+[ "$LINK_B_STATUS" = "200" ] || fail "linking row 3 to a card with no stock returned $LINK_B_STATUS: $(cat "$TMP_DIR/link-b.json")"
+[ "$(jval path <"$TMP_DIR/link-b.json")" = "created" ] || fail "linking row 3 returned the wrong path: $(cat "$TMP_DIR/link-b.json")"
+LINK_NEW_ITEM_ID="$(jval "item.id" <"$TMP_DIR/link-b.json")"
+[ -n "$LINK_NEW_ITEM_ID" ] || fail "linking row 3 returned no item"
+LINK_NEW_ITEM_JSON="$(curl -s "$BASE/api/collections/items/records/$LINK_NEW_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$LINK_NEW_ITEM_JSON" | jval status)" = "listed_ebay" ] || fail "the row-3-created item is not listed_ebay: $LINK_NEW_ITEM_JSON"
+[ "$(echo "$LINK_NEW_ITEM_JSON" | jval price)" = "900" ] || fail "the row-3-created item did not get the row's price: $LINK_NEW_ITEM_JSON"
+[ "$(echo "$LINK_NEW_ITEM_JSON" | jval ebay_sku)" = "CS-LINK-NEW" ] || fail "the row-3-created item did not get the row's ebay_sku: $LINK_NEW_ITEM_JSON"
+[ "$(echo "$LINK_NEW_ITEM_JSON" | jval source)" = "supplier" ] || fail "the row-3-created item has the wrong source: $LINK_NEW_ITEM_JSON"
+LINK_IMPORT_AFTER_B="$(curl -s "$BASE/api/vault/imports/$LINK_IMPORT_ID" -H "Authorization: $STAFF_TOKEN")"
+echo "$LINK_IMPORT_AFTER_B" | grep -qF "Link Creates New Card" && fail "row 3's needs-match entry should have been dropped once linked: $LINK_IMPORT_AFTER_B"
+echo "$LINK_IMPORT_AFTER_B" | grep -qF "Created with no cost" || fail "linking row 3 should leave a zero-cost review note behind: $LINK_IMPORT_AFTER_B"
+[ "$(echo "$LINK_IMPORT_AFTER_B" | jval rows_ok)" = "3" ] || fail "linking must not change rows_ok: $LINK_IMPORT_AFTER_B"
+ok "linking a review row to a card with nothing in stock creates a new supplier item and leaves a zero-cost review note"
+
+# Row 4: dismissed rather than linked.
+LINK_SKIP_STATUS="$(curl -s -o "$TMP_DIR/link-skip.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/$LINK_IMPORT_ID/link" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"row":4,"skip":true}')"
+[ "$LINK_SKIP_STATUS" = "200" ] || fail "skipping row 4 returned $LINK_SKIP_STATUS: $(cat "$TMP_DIR/link-skip.json")"
+[ "$(jval path <"$TMP_DIR/link-skip.json")" = "skipped" ] || fail "skipping row 4 returned the wrong path: $(cat "$TMP_DIR/link-skip.json")"
+[ "$(jval "item.id" <"$TMP_DIR/link-skip.json")" = "" ] || fail "skipping row 4 should return no item: $(cat "$TMP_DIR/link-skip.json")"
+LINK_IMPORT_AFTER_SKIP="$(curl -s "$BASE/api/vault/imports/$LINK_IMPORT_ID" -H "Authorization: $STAFF_TOKEN")"
+echo "$LINK_IMPORT_AFTER_SKIP" | grep -qF "Link Skip Me Card" && fail "row 4's needs-match entry should have been dropped once skipped: $LINK_IMPORT_AFTER_SKIP"
+[ "$(echo "$LINK_IMPORT_AFTER_SKIP" | jval rows_skipped)" = "1" ] || fail "skipping row 4 did not record a skipped count: $LINK_IMPORT_AFTER_SKIP"
+[ "$(echo "$LINK_IMPORT_AFTER_SKIP" | jval rows_ok)" = "3" ] || fail "skipping must not change rows_ok either: $LINK_IMPORT_AFTER_SKIP"
+ok "skipping a review row drops its entry and counts it as skipped, without touching rows_ok"
+
+# A second link of the already-linked row 2 is a conflict, not a fresh match.
+LINK_AGAIN_STATUS="$(curl -s -o "$TMP_DIR/link-again.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/$LINK_IMPORT_ID/link" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"row\":2,\"card\":\"$LINK_STOCK_CARD_ID\"}")"
+[ "$LINK_AGAIN_STATUS" = "409" ] || fail "re-linking row 2 returned $LINK_AGAIN_STATUS, expected 409: $(cat "$TMP_DIR/link-again.json")"
+ok "linking an already-linked row again is refused with 409"
+
+# An unknown row on a real import is 404, worded the same as a missing import.
+LINK_UNKNOWN_STATUS="$(curl -s -o "$TMP_DIR/link-unknown.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/$LINK_IMPORT_ID/link" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"row\":99,\"card\":\"$LINK_STOCK_CARD_ID\"}")"
+[ "$LINK_UNKNOWN_STATUS" = "404" ] || fail "linking a row that was never waiting for a match returned $LINK_UNKNOWN_STATUS, expected 404: $(cat "$TMP_DIR/link-unknown.json")"
+grep -qF "not waiting for a match" "$TMP_DIR/link-unknown.json" || fail "the unknown-row 404 does not carry the documented message: $(cat "$TMP_DIR/link-unknown.json")"
+ok "linking a row that is not waiting for a match is refused with 404"
+
+LINK_AUDIT_COUNT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22import_link%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
+[ "${LINK_AUDIT_COUNT:-0}" -ge 3 ] || fail "linking and skipping wrote fewer than 3 import_link audit rows: $LINK_AUDIT_COUNT"
+ok "linking and skipping a review row is audited as import_link"
+
 echo
 echo "All checks passed ($PASS_COUNT)."

@@ -1395,23 +1395,49 @@ export interface CsvImportError {
   name?: string
   set?: string
   number?: string
-  price?: number
+  /**
+   * The row's own price in pence, or null when the file's cell did not read
+   * as an amount. Never invented here: the link route refuses a row whose
+   * price it could not parse rather than listing it at nothing.
+   */
+  price?: number | null
+  quantity?: number
+  condition?: string
   custom_label?: string
   ebay_sku?: string
   item?: string
   sku?: string
+  /** The card a zero-cost note was raised against. */
+  card?: string
 }
 
 /** The `csv_imports` row as stored, which is what the review screen reads. */
 export interface CsvImportRecord {
   id: string
   type?: string
-  filename?: string
+  status?: string
+  /** The uploaded file, as PocketBase stores it. */
+  file?: string
   rows_total?: number
   rows_ok?: number
+  /** Rows dismissed by hand from the review queue. */
+  rows_skipped?: number
+  /** Rows the link route has already resolved, so a second try is a 409. */
+  resolved_rows?: number[]
   errors?: CsvImportError[]
   staff?: string
   created?: string
+}
+
+/** Which of the three paths a link landed on, or a skip. */
+export type ReviewLinkPath = "ebay_sku" | "in_stock" | "created" | "skipped"
+
+/** `POST /api/vault/imports/:id/link`. */
+export interface LinkReviewResult {
+  import: CsvImportRecord
+  /** The item the row was linked to, or null for a skip. */
+  item: StockItemRecord | null
+  path: ReviewLinkPath
 }
 
 /** `POST /api/vault/imports/card-uploader`. */
