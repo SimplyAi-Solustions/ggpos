@@ -163,12 +163,16 @@ function parseListings(json) {
 /**
  * `cacheKey` should be unique per card+finish+condition (or per retro title
  * + completeness). `query` is the search text the caller has already built
- * (name, set, number, finish and condition words - PLAN.md).
+ * (name, set, number, finish and condition words - PLAN.md). `bypassCache`
+ * is `POST .../refresh-prices`'s own "bypasses the price cache" contract
+ * promise (docs/api-contract.md): a GET never sets it, so an ordinary price
+ * check still respects the 24-hour window, but a deliberate refresh always
+ * asks eBay again rather than replaying yesterday's cached read.
  */
-function getPrices(store, apiKey, query, cacheKey, haircutPct, transport) {
+function getPrices(store, apiKey, query, cacheKey, haircutPct, bypassCache, transport) {
   if (!apiKey || !apiKey.client_id || !apiKey.client_secret) return [];
 
-  var cached = cacheKey ? store.get("ebay_prices:" + cacheKey) : null;
+  var cached = cacheKey && !bypassCache ? store.get("ebay_prices:" + cacheKey) : null;
   if (cached) return cached;
 
   var http = require(__hooks + "/adapters/http.js");
@@ -190,20 +194,31 @@ function getPrices(store, apiKey, query, cacheKey, haircutPct, transport) {
   var candidate = medianAskingCandidate(parseListings(res.json), haircutPct);
   var result = [];
   if (candidate) {
+    // marketMinor/midMinor carry the GBP figure as an integer already in
+    // pence - pricing_policy.js's fromAdapterCandidate takes it as-is,
+    // rather than formatting it to a decimal string here only to re-parse
+    // that same string a moment later, which risks nothing but a pointless
+    // float round-trip on a value that was already exact.
     result = [
       {
         source: "ebay_uk_asking",
         currency: "GBP",
-        low: (candidate.afterHaircutPence / 100).toFixed(2),
-        mid: (candidate.medianPence / 100).toFixed(2),
-        market: (candidate.afterHaircutPence / 100).toFixed(2),
+        low: null,
+        mid: null,
+        market: null,
+        lowMinor: candidate.afterHaircutPence,
+        midMinor: candidate.medianPence,
+        marketMinor: candidate.afterHaircutPence,
         trend: null,
         fetchedAt: new Date().toISOString(),
         evidenceUrl: candidate.evidenceUrl,
       },
     ];
   }
-  if (cacheKey) {
+  // Never cache an empty result: a query that happened to match nothing
+  // this time (an unlucky search, or eBay having a slow moment) should not
+  // be remembered as "no listings" for a full day.
+  if (cacheKey && result.length) {
     store.set("ebay_prices:" + cacheKey, result, new Date(Date.now() + CACHE_HOURS * 3600000).toISOString());
   }
   return result;

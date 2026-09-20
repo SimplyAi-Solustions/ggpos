@@ -68,6 +68,19 @@ async function snap(name, path, drive) {
   await page.waitForTimeout(400)
 
   const html = await page.evaluate(async () => {
+    // The detector's `cramped-padding` rule only reads inline padding in file
+    // mode, so every Tailwind `py-*` reads as zero and correctly spaced rows
+    // are reported as flush against their hairline. Copying the computed
+    // padding onto the element changes nothing about the layout and lets the
+    // rule see what the browser actually painted.
+    for (const el of Array.from(document.querySelectorAll("*"))) {
+      const { paddingTop, paddingRight, paddingBottom, paddingLeft } =
+        getComputedStyle(el)
+      const padding = [paddingTop, paddingRight, paddingBottom, paddingLeft]
+      if (padding.some((value) => parseFloat(value) > 0)) {
+        el.style.padding = padding.join(" ")
+      }
+    }
     for (const link of Array.from(
       document.querySelectorAll('link[rel="stylesheet"]')
     )) {

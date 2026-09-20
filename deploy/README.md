@@ -275,9 +275,16 @@ docker compose up -d --build
 
 ```bash
 docker compose logs -f pocketbase   # the app and API
-docker compose logs -f pricesync    # only useful right after a pricesync run
+tail -f deploy/logs/pricesync.log   # the nightly price sync's own log (see "pricesync configuration")
 tail -f deploy/logs/backup.log      # the nightly backup's own log
 ```
+
+`docker compose logs pricesync` only shows anything in the few moments
+between a manual `docker compose run pricesync` (without `--rm`) and
+removing that container yourself - the cron-scheduled run always uses
+`--rm`, which deletes the container, and its logs with it, the instant
+it exits. `deploy/logs/pricesync.log` is what the cron line itself
+redirects to, so it is the one place that log survives.
 
 ## 10. Health checks
 
@@ -365,6 +372,8 @@ that supports "install as app":
       `curl -i https://vault.ggentertainment.co.uk/_/` and confirm they
       get a plain `404`, then confirm it loads normally from inside the
       shop
-- [ ] PocketBase's Batch API is turned on with Max requests at least 200
-      (Settings > Application in `/_/`) - see "pricesync configuration"
-      above; pricesync works without this but is much slower
+- [ ] PocketBase's Batch API is confirmed on with Max requests at least
+      200 (Settings > Application in `/_/`) - `pb_migrations/
+      1789819980_batch_api_settings.js` turns this on for you as part of
+      the schema migrations, so this is a check, not a step; see
+      "pricesync configuration" above
