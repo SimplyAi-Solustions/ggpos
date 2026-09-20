@@ -13,6 +13,7 @@
  * native EUR and USD amounts travel beside their conversion on the same row
  * and are never shown without it (CLAUDE.md, "Pricing").
  */
+import * as React from "react"
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query"
 import {
   DEFAULT_CONDITION_MULTIPLIERS,
@@ -114,10 +115,16 @@ function activeSettings(row: VaultSettingsRow | undefined): VaultSettingsRow | u
   return { ...demoSettingsRecord(), ...(row ?? {}) }
 }
 
-/** The pricing half of `GET /api/vault/config`, already mapped. */
+/**
+ * The pricing half of `GET /api/vault/config`, already mapped.
+ *
+ * Memoised on the config itself: the multipliers are a dependency of the
+ * buy-in wizard's saved line shape, and a fresh object on every render would
+ * recompute it on every keystroke.
+ */
 export function usePricingSettings(): PricingSettings {
   const { data } = useVaultConfig()
-  return pricingSettingsFrom(activeSettings(data?.settings))
+  return React.useMemo(() => pricingSettingsFrom(activeSettings(data?.settings)), [data])
 }
 
 // ---------------------------------------------------------------------------

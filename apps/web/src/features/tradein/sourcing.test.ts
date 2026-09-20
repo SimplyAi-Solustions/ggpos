@@ -21,6 +21,7 @@ import {
   type TradeLine,
 } from "@/features/tradein/machine"
 import { DEMO_PRICING_RULES } from "@/lib/api/demo/tradeins"
+import type { TradeInRecord } from "@/lib/api"
 
 /**
  * Where a buy-in line's market value came from.
@@ -285,7 +286,7 @@ describe("a retro line's own title", () => {
 
   it("comes back on a reopened draft, so the line prices itself again", () => {
     const state = hydrate(
-      { id: "trade_1", customer: "cust_1" },
+      { id: "trade_1", customer: "cust_1", status: "draft" } as TradeInRecord,
       [
         {
           id: "line_1",

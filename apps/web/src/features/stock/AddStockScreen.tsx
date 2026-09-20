@@ -792,7 +792,7 @@ export function AddStockScreen({
                     Use suggested
                   </Button>
                 </div>
-              ) : (
+              ) : prices.isPending ? null : (
                 <p className="mt-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
                   No source has a value for this one yet. Refresh, add a UK
                   comp, or price it by hand.

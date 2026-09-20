@@ -359,7 +359,7 @@ function LineRow({
         <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
           Overridden: {line.overrideReason}
         </p>
-      ) : offer.source === "none" ? (
+      ) : offer.source === "none" && !waiting ? (
         <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
           No band matches this line. Override the offer to price it.
         </p>

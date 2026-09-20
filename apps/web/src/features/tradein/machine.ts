@@ -284,10 +284,9 @@ export function marketPatchFor(
   if (!view) return null
 
   const chosen = view.chosen
-  if (!chosen) {
-    if (line.marketPence === 0 && line.marketSource === MANUAL_SOURCE) return null
-    return { marketPence: 0, marketSource: MANUAL_SOURCE }
-  }
+  // A figure typed by hand never reaches here, so this only ever lets go of
+  // one the routes put there.
+  if (!chosen) return { marketPence: 0, marketSource: MANUAL_SOURCE }
   if (chosen.gbp_market === line.marketPence && chosen.source === line.marketSource) {
     return null
   }

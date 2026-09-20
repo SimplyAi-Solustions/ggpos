@@ -343,6 +343,9 @@ export function ItemPage({ sku }: { sku: string }) {
   const cardPrices = useCardPrices(item?.card, item?.finish ?? "", item?.condition || "NM")
   const retroPrices = useRetroPrices(item?.retro_title, item?.completeness ?? "")
   const priced = item?.card ? cardPrices.data : retroPrices.data
+  // A price on its way is not "no price": the line only says so once the
+  // route has actually answered.
+  const pricesPending = item?.card ? cardPrices.isPending : retroPrices.isPending
   const market = priced?.chosen?.gbp_market ?? null
   const adjustedMarket =
     market === null
@@ -593,7 +596,7 @@ export function ItemPage({ sku }: { sku: string }) {
                 Reprice to market
               </Button>
             </div>
-          ) : (
+          ) : pricesPending ? null : (
             <p className="mt-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
               No source has a value for this one yet. Refresh, or add a UK comp.
             </p>
