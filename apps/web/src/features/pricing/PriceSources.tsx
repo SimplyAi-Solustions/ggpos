@@ -488,8 +488,8 @@ export function PriceSources({
           <Skeleton className="h-4 w-3/5" />
         </div>
       ) : (
-        {/* Not "Price sources": a screen-reader label that starts with the
-            word Price also answers to the Price field beside it. */}
+        // Not "Price sources": a screen-reader label that opens with the word
+        // Price also answers to the Price field beside it.
         <ul aria-label="Where the value comes from">
           {rows.map((row) => (
             <SourceRow

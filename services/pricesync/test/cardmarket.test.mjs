@@ -64,6 +64,36 @@ describe("buildCardmarketVariant", () => {
 });
 
 describe("buildCardmarketRows", () => {
+  test("a variant with a bare trend of 0 but real low/avg/avg7 still gets a row, with market falling back rather than reading 0", () => {
+    // A hand-built entry rather than one hunted for in the fixture: the
+    // repo fixture happens to have zero cases of "trend exactly 0 AND
+    // avg/low/avg7 all real" for -foil specifically (see cardmarket.mjs's
+    // doc comment), so this pins the behaviour directly rather than
+    // relying on one turning up.
+    // Values as strings, exactly as they arrive after numberAsString
+    // parsing in production (see json-stream.mjs) - buildCardmarketVariant
+    // calls money.mjs's parseDecimalToMinor, which requires a string and
+    // treats anything else as absent, so a plain JS number here would
+    // silently test the wrong thing (every field reading as "missing").
+    const entry = {
+      idProduct: "555555",
+      avg: "10",
+      low: "8",
+      trend: "9",
+      avg7: "9.5",
+      "avg-foil": "20",
+      "low-foil": "18",
+      "trend-foil": "0",
+      "avg7-foil": "19",
+    };
+    const cardsByCardmarketId = new Map([["555555", { id: "card_zero_trend" }]]);
+    const rows = buildCardmarketRows(entry, cardsByCardmarketId, FX, FETCHED_AT);
+    const foil = rows.find((r) => r.finish === "foil");
+    assert.ok(foil, "the foil variant has real avg/low/avg7 and must still get a row despite trend-foil being 0");
+    assert.equal(foil.native_market, 1900, "market should fall back to avg7 (19.00) rather than reading the bare zero trend");
+    assert.notEqual(foil.native_market, 0);
+  });
+
   test("a card with no foil printing gets only a normal row, never a spurious all-zero foil row", () => {
     const cardsByCardmarketId = new Map([["726997", { id: "card_no_foil" }]]);
     const rows = buildCardmarketRows(NO_FOIL_ENTRY, cardsByCardmarketId, FX, FETCHED_AT);
