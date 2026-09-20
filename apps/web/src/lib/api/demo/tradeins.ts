@@ -303,6 +303,15 @@ export const demoTradeIns: DemoTradeIn[] = [
   },
 ]
 
+/**
+ * The ID photos this demo session holds, by customer. Seeded with the one
+ * taken when Jasmine was verified, so the wizard's ID gate sees what the
+ * `id-document` route would see.
+ */
+export const demoIdDocuments = new Map<string, string>([
+  ["cust_demo_1", "iddoc_demo_1"],
+])
+
 function find(id: string): DemoTradeIn | null {
   return demoTradeIns.find((entry) => entry.record.id === id) ?? null
 }
@@ -393,10 +402,12 @@ export function demoSubmitIdCheck(
     id_document: null,
   }
   demoVerifyId(customerId, check)
+  const documentId = randomId("iddoc")
+  demoIdDocuments.set(customerId, documentId)
   const expires = new Date()
   expires.setMonth(expires.getMonth() + 12)
   return {
-    id_document: randomId("iddoc"),
+    id_document: documentId,
     id_status: "verified",
     id_expiry: check.id_expiry,
     expires_at: expires.toISOString(),
@@ -408,16 +419,110 @@ function skuFor(kind: ItemKind): string {
   return buildCode(kind, randomBody()).encoded
 }
 
+/**
+ * The same refusals the completion route makes, in the same words.
+ *
+ * Demo mode that says yes to everything is worse than no demo mode: it is
+ * how a line that the server would reject gets built and shipped. The
+ * sentences are copied from pb_hooks/tradeins.pb.js so a demo run reads
+ * exactly like a real counter.
+ */
+function demoCompletionRefusal(
+  entry: DemoTradeIn,
+  payload: CompleteTradeInPayload
+): string | null {
+  const accepted = entry.lines.filter((line) => line.accepted)
+  if (accepted.length === 0) {
+    return "Accept at least one line before completing this trade-in."
+  }
+
+  const offerTotal = accepted.reduce(
+    (sum, line) => sum + (line.offer_price ?? 0) * Math.max(1, line.qty ?? 1),
+    0
+  )
+  const paid = payload.payout_cash + payload.payout_credit
+  if (paid !== offerTotal) {
+    return `The payout adds up to ${formatGBP(paid)} but the accepted lines come to ${formatGBP(offerTotal)}. Adjust the split and try again.`
+  }
+
+  if (!payload.terms_accepted) {
+    return "Ask the customer to accept the terms before completing."
+  }
+
+  if (payload.payout_cash <= 0) return null
+
+  // ---- everything below here is the cash gate ---------------------------
+  if (DEMO_OFFER_LIMITS.cashCap <= 0) {
+    return "Cash payouts are switched off in settings."
+  }
+  if (payload.payout_cash > DEMO_OFFER_LIMITS.cashCap) {
+    return `Cash payouts are capped at ${formatGBP(DEMO_OFFER_LIMITS.cashCap)}. Pay the rest as store credit.`
+  }
+
+  const customer = findDemoCustomer(entry.record.customer)
+  const priv = customer?.private
+  const flags = priv?.flags ?? []
+  if (flags.includes("no_cash")) {
+    return "This customer is marked no cash. Pay as store credit."
+  }
+  if (flags.includes("under_18")) {
+    return "This customer is recorded as under 18, so we cannot buy for cash."
+  }
+
+  const address = payload.id_check?.address || priv?.address || ""
+  if (address.trim().length === 0) {
+    return "Add the seller's address before paying cash."
+  }
+
+  const now = Date.now()
+  const inDate = (value: string | undefined) =>
+    Boolean(value) && new Date(value as string).getTime() > now
+  const alreadyVerified = priv?.id_status === "verified" && inDate(priv?.id_expiry)
+  if (!alreadyVerified && !payload.id_check) {
+    return "Take an ID check before paying cash. Photograph the seller's ID on the ID step."
+  }
+  if (payload.id_check && !inDate(payload.id_check.id_expiry)) {
+    return "That ID has expired. Ask for one that is still in date."
+  }
+  // The route wants a photo on file, not only verified fields.
+  if (!payload.id_check?.id_document && !demoIdDocuments.has(entry.record.customer)) {
+    return "Take a photo of the customer's ID before paying cash."
+  }
+
+  const dob = payload.id_check?.dob || priv?.dob || ""
+  if (dob) {
+    const born = new Date(dob)
+    if (!Number.isNaN(born.getTime())) {
+      const today = new Date()
+      let age = today.getFullYear() - born.getFullYear()
+      const months = today.getMonth() - born.getMonth()
+      if (months < 0 || (months === 0 && today.getDate() < born.getDate())) age -= 1
+      if (age < 18) return "We cannot buy for cash from anyone under 18."
+    }
+  }
+
+  return null
+}
+
 export function demoCompleteTradeIn(
   id: string,
   payload: CompleteTradeInPayload
 ): CompleteTradeInResult {
   const entry = find(id)
   if (!entry) throw new Error("Trade-in not found in the demo shop.")
+  if (entry.record.status === "completed") {
+    throw new Error("This trade-in is already completed.")
+  }
 
   if (payload.id_check) {
     demoVerifyId(entry.record.customer, payload.id_check)
+    if (payload.id_check.id_document) {
+      demoIdDocuments.set(entry.record.customer, payload.id_check.id_document)
+    }
   }
+
+  const refusal = demoCompletionRefusal(entry, payload)
+  if (refusal) throw new Error(refusal)
 
   const accepted = entry.lines.filter((line) => line.accepted)
   const items: CompleteTradeInResult["items"] = []

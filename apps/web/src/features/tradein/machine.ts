@@ -140,13 +140,15 @@ export function lineOffer(
   settings: OfferSettings
 ): LineOffer {
   if (line.kind === "bulk") {
+    // A lot is priced as a whole: one figure, whatever the card count, so
+    // nothing here multiplies and the market is the figure itself.
     const flat = line.bulkOffer ?? 0
     return {
       cash: flat,
       credit: flat,
       cashTotal: flat,
       creditTotal: flat,
-      marketTotal: line.marketPence,
+      marketTotal: flat,
       source: "lot",
       cashPct: 0,
       creditPct: 0,

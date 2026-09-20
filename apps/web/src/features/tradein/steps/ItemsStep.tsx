@@ -21,6 +21,8 @@ import { CardSearchField } from "@/features/stock/CardSearchField"
 import { MoneyField } from "@/features/tradein/MoneyField"
 import { OverrideSheet } from "@/features/tradein/OverrideSheet"
 import {
+  BULK_SOURCE,
+  bulkTitle,
   CARD_CONDITIONS,
   COSMETIC_GRADES,
   LINE_FINISHES,
@@ -146,19 +148,31 @@ export function ItemsStep({
   }
 
   function addBulk() {
+    const count = Math.max(1, bulkCount)
     onAdd({
       key: newKey(),
       kind: "bulk",
-      title: `Bulk lot, ${bulkCount} ${bulkCount === 1 ? "card" : "cards"}`,
+      title: bulkTitle(count),
       gameId: gameFor("bulk"),
-      qty: Math.max(1, bulkCount),
-      marketPence: 0,
-      marketSource: "Manual",
+      // The count is the count of cards, not a quantity the server should
+      // multiply the flat figure by: `toLineInputs` sends the lot as one
+      // line with the count in its title.
+      qty: count,
+      marketPence: bulkOffer,
+      marketSource: BULK_SOURCE,
       bulkOffer,
       accepted: true,
     })
     setBulkCount(1)
     setBulkOffer(0)
+  }
+
+  /** A lot's count lives in its title as well, so the two move together. */
+  function setCount(line: TradeLine, count: number) {
+    onUpdate(line.key, {
+      qty: count,
+      ...(line.kind === "bulk" ? { title: bulkTitle(count) } : {}),
+    })
   }
 
   const overridden = lines.find((line) => line.key === overrideKey)
@@ -415,9 +429,7 @@ export function ItemsStep({
                         type="button"
                         aria-label="One fewer"
                         disabled={line.qty <= 1}
-                        onClick={() =>
-                          onUpdate(line.key, { qty: Math.max(1, line.qty - 1) })
-                        }
+                        onClick={() => setCount(line, Math.max(1, line.qty - 1))}
                       >
                         <MinusIcon />
                       </Button>
@@ -431,16 +443,14 @@ export function ItemsStep({
                           const next = Number(
                             event.target.value.replace(/\D/g, "")
                           )
-                          onUpdate(line.key, {
-                            qty: Number.isFinite(next) && next > 0 ? next : 1,
-                          })
+                          setCount(line, Number.isFinite(next) && next > 0 ? next : 1)
                         }}
                       />
                       <Button
                         variant="ghost-icon"
                         type="button"
                         aria-label="One more"
-                        onClick={() => onUpdate(line.key, { qty: line.qty + 1 })}
+                        onClick={() => setCount(line, line.qty + 1)}
                       >
                         <PlusIcon />
                       </Button>
@@ -448,7 +458,19 @@ export function ItemsStep({
                   </div>
                 ) : null}
 
-                {!isBulk ? (
+                {isBulk ? (
+                  <div className="w-36">
+                    <MicroLabel className="mb-2">Offer for the lot</MicroLabel>
+                    <MoneyField
+                      id={`lot-${line.key}`}
+                      label={`Flat offer for ${line.title}`}
+                      value={line.bulkOffer ?? 0}
+                      onChange={(pence) =>
+                        onUpdate(line.key, { bulkOffer: pence, marketPence: pence })
+                      }
+                    />
+                  </div>
+                ) : (
                   <div className="w-36">
                     <MicroLabel className="mb-2">Market</MicroLabel>
                     <MoneyField
@@ -461,7 +483,7 @@ export function ItemsStep({
                     />
                     <Hint className="mt-1 block">Manual</Hint>
                   </div>
-                ) : null}
+                )}
 
                 <div>
                   <MicroLabel className="mb-2">Cash</MicroLabel>

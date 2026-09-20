@@ -33,6 +33,7 @@ import {
   demoListTradeIns,
   demoReceipt,
   demoSaveLines,
+  demoIdDocuments,
   demoSubmitIdCheck,
   demoTradeInsFor,
 } from "@/lib/api/demo/tradeins"
@@ -508,11 +509,7 @@ function demoIdPhoto(): string {
  * needs, and returns null once the retention cron has purged it.
  */
 export async function latestIdDocument(customerId: string): Promise<string | null> {
-  if (isDemo()) {
-    return findDemoCustomer(customerId)?.private.id_status === "verified"
-      ? "iddoc_demo"
-      : null
-  }
+  if (isDemo()) return demoIdDocuments.get(customerId) ?? null
   const result = await pb.send<{ document: IdDocumentSummary | null }>(
     `/api/vault/customers/${customerId}/id-document`,
     { method: "GET" }
