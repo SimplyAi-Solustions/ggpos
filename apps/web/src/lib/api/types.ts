@@ -826,6 +826,8 @@ export interface ItemDetail extends StockItemRecord {
   sellerName: string | null
   sellerCode: string | null
   reservedForName: string | null
+  /** Display form, so the hold line can link to the customer. */
+  reservedForCode: string | null
   reservedUntil: string | null
   history: ItemEvent[]
 }
@@ -990,6 +992,27 @@ export interface VaultSettingsRow {
   receipt_terms?: string
   /** The SumUp merchant code. Not a key, so the config route serves it. */
   sumup?: { merchant_code?: string }
+  /**
+   * How customer email is addressed and whether it is sent at all. The mail
+   * API key is `email_api_key`, a column of its own that never leaves the
+   * server and is never read here.
+   */
+  email?: {
+    from_name?: string
+    from_address?: string
+    reply_to?: string
+    /** Anything but an explicit false keeps test mode on, as the server reads it. */
+    test_mode?: boolean
+  }
+  /** `resend`, `postmark`, `brevo` or `none`. Never the key itself. */
+  email_provider?: string
+  /**
+   * The public half of the VAPID pair, handed to every browser that
+   * subscribes. The private half lives only in `services/notify`.
+   */
+  push?: { vapid_public_key?: string }
+  /** How long a want-list hold stands. `{ hours: 48 }` by default. */
+  holds?: { hours?: number }
   /** The importers' header-name mappings, seeded by the Phase 4 migration. */
   import_mappings?: Record<string, { headerRow?: number; columns?: Record<string, string[]> }>
 }
@@ -1002,6 +1025,12 @@ export interface VaultConfig {
     rules: LoyaltyRuleRow[]
     tiers: LoyaltyTierRow[]
   }
+  /**
+   * Named back in by the config route rather than served as
+   * `settings.push`, which its own filter drops: the public key is not a
+   * secret, and empty until the deploy sets one.
+   */
+  push?: { vapid_public_key?: string }
 }
 
 /** The newest ID document whose photo is still on disk, or null. */
@@ -1607,6 +1636,52 @@ export interface QuoteRecord extends BaseRecord {
   staff_note?: string
   photo_count?: number
   trade_in?: string
+  /**
+   * The column the collection actually carries the customer's answer in
+   * (1789819380_trading_collections.js). `reply` above is the demo store's
+   * own shorthand; the counter reads whichever is there.
+   */
+  customer_reply?: string
+  /** The file names on the record. A collection read carries them; the
+   * `GET /api/vault/quotes/:id` route sends tokenised URLs instead. */
+  photos?: string[]
+  /** Stamped when the quote first reaches completed, declined or expired. */
+  closed_at?: string
+}
+
+/**
+ * One row of the counter's quote queue.
+ *
+ * Built from a `quotes` list with the customer expanded, so the queue can
+ * say who sent it without a second read per row.
+ */
+export interface QuoteQueueRow {
+  id: string
+  status: QuoteStatus
+  customerId: string
+  customerName: string
+  /** The customer's own code, already in display form. */
+  customerCode: string
+  photoCount: number
+  message: string
+  dropOff: QuoteDropOff | null
+  /** Integer GBP pence, once an offer has been made. */
+  offerTotal: number | null
+  offerExpiresAt: string | null
+  created: string
+}
+
+/** `GET /api/vault/quotes/:id` as the counter reads it, the sender included. */
+export interface StaffQuoteDetail extends QuoteDetail {
+  customer: {
+    id: string
+    name: string
+    /** Display form, `GGC-4K7M2`. */
+    code: string
+    email: string
+  } | null
+  /** The draft or completed buy-in this quote became, once it has one. */
+  tradeInId: string | null
 }
 
 export interface QuoteMessage {
@@ -1671,6 +1746,27 @@ export interface NewWantInput {
   freeText?: string
   /** Integer GBP pence, or null for any price. */
   maxPrice: number | null
+}
+
+/**
+ * An item the shop is holding for somebody, as the counter lists them.
+ *
+ * A hold is an `items` row (`reserved`, with `reserved_for` and
+ * `reserved_until`), whether a want-list match made it or a staff member
+ * did, so this reads the items rather than the want list.
+ */
+export interface HoldRow {
+  itemId: string
+  sku: string
+  title: string
+  /** Integer GBP pence. */
+  price: number
+  customerId: string
+  customerName: string
+  /** Display form, `GGC-4K7M2`, or "" when the customer has gone. */
+  customerCode: string
+  /** ISO, when the hold runs out. */
+  until: string
 }
 
 /** One hit from `GET /api/vault/estimate/search?q=`. */

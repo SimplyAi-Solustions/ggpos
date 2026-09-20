@@ -4124,6 +4124,13 @@ P5_QUOTE_ID="$(echo "$P5_QUOTE_JSON" | head -n -1 | jval "quote.id")"
 [ "$(echo "$P5_QUOTE_JSON" | head -n -1 | jval "quote.status")" = "submitted" ] || fail "a submitted quote is not status submitted"
 ok "a quote submits with two photos as multipart and reads back submitted"
 
+P5_MY_QUOTES_JSON="$(curl -s -w '\n%{http_code}' "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN")"
+[ "$(echo "$P5_MY_QUOTES_JSON" | tail -n1)" = "200" ] || fail "GET /api/vault/quotes returned $(echo "$P5_MY_QUOTES_JSON" | tail -n1), expected 200"
+P5_MY_QUOTES_BODY="$(echo "$P5_MY_QUOTES_JSON" | head -n -1)"
+[ "$(echo "$P5_MY_QUOTES_BODY" | jlen quotes)" -ge 1 ] || fail "GET /api/vault/quotes returned none for a customer with one: $P5_MY_QUOTES_BODY"
+echo "$P5_MY_QUOTES_BODY" | grep -qF "\"$P5_QUOTE_ID\"" || fail "GET /api/vault/quotes did not include the quote just submitted: $P5_MY_QUOTES_BODY"
+ok "GET /api/vault/quotes lists the customer's own quotes, newest first"
+
 P5_BAD_PHOTO_STATUS="$(curl -s -o "$TMP_DIR/p5-bad-photo.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes" -H "Authorization: $P5_CUSTOMER_TOKEN" \
   -F "photos=@$TMP_DIR/p5-notaphoto.txt;type=text/plain" \
   -F "message=bad upload")"
@@ -4153,11 +4160,12 @@ P5_QUOTE_DETAIL="$(curl -s "$BASE/api/vault/quotes/$P5_QUOTE_ID" -H "Authorizati
 echo "$P5_QUOTE_DETAIL" | jval "photos.0.url" | grep -q "token=" || fail "a quote photo URL carries no file token"
 ok "messages in both directions land on the quote's thread, with photo URLs carrying a file token"
 
-P5_CUSTOMER_MSG_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_message%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
-[ "${P5_CUSTOMER_MSG_NOTIF:-0}" -ge 1 ] || fail "the staff message did not notify the customer"
+P5_CUSTOMER_MSG_NOTIF_JSON="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_message%22%26%26customer%3D%22$P5_CUSTOMER_ID%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P5_CUSTOMER_MSG_NOTIF_JSON" | jval totalItems)" -ge 1 ] || fail "the staff message did not notify the customer"
+[ "$(echo "$P5_CUSTOMER_MSG_NOTIF_JSON" | jval "items.0.link")" = "/account/quotes/$P5_QUOTE_ID" ] || fail "a customer-facing quote notification's link is '$(echo "$P5_CUSTOMER_MSG_NOTIF_JSON" | jval "items.0.link")', expected an in-app /account/quotes/:id path"
 P5_STAFF_ANY_MSG_NOTIF="$(curl -s "$BASE/api/collections/notifications/records?perPage=200&filter=type%3D%22quote_message%22" -H "Authorization: $SUPER_TOKEN")"
 [ "$(echo "$P5_STAFF_ANY_MSG_NOTIF" | jval totalItems)" -ge 2 ] || fail "expected a notification row for both the customer's and staff's message: $P5_STAFF_ANY_MSG_NOTIF"
-ok "a quote message notifies the other side"
+ok "a quote message notifies the other side, with an in-app link"
 
 # offer, with the total recomputed server-side from two lines
 P5_CARD_A="$(p5_make_card "Phase 5 Card A" "6")"
