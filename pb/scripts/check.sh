@@ -2645,9 +2645,11 @@ for pct in 20 30 50; do
   MOVER_TITLES+=("$MOVER_SKU")
 done
 
-STOCK_MOVERS_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY")"
+STOCK_MOVERS_STATUS="$(curl -s -o "$TMP_DIR/stock-movers.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY")"
+[ "$STOCK_MOVERS_STATUS" = "200" ] || fail "GET reports/stock returned $STOCK_MOVERS_STATUS: $(cat "$TMP_DIR/stock-movers.json")"
+STOCK_MOVERS_JSON="$(cat "$TMP_DIR/stock-movers.json")"
 [ "$(echo "$STOCK_MOVERS_JSON" | jlen table)" = "3" ] \
-  || fail "reports/stock's price-movers table has $(echo "$STOCK_MOVERS_JSON" | jlen table) rows, expected exactly the 3 seeded here"
+  || fail "reports/stock's price-movers table has $(echo "$STOCK_MOVERS_JSON" | jlen table) rows, expected exactly the 3 seeded here: $STOCK_MOVERS_JSON"
 
 DIGEST_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/weekly_digest" -H "Authorization: $SUPER_TOKEN")"
 [ "$DIGEST_STATUS" = "204" ] || fail "POST /api/crons/weekly_digest returned $DIGEST_STATUS, expected 204"
