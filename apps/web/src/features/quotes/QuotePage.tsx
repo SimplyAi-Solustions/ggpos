@@ -70,7 +70,7 @@ import {
   sendStaffQuoteMessage,
 } from "@/lib/api/quotes"
 import { usePricingSettings } from "@/lib/api/prices"
-import { refusalOrFallback } from "@/lib/api/refusal"
+import { isNotFound, refusalOrFallback } from "@/lib/api/refusal"
 
 const MAX_MESSAGE = 2000
 
@@ -120,7 +120,7 @@ export function QuotePage({ id }: { id: string }) {
   const [reason, setReason] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
 
-  const { data, isPending } = useQuery({
+  const { data, isPending, error: loadError } = useQuery({
     queryKey: ["quote", id],
     queryFn: () => getStaffQuote(id),
     // Re-read every time it is opened: somebody at the other till may have
@@ -251,12 +251,19 @@ export function QuotePage({ id }: { id: string }) {
   }
 
   if (!data) {
+    // A quote that is not on file and a quote that would not load are two
+    // different things, and only one of them is worth trying again.
+    const missing = !loadError || isNotFound(loadError)
     return (
       <section className="pt-16 sm:pt-24">
-        <PageTitle>No such quote</PageTitle>
+        <PageTitle>{missing ? "No such quote" : "Quote"}</PageTitle>
         <p className="mt-4 max-w-[56ch] text-base leading-[1.5] text-muted-foreground">
-          That quote is not on file. It may have been sent by a customer who has
-          since been erased.
+          {missing
+            ? "That quote is not on file. It may have been sent by a customer who has since been erased."
+            : refusalOrFallback(
+                loadError,
+                "That quote would not load. Check the connection and try again."
+              )}
         </p>
         <div className="mt-10">
           <Button render={<Link to="/counter/quotes" />} trailingArrow>

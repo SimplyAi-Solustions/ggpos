@@ -75,7 +75,9 @@ export function PhotoViewer({ photos }: { photos: QuotePhoto[] }) {
             go(index - 1)
           }
         }}
-        className="flex snap-x snap-mandatory overflow-x-auto outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        // The track takes focus so the arrow keys work, so it has to show
+        // it: the house ring, 2px volt at 2px offset.
+        className="flex snap-x snap-mandatory overflow-x-auto outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-volt [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {photos.map((photo, at) => (
           <div
@@ -132,7 +134,7 @@ export function PhotoViewer({ photos }: { photos: QuotePhoto[] }) {
                 onClick={() => go(at)}
                 aria-current={at === index ? "true" : undefined}
                 aria-label={`Show photo ${at + 1}`}
-                className="block size-14 border border-hairline-soft p-0.5 transition-colors duration-150 ease-gg aria-[current]:border-foreground"
+                className="block size-14 border border-hairline-soft p-0.5 outline-none transition-colors duration-150 ease-gg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-volt aria-[current]:border-foreground"
               >
                 <img
                   src={photo.url}
