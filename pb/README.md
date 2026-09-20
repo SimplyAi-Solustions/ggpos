@@ -66,7 +66,7 @@ concern per file:
 | `..._phase4_stats_reports_hardening.js` | `daily_stats.sales_refunded` (the net-of-refunds field every report's revenue reads - `docs/api-contract.md`'s Phase 4 section); `items.listed_at` (set by `items.pb.js`'s own hook, backfilled here to `updated` for every row already `listed_ebay`); tightens `saved_reports`' rules - a staff member may only touch their own rows, and setting `recipients` or `schedule` needs `role = "admin"` regardless of whose row it is |
 | `..._csv_imports_review_link.js` | `csv_imports.resolved_rows` (json) and `.rows_skipped` (number), for `POST /api/vault/imports/:id/link` (`imports.pb.js`) |
 | `..._csv_imports_sumup_write_rules.js` | `csv_imports.updateRule` becomes admin-only (every staff write now goes through the import routes); `sumup_transactions.updateRule` lets a staff member set `matched_sale` only (`@request.body.<field>:isset = false` on every other field), admin unrestricted |
-| `..._phase5_portal_quotes_wants.js` | `quote_messages` (new); `quotes.closed_at`; `customers.notify_email`/`.notify_push` (default `true`, backfilled onto every existing row); `settings.push` (`{ vapid_public_key: "" }`) and `.holds` (`{ hours: 48 }`); `want_list.updateRule` gains a customer-own "close my own row" carve-out; `customers.otp.emailTemplate` becomes a GG-branded subject and plain body; three `app.settings().rateLimits` rules (`customers:requestOTP`, the two public estimate routes). `quotes.createRule` is deliberately **not** touched - see `docs/api-contract.md`'s Phase 5 section |
+| `..._phase5_portal_quotes_wants.js` | `quote_messages` (new); `quotes.closed_at`; `quotes.createRule` tightened to staff-only (a forged customer-created row could otherwise be paid out - fix round, finding 1); `customers.notify_email`/`.notify_push` (default `true`, backfilled onto every existing row); `settings.push` (`{ vapid_public_key: "" }`) and `.holds` (`{ hours: 48 }`); `customers.otp.emailTemplate` becomes a GG-branded subject and plain body; `app.settings().rateLimits` set explicitly to four rules (`customers:requestOTP`, the two public estimate routes, a per-IP `*:auth` guard - not merely turned on, which would also activate PocketBase's own tighter bundled defaults) and `.trustedProxy` (so a limit reads the real client address behind this deploy's Caddy); removes the unused Phase 1 `settings.push_vapid_public_key`/`.push_vapid_private_key` text fields. See `docs/api-contract.md`'s Phase 5 section |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -247,7 +247,7 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `POST /api/vault/want-list` | **customer**. `{ card?, free_text?, max_price? }`. Response `{ row }`, `row.card` expanded to `{ id, name, set, number, image }`. |
 | `POST /api/vault/want-list/:id/close` | **customer own**. Also doable directly through the collection API, per its own updated `updateRule`. Same `{ row }` response shape. |
 | `GET /api/vault/estimate/search`, `GET /api/vault/estimate` | Public, no auth, rate limited, no writes, never an adapter call. `estimate/search` hits also carry `finishes` (the card's `finishes_available`, `[]` when unset). See `docs/api-contract.md`'s Phase 5 section. |
-| `POST`/`DELETE /api/vault/push/subscribe` | **customer or staff**. Upserts/removes a `push_subscriptions` row by `endpoint`. Never logs the endpoint or the keys. |
+| `POST`/`DELETE /api/vault/push/subscribe` | **customer or staff**. Upserts/removes a `push_subscriptions` row by `endpoint` **and the caller's own identity** (fix round, finding 8 - a lookup by endpoint alone could return someone else's row for the same endpoint, once a second caller is allowed to hold one); a different caller subscribing with the same endpoint gets its own new row rather than re-pointing the first's, and unsubscribing a row the caller does not own is a 404. Never logs the endpoint or the keys. |
 | `GET /api/vault/me/notifications` | **customer**. `{ items, unread }`, newest first, capped at 50. |
 | `POST /api/vault/me/notifications/:id/read` | **customer own**. Idempotent; response `{ notification }`. |
 | `GET /api/vault/quotes` | **customer**. The caller's own quotes, newest first, capped at 50 - no photos or lines. Additive: the collection API's own `filter=customer=<id>` read still works. |
@@ -426,13 +426,15 @@ conventions:
   @request.auth.id` on `customers` itself), OR'd with staff-only so
   staff keep full access.
 - **Superuser-only** (`null`): `id_documents`, `audit_log`.
-- Customers can only ever **create** `quotes`, `want_list` and
-  `push_subscriptions` (`customer = @request.auth.id` in each
-  `createRule`), and can never delete anything. `quotes` and
-  `notifications` also let the owning customer **update** their own row
-  (accepting/declining a quote, marking a notification read) - that is
-  an update, not a create or delete, so it does not conflict with the
-  brief's "never create or delete" rule for customers.
+- Customers can only ever **create** `want_list` and `push_subscriptions`
+  (`customer = @request.auth.id` in each `createRule`), and can never
+  delete anything. `quotes.createRule` is staff-only (fix round, finding
+  1 - a customer submits only through `POST /api/vault/quotes`, never the
+  collection API directly). `quotes` and `notifications` still let the
+  owning customer **update** their own row (accepting/declining a quote,
+  marking a notification read) - that is an update, not a create or
+  delete, so it does not conflict with the brief's "never create or
+  delete" rule for customers.
 - **Append-only** ledgers (`credit_ledger`, `points_ledger`): `create` is
   staff-only, `update` and `delete` are `null` (nobody edits history).
 - `items` is never public, matching PLAN.md.
