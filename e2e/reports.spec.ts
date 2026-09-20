@@ -134,8 +134,59 @@ test.describe("reports", () => {
     const text = path ? await (await import("node:fs/promises")).readFile(path, "utf8") : ""
     const lines = text.replace(/^\ufeff/, "").trim().split("\r\n")
     expect(lines[0]).toBe("Name,Revenue,Sales")
-    // Money is a plain decimal, never pence and never a pound sign.
-    expect(lines[1]).toMatch(/^[^,]+,-?\d+\.\d{2},\d+$/)
+    // Every money cell is pounds and pence, never pence, never a pound sign
+    // and never a bare "5" where 500 pence was meant.
+    for (const line of lines.slice(1)) {
+      const [, revenue, count] = line.split(",")
+      expect(revenue).toMatch(/^-?\d+\.\d{2}$/)
+      expect(count).toMatch(/^\d+$/)
+    }
+  })
+
+  test("adds its own figures up the way the generator does", async ({ page }) => {
+    await signIn(page)
+    await openReport(page, "Sales")
+    await expect(page.getByTestId("report-table")).toBeVisible()
+
+    const pounds = async (testId: string) =>
+      Number(((await page.getByTestId(testId).textContent()) ?? "").replace(/[£,]/g, ""))
+
+    // The demo splits the range's revenue across the breakdown exactly, so
+    // the rows have to add back up to the headline penny for penny.
+    const revenue = await pounds("kpi-revenue")
+    const [, ...rows] = ((await page.getByTestId("report-table").textContent()) ?? "")
+      .split("£")
+    const rowTotal = rows.reduce((carry, chunk) => {
+      const amount = /^[\d,]+\.\d{2}/.exec(chunk)?.[0]
+      return amount ? carry + Number(amount.replace(/,/g, "")) : carry
+    }, 0)
+    expect(Math.abs(rowTotal - revenue)).toBeLessThan(0.005)
+
+    // And the average basket is the revenue over the count, to the penny.
+    const count = Number(
+      ((await page.getByTestId("kpi-count").textContent()) ?? "").replace(/,/g, "")
+    )
+    const basket = await pounds("kpi-avg_basket")
+    expect(count).toBeGreaterThan(0)
+    expect(Math.round(basket * 100)).toBe(Math.round((revenue * 100) / count))
+  })
+
+  test("says what is empty rather than drawing a blank chart", async ({ page }) => {
+    await signIn(page)
+    await openReport(page, "Sales")
+
+    // A week that has not happened yet: the shape is right, the figures are
+    // all zero, and the page has to say so.
+    await page.getByTestId("preset-custom").click()
+    await page.getByLabel("From").fill("2027-01-01")
+    await page.getByLabel("To").fill("2027-01-07")
+
+    await expect(page.getByTestId("report-empty")).toBeVisible()
+    await expect(page.getByTestId("report-empty")).toContainText(
+      "between 1 and 7 Jan 2027"
+    )
+    await expect(page.getByTestId("kpi-revenue")).toHaveText("£0.00")
+    await expect(page.locator("figure[data-slot='report-chart']")).toHaveCount(0)
   })
 
   test("saves a view and offers it back under the title", async ({ page }) => {
@@ -163,6 +214,11 @@ test.describe("reports", () => {
     await expect(page.locator("figure[data-slot='report-chart']")).toHaveCount(0)
     await expect(page.getByTestId("report-table")).toBeVisible()
     await expect(page.getByRole("heading", { name: "How long it is held" })).toBeVisible()
+    // Stock is read as it stands now, so no comparison is offered at all.
+    await expect(page.getByLabel("Compare with the period before")).toHaveCount(0)
+    // The ageing buckets read in words, never as a raw key.
+    await expect(page.getByRole("heading", { name: "How long it is held" })).toBeVisible()
+    await expect(page.getByText("Date not known")).toBeVisible()
   })
 
   test("keeps the register for admins", async ({ page }) => {

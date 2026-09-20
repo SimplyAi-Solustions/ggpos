@@ -85,6 +85,8 @@ test.describe("exports and imports", () => {
         .getByRole("button", { name: "Download the SumUp items file" })
         .click(),
     ])
+    // One black button on this screen, and it is the import.
+    await expect(page.locator("[data-variant='circle']")).toHaveCount(0)
     expect(download.suggestedFilename()).toBe("gg-vault-sumup.csv")
 
     const path = await download.path()
@@ -119,12 +121,40 @@ test.describe("exports and imports", () => {
     await expect(result).toContainText("4 rows read")
     await expect(result).toContainText("The price on this row is not an amount.")
 
-    // The name-only row waits to be matched, and skipping it clears it.
+    // The name-only row waits to be matched, with the price the server
+    // parsed from the file rather than a guess.
     const queue = page.getByTestId("review-queue")
     await expect(queue.getByTestId("review-row")).toHaveCount(1)
     await expect(queue).toContainText("Mystery holo")
+    await expect(queue).toContainText("£4.50")
+    await expect(queue).toContainText("CS-441822")
     await queue.getByRole("button", { name: "Skip this row" }).click()
     await expect(page.getByText("Nothing is waiting to be matched.")).toBeVisible()
+    await expect(page.getByText("Skipped.")).toBeVisible()
+  })
+
+  test("links a reviewed row to a card through the route", async ({ page }) => {
+    await signIn(page)
+    await openExports(page)
+    await choose(page, "Card Uploader CSV", "card-uploader.csv", CARD_UPLOADER_CSV)
+    await primary(page, "Import the file").click()
+
+    const queue = page.getByTestId("review-queue")
+    await expect(queue.getByTestId("review-row")).toHaveCount(1)
+
+    // The lookup only runs once this row is the one being worked on.
+    const field = queue.getByLabel("Find the card")
+    await field.click()
+    await field.fill("charizard")
+    await queue.getByRole("button", { name: /Charizard/ }).first().click()
+
+    // The route owns what happened, and the screen repeats its words.
+    await expect(page.getByText("Listed as a new item. It has no cost, so check it.")).toBeVisible()
+    await expect(page.getByText("Nothing is waiting to be matched.")).toBeVisible()
+    // Its zero-cost note lands with the rest of what the import did.
+    await expect(page.getByTestId("import-result")).toContainText(
+      "Listed card was not in stock"
+    )
   })
 
   test("refuses a file whose headings it does not recognise", async ({ page }) => {
@@ -164,10 +194,34 @@ test.describe("exports and imports", () => {
 
     const listings = page.getByTestId("end-listings")
     await expect(listings.locator("li")).toHaveCount(2)
-    await page.getByRole("button", { name: "Ended them on eBay" }).click()
+
+    // Every row is ticked to start with, and the button counts them.
+    await expect(page.getByRole("button", { name: "Ended 2 on eBay" })).toBeVisible()
+    await listings.getByRole("checkbox").first().uncheck()
+    await expect(page.getByRole("button", { name: "Ended 1 on eBay" })).toBeVisible()
+
+    await listings.getByRole("checkbox").first().check()
+    await page.getByRole("button", { name: "Ended 2 on eBay" }).click()
     await expect(
       page.getByText("Nothing sold in the shop is still listed on eBay.")
     ).toBeVisible()
+  })
+
+  test("says on the spot that a file is too big to import", async ({ page }) => {
+    await signIn(page)
+    await openExports(page)
+
+    await page.getByLabel("Card Uploader CSV").setInputFiles({
+      name: "huge.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.alloc(11 * 1024 * 1024, "a"),
+    })
+    await expect(
+      page.getByText(
+        "That file is over 10 MB. Export a smaller range and import it in parts."
+      )
+    ).toBeVisible()
+    await expect(primary(page, "Import the file")).toBeDisabled()
   })
 
   test("keeps the admin files to admins", async ({ page }) => {
