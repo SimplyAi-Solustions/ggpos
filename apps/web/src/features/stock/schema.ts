@@ -123,6 +123,20 @@ export const addStockSchema = z
 export type AddStockValues = z.input<typeof addStockSchema>
 export type AddStockParsed = z.output<typeof addStockSchema>
 
+/**
+ * The finish a card is priced in until somebody taps another chip.
+ *
+ * `price_snapshots.finish` is matched exactly by every price route, so a
+ * card looked up with no finish finds no snapshots at all. The card's own
+ * first printing is the honest default; "normal" covers a catalogue row that
+ * lists none, which is what a manual card has.
+ */
+export function defaultFinish(available: string[] | undefined): string {
+  const known: string[] = finishesFor(available).map((finish) => finish.value)
+  const first = (available ?? []).find((finish) => known.includes(finish))
+  return first ?? known[0] ?? "normal"
+}
+
 /** The finishes a card actually exists in, filtered down to ones we name. */
 export function finishesFor(available: string[] | undefined) {
   if (!available || available.length === 0) return FINISHES

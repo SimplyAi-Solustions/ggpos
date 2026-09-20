@@ -41,6 +41,7 @@ import {
   CARD_KINDS,
   COMPLETENESS,
   CONDITIONS,
+  defaultFinish,
   finishesFor,
   KINDS,
   SINGLE_QTY_KINDS,
@@ -283,7 +284,7 @@ export function AddStockScreen({
     setValue("gameId", prefilledCard.gameId)
     setValue("setCode", prefilledCard.setCode)
     setValue("number", prefilledCard.number)
-    setValue("finish", prefilledCard.finishes[0] ?? "normal")
+    setValue("finish", defaultFinish(prefilledCard.finishes))
   }, [prefilledCard, setValue])
 
   function chooseCard(next: CardHit | null) {
@@ -296,11 +297,9 @@ export function AddStockScreen({
       setValue("gameId", next.gameId)
       const allowed: string[] = finishesFor(next.finishes).map((finish) => finish.value)
       const current = form.getValues("finish")
-      // `price_snapshots.finish` is matched exactly, so a card looked up with
-      // no finish at all finds nothing: the card's own first printing is the
-      // honest default, and the chips are right there to change it.
+      // A card is never priced with an empty finish: see `defaultFinish`.
       if (!current || !allowed.includes(current)) {
-        setValue("finish", next.finishes[0] ?? allowed[0] ?? "normal")
+        setValue("finish", defaultFinish(next.finishes))
       }
     }
   }

@@ -259,6 +259,41 @@ export function lineOffer(
   }
 }
 
+/**
+ * What a line's market should become when its price routes answer.
+ *
+ * Pure so the rule can be read and tested without a browser: the screen only
+ * applies what this returns. Null means leave the line alone.
+ *
+ *  - A figure typed by hand, or a source a staff member picked (which
+ *    carries a reason), is never written over.
+ *  - A chosen source writes its figure, including when a finish change moves
+ *    it.
+ *  - A finish with no price at all clears the line back to nothing rather
+ *    than leaving the last finish's figure under a note that says there is
+ *    no price: the offer would be for a card nobody is buying.
+ */
+export function marketPatchFor(
+  line: TradeLine,
+  view: { chosen: { gbp_market: number; source: string } | null } | undefined
+): Partial<TradeLine> | null {
+  const priced = Boolean(line.cardId || line.retroTitleId)
+  if (!priced) return null
+  if (line.marketSource === MANUAL_SOURCE) return null
+  if (line.overrideReason) return null
+  if (!view) return null
+
+  const chosen = view.chosen
+  if (!chosen) {
+    if (line.marketPence === 0 && line.marketSource === MANUAL_SOURCE) return null
+    return { marketPence: 0, marketSource: MANUAL_SOURCE }
+  }
+  if (chosen.gbp_market === line.marketPence && chosen.source === line.marketSource) {
+    return null
+  }
+  return { marketPence: chosen.gbp_market, marketSource: chosen.source }
+}
+
 export interface Totals {
   market: number
   cash: number

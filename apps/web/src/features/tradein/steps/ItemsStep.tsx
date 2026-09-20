@@ -30,6 +30,7 @@ import { OverrideSheet } from "@/features/tradein/OverrideSheet"
 import {
   BULK_SOURCE,
   bulkTitle,
+  marketPatchFor,
   CARD_CONDITIONS,
   COSMETIC_GRADES,
   LINE_FINISHES,
@@ -104,41 +105,16 @@ function LineRow({
   const waiting = line.marketSource === PENDING_SOURCE
 
   // The figure has to be on the line, not just on screen: the offer, the
-  // totals and the saved draft all read `marketPence`. It is written when the
-  // route first answers and again when the finish changes the answer, but
-  // never over a figure a staff member typed or a source they picked by hand.
-  const typed = line.marketSource === MANUAL_SOURCE
-  const held = Boolean(line.overrideReason)
+  // totals and the saved draft all read `marketPence`. What it should become
+  // is `marketPatchFor`'s decision, which is pure and tested; this only
+  // applies it.
+  const patch = marketPatchFor(line, view)
   React.useEffect(() => {
-    if (!priced || typed || held) return
-    if (!view) return
-    const chosen = view.chosen
-    if (!chosen) {
-      // Nothing to price this finish from. A line that was priced from a
-      // source a moment ago has to let that figure go with it: leaving the
-      // old finish's market on the line while the note says there is no
-      // price would offer the customer money for the wrong card.
-      // A figure typed by hand never reaches here: `typed` returns above.
-      onUpdate(line.key, { marketPence: 0, marketSource: MANUAL_SOURCE })
-      return
-    }
-    if (chosen.gbp_market === line.marketPence && chosen.source === line.marketSource) {
-      return
-    }
-    onUpdate(line.key, {
-      marketPence: chosen.gbp_market,
-      marketSource: chosen.source,
-    })
-  }, [
-    priced,
-    typed,
-    held,
-    view,
-    line.key,
-    line.marketPence,
-    line.marketSource,
-    onUpdate,
-  ])
+    if (patch) onUpdate(line.key, patch)
+    // `patch` is a fresh object each render, so the effect keys on what it
+    // holds rather than on its identity; applying it makes the next one null.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line.key, patch?.marketPence, patch?.marketSource, onUpdate])
 
   /** A lot's count lives in its title as well, so the two move together. */
   function setCount(count: number) {
