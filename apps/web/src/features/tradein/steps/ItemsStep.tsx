@@ -58,7 +58,7 @@ export interface ItemsStepProps {
   rules: PricingRule[]
   settings: OfferSettings
   sums: Totals
-  /** True when the server would not hand over any offer bands. */
+  /** True when the shop has no active offer bands at all. */
   rulesMissing: boolean
   onAdd: (line: TradeLine) => void
   onUpdate: (key: string, patch: Partial<TradeLine>) => void
@@ -297,8 +297,8 @@ export function ItemsStep({
 
       {rulesMissing ? (
         <p className="mt-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
-          The offer bands are admin only, so this account cannot read them.
-          Enter each offer with Override, or ask an admin to open the wizard.
+          No offer bands are set up yet, so nothing prices itself. Enter each
+          offer with Override, or add the bands in Settings.
         </p>
       ) : null}
 

@@ -1,8 +1,7 @@
-import { buildCode } from "@gg/shared"
+import { buildCode, formatGBP } from "@gg/shared"
 
 import type {
   CreditLedgerRecord,
-  CustomerFlag,
   CustomerPatch,
   CustomerPrivateRecord,
   CustomerProfile,
@@ -419,10 +418,22 @@ export function demoVerifyId(customerId: string, check: IdCheckPayload) {
   entry.private.id_verified_at = new Date().toISOString()
 }
 
-/** Erasure, as far as the app can go without the backend: anonymise and flag. */
+/**
+ * Erasure, mirroring what `POST /api/vault/customers/:id/erase` does: the
+ * record is anonymised, the ID details go, and the numbered trade-ins keep
+ * their seller snapshot. The route refuses while store credit remains, so
+ * the demo book refuses in the same words rather than letting a demo do
+ * something the counter cannot.
+ */
 export function demoEraseCustomer(customerId: string): CustomerProfile {
   const entry = findDemoCustomer(customerId)
   if (!entry) throw new Error("Customer not found in the demo shop.")
+  const credit = entry.private.credit_balance ?? 0
+  if (credit > 0) {
+    throw new Error(
+      `This customer still has ${formatGBP(credit)} store credit. Pay it out or write it off first.`
+    )
+  }
   entry.customer.name = "Erased customer"
   entry.customer.email = undefined
   entry.customer.phone = undefined
@@ -434,8 +445,7 @@ export function demoEraseCustomer(customerId: string): CustomerProfile {
   entry.private.id_type = ""
   entry.private.id_expiry = ""
   entry.private.id_ref_last4 = ""
-  const flags = new Set<CustomerFlag>(entry.private.flags ?? [])
-  flags.add("watchlist")
-  entry.private.flags = [...flags]
+  entry.private.points_balance = 0
+  entry.private.flags = []
   return demoGetCustomer(customerId) as CustomerProfile
 }

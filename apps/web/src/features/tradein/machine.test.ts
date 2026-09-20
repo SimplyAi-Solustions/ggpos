@@ -89,23 +89,20 @@ describe("offer totals", () => {
   })
 
   it("applies the condition multiplier before choosing the band", () => {
-    // £100 at MP is £70, which is still the top band, so a rule written for
-    // any condition offers 60 and 75 percent of the adjusted figure.
-    const anyCondition: PricingRule[] = [
-      { ...(RULES[2] as PricingRule), id: "any", condition: null },
-    ]
-    const offer = lineOffer(line({ condition: "MP" }), anyCondition, SETTINGS)
+    // The seeded single bands are condition wildcards, so a played card
+    // drops through the multiplier rather than matching nothing: £100 at MP
+    // is £70, still the top band, at 60 and 75 percent.
+    const offer = lineOffer(line({ condition: "MP" }), RULES, SETTINGS)
+    expect(offer.source).toBe("rule")
     expect(offer.cash).toBe(4200)
     expect(offer.credit).toBe(5250)
   })
 
-  it("offers nothing on a played single, because the seed bands are NM only", () => {
-    // pb_migrations/1789819620_seed.js writes single rules for NM alone, so
-    // an LP or MP card matches no band and the counter has to override it.
-    // Recorded here so a change to the seed shows up as a failing test.
-    const offer = lineOffer(line({ condition: "MP" }), RULES, SETTINGS)
-    expect(offer.source).toBe("none")
-    expect(offer.cash).toBe(0)
+  it("drops a badly played card into a lower band", () => {
+    // £100 at DMG is £30, which is the £5 to £50 band: 50 and 65 percent.
+    const offer = lineOffer(line({ condition: "DMG" }), RULES, SETTINGS)
+    expect(offer.cash).toBe(1500)
+    expect(offer.credit).toBe(1950)
   })
 
   it("multiplies a sealed line by its quantity", () => {

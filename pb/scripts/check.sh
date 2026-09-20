@@ -1396,5 +1396,220 @@ grep "^$CASH_SKU," "$TMP_DIR/stockbook2.txt" | grep -q ',6\.00,,,,$' \
   || fail "the fully refunded item's row is not a remaining row: $(grep "^$CASH_SKU," "$TMP_DIR/stockbook2.txt")"
 ok "a fully refunded sale line leaves no sold row in the stock book"
 
+# -----------------------------------------------------------------------
+# 16. The read-only config window and the two customer record operations.
+# -----------------------------------------------------------------------
+STEPUP_TOKEN="$(curl -s -X POST "$BASE/api/vault/step-up" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"password\":\"$STAFF_PASSWORD\"}" | jval token)"
+[ -n "$STEPUP_TOKEN" ] || fail "could not mint a step-up token for section 16"
+
+# --- 16a. GET /api/vault/config -----------------------------------------
+CONFIG_ANON="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/config")"
+[ "$CONFIG_ANON" = "401" ] || [ "$CONFIG_ANON" = "403" ] || fail "/api/vault/config without auth returned $CONFIG_ANON, expected 401 or 403"
+ok "/api/vault/config is refused without a staff token (got $CONFIG_ANON)"
+
+CONFIG_STATUS="$(curl -s -o "$TMP_DIR/config.json" -w '%{http_code}' \
+  -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/config")"
+[ "$CONFIG_STATUS" = "200" ] || fail "an ordinary staff token got $CONFIG_STATUS from /api/vault/config: $(cat "$TMP_DIR/config.json")"
+CONFIG_RULES="$(node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => process.stdout.write(String((JSON.parse(d).pricing_rules || []).length)));
+' <"$TMP_DIR/config.json")"
+[ "${CONFIG_RULES:-0}" -ge 1 ] || fail "/api/vault/config returned $CONFIG_RULES pricing rules to an ordinary staff member"
+[ -n "$(jval "settings.cash_cap" <"$TMP_DIR/config.json")" ] || fail "/api/vault/config returned no settings.cash_cap"
+[ -n "$(jval "settings.offer.minimumOffer" <"$TMP_DIR/config.json")" ] || fail "/api/vault/config did not decode settings.offer as JSON"
+[ -n "$(jval "loyalty.programme.name" <"$TMP_DIR/config.json")" ] || fail "/api/vault/config returned no loyalty programme"
+CONFIG_TIERS="$(node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => process.stdout.write(String(((JSON.parse(d).loyalty || {}).tiers || []).length)));
+' <"$TMP_DIR/config.json")"
+[ "${CONFIG_TIERS:-0}" -ge 3 ] || fail "/api/vault/config returned $CONFIG_TIERS loyalty tiers, expected the three seeded ones"
+ok "/api/vault/config gives an ordinary staff member the pricing rules, settings and loyalty rows"
+
+for SECRET_KEY in api_keys email_api_key push_vapid_private_key push_vapid_public_key; do
+  grep -qF "$SECRET_KEY" "$TMP_DIR/config.json" && fail "/api/vault/config leaks the $SECRET_KEY field"
+done
+grep -qF "$SECRET_API_KEY" "$TMP_DIR/config.json" && fail "/api/vault/config leaks the stored email API key value"
+ok "/api/vault/config carries no api_keys, mail key or VAPID key"
+
+# --- 16b. The latest ID document, without the photo ----------------------
+ID_DOC_LOOKUP="$(curl -s -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/customers/$SELLER_ID/id-document")"
+[ "$(echo "$ID_DOC_LOOKUP" | jval "document.id")" = "$ID_DOC_ID" ] \
+  || fail "the id-document lookup returned '$(echo "$ID_DOC_LOOKUP" | jval "document.id")', expected $ID_DOC_ID"
+[ -n "$(echo "$ID_DOC_LOOKUP" | jval "document.expires_at")" ] || fail "the id-document lookup returned no expires_at"
+echo "$ID_DOC_LOOKUP" | grep -qF "photo" && fail "the id-document lookup returned the photo field"
+ok "the id-document lookup returns the latest document and never the photo"
+
+EMPTY_DOC_CUSTOMER="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"No Document Check","email":"no-document-check@local.test","source":"counter"}' | jval id)"
+EMPTY_DOC="$(curl -s -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/customers/$EMPTY_DOC_CUSTOMER/id-document" | jval document)"
+[ -z "$EMPTY_DOC" ] || fail "a customer with no ID document returned '$EMPTY_DOC', expected null"
+ok "a customer with no ID document on file returns null"
+
+# --- 16c. Merging a duplicate customer -----------------------------------
+DUPE_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Dupe Check","email":"dupe-check@local.test","phone":"+447700900001","source":"counter"}' | jval id)"
+KEEP_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Keep Check","email":"keep-check@local.test","source":"counter"}' | jval id)"
+[ -n "$DUPE_ID" ] && [ -n "$KEEP_ID" ] || fail "could not create the merge check customers"
+
+DUPE_PRIVATE="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$DUPE_ID%22" \
+  -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/customer_private/records/$DUPE_PRIVATE" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"address":"9 Sherwood Lodge, Bolsover, S44 6AB","dob":"1979-02-02","flags":["watchlist"],"notes":"Collects vintage Pokemon.","id_status":"verified","id_type":"driving_licence","id_expiry":"2032-02-02","id_ref_last4":"7777"}'
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/credit_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"amount\":1000,\"reason\":\"adjustment\",\"ref\":\"merge check\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/points_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"delta\":300,\"reason\":\"adjust\",\"ref\":\"merge check\"}"
+DUPE_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
+curl -s -o /dev/null -X POST "$BASE/api/collections/notifications/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$DUPE_ID\",\"type\":\"quote_offer\",\"title\":\"Merge check\",\"body\":\"Body\"}"
+
+MERGE_SELF="$(curl -s -o "$TMP_DIR/merge-self.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/customers/$DUPE_ID/merge" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STEPUP_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"into\":\"$DUPE_ID\"}")"
+[ "$MERGE_SELF" = "409" ] || fail "merging a customer into itself returned $MERGE_SELF, expected 409: $(cat "$TMP_DIR/merge-self.json")"
+MERGE_MISSING="$(curl -s -o "$TMP_DIR/merge-missing.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/customers/$DUPE_ID/merge" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STEPUP_TOKEN" -H "Content-Type: application/json" \
+  -d '{"into":"doesnotexist0000"}')"
+[ "$MERGE_MISSING" = "404" ] || fail "merging into a missing customer returned $MERGE_MISSING, expected 404: $(cat "$TMP_DIR/merge-missing.json")"
+MERGE_NO_STEPUP="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "$BASE/api/vault/customers/$DUPE_ID/merge" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"into\":\"$KEEP_ID\"}")"
+[ "$MERGE_NO_STEPUP" = "403" ] || fail "merging without a step-up token returned $MERGE_NO_STEPUP, expected 403"
+ok "a merge is refused on itself (409), on a missing record (404) and without step-up (403)"
+
+MERGE_STATUS="$(curl -s -o "$TMP_DIR/merge.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/customers/$DUPE_ID/merge" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STEPUP_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"into\":\"$KEEP_ID\"}")"
+[ "$MERGE_STATUS" = "200" ] || fail "the merge returned $MERGE_STATUS: $(cat "$TMP_DIR/merge.json")"
+[ "$(jval "customer.id" <"$TMP_DIR/merge.json")" = "$KEEP_ID" ] || fail "the merge returned the wrong customer"
+for MOVED_KEY in trade_ins credit_ledger points_ledger notifications; do
+  [ "$(jval "moved.$MOVED_KEY" <"$TMP_DIR/merge.json")" = "1" ] \
+    || fail "the merge moved '$(jval "moved.$MOVED_KEY" <"$TMP_DIR/merge.json")' $MOVED_KEY rows, expected 1"
+done
+DUPE_AFTER="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/customers/records/$DUPE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$DUPE_AFTER" = "404" ] || fail "the duplicate customer is still there after the merge (got $DUPE_AFTER)"
+MERGED_TRADE_CUSTOMER="$(curl -s "$BASE/api/collections/trade_ins/records/$DUPE_TRADE_ID" -H "Authorization: $STAFF_TOKEN" | jval customer)"
+[ "$MERGED_TRADE_CUSTOMER" = "$KEEP_ID" ] || fail "the duplicate's trade-in still points at '$MERGED_TRADE_CUSTOMER'"
+ok "a merge re-points every relation and deletes the duplicate"
+
+KEEP_PRIVATE_JSON="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$KEEP_ID%22" \
+  -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$KEEP_PRIVATE_JSON" | jval totalItems)" = "1" ] || fail "the kept customer has $(echo "$KEEP_PRIVATE_JSON" | jval totalItems) customer_private rows, expected 1"
+[ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.credit_balance")" = "1000" ] \
+  || fail "the kept customer's credit balance is '$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.credit_balance")', expected 1000"
+[ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.points_balance")" = "300" ] \
+  || fail "the kept customer's points balance is '$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.points_balance")', expected 300"
+[ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.address")" = "9 Sherwood Lodge, Bolsover, S44 6AB" ] \
+  || fail "the merge did not fill the kept customer's empty address"
+[ "$(echo "$KEEP_PRIVATE_JSON" | jval "items.0.id_status")" = "verified" ] \
+  || fail "the merge did not carry the duplicate's verified ID over to a record that had none"
+echo "$KEEP_PRIVATE_JSON" | grep -q "watchlist" || fail "the merge did not union the duplicate's flags"
+echo "$KEEP_PRIVATE_JSON" | grep -q "vintage Pokemon" || fail "the merge did not append the duplicate's notes"
+ok "a merge fills the kept record's gaps and recomputes its balances"
+
+# --- 16d. Erasing a customer ---------------------------------------------
+ERASE_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Erase Check","email":"erase-check@local.test","phone":"+447700900002","marketing_consent":true,"birthday_month":4,"source":"counter"}' | jval id)"
+ERASE_PRIVATE="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$ERASE_ID%22" \
+  -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$ERASE_ID" ] && [ -n "$ERASE_PRIVATE" ] || fail "could not create the erase check customer"
+
+ERASE_DOC="$(curl -s -X POST "$BASE/api/vault/customers/$ERASE_ID/id-check" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "photo=@$TMP_DIR/id.png;type=image/png" \
+  -F "id_type=passport" -F "id_expiry=2032-06-30" -F "id_ref_last4=5555" \
+  -F "dob=1991-11-11" -F "address=7 Hockley Lane, Bolsover, S44 6QT" | jval id_document)"
+[ -n "$ERASE_DOC" ] || fail "could not take an ID photo for the erase check customer"
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/want_list/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$ERASE_ID\",\"free_text\":\"Base Set Charizard\",\"status\":\"open\"}"
+curl -s -o /dev/null -X POST "$BASE/api/collections/notifications/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$ERASE_ID\",\"type\":\"quote_offer\",\"title\":\"Erase check\",\"body\":\"Body\"}"
+ERASE_VOUCHER="$(curl -s -X POST "$BASE/api/collections/reward_redemptions/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$ERASE_ID\",\"reward\":\"$MONEY_OFF_REWARD\",\"points_spent\":500,\"status\":\"issued\",\"expires_at\":\"2031-01-01 00:00:00.000Z\"}" | jval id)"
+
+# A completed credit buy-in, so there is both a store credit balance in the
+# way and a seller snapshot that has to survive the erasure.
+ERASE_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$ERASE_ID\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
+curl -s -o /dev/null -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$ERASE_TRADE_ID\",\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"free_text_title\":\"Erase Check Bundle\",\"qty\":1,\"market_price\":2500,\"market_currency\":\"GBP\",\"offer_price\":1500,\"accepted\":true}"
+ERASE_COMPLETE="$(curl -s -o "$TMP_DIR/erase-buyin.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/trade-ins/$ERASE_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":1500,"terms_accepted":true}')"
+[ "$ERASE_COMPLETE" = "200" ] || fail "the erase check buy-in returned $ERASE_COMPLETE: $(cat "$TMP_DIR/erase-buyin.json")"
+
+ERASE_NOT_ADMIN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/customers/$ERASE_ID/erase" \
+  -H "Authorization: $PLAIN_TOKEN" -H "X-Step-Up: $PLAIN_STEPUP" -H "Content-Type: application/json" -d '{}')"
+[ "$ERASE_NOT_ADMIN" = "403" ] || fail "a non-admin erasing a customer returned $ERASE_NOT_ADMIN, expected 403"
+ok "only an admin can erase a customer (403)"
+
+ERASE_WITH_CREDIT="$(curl -s -o "$TMP_DIR/erase-credit.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/customers/$ERASE_ID/erase" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STEPUP_TOKEN" -H "Content-Type: application/json" -d '{}')"
+[ "$ERASE_WITH_CREDIT" = "422" ] || fail "erasing a customer with store credit returned $ERASE_WITH_CREDIT, expected 422: $(cat "$TMP_DIR/erase-credit.json")"
+grep -q '£15.00' "$TMP_DIR/erase-credit.json" || fail "the erase refusal does not name the £15.00 balance: $(cat "$TMP_DIR/erase-credit.json")"
+ok "erasing a customer who still holds store credit is refused with 422"
+
+curl -s -o /dev/null -X POST "$BASE/api/collections/credit_ledger/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$ERASE_ID\",\"amount\":-1500,\"reason\":\"adjustment\",\"ref\":\"written off before erasure\"}"
+
+ERASE_STATUS="$(curl -s -o "$TMP_DIR/erase.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/customers/$ERASE_ID/erase" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $STEPUP_TOKEN" -H "Content-Type: application/json" -d '{}')"
+[ "$ERASE_STATUS" = "200" ] || fail "the erasure returned $ERASE_STATUS: $(cat "$TMP_DIR/erase.json")"
+[ "$(jval erased <"$TMP_DIR/erase.json")" = "true" ] || fail "the erasure did not report erased: true"
+[ "$(jval "customer.name" <"$TMP_DIR/erase.json")" = "Erased customer" ] || fail "the erased customer is still called '$(jval "customer.name" <"$TMP_DIR/erase.json")'"
+[ -z "$(jval "customer.email" <"$TMP_DIR/erase.json")" ] || fail "the erased customer still has an email"
+[ -n "$(jval "customer.code" <"$TMP_DIR/erase.json")" ] || fail "the erasure dropped the customer code"
+grep -qF "erase-check@local.test" "$TMP_DIR/erase.json" && fail "the erase response still carries the old email"
+grep -qiE '"(password|tokenKey|passwordHash)"' "$TMP_DIR/erase.json" && fail "the erase response leaks an auth secret"
+ok "erasing a customer anonymises the record and keeps their code"
+
+ERASED_PRIVATE="$(curl -s "$BASE/api/collections/customer_private/records/$ERASE_PRIVATE" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$ERASED_PRIVATE" | jval id_status)" = "none" ] || fail "the erased customer_private id_status is '$(echo "$ERASED_PRIVATE" | jval id_status)'"
+[ -z "$(echo "$ERASED_PRIVATE" | jval address)" ] || fail "the erased customer_private still has an address"
+[ -z "$(echo "$ERASED_PRIVATE" | jval dob)" ] || fail "the erased customer_private still has a date of birth"
+ERASED_DOC_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/id_documents/records/$ERASE_DOC" -H "Authorization: $SUPER_TOKEN")"
+[ "$ERASED_DOC_STATUS" = "404" ] || fail "the erased customer's ID document is still there (got $ERASED_DOC_STATUS)"
+ERASED_WANT_LIST="$(curl -s "$BASE/api/collections/want_list/records?filter=customer%3D%22$ERASE_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$ERASED_WANT_LIST" = "0" ] || fail "the erased customer still has $ERASED_WANT_LIST want_list rows"
+ERASED_VOUCHER_STATUS="$(curl -s "$BASE/api/collections/reward_redemptions/records/$ERASE_VOUCHER" -H "Authorization: $STAFF_TOKEN" | jval status)"
+[ "$ERASED_VOUCHER_STATUS" = "cancelled" ] || fail "the erased customer's open voucher is '$ERASED_VOUCHER_STATUS', expected cancelled"
+ok "erasing a customer clears their private row, ID photos, lists and open vouchers"
+
+ERASED_TRADE="$(curl -s "$BASE/api/collections/trade_ins/records/$ERASE_TRADE_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$ERASED_TRADE" | jval seller_name)" = "Erase Check" ] \
+  || fail "the buy-in's seller snapshot reads '$(echo "$ERASED_TRADE" | jval seller_name)', expected the name as it was at the time"
+[ "$(echo "$ERASED_TRADE" | jval status)" = "completed" ] || fail "the erasure changed the buy-in's status"
+ok "the six-year buy-in register keeps its seller snapshot through an erasure"
+
 echo
 echo "All checks passed ($PASS_COUNT)."

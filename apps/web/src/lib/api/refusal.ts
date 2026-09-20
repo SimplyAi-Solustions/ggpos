@@ -38,11 +38,28 @@ export function refusalMessage(error: unknown): string | null {
 }
 
 /**
+ * A refusal this app wrote for itself, rather than the server.
+ *
+ * Demo mode and a few guards raise a plain `Error` with a sentence already
+ * written for the counter ("That password is not right. Try again."). Those
+ * are worth showing as they are; a stack-trace-ish message from a library is
+ * not, so only a message that ends like a sentence counts.
+ */
+function writtenMessage(error: unknown): string | null {
+  if (error instanceof ClientResponseError) return null
+  if (!(error instanceof Error)) return null
+  const message = error.message?.trim()
+  if (!message || message.length > 200) return null
+  return /[.!?]$/.test(message) ? message : null
+}
+
+/**
  * The sentence to put under a control after a failed write: the server's
- * own words when it wrote any, and a plain fallback when it did not.
+ * own words when it wrote any, this app's own when it wrote them instead,
+ * and a plain fallback when neither did.
  */
 export function refusalOrFallback(error: unknown, fallback: string): string {
-  return refusalMessage(error) ?? fallback
+  return refusalMessage(error) ?? writtenMessage(error) ?? fallback
 }
 
 /** True for the 404 a lookup makes when there is simply nothing there. */
