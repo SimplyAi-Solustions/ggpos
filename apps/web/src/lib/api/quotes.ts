@@ -41,10 +41,8 @@ import type {
   QuoteStatus,
   StaffQuoteDetail,
 } from "@/lib/api/types"
+import { escapeFilter } from "@/lib/api/filter"
 
-function escapeFilter(value: string): string {
-  return value.replace(/["\\]/g, "\\$&")
-}
 
 export async function listMyQuotes(): Promise<QuoteRecord[]> {
   if (isDemo()) return demoListQuotes()

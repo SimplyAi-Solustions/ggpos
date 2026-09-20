@@ -41,9 +41,6 @@ export { DEMO_STAFF, DEMO_SCAN_SKU } from "@/lib/api/fixtures"
 /** Items created during a demo session, newest first. Never persisted. */
 const demoItems: ItemRecord[] = [...DEMO_ITEMS]
 
-function escapeFilter(value: string): string {
-  return value.replace(/["\\]/g, "\\$&")
-}
 
 type ExpandedCard = CardRecord & {
   expand?: { set?: CardSetRecord; game?: GameRecord }
@@ -419,4 +416,5 @@ export {
   stockForCard,
   toCardHit,
 } from "@/lib/api/lookup"
+import { escapeFilter } from "@/lib/api/filter"
 export * from "@/lib/api/prices"

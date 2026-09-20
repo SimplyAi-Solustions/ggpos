@@ -30,10 +30,8 @@ import type {
   WantListRecord,
   WantListRow,
 } from "@/lib/api/types"
+import { escapeFilter } from "@/lib/api/filter"
 
-function escapeFilter(value: string): string {
-  return value.replace(/["\\]/g, "\\$&")
-}
 
 type ExpandedWant = WantListRecord & {
   expand?: {

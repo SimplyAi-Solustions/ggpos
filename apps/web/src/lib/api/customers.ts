@@ -34,10 +34,8 @@ import type {
   NewCustomerInput,
   TradeInRecord,
 } from "@/lib/api/types"
+import { escapeFilter } from "@/lib/api/filter"
 
-function escapeFilter(value: string): string {
-  return value.replace(/["\\]/g, "\\$&")
-}
 
 /** At least this many characters before a phone or code is worth matching. */
 const MIN_PARTIAL = 3
