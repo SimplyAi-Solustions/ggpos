@@ -7,6 +7,8 @@
  * canned one. Nothing is persisted: it lives in memory for the tab, like
  * every other demo store.
  */
+import { parseDecimalToMinor } from "@gg/shared"
+
 import {
   CARD_UPLOADER_MAPPING,
   EBAY_ORDERS_MAPPING,
@@ -19,6 +21,7 @@ import type {
   CsvImportError,
   CsvImportRecord,
   EbayOrdersResult,
+  LinkReviewResult,
 } from "@/lib/api/types"
 import type { LinkReviewInput } from "@/lib/api/imports"
 
@@ -36,9 +39,12 @@ function record(
   const row: CsvImportRecord = {
     id: `csv_import_demo_${sequence}`,
     type,
-    filename,
+    status: "done",
+    file: filename,
     rows_total: total,
     rows_ok: ok,
+    rows_skipped: 0,
+    resolved_rows: [],
     // The server caps its stored errors at 200 and adds one note saying how
     // many it left out; the demo does the same so the screen is exercised.
     errors: errors.slice(0, 200),
@@ -77,8 +83,12 @@ export async function importCardUploader(file: File): Promise<CardUploaderResult
         name: row.name ?? "",
         set: row.set ?? "",
         number: row.number ?? "",
+        condition: row.condition ?? "",
+        quantity: Number(row.quantity ?? "1") || 1,
         ebay_sku: row.csSku ?? "",
-        price: Math.round(Number(String(row.price ?? "0").replace(/[^\d.-]/g, "")) * 100),
+        // Integer pence through the shared parser, or null when the cell
+        // was not an amount - exactly what the route stores.
+        price: parseDecimalToMinor(row.price ?? ""),
       })
       return
     }
@@ -146,18 +156,78 @@ export function listImports(limit: number): CsvImportRecord[] {
   return imports.slice(0, limit)
 }
 
-function drop(id: string, row: number): CsvImportRecord {
-  const found = getImport(id)
-  found.errors = (found.errors ?? []).filter(
-    (entry) => !(entry.kind === "review" && entry.row === row)
+/**
+ * The link route's own behaviour, as far as a demo can mirror it.
+ *
+ * Same refusals in the same order, and the same three-path outcome: the demo
+ * shop holds nothing behind a Card Uploader listing, so a link always lands
+ * on "created" and leaves the zero-cost note the real importer leaves. The
+ * route owns the item write; nothing here invents one.
+ */
+function resolve(
+  id: string,
+  row: number,
+  card: string | null
+): LinkReviewResult {
+  const record = getImport(id)
+  const resolved = record.resolved_rows ?? []
+  if (resolved.includes(row)) {
+    throw new Error("This row has already been linked or skipped.")
+  }
+  const entry = (record.errors ?? []).find(
+    (candidate) =>
+      candidate.kind === "review" &&
+      candidate.message === "needs match" &&
+      candidate.row === row
   )
-  return found
+  if (!entry) throw new Error("That row is not waiting for a match.")
+  if (card !== null && (entry.price === null || entry.price === undefined)) {
+    throw new Error(
+      "This row's price could not be read as an amount. Re-import the file with a valid price."
+    )
+  }
+
+  record.errors = (record.errors ?? []).filter((candidate) => candidate !== entry)
+  record.resolved_rows = [...resolved, row]
+
+  if (card === null) {
+    record.rows_skipped = (record.rows_skipped ?? 0) + 1
+    return { import: { ...record }, item: null, path: "skipped" }
+  }
+
+  // The demo has nothing in stock behind these listings, so the rule lands
+  // on its third path and leaves the same note the importer would.
+  record.errors.push({
+    row,
+    kind: "review",
+    message: "Listed card was not in stock. Created with no cost - check it.",
+    card,
+    sku: entry.ebay_sku ?? "",
+  })
+  return {
+    import: { ...record },
+    item: {
+      id: `item_demo_link_${row}`,
+      sku: `GGS${row}LINK`,
+      kind: "single",
+      game: "game_pokemon",
+      card,
+      title: entry.name ?? "",
+      qty: entry.quantity ?? 1,
+      price: entry.price ?? 0,
+      status: "listed_ebay",
+      ebay_sku: entry.ebay_sku ?? "",
+      source: "supplier",
+      tax_scheme: "margin",
+    },
+    path: "created",
+  }
 }
 
-export function linkReviewRow(input: LinkReviewInput): CsvImportRecord {
-  return drop(input.importId, input.row)
+export function linkReviewRow(input: LinkReviewInput): LinkReviewResult {
+  return resolve(input.importId, input.row, input.cardId)
 }
 
-export function skipReviewRow(id: string, row: number): CsvImportRecord {
-  return drop(id, row)
+export function skipReviewRow(id: string, row: number): LinkReviewResult {
+  return resolve(id, row, null)
 }
