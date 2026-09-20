@@ -1,11 +1,8 @@
-import {
-  buildCode,
-  DEFAULT_OFFER_SETTINGS,
-  evaluateTradeInPoints,
-  type LoyaltyProgramme,
-  type OfferSettings,
-  type PricingRule,
-} from "@gg/shared"
+import { buildCode } from "@gg/shared"
+// `packages/shared/src/index.ts` re-exports money, sku and pb-types only, so
+// the pricing and loyalty evaluators come in through their own subpaths.
+import { DEFAULT_OFFER_SETTINGS, type OfferSettings, type PricingRule } from "@gg/shared/pricing"
+import { evaluateTradeInPoints, type LoyaltyProgramme } from "@gg/shared/loyalty"
 
 import {
   demoAddPoints,

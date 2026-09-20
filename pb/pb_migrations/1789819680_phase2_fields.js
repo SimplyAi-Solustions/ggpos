@@ -62,7 +62,12 @@ migrate((app) => {
   // stay unique while any number of drafts sit at "".
   // -------------------------------------------------------------------
   const tradeIns = app.findCollectionByNameOrId("trade_ins");
-  tradeIns.fields.add(new Field({ name: "number", type: "text", required: false, max: 20 }));
+  // Mutated through getByName and re-added by its existing id, so the
+  // column keeps its identity (adding a fresh Field with the same name but
+  // a new id reads as a drop-and-recreate to PocketBase's schema diff).
+  const numberField = tradeIns.fields.getByName("number");
+  numberField.required = false;
+  tradeIns.fields.add(numberField);
   tradeIns.removeIndex("idx_trade_ins_number_unique");
   tradeIns.addIndex("idx_trade_ins_number_unique", true, "number", "number != ''");
   app.save(tradeIns);
@@ -177,7 +182,9 @@ migrate((app) => {
   app.save(tradeInLines);
 
   const tradeIns = app.findCollectionByNameOrId("trade_ins");
-  tradeIns.fields.add(new Field({ name: "number", type: "text", required: true, max: 20 }));
+  const numberField = tradeIns.fields.getByName("number");
+  numberField.required = true;
+  tradeIns.fields.add(numberField);
   tradeIns.removeIndex("idx_trade_ins_number_unique");
   tradeIns.addIndex("idx_trade_ins_number_unique", true, "number", "");
   app.save(tradeIns);

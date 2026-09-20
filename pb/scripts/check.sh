@@ -28,6 +28,11 @@ SUPER_PASSWORD="checkpassword123456"
 STAFF_EMAIL="admin-check@local.test"
 STAFF_PASSWORD="staffcheckpassword123"
 
+# $security.encrypt is AES-256-GCM and wants exactly 32 characters. The ID
+# check route refuses with 500 without this, so the server under test gets
+# a throwaway one (see pb/README.md, "ID photos").
+ID_PHOTO_KEY="check-id-photo-key-0123456789abc"
+
 SERVER_PID=""
 PASS_COUNT=0
 
@@ -83,7 +88,7 @@ echo
 "$PB" --dir "$TMP_DIR" superuser upsert "$SUPER_EMAIL" "$SUPER_PASSWORD" >/dev/null
 ok "superuser created"
 
-"$PB" serve \
+GG_ID_PHOTO_KEY="$ID_PHOTO_KEY" "$PB" serve \
   --dir "$TMP_DIR" \
   --hooksDir "$HOOKS_DIR" \
   --migrationsDir "$MIGRATIONS_DIR" \
