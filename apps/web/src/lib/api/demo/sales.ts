@@ -106,6 +106,19 @@ function itemFor(id: string): StockItemRecord | undefined {
 export function completeSale(payload: CompleteSalePayload): CompleteSaleResult {
   ensureSeeded()
 
+  if (payload.reward_code) {
+    const voucher = DEMO_VOUCHERS.find((row) => row.code === payload.reward_code)
+    if (!voucher || usedVoucherIds.has(voucher.id)) {
+      throw new Error("That voucher has been used or has run out. Check the code.")
+    }
+    if (!payload.customer || payload.customer !== voucher.customer) {
+      throw new Error("A reward needs the customer it was issued to on the sale.")
+    }
+    if (payload.discount_source !== "reward" || payload.discount !== voucher.value) {
+      throw new Error("A reward is the whole discount on a sale. Clear the other one.")
+    }
+  }
+
   const lines = payload.lines.map((line) => {
     const item = itemFor(line.item)
     if (!item) throw new Error("That item is no longer in stock.")
@@ -250,21 +263,33 @@ export function refundSale(
   const sale = demoSales.find((row) => row.id === id)
   if (!sale) throw new Error("That sale is not on today's list.")
 
+  // `qty` and `discount` on a line are never rewritten: a refund counts up
+  // `refunded_qty` and only marks the line refunded once it reaches `qty`.
   let refunded = 0
   for (const request of payload.lines) {
     const line = sale.lines.find((row) => row.id === request.sale_line)
-    if (!line || line.status === "refunded") continue
-    refunded += (line.unit_price ?? 0) * request.qty - (line.discount ?? 0)
-    line.status = "refunded"
+    if (!line) continue
+    const already = line.refunded_qty ?? 0
+    const remaining = (line.qty ?? 1) - already
+    const qty = Math.min(request.qty, remaining)
+    if (qty <= 0) continue
+
+    refunded += (line.unit_price ?? 0) * qty
+    line.refunded_qty = already + qty
+    if (line.refunded_qty >= (line.qty ?? 1)) line.status = "refunded"
+
     const item = itemFor(line.item)
     if (item) {
-      item.qty = (item.qty ?? 0) + request.qty
+      item.qty = (item.qty ?? 0) + qty
       item.status = "in_stock"
       item.updated = new Date().toISOString()
     }
   }
 
-  const allRefunded = sale.lines.every((line) => line.status === "refunded")
+  sale.refunded_total = (sale.refunded_total ?? 0) + refunded
+  const allRefunded = sale.lines.every(
+    (line) => (line.refunded_qty ?? 0) >= (line.qty ?? 1)
+  )
   sale.status = allRefunded ? "refunded" : "part_refunded"
 
   const customer = DEMO_SALE_CUSTOMERS.find((row) => row.id === sale.customer)
@@ -306,10 +331,11 @@ export function todayStats(): TodayStats {
   let itemsOut = 0
   for (const sale of sales) {
     if (sale.status === "refunded") continue
-    salesTotal += sale.total ?? 0
-    itemsOut += sale.lines
-      .filter((line) => line.status !== "refunded")
-      .reduce((count, line) => count + (line.qty ?? 0), 0)
+    salesTotal += (sale.total ?? 0) - (sale.refunded_total ?? 0)
+    itemsOut += sale.lines.reduce(
+      (count, line) => count + ((line.qty ?? 0) - (line.refunded_qty ?? 0)),
+      0
+    )
     for (const [method, amount] of Object.entries(sale.payment_split ?? {})) {
       const key = method as keyof TodayStats["salesByPayment"]
       salesByPayment[key] = (salesByPayment[key] ?? 0) + (amount ?? 0)

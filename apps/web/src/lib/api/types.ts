@@ -512,6 +512,8 @@ export interface SaleRecord extends BaseRecord {
   sumup_ref?: string
   cash_session?: string
   points_earned?: number
+  /** Pence refunded so far. A refund never rewrites the original total. */
+  refunded_total?: number
   status?: SaleStatus
 }
 
@@ -520,6 +522,12 @@ export interface SaleLineRecord extends BaseRecord {
   sale: string
   item: string
   qty?: number
+  /**
+   * How many of `qty` have gone back. `qty` and `discount` are never
+   * rewritten, so a line with `refunded_qty` above zero and a status still
+   * "sold" is part refunded.
+   */
+  refunded_qty?: number
   unit_price?: number
   discount?: number
   vat_rate?: number

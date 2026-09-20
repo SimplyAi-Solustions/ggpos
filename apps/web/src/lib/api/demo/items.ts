@@ -68,10 +68,17 @@ function historyFor(item: StockItemRecord): ItemEvent[] {
     for (const line of sale.lines) {
       if (line.item !== item.id) continue
       events.push({
-        kind: line.status === "refunded" ? "refunded" : "sold",
+        kind: "sold",
         at: sale.created ?? new Date().toISOString(),
-        detail: line.status === "refunded" ? `Refunded on ${sale.number}` : `Sold on ${sale.number}`,
+        detail: `Sold on ${sale.number}`,
       })
+      if ((line.refunded_qty ?? 0) > 0) {
+        events.push({
+          kind: "refunded",
+          at: sale.created ?? new Date().toISOString(),
+          detail: `Refunded on ${sale.number}`,
+        })
+      }
     }
   }
 

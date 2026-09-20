@@ -248,18 +248,32 @@ export function summarise(state: BasketState): BasketTotals {
         ? applyPercent(subtotal, state.manualDiscount.value)
         : 0
 
+  // A reward is the whole discount on a sale: the completion route checks
+  // that `discount` equals the reward's value, so a perk or a manual amount
+  // steps aside while one is applied rather than stacking on top of it.
   const voucher = voucherDiscountFor(state.voucher)
-  const discount = Math.min(subtotal, perk.amount + manual + voucher)
+  const perkApplied = voucher > 0 ? 0 : perk.amount
+  const manualApplied = voucher > 0 ? 0 : manual
+  const discount = Math.min(
+    subtotal,
+    voucher > 0 ? voucher : perkApplied + manualApplied
+  )
   const total = subtotal - discount
 
   const source: DiscountSource | null =
-    voucher > 0 ? "reward" : manual > 0 ? "manual" : perk.amount > 0 ? "tier_perk" : null
+    voucher > 0
+      ? "reward"
+      : manualApplied > 0
+        ? "manual"
+        : perkApplied > 0
+          ? "tier_perk"
+          : null
 
   return {
     subtotal,
-    perkPercent: perk.percent,
-    perkDiscount: perk.amount,
-    manualDiscount: manual,
+    perkPercent: voucher > 0 ? 0 : perk.percent,
+    perkDiscount: perkApplied,
+    manualDiscount: manualApplied,
     voucherDiscount: voucher,
     discount,
     discountSource: source,
@@ -337,6 +351,10 @@ export function checkPayment(
 
   if (totals.total === 0 && state.lines.length === 0) {
     problems.push("Scan an item to start a sale.")
+  }
+
+  if (state.voucher && state.customer?.id !== state.voucher.customer) {
+    problems.push("A reward needs the customer it was issued to on the sale.")
   }
 
   if (state.payment === "mixed" && summed !== totals.total) {
