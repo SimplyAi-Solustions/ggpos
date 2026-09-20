@@ -10,6 +10,7 @@
 import { Link } from "@tanstack/react-router"
 import { displayCode, encodeCode, formatGBP } from "@gg/shared"
 
+import { poundsCell } from "@/features/reports/csv"
 import type { ReportKey, ReportRow } from "@/lib/api/types"
 import { formatDay } from "@/features/reports/range"
 import type { ChartTone } from "@/features/reports/charts"
@@ -81,9 +82,10 @@ export function moneyColumn(
     label,
     numeric: true,
     text: (row) => formatGBP(num(row, key)),
-    // Pounds and pence from integer pence, with no symbol: the CSV is a
-    // spreadsheet's input, not a receipt.
-    csv: (row) => num(row, key) / 100,
+    // Pounds and pence from integer pence, with no symbol, and never a
+    // float: 500 / 100 is 5 and writes "5", not "5.00". The shared writer
+    // is the same one the server's own exports go through.
+    csv: (row) => poundsCell(num(row, key)),
     sortValue: (row) => num(row, key),
     summary,
   }
@@ -140,6 +142,14 @@ const ID_TYPES: Record<string, string> = {
   passport: "Passport",
   driving_licence: "Driving licence",
   other: "Other",
+}
+
+const AGEING_BUCKETS: Record<string, string> = {
+  "0-30": "0 to 30",
+  "31-90": "31 to 90",
+  "91-180": "91 to 180",
+  "180+": "Over 180",
+  unknown: "Date not known",
 }
 
 const PERK_TYPES: Record<string, string> = {
@@ -214,6 +224,8 @@ export interface PanelSpec {
   heading: string
   empty: string
   columns: ColumnSpec[]
+  /** When the rows are items, the frame their thumbnail is drawn in. */
+  imagePlatform?: string
 }
 
 export interface ReportSpec {
@@ -392,7 +404,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         heading: "How long it is held",
         empty: "Nothing is in stock.",
         columns: [
-          textColumn("bucket", "Days held", "title"),
+          mappedColumn("bucket", "Days held", AGEING_BUCKETS, "title"),
           countColumn("count", "Items", "detail"),
           moneyColumn("value_cost", "At cost"),
           moneyColumn("value_market", "At market", "figure"),
@@ -413,6 +425,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         totalsKey: "dead_stock",
         heading: "Held over 180 days",
         empty: "Nothing has been on the shelf over 180 days.",
+        imagePlatform: "tcg_card",
         columns: [
           skuColumn(),
           textColumn("title", "Item", "title"),
@@ -448,6 +461,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
         totalsKey: "listing_ages",
         heading: "Listed on eBay now",
         empty: "Nothing is listed on eBay.",
+        imagePlatform: "tcg_card",
         columns: [
           skuColumn(),
           textColumn("title", "Item", "title"),

@@ -7,7 +7,7 @@
  * decision. The verdicts here are the importer's published rules, so a row
  * this says will be skipped is a row the import will report as skipped.
  */
-import { formatGBP } from "@gg/shared"
+import { formatGBP, parseDecimalToMinor } from "@gg/shared"
 
 import { MicroLabel } from "@/components/ui/micro-label"
 import {
@@ -53,10 +53,15 @@ const FIELD_LABELS: Record<string, string> = {
   currency: "Currency",
 }
 
+/**
+ * The cell as money when it reads as money, and exactly as written when it
+ * does not. The shared parser, never a float multiply: "12.34" is 1234
+ * pence through string arithmetic, and anything it refuses is shown raw so
+ * staff can see what the file actually says.
+ */
 function priceText(raw: string): string {
-  const cleaned = raw.replace(/[^\d.-]/g, "")
-  const pence = Math.round(Number(cleaned) * 100)
-  return Number.isFinite(pence) && cleaned !== "" ? formatGBP(pence) : raw
+  const pence = parseDecimalToMinor(raw)
+  return pence === null ? raw : formatGBP(pence)
 }
 
 export function ImportPreview({

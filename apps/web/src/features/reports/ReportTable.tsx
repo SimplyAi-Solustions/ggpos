@@ -94,13 +94,17 @@ export function ReportTable({
 
   return (
     <div data-testid={testId}>
-      {/* From 900px: the table. */}
-      <div className="hidden min-[900px]:block">
+      {/* From 900px: the table, in its own scrollport so the heading row
+          has something to stick to. Without one, `sticky top-0` sticks to
+          the page and a long table's heading scrolls away regardless. */}
+      <div className="hidden max-h-[70vh] overflow-y-auto min-[900px]:block">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((group) => (
               <TableRow key={group.id} className="hover:bg-transparent">
-                {imagePlatform ? <TableHead className="w-14" /> : null}
+                {imagePlatform ? (
+                  <TableHead className="sticky top-0 z-10 w-14 bg-background" />
+                ) : null}
                 {group.headers.map((header) => {
                   const column = columns.find((entry) => entry.key === header.id)
                   const sorted = header.column.getIsSorted()

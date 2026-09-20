@@ -2,12 +2,16 @@
  * The report charts: one series chart, one heatmap, both drawn in the five
  * chart tokens and nothing else.
  *
- * DESIGN.md's rules, made literal here: bars and lines in ink, the
- * comparison period in `--chart-4`, one highlight series in volt
- * (`--chart-5`); hairline axes, no filled areas, no gradients, no rounded bar
- * caps; ticks in Space Mono at the micro-label size; money through
- * `formatGBP`; and no animation at all when the reader has asked for less
- * motion.
+ * DESIGN.md's rules, made literal here: bars and lines in ink, a second
+ * series and the comparison period in `--chart-3`, one highlight series in
+ * volt (`--chart-5`); hairline axes, no filled areas, no gradients, no
+ * rounded bar caps; ticks in Space Mono at the micro-label size; money
+ * through `formatGBP`; and no animation at all when the reader has asked for
+ * less motion.
+ *
+ * `--chart-4` draws gridlines and an empty heatmap cell and nothing else: at
+ * ink 8 percent it is a surface tone, not a series colour, and a comparison
+ * period drawn in it is a bar nobody can see.
  *
  * Every chart is a `<figure>` whose caption is a hidden sentence carrying the
  * headline figures, and the chart itself is hidden from the reading order:
@@ -91,7 +95,7 @@ export function SeriesChart({
 
   const axis = (
     <>
-      <CartesianGrid vertical={false} stroke="var(--hairline-faint)" />
+      <CartesianGrid vertical={false} stroke="var(--chart-4)" />
       <XAxis
         dataKey="label"
         tickLine={false}
@@ -119,7 +123,13 @@ export function SeriesChart({
           />
         }
       />
-      {series.length > 1 ? <ChartLegend content={<ChartLegendContent />} /> : null}
+      {series.length > 1 ? (
+        // The order the series were declared in, primary first, rather than
+        // whatever order Recharts happens to hand the payload back in.
+        <ChartLegend
+          content={<ChartLegendContent order={series.map((entry) => entry.key)} />}
+        />
+      ) : null}
     </>
   )
 
@@ -187,6 +197,21 @@ export interface HeatmapProps {
   className?: string
 }
 
+/** The slot with the most sales in it, for the hidden summary. */
+export function busiestSlot(
+  rows: number[][]
+): { day: string; hour: number; count: number } | null {
+  let best: { day: string; hour: number; count: number } | null = null
+  rows.forEach((hours, day) => {
+    hours.forEach((count, hour) => {
+      if (count > 0 && (best === null || count > best.count)) {
+        best = { day: WEEKDAYS[day] ?? "", hour, count }
+      }
+    })
+  })
+  return best
+}
+
 export function Heatmap({ rows, summary, className }: HeatmapProps) {
   const max = Math.max(0, ...rows.flat())
 
@@ -204,7 +229,7 @@ export function Heatmap({ rows, summary, className }: HeatmapProps) {
                   key={hour}
                   title={`${WEEKDAYS[day]} ${String(hour).padStart(2, "0")}:00, ${count} sales`}
                   className="h-5 flex-1 border border-hairline-faint bg-foreground"
-                  style={{ opacity: stepFor(count, max) || 0.04 }}
+                  style={{ opacity: stepFor(count, max) || 0.06 }}
                 />
               ))}
             </div>

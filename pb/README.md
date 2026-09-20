@@ -64,6 +64,8 @@ concern per file:
 | `..._stock_counts_one_open.js` | A partial unique index, `stock_counts (location) WHERE status = 'open'` - only one count may be open per location at once, same shape as `cash_sessions`' one-open-session index. The unique violation this can raise on create is mapped to a plain 409 by `stockcounts.pb.js`'s own `onRecordCreateRequest` hook |
 | `..._phase4_exports_imports_sumup.js` | `sales.channel` (`counter` \| `ebay`) and `sales.external_ref`; `settings.import_mappings` (seeded with the Card Uploader and eBay orders mapping skeletons from `docs/csv-formats.md`) and `settings.sumup` (`{ merchant_code }`); merges an empty `api_keys.sumup` into the existing `api_keys` blob, same pattern as `..._phase3_adapter_state.js`'s `offer.ebayHaircutPct` |
 | `..._phase4_stats_reports_hardening.js` | `daily_stats.sales_refunded` (the net-of-refunds field every report's revenue reads - `docs/api-contract.md`'s Phase 4 section); `items.listed_at` (set by `items.pb.js`'s own hook, backfilled here to `updated` for every row already `listed_ebay`); tightens `saved_reports`' rules - a staff member may only touch their own rows, and setting `recipients` or `schedule` needs `role = "admin"` regardless of whose row it is |
+| `..._csv_imports_review_link.js` | `csv_imports.resolved_rows` (json) and `.rows_skipped` (number), for `POST /api/vault/imports/:id/link` (`imports.pb.js`) |
+| `..._csv_imports_sumup_write_rules.js` | `csv_imports.updateRule` becomes admin-only (every staff write now goes through the import routes); `sumup_transactions.updateRule` lets a staff member set `matched_sale` only (`@request.body.<field>:isset = false` on every other field), admin unrestricted |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -205,10 +207,10 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/exports/end-listings.csv` | Sold items that still carry an `ebay_listing_id`. |
 | `POST /api/vault/items/end-listings` | `{ ids }` - clears `ebay_listing_id`/`ebay_sku` on each and audits. |
 | `POST /api/vault/imports/card-uploader`, `/imports/ebay-orders` | Multipart CSV imports; one `$app.runInTransaction` per file. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
-| `GET /api/vault/imports/:id` | The `csv_imports` row with its `errors`, for the review screen. |
+| `GET /api/vault/imports/:id` | The `csv_imports` row with its `errors`, for the review screen. A staff token can no longer `PATCH` a `csv_imports` row directly (admin only); every write goes through this file's routes. |
 | `POST /api/vault/imports/:id/link` | `{ row, card }` links one "needs match" row by hand through the same three-path rule the import itself uses; `{ row, skip: true }` dismisses it. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
 | `POST /api/vault/sumup/pull` | **admin**. Also runs hourly - see `crons_sumup.pb.js`. |
-| `GET /api/vault/sumup/reconcile?date` | The day's SumUp transactions beside the day's card sales, for the Cash screen. |
+| `GET /api/vault/sumup/reconcile?date` | The day's SumUp transactions beside the day's card sales, for the Cash screen. A manual match off this list is a plain `PATCH /api/collections/sumup_transactions/:id { matched_sale }` - the only field a staff token may set there; every other field needs `role = "admin"`. |
 | `GET /api/vault/lookup`, `/lookup/:game/:set/:number`, `/retro/lookup` | Catalogue and retro-title search, writing through to `cards`/`card_sets`/`retro_titles`. See "Card and price adapters" below. |
 | `GET`/`POST /api/vault/cards/:id/prices`, `/refresh-prices`, `/uk-comp`; `GET /api/vault/retro/:id/prices` | Valuation, reading (GET) or writing (POST) `price_snapshots`. See "Card and price adapters" below. |
 | `GET /api/vault/fx` | The latest `fx_rates` row. |
@@ -606,12 +608,15 @@ time window, a second pull (run as the `sumup_pull` cron,
 `POST /api/crons/sumup_pull`) upserting in place rather than duplicating
 either, `GET /api/vault/sumup/reconcile` returning matched and unmatched
 lists with totals, and a non-admin refused the pull but not the reconcile.
-Last, `POST /api/vault/imports/:id/link`: linking a review row to a card
+Then `POST /api/vault/imports/:id/link`: linking a review row to a card
 already in stock (no duplicate item, cost untouched), linking one to a
 card with nothing in stock (a new item, with the same zero-cost review
 note the automatic import itself would leave), skipping a row, a second
 link of an already-resolved row refused with 409, and an unknown row
-refused with 404.
+refused with 404. Last, the tightened write rules: a staff `PATCH` of
+`csv_imports.errors` refused (404), a staff `PATCH` of
+`sumup_transactions.matched_sale` accepted (the counter screen's manual
+match), and a staff `PATCH` of `sumup_transactions.amount` refused.
 
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),

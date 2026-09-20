@@ -166,21 +166,33 @@ const ChartLegend = RechartsPrimitive.Legend
 function ChartLegendContent({
   className,
   payload,
+  order,
 }: {
   className?: string
   payload?: TooltipPayloadEntry[]
+  /** The series keys in the order the caller declared them. */
+  order?: string[]
 }) {
   const { config } = useChart()
   if (!payload?.length) return null
+
+  const entries = payload.filter((item) => item.type !== "none")
+  // Recharts hands the payload back in its own order; the caller's is the
+  // one that means something, so the primary series is named first.
+  const sorted = order
+    ? [...entries].sort(
+        (left, right) =>
+          order.indexOf(String(left.dataKey ?? left.name ?? "")) -
+          order.indexOf(String(right.dataKey ?? right.name ?? ""))
+      )
+    : entries
 
   return (
     <div
       data-slot="chart-legend"
       className={cn("flex flex-wrap items-center gap-x-8 gap-y-2 pt-4", className)}
     >
-      {payload
-        .filter((item) => item.type !== "none")
-        .map((item, index) => {
+      {sorted.map((item, index) => {
           const key = String(item.dataKey ?? item.name ?? index)
           return (
             <span
@@ -190,7 +202,7 @@ function ChartLegendContent({
               {config[key]?.label ?? key}
             </span>
           )
-        })}
+      })}
     </div>
   )
 }
