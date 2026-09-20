@@ -15,6 +15,8 @@ import { expect, test, type Page } from "@playwright/test"
 const DEMO_EMAIL = "jasmine.okafor@example.co.uk"
 const DEMO_CODE = "48213976"
 const DEMO_QR_TOKEN = "demo-4k7m2-token"
+/** Jasmine's own card code, which is also her referral code. */
+const DEMO_CUSTOMER_CODE = "GGC-4K7M2S"
 /** The second demo card: an email, and no store credit to block an erasure. */
 const DEMO_NO_CREDIT_EMAIL = "tom.bradbury@example.co.uk"
 
@@ -253,6 +255,184 @@ test.describe("credit and trade-ins", () => {
   })
 })
 
+test.describe("the Guild", () => {
+  test("shows the tier, the wallet and the referral code", async ({ page }) => {
+    await signIn(page)
+
+    // Reached from the card, which is where a customer starts.
+    await page.getByRole("link", { name: "Guild", exact: true }).click()
+    await expect(page.getByRole("heading", { name: "GG Guild" })).toBeVisible()
+
+    await expect(page.getByTestId("guild-tier")).toHaveText("Regular")
+    await expect(page.getByTestId("guild-progress")).toHaveText(
+      "5,920 points to Legend"
+    )
+    await expect(page.getByTestId("guild-membership")).toContainText(
+      "Regular membership. Renews on"
+    )
+    await expect(page.getByTestId("guild-balance")).toHaveText("2,180")
+
+    // The wallet says each perk in words, and counts the monthly ones.
+    const perks = page.getByTestId("perk-list")
+    await expect(perks).toContainText("5% off sealed product")
+    await expect(perks).toContainText("1.25x points")
+    await expect(perks).toContainText("Free event entries")
+    await expect(perks).toContainText("1 of 2 used this month")
+    await expect(perks).toContainText("3 of 12 used this month")
+
+    await expect(page.getByTestId("referral-code")).toHaveText(DEMO_CUSTOMER_CODE)
+    await expect(
+      page.getByText(
+        "You both get 250 points after their first buy-in or purchase."
+      )
+    ).toBeVisible()
+    await expect(
+      page.getByText(
+        "2 friends have earned you points, and 1 is still to make their first visit."
+      )
+    ).toBeVisible()
+  })
+
+  test("copies the code on a browser with no share sheet", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"])
+    await signIn(page)
+    await page.goto("/account/guild")
+
+    // Chromium here has no `navigator.share`, so the button says what it
+    // will really do rather than offering a sheet that cannot open.
+    await page.getByRole("button", { name: "Copy my code" }).click()
+    await expect(page.getByTestId("share-result")).toHaveText("Code copied.")
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(DEMO_CUSTOMER_CODE)
+  })
+
+  test("lists every points row with the balance it left", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/points")
+
+    await expect(page.getByRole("heading", { name: "Points" })).toBeVisible()
+    await expect(page.getByTestId("points-balance")).toHaveText("2,180")
+
+    const rows = page.getByTestId("points-list").getByRole("listitem")
+    await expect(rows.first()).toContainText("Earned on a £33.00 sale")
+    await expect(rows.first()).toContainText("+330")
+    await expect(rows.first()).toContainText("2,180 after")
+
+    // Spending points is a row like any other, and carries its own sign.
+    const spent = rows.filter({ hasText: "Redeemed for Free booster pack" })
+    await expect(spent).toContainText("-500")
+    await expect(rows.filter({ hasText: "Welcome bonus" })).toContainText("+100")
+  })
+})
+
+test.describe("rewards", () => {
+  test("says in the list why one cannot be redeemed yet", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+
+    await expect(page.getByRole("heading", { name: "Rewards" })).toBeVisible()
+    await expect(page.getByTestId("rewards-points")).toHaveText("2,180")
+
+    const list = page.getByTestId("reward-list")
+    await expect(list).toContainText("You need 5,000 points and have 2,180.")
+    await expect(list).toContainText("None left at the moment.")
+    await expect(list).toContainText("You have had this one already.")
+  })
+
+  test("offers no button at all on one they cannot have", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page.getByTestId("reward-row").filter({ hasText: "Retro shelf pick" }).click()
+
+    await expect(
+      page.getByRole("heading", { name: "Retro shelf pick" })
+    ).toBeVisible()
+    await expect(page.getByTestId("reward-refusal")).toHaveText(
+      "You need 5,000 points and have 2,180."
+    )
+    await expect(page.getByRole("button", { name: /^Redeem/ })).toHaveCount(0)
+  })
+
+  test("redeems one and shows the voucher with its QR", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page
+      .getByTestId("reward-row")
+      .filter({ hasText: "Free booster pack" })
+      .click()
+
+    await expect(page.getByTestId("reward-cost")).toHaveText("500 points")
+    await primary(page, "Redeem for 500 points").click()
+
+    const confirm = page.getByRole("dialog", { name: "Redeem this reward" })
+    await expect(confirm).toContainText("You would have 1,680 left")
+    await confirm.getByRole("button", { name: "Redeem", exact: true }).click()
+
+    const voucher = page.getByRole("dialog", { name: "Your voucher" })
+    await expect(voucher).toContainText("Ready to use")
+    await expect(voucher).toContainText("Show this at the counter.")
+    await expect(voucher).toContainText("GGV-V00081")
+    await expect(voucher.getByRole("img", { name: /^Voucher GGV-/ })).toBeVisible()
+    await voucher.getByRole("button", { name: "Done" }).click()
+
+    // The points went with it, and the voucher is on the list.
+    await expect(page.getByRole("dialog")).toBeHidden()
+    await page.goto("/account/rewards")
+    await expect(page.getByTestId("rewards-points")).toHaveText("1,680")
+    await expect(page.getByTestId("voucher-row")).toHaveCount(4)
+  })
+
+  test("puts store credit on the account instead of a code", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page
+      .getByTestId("reward-row")
+      .filter({ hasText: "£5 store credit" })
+      .click()
+
+    await primary(page, "Redeem for 750 points").click()
+    const confirm = page.getByRole("dialog", { name: "Redeem this reward" })
+    await expect(confirm).toContainText("goes onto your account straight away")
+    await confirm.getByRole("button", { name: "Redeem", exact: true }).click()
+
+    const voucher = page.getByRole("dialog", { name: "Your voucher" })
+    await expect(voucher).toContainText(
+      "paid £5.00 of store credit onto your account"
+    )
+    await expect(voucher.getByRole("img", { name: /^Voucher/ })).toHaveCount(0)
+
+    await voucher.getByRole("link", { name: "See my credit" }).click()
+    await expect(page.getByTestId("credit-balance")).toHaveText("£50.00")
+  })
+
+  test("shows an issued code again, and says which ones are spent", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+
+    const rows = page.getByTestId("voucher-row")
+    await expect(rows).toHaveCount(3)
+    // Status in words, never a colour on its own.
+    await expect(rows.filter({ hasText: "Tournament entry" })).toContainText(
+      "Expired"
+    )
+    await expect(rows.filter({ hasText: "GG lanyard" })).toContainText("Used")
+
+    await rows
+      .filter({ hasText: "Free booster pack" })
+      .getByRole("button", { name: "Show code" })
+      .click()
+    const sheet = page.getByRole("dialog", { name: "Free booster pack" })
+    await expect(sheet).toContainText("GGV-7QB2MW")
+    await expect(sheet.getByRole("img", { name: "Voucher GGV-7QB2MW" })).toBeVisible()
+  })
+})
+
 test.describe("notifications", () => {
   test("counts the unread ones in the nav and clears them on open", async ({ page }) => {
     await signIn(page)
@@ -278,6 +458,20 @@ test.describe("notifications", () => {
     await page.getByRole("link", { name: /Charizard ex 199\/165 is in/ }).click()
     await expect(page.getByRole("heading", { name: "Want list" })).toBeVisible()
     await expect(page).toHaveURL(/\/account\/wants$/)
+  })
+
+  test("opens the Guild and the points history from a Guild row", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/account/notifications")
+
+    await page.getByRole("link", { name: /You are now a Regular/ }).click()
+    await expect(page.getByRole("heading", { name: "GG Guild" })).toBeVisible()
+
+    await page.goto("/account/notifications")
+    await page.getByRole("link", { name: /points expire on/ }).click()
+    await expect(page.getByRole("heading", { name: "Points" })).toBeVisible()
   })
 
   test("opens the quote a notification points at", async ({ page }) => {

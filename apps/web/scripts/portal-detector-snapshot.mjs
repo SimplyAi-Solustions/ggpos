@@ -41,6 +41,11 @@ const PRIVATE_ROUTES = [
   ["credit", "/account/credit"],
   ["trade-ins", "/account/trade-ins"],
   ["trade-in", "/account/trade-ins/trade_demo_portal"],
+  ["guild", "/account/guild"],
+  ["rewards", "/account/rewards"],
+  ["reward", "/account/rewards/reward_booster"],
+  ["reward-refused", "/account/rewards/reward_retro"],
+  ["points", "/account/points"],
   ["profile", "/account/me"],
   ["notifications", "/account/notifications"],
 ]

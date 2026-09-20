@@ -41,6 +41,11 @@ const SCREENS = [
   { name: "credit", path: "/account/credit" },
   { name: "trade-ins", path: "/account/trade-ins" },
   { name: "trade-in", path: "/account/trade-ins/trade_demo_portal" },
+  { name: "guild", path: "/account/guild" },
+  { name: "rewards", path: "/account/rewards" },
+  { name: "reward", path: "/account/rewards/reward_booster" },
+  { name: "reward-refused", path: "/account/rewards/reward_retro" },
+  { name: "points", path: "/account/points" },
   { name: "profile", path: "/account/me" },
   { name: "notifications", path: "/account/notifications" },
   { name: "estimate", path: "/account/estimate" },
@@ -134,6 +139,26 @@ for (const mode of MODES) {
       await page.getByTestId("quote-photo-input").setInputFiles([photo, photo, photo])
       await page.getByLabel("Message").fill("Four holos and a boxed SNES game.")
       await shoot(page, `portal-quote-new-filled-${mode}-${viewport.name}`)
+      await context.close()
+    }
+    // The voucher, which only a redemption reaches, and the code a
+    // customer comes back for days later.
+    {
+      const { context, page } = await open(
+        mode,
+        viewport,
+        "/account/rewards/reward_booster",
+        { signedIn: true }
+      )
+      await page
+        .getByRole("button", { name: "Redeem for 500 points" })
+        .filter({ visible: true })
+        .click()
+      const sheet = page.getByRole("dialog", { name: "Redeem this reward" })
+      await shoot(page, `portal-reward-confirm-${mode}-${viewport.name}`)
+      await sheet.getByRole("button", { name: "Redeem", exact: true }).click()
+      await page.getByRole("dialog", { name: "Your voucher" }).waitFor()
+      await shoot(page, `portal-voucher-${mode}-${viewport.name}`)
       await context.close()
     }
     // The two sheets on the profile screen.
