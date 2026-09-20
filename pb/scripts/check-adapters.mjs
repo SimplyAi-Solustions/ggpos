@@ -1,0 +1,653 @@
+#!/usr/bin/env node
+// Unit tests for pb/pb_hooks/adapters/*.js against recorded (or, where a
+// key is needed, hand-written) fixtures. No PocketBase, no network:
+//
+//   node --test pb/scripts/check-adapters.mjs
+//
+// Every adapter is CommonJS (pb_hooks cannot load TypeScript - see
+// CLAUDE.md's "Hooks"), and every outbound call goes through
+// adapters/http.js's request(req, transport), so each test below passes
+// its own `transport` function reading a fixture instead of calling the
+// network. `global.__hooks` is set once, below, to this repo's real
+// pb_hooks directory: every adapter requires its neighbours with
+// `require(`${__hooks}/...`)`, exactly the convention the rest of pb_hooks
+// uses (see pb/README.md), and Node's own require() accepts that absolute
+// path directly - no relative-path resolution to get right across two
+// different module loaders (goja's and Node's).
+//
+// Fixtures (pb_hooks/adapters/fixtures/), recorded live through the
+// configured proxy on 2026-09-20 unless the name says HANDWRITTEN:
+//   tcgdex_sv151_199.json                     GET /v2/en/sets/sv03.5/199
+//   tcgdex_search_charizard.json              GET /v2/en/cards?name=charizard (trimmed to 5)
+//   scryfall_blb_223.json                     GET /cards/blb/223 (trimmed to used fields)
+//   ygoprodeck_46986414.json                  GET /cardinfo.php?id=46986414 (card_sets trimmed to 5)
+//   ygoprodeck_46986421.json                  GET /cardinfo.php?id=46986421 (the CT13-EN003 printing; trimmed)
+//   ygoprodeck_cardsetsinfo_CT13-EN003.json   GET /cardsetsinfo.php?setcode=CT13-EN003
+//   optcg_OP01-001.json                       GET /api/sets/card/OP01-001/
+//   lorcast_1_1.json                          GET /v0/cards/1/1
+//   frankfurter_gbp_latest.json               GET /v1/latest?base=GBP&symbols=EUR,USD
+// Hand-written (no key available on this build - see each fixture's own
+// "_fixture_note" and pb/README.md):
+//   igdb_HANDWRITTEN_oauth_token.json, igdb_HANDWRITTEN_games_search.json
+//   pricecharting_HANDWRITTEN_products_search_{pal,ntsc,empty}.json,
+//     pricecharting_HANDWRITTEN_product_{pal,ntsc}.json
+//   ebay_HANDWRITTEN_oauth_token.json, ebay_HANDWRITTEN_item_summary_search.json
+"use strict";
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const hooksDir = path.resolve(__dirname, "..", "pb_hooks");
+const fixturesDir = path.join(hooksDir, "adapters", "fixtures");
+
+// The one piece of environment every adapter needs outside PocketBase -
+// see the file banner above and adapters/http.js.
+global.__hooks = hooksDir;
+
+const nodeRequire = createRequire(import.meta.url);
+
+function fixture(name) {
+  return JSON.parse(fs.readFileSync(path.join(fixturesDir, name), "utf8"));
+}
+
+/** A fresh instance of an adapter module, cache cleared like a goja require() would be. */
+function adapter(name) {
+  const p = path.join(hooksDir, "adapters", name);
+  delete nodeRequire.cache[nodeRequire.resolve(p)];
+  return nodeRequire(p);
+}
+
+function sharedLib(name) {
+  return nodeRequire(path.join(hooksDir, "lib", "shared", name));
+}
+
+// =======================================================================
+// TCGdex (Pokemon) - recorded fixtures
+// =======================================================================
+
+test("tcgdex.getBySetNumber: parsed shape, ids, image URLs", () => {
+  const tcgdex = adapter("tcgdex.js");
+  const transport = (req) => {
+    assert.equal(req.url, "https://api.tcgdex.net/v2/en/sets/sv03.5/199");
+    assert.equal(req.headers["User-Agent"], "GGVault/1.0 (+https://vault.ggentertainment.co.uk)");
+    return { statusCode: 200, json: fixture("tcgdex_sv151_199.json") };
+  };
+  const card = tcgdex.getBySetNumber("sv03.5", "199", transport);
+  assert.equal(card.number, "199");
+  assert.equal(card.name, "Charizard ex");
+  assert.equal(card.setCode, "sv03.5");
+  assert.equal(card.setName, "151");
+  assert.equal(card.rehostImage, false, "TCGdex images may be hotlinked");
+  assert.equal(card.tcgplayerId, "517045");
+  assert.equal(card.cardmarketId, "733794");
+  assert.match(card.imageLarge, /\/high\.webp$/);
+  assert.match(card.imageSmall, /\/low\.webp$/);
+});
+
+test("tcgdex.getPrices: cardmarket EUR + tcgplayer USD, decimal strings converted half-up at a fixed rate", () => {
+  const tcgdex = adapter("tcgdex.js");
+  const money = sharedLib("money.js");
+  const transport = () => ({ statusCode: 200, json: fixture("tcgdex_sv151_199.json") });
+
+  const prices = tcgdex.getPrices({ setCode: "sv03.5", number: "199" }, "holo", transport);
+  const cardmarket = prices.find((p) => p.source === "cardmarket");
+  const tcgplayer = prices.find((p) => p.source === "tcgplayer");
+
+  assert.equal(cardmarket.currency, "EUR");
+  assert.equal(typeof cardmarket.market, "string", "EUR prices are decimal strings, never floats");
+  assert.equal(cardmarket.market, "368.3");
+  assert.equal(tcgplayer.currency, "USD");
+  assert.equal(typeof tcgplayer.market, "string");
+  assert.equal(tcgplayer.market, "359.87");
+
+  assert.equal(money.eurDecimalToGbpPence(cardmarket.market, 0.86), 31674);
+  assert.equal(
+    money.convertMinorToGbpPence(money.parseDecimalToMinor(tcgplayer.market), "USD", 0.75),
+    26990
+  );
+});
+
+test("tcgdex.search: compact rows, set/number split off the id's last hyphen", () => {
+  const tcgdex = adapter("tcgdex.js");
+  const rows = tcgdex.search("charizard", () => ({
+    statusCode: 200,
+    json: fixture("tcgdex_search_charizard.json"),
+  }));
+  assert.equal(rows.length, 5);
+  const withHyphenatedSet = rows.find((r) => r.externalIds.tcgdex === "30th-c-001");
+  assert.equal(withHyphenatedSet.setCode, "30th-c");
+  assert.equal(withHyphenatedSet.number, "001");
+});
+
+test("tcgdex.getImage: reuses an already-known image without a second call", () => {
+  const tcgdex = adapter("tcgdex.js");
+  const transport = () => {
+    throw new Error("should not be called - getImage had the URLs already");
+  };
+  const image = tcgdex.getImage(
+    { imageSmall: "https://x/low.webp", imageLarge: "https://x/high.webp" },
+    transport
+  );
+  assert.equal(image.rehost, false);
+  assert.equal(image.large, "https://x/high.webp");
+});
+
+// =======================================================================
+// Scryfall (MTG) - recorded fixture
+// =======================================================================
+
+test("scryfall.getBySetNumber: parsed shape, ids, currency", () => {
+  const scryfall = adapter("scryfall.js");
+  const transport = (req) => {
+    assert.equal(req.url, "https://api.scryfall.com/cards/blb/223");
+    return { statusCode: 200, json: fixture("scryfall_blb_223.json") };
+  };
+  const card = scryfall.getBySetNumber("blb", "223", transport);
+  assert.equal(card.number, "223");
+  assert.equal(card.name, "Lunar Convocation");
+  assert.equal(card.setCode, "blb");
+  assert.equal(card.setName, "Bloomburrow");
+  assert.equal(card.rarity, "rare");
+  assert.equal(card.rehostImage, false);
+  assert.equal(card.tcgplayerId, "559480");
+  assert.equal(card.cardmarketId, "778438");
+});
+
+test("scryfall.getPrices: eur + usd decimal strings, converted half-up at a fixed rate", () => {
+  const scryfall = adapter("scryfall.js");
+  const money = sharedLib("money.js");
+  const transport = () => ({ statusCode: 200, json: fixture("scryfall_blb_223.json") });
+
+  const prices = scryfall.getPrices({ setCode: "blb", number: "223" }, "nonfoil", transport);
+  const cardmarket = prices.find((p) => p.source === "cardmarket");
+  const tcgplayer = prices.find((p) => p.source === "tcgplayer");
+  assert.equal(cardmarket.currency, "EUR");
+  assert.equal(cardmarket.market, "0.80");
+  assert.equal(tcgplayer.currency, "USD");
+  assert.equal(tcgplayer.market, "0.81");
+
+  assert.equal(money.eurDecimalToGbpPence(cardmarket.market, 0.86), 69);
+  assert.equal(
+    money.convertMinorToGbpPence(money.parseDecimalToMinor(tcgplayer.market), "USD", 0.75),
+    61
+  );
+});
+
+// =======================================================================
+// YGOPRODeck (Yu-Gi-Oh!) - recorded fixtures. Images must be re-hosted.
+// =======================================================================
+
+test("ygoprodeck.getBySetNumber: resolves a set code via cardsetsinfo, then re-hosts the image", () => {
+  const ygoprodeck = adapter("ygoprodeck.js");
+  const calls = [];
+  const transport = (req) => {
+    calls.push(req.url);
+    if (req.url.indexOf("cardsetsinfo.php") >= 0) {
+      return { statusCode: 200, json: fixture("ygoprodeck_cardsetsinfo_CT13-EN003.json") };
+    }
+    if (req.url.indexOf("cardinfo.php?id=46986421") >= 0) {
+      return { statusCode: 200, json: fixture("ygoprodeck_46986421.json") };
+    }
+    if (req.url.indexOf("images.ygoprodeck.com") >= 0) {
+      return { statusCode: 200, body: [1, 2, 3] }; // stand-in JPEG bytes
+    }
+    throw new Error("unexpected YGOPRODeck URL: " + req.url);
+  };
+
+  const card = ygoprodeck.getBySetNumber("CT13", "EN003", transport);
+  assert.equal(card.name, "Dark Magician");
+  assert.equal(card.setCode, "CT13");
+  assert.equal(card.number, "EN003");
+  assert.equal(card.setName, "2016 Mega-Tins");
+  assert.equal(card.rarity, "Ultra Rare");
+  assert.equal(
+    card.rehostImage,
+    true,
+    "YGOPRODeck images must never be hotlinked - hotlinking gets IPs banned"
+  );
+  assert.equal(card.imageSmall, "", "the bare provider URL must never reach image_small");
+  assert.equal(card.imageLarge, "", "the bare provider URL must never reach image_large");
+  assert.deepEqual(card.imageBytes, [1, 2, 3]);
+  assert.ok(card.imageFilename);
+  assert.ok(calls.some((u) => u.indexOf("cardsetsinfo.php") >= 0));
+  assert.ok(calls.some((u) => u.indexOf("images.ygoprodeck.com") >= 0));
+});
+
+test("ygoprodeck.getPrices: cardmarket EUR (overall) + tcgplayer USD (this printing's set_price)", () => {
+  const ygoprodeck = adapter("ygoprodeck.js");
+  const money = sharedLib("money.js");
+  const transport = (req) => {
+    if (req.url.indexOf("cardsetsinfo.php") >= 0) {
+      return { statusCode: 200, json: fixture("ygoprodeck_cardsetsinfo_CT13-EN003.json") };
+    }
+    if (req.url.indexOf("cardinfo.php") >= 0) {
+      return { statusCode: 200, json: fixture("ygoprodeck_46986421.json") };
+    }
+    return { statusCode: 200, body: [1] };
+  };
+  const card = ygoprodeck.getBySetNumber("CT13", "EN003", transport);
+  const prices = ygoprodeck.getPrices(card, null, transport);
+  const cardmarket = prices.find((p) => p.source === "cardmarket");
+  const tcgplayer = prices.find((p) => p.source === "tcgplayer");
+
+  assert.equal(cardmarket.currency, "EUR");
+  assert.equal(cardmarket.market, "0.02");
+  assert.equal(tcgplayer.currency, "USD");
+  assert.equal(tcgplayer.market, "6.97", "the CT13-EN003 printing's own set_price, not the overall tcgplayer_price");
+
+  assert.equal(money.eurDecimalToGbpPence(cardmarket.market, 0.86), 2);
+  assert.equal(
+    money.convertMinorToGbpPence(money.parseDecimalToMinor(tcgplayer.market), "USD", 0.75),
+    523
+  );
+});
+
+test("ygoprodeck.search: a lightweight listing that never carries a hotlinked image", () => {
+  const ygoprodeck = adapter("ygoprodeck.js");
+  const rows = ygoprodeck.search("dark magician", () => ({
+    statusCode: 200,
+    json: fixture("ygoprodeck_46986414.json"),
+  }));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "Dark Magician");
+  assert.equal(rows[0].rehostImage, true);
+  assert.equal(rows[0].imageSmall, "");
+  assert.equal(rows[0].imageLarge, "");
+});
+
+// =======================================================================
+// OPTCG (One Piece) - recorded fixture. Image cached locally.
+// =======================================================================
+
+test("optcg.getBySetNumber: picks the base printing over its parallel, re-hosts the image", () => {
+  const optcg = adapter("optcg.js");
+  const transport = (req) => {
+    if (req.url.indexOf("/sets/card/") >= 0) return { statusCode: 200, json: fixture("optcg_OP01-001.json") };
+    if (req.url.indexOf("Card_Images") >= 0) return { statusCode: 200, body: [9, 9, 9] };
+    throw new Error("unexpected OPTCG URL: " + req.url);
+  };
+  const card = optcg.getBySetNumber("OP01", "001", transport);
+  assert.equal(card.number, "OP01-001");
+  assert.equal(card.setCode, "OP-01");
+  assert.equal(card.setName, "Romance Dawn");
+  assert.equal(card.rehostImage, true, "OPTCG images are cached locally, never hotlinked");
+  assert.deepEqual(card.imageBytes, [9, 9, 9]);
+  assert.equal(card.marketPriceUsd, 2.09);
+});
+
+test("optcg.getPrices: market_price as a decimal string, safe from float drift", () => {
+  const optcg = adapter("optcg.js");
+  const money = sharedLib("money.js");
+  const transport = () => ({ statusCode: 200, json: fixture("optcg_OP01-001.json") });
+  const card = optcg.getBySetNumber("OP01", "001", transport);
+  const prices = optcg.getPrices(card, null, transport);
+  assert.equal(prices.length, 1);
+  assert.equal(prices[0].currency, "USD");
+  assert.equal(typeof prices[0].market, "string");
+  assert.equal(prices[0].market, "2.09");
+  assert.equal(money.convertMinorToGbpPence(money.parseDecimalToMinor(prices[0].market), "USD", 0.75), 157);
+});
+
+// =======================================================================
+// Lorcast (Disney Lorcana) - recorded fixture
+// =======================================================================
+
+test("lorcast.getBySetNumber + getPrices: parsed shape and usd decimal string", () => {
+  const lorcast = adapter("lorcast.js");
+  const money = sharedLib("money.js");
+  const transport = (req) => {
+    assert.equal(req.url, "https://api.lorcast.com/v0/cards/1/1");
+    return { statusCode: 200, json: fixture("lorcast_1_1.json") };
+  };
+  const card = lorcast.getBySetNumber("1", "1", transport);
+  assert.equal(card.number, "1");
+  assert.equal(card.name, "Ariel - On Human Legs");
+  assert.equal(card.setCode, "1");
+  assert.equal(card.setName, "The First Chapter");
+  assert.equal(card.tcgplayerId, "494102");
+  assert.equal(card.rehostImage, false);
+
+  const prices = lorcast.getPrices(card, "normal", transport);
+  assert.equal(prices.length, 1);
+  assert.equal(prices[0].source, "tcgplayer");
+  assert.equal(prices[0].currency, "USD");
+  assert.equal(prices[0].market, "0.12");
+  assert.equal(money.convertMinorToGbpPence(money.parseDecimalToMinor(prices[0].market), "USD", 0.75), 9);
+});
+
+// =======================================================================
+// Frankfurter (FX)
+// =======================================================================
+
+test("frankfurter.fetchRates: inverts to GBP-per-unit (packages/shared's own convention)", () => {
+  const frankfurter = adapter("frankfurter.js");
+  const transport = (req) => {
+    assert.match(req.url, /base=GBP/);
+    assert.match(req.url, /symbols=EUR%2CUSD/);
+    return { statusCode: 200, json: fixture("frankfurter_gbp_latest.json") };
+  };
+  const rates = frankfurter.fetchRates(["EUR", "USD"], transport);
+  assert.equal(rates.base, "GBP");
+  assert.ok(Math.abs(rates.quotes.EUR - 0.8588114050154585) < 1e-9);
+  assert.ok(Math.abs(rates.quotes.USD - 0.749400479616307) < 1e-9);
+  assert.equal(rates.date, "2026-09-18");
+});
+
+// =======================================================================
+// eBay - median of the five lowest GBP/GB asking prices, then the haircut.
+// Hand-written fixtures (no Browse API production access on this build).
+// =======================================================================
+
+test("ebay.parseListings + medianAskingCandidate: filters to GBP/GB, medians the five lowest, applies the haircut", () => {
+  const ebay = adapter("ebay.js");
+  const listings = ebay.parseListings(fixture("ebay_HANDWRITTEN_item_summary_search.json"));
+
+  // 9 rows in the fixture; only the 7 GBP/GB ones may count.
+  const eligible = listings.filter((l) => l.currency === "GBP" && l.country === "GB");
+  assert.equal(eligible.length, 7);
+
+  const candidate = ebay.medianAskingCandidate(listings, 15);
+  assert.equal(candidate.sampleSize, 5, "the five lowest, not all seven");
+  assert.equal(candidate.medianPence, 1500, "median of 1000,1200,1500,1800,2000 is 1500");
+  assert.equal(candidate.afterHaircutPence, 1275, "15% off 1500 is 1275, half-up");
+});
+
+test("ebay.getPrices: end to end through a stub OAuth token and search, source order and shape", () => {
+  const ebay = adapter("ebay.js");
+  const statestore = adapter("statestore.js");
+  const transport = (req) => {
+    if (req.url.indexOf("oauth2/token") >= 0) {
+      assert.equal(req.method, "POST");
+      return { statusCode: 200, json: fixture("ebay_HANDWRITTEN_oauth_token.json") };
+    }
+    if (req.url.indexOf("item_summary/search") >= 0) {
+      assert.equal(req.headers["X-EBAY-C-MARKETPLACE-ID"], "EBAY_GB");
+      return { statusCode: 200, json: fixture("ebay_HANDWRITTEN_item_summary_search.json") };
+    }
+    throw new Error("unexpected eBay URL: " + req.url);
+  };
+
+  const prices = ebay.getPrices(
+    statestore.memory(),
+    { client_id: "id", client_secret: "secret" },
+    "Test Card NM",
+    "test-cache-key",
+    15,
+    transport
+  );
+  assert.equal(prices.length, 1);
+  assert.equal(prices[0].source, "ebay_uk_asking");
+  assert.equal(prices[0].currency, "GBP");
+  assert.equal(prices[0].market, "12.75");
+});
+
+test("ebay.getPrices: switched off entirely with no key (PLAN.md)", () => {
+  const ebay = adapter("ebay.js");
+  const statestore = adapter("statestore.js");
+  const transport = () => {
+    throw new Error("must not call out with no api key configured");
+  };
+  const prices = ebay.getPrices(statestore.memory(), null, "anything", "key", 15, transport);
+  assert.deepEqual(prices, []);
+});
+
+test("ebay.getPrices: the 24-hour cache skips a second call entirely (globalThis.__adapterTransport override)", () => {
+  const ebay = adapter("ebay.js");
+  const statestore = adapter("statestore.js");
+  const store = statestore.memory();
+  let calls = 0;
+  // Demonstrates the *other* override path (adapters/http.js falls back to
+  // globalThis.__adapterTransport when no transport argument is given),
+  // not just passing one explicitly like every other test here.
+  global.__adapterTransport = (req) => {
+    calls += 1;
+    if (req.url.indexOf("oauth2/token") >= 0) return { statusCode: 200, json: fixture("ebay_HANDWRITTEN_oauth_token.json") };
+    return { statusCode: 200, json: fixture("ebay_HANDWRITTEN_item_summary_search.json") };
+  };
+  try {
+    const first = ebay.getPrices(store, { client_id: "id", client_secret: "s" }, "q", "cache-key-2", 15);
+    const callsAfterFirst = calls;
+    const second = ebay.getPrices(store, { client_id: "id", client_secret: "s" }, "q", "cache-key-2", 15);
+    assert.deepEqual(second, first);
+    assert.equal(calls, callsAfterFirst, "the second call must be served from the 24-hour cache");
+  } finally {
+    delete global.__adapterTransport;
+  }
+});
+
+// =======================================================================
+// PriceCharting - PAL first, NTSC only when PAL has no entry. Hand-written
+// fixtures (no PriceCharting key on this build).
+// =======================================================================
+
+test("pricecharting.getPrices: PAL first when a PAL entry exists, integer US cents throughout", () => {
+  const pricecharting = adapter("pricecharting.js");
+  const calls = [];
+  const transport = (req) => {
+    calls.push(req.url);
+    if (req.url.indexOf("/products?") >= 0) {
+      assert.match(req.url, /pal-super-nintendo/, "PAL category must be searched first");
+      return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_pal.json") };
+    }
+    if (req.url.indexOf("/product?") >= 0) {
+      return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_product_pal.json") };
+    }
+    throw new Error("unexpected PriceCharting URL: " + req.url);
+  };
+  const prices = pricecharting.getPrices("key", "Super Mario Kart", "snes_pal_box", "cib", transport);
+  assert.equal(prices.length, 1);
+  assert.equal(prices[0].source, "pricecharting_pal");
+  assert.equal(prices[0].currency, "USD");
+  assert.equal(typeof prices[0].market, "number", "PriceCharting is integer cents, never a string");
+  assert.equal(prices[0].market, 2500, "cib-price, in cents");
+  assert.ok(!calls.some((u) => u.indexOf("super-nintendo") >= 0 && u.indexOf("pal-") < 0), "must never fall through to NTSC when PAL matched");
+
+  const money = sharedLib("money.js");
+  assert.equal(money.usdCentsToGbpPence(prices[0].market, 0.75), 1875);
+});
+
+test("pricecharting.getPrices: falls back to NTSC only when PAL has no entry", () => {
+  const pricecharting = adapter("pricecharting.js");
+  const transport = (req) => {
+    if (req.url.indexOf("/products?") >= 0 && req.url.indexOf("pal-super-nintendo") >= 0) {
+      return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_empty.json") };
+    }
+    if (req.url.indexOf("/products?") >= 0) {
+      return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_products_search_ntsc.json") };
+    }
+    if (req.url.indexOf("/product?") >= 0 && req.url.indexOf("ntsc-") >= 0) {
+      return { statusCode: 200, json: fixture("pricecharting_HANDWRITTEN_product_ntsc.json") };
+    }
+    throw new Error("unexpected PriceCharting URL: " + req.url);
+  };
+  const prices = pricecharting.getPrices("key", "Super Mario Kart", "snes_pal_box", "cib", transport);
+  assert.equal(prices.length, 1);
+  assert.equal(prices[0].source, "pricecharting_ntsc");
+  assert.equal(prices[0].market, 1800);
+
+  const money = sharedLib("money.js");
+  assert.equal(money.usdCentsToGbpPence(prices[0].market, 0.75), 1350);
+});
+
+test("pricecharting.getPrices: switched off entirely with no key configured", () => {
+  const pricecharting = adapter("pricecharting.js");
+  const prices = pricecharting.getPrices(null, "Anything", "snes_pal_box", "cib", () => {
+    throw new Error("must not call out with no api key configured");
+  });
+  assert.deepEqual(prices, []);
+});
+
+test("pricecharting.priceField: our loose/boxed/cib completeness maps onto PriceCharting's two price tiers", () => {
+  const pricecharting = adapter("pricecharting.js");
+  assert.equal(pricecharting.priceField("loose"), "loose-price");
+  assert.equal(pricecharting.priceField("boxed"), "cib-price");
+  assert.equal(pricecharting.priceField("cib"), "cib-price");
+});
+
+// =======================================================================
+// IGDB - hand-written fixtures (no key on this build)
+// =======================================================================
+
+test("igdb.search: token fetched once and cached, Apicalypse body, parsed shape", () => {
+  const igdb = adapter("igdb.js");
+  const statestore = adapter("statestore.js");
+  const store = statestore.memory();
+  let tokenCalls = 0;
+  const transport = (req) => {
+    if (req.url.indexOf("id.twitch.tv") >= 0) {
+      tokenCalls += 1;
+      return { statusCode: 200, json: fixture("igdb_HANDWRITTEN_oauth_token.json") };
+    }
+    if (req.url.indexOf("api.igdb.com") >= 0) {
+      assert.equal(req.headers["Client-ID"], "client123");
+      assert.match(req.body, /search "super mario"/);
+      return { statusCode: 200, json: fixture("igdb_HANDWRITTEN_games_search.json") };
+    }
+    throw new Error("unexpected IGDB URL: " + req.url);
+  };
+
+  const first = igdb.search(store, "client123", "secret", "super mario", igdb.platformIgdbId("snes_pal_box"), transport);
+  const second = igdb.search(store, "client123", "secret", "super mario", null, transport);
+  assert.equal(tokenCalls, 1, "the Twitch token is cached between calls");
+  assert.equal(first.length, 2);
+  assert.equal(first[0].name, "Super Mario Kart");
+  assert.deepEqual(first[0].platformNames, ["Super Nintendo Entertainment System"]);
+  assert.match(first[0].cover, /^https:\/\/images\.igdb\.com\//);
+  assert.equal(second.length, 2);
+});
+
+// =======================================================================
+// The shared source order is UK first, in both directions
+// =======================================================================
+
+test("packages/shared's default source priority puts a UK sold comp first, for cards and for retro", () => {
+  const pricing = sharedLib("pricing.js");
+  assert.equal(pricing.DEFAULT_TCG_PRIORITY[0], "uk_sold_manual");
+  assert.equal(pricing.DEFAULT_RETRO_PRIORITY[0], "uk_sold_manual");
+  assert.deepEqual(pricing.DEFAULT_TCG_PRIORITY, [
+    "uk_sold_manual",
+    "ebay_uk_asking",
+    "cardmarket",
+    "tcgplayer",
+  ]);
+  assert.deepEqual(pricing.DEFAULT_RETRO_PRIORITY, [
+    "uk_sold_manual",
+    "pricecharting_pal",
+    "ebay_uk_asking",
+    "pricecharting_ntsc",
+  ]);
+});
+
+// =======================================================================
+// Live smoke (GG_ADAPTER_SMOKE=1): calls the keyless sources for real, for
+// the exact cards named in the brief, and prints what came back. Skips
+// cleanly - no tests registered at all - without the flag.
+// =======================================================================
+
+if (process.env.GG_ADAPTER_SMOKE === "1") {
+  // adapters/http.js falls through to a real `$http.send` when no
+  // transport is given and no override global is set - that binding only
+  // exists inside PocketBase, so the smoke run provides its own, backed by
+  // `curl` (already how this session's outbound HTTPS goes through the
+  // configured proxy, and every adapter's own functions are synchronous to
+  // match goja's synchronous $http.send, which rules out Node's own
+  // (Promise-based) fetch here).
+  global.$os = { getenv: () => "" };
+  global.$http = {
+    send(cfg) {
+      const args = ["-sS", "-i", "-L", "--max-time", String(Math.ceil(cfg.timeout || 20)), "-X", cfg.method || "GET"];
+      const headers = cfg.headers || {};
+      for (const key of Object.keys(headers)) args.push("-H", `${key}: ${headers[key]}`);
+      if (cfg.body) args.push("--data-raw", cfg.body);
+      args.push(cfg.url);
+      // Buffer, not a string: an image adapter (YGOPRODeck, OPTCG) fetches
+      // raw JPEG bytes through this same path, and decoding those as UTF-8
+      // to split on a blank line first would corrupt them. `-L` follows the
+      // one redirect Frankfurter's old .app host now issues.
+      const out = execFileSync("curl", args, { maxBuffer: 20 * 1024 * 1024 });
+      // With -L, a redirect prints one header block per hop; only the last
+      // "header block, blank line, body" split (found from the end) is the
+      // final response.
+      const marker = Buffer.from("\r\n\r\n");
+      let splitAt = out.lastIndexOf(marker);
+      if (splitAt < 0) splitAt = out.lastIndexOf(Buffer.from("\n\n"));
+      const headerText = (splitAt >= 0 ? out.subarray(0, splitAt) : out).toString("latin1");
+      const bodyBuffer = splitAt >= 0 ? out.subarray(splitAt + marker.length) : Buffer.alloc(0);
+      // -L (and the proxy's own CONNECT tunnel banner) can print more than
+      // one "HTTP/... status" line before the final response's own; the
+      // last one is the one that actually answers this request.
+      const headerLines = headerText.split(/\r?\n/);
+      const statusLine = [...headerLines].reverse().find((l) => /^HTTP\/\d/.test(l)) || "";
+      const statusMatch = statusLine.match(/\s(\d{3})\b/);
+      const statusCode = statusMatch ? Number(statusMatch[1]) : 0;
+      let json = null;
+      try {
+        json = JSON.parse(bodyBuffer.toString("utf8"));
+      } catch (err) {
+        json = null;
+      }
+      return { statusCode, json, headers: {}, body: Array.from(bodyBuffer) };
+    },
+  };
+
+  test("[smoke] tcgdex sv151(=sv03.5)/199", async () => {
+    const tcgdex = adapter("tcgdex.js");
+    const card = tcgdex.getBySetNumber("sv03.5", "199");
+    console.log("[smoke] tcgdex image:", card && card.imageLarge);
+    console.log("[smoke] tcgdex prices:", card && JSON.stringify(tcgdex.getPrices(card, "holo")));
+    assert.ok(card, "tcgdex returned no card for sv03.5/199");
+  });
+
+  test("[smoke] scryfall blb/223", async () => {
+    const scryfall = adapter("scryfall.js");
+    const card = scryfall.getBySetNumber("blb", "223");
+    console.log("[smoke] scryfall image:", card && card.imageLarge);
+    console.log("[smoke] scryfall prices:", card && JSON.stringify(scryfall.getPrices(card, "nonfoil")));
+    assert.ok(card, "scryfall returned no card for blb/223");
+  });
+
+  test("[smoke] ygoprodeck passcode 46986414", async () => {
+    const ygoprodeck = adapter("ygoprodeck.js");
+    // cardinfo.php's `fname` is a fuzzy *name* search, not a betcode/passcode
+    // lookup, so the smoke check for the named passcode goes straight to
+    // the id lookup search() is built on internally.
+    const http = adapter("http.js");
+    const res = http.request({ url: "https://db.ygoprodeck.com/api/v7/cardinfo.php?id=46986414", method: "GET" });
+    const card = res.json && res.json.data && res.json.data[0];
+    console.log("[smoke] ygoprodeck card:", card && card.name, "image:", card && card.card_images && card.card_images[0] && card.card_images[0].image_url);
+
+    const rows = ygoprodeck.search("Dark Magician");
+    console.log("[smoke] ygoprodeck search('Dark Magician') rows:", rows.length);
+    assert.ok(card, "ygoprodeck returned no card for passcode 46986414");
+  });
+
+  test("[smoke] optcg OP01-001", async () => {
+    const optcg = adapter("optcg.js");
+    const card = optcg.getBySetNumber("OP01", "001");
+    console.log("[smoke] optcg image bytes:", card && card.imageBytes && card.imageBytes.length);
+    console.log("[smoke] optcg prices:", card && JSON.stringify(optcg.getPrices(card)));
+    assert.ok(card, "optcg returned no card for OP01-001");
+  });
+
+  test("[smoke] lorcast 1/1", async () => {
+    const lorcast = adapter("lorcast.js");
+    const card = lorcast.getBySetNumber("1", "1");
+    console.log("[smoke] lorcast image:", card && card.imageLarge);
+    console.log("[smoke] lorcast prices:", card && JSON.stringify(lorcast.getPrices(card, "normal")));
+    assert.ok(card, "lorcast returned no card for 1/1");
+  });
+
+  test("[smoke] frankfurter latest GBP rates", async () => {
+    const frankfurter = adapter("frankfurter.js");
+    const rates = frankfurter.fetchRates(["EUR", "USD"]);
+    console.log("[smoke] frankfurter rates:", JSON.stringify(rates));
+    assert.ok(rates.quotes.EUR > 0 && rates.quotes.USD > 0);
+  });
+}

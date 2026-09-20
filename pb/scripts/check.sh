@@ -104,7 +104,7 @@ echo
 "$PB" --dir "$TMP_DIR" superuser upsert "$SUPER_EMAIL" "$SUPER_PASSWORD" >/dev/null
 ok "superuser created"
 
-GG_ID_PHOTO_KEY="$ID_PHOTO_KEY" "$PB" serve \
+GG_ID_PHOTO_KEY="$ID_PHOTO_KEY" GG_ADAPTER_TRANSPORT_MODE="offline_fail" "$PB" serve \
   --dir "$TMP_DIR" \
   --hooksDir "$HOOKS_DIR" \
   --migrationsDir "$MIGRATIONS_DIR" \
@@ -1811,6 +1811,115 @@ echo "$OVERRIDE_AUDIT" | grep -qF "$OVERRIDE_LINE_ID" || fail "the audit meta do
 echo "$OVERRIDE_AUDIT" | grep -qF "$PLAIN_LINE_ID" && fail "the audit meta names a line that was not overridden"
 echo "$OVERRIDE_AUDIT" | grep -qF "water damaged" && fail "the override reason reached audit_log; it belongs on the line row only"
 ok "the audit meta lists the overridden line ids and never the reason"
+
+# -----------------------------------------------------------------------
+# 19. Phase 3: lookup, prices and FX - route-level checks that need no
+#     network at all. The server was started above with
+#     GG_ADAPTER_TRANSPORT_MODE=offline_fail (pb_hooks/adapters/http.js),
+#     so any route that mistakenly called an adapter out to the real
+#     network would throw and this section's own status/shape assertions
+#     would catch it immediately, rather than the check silently passing
+#     because a live call happened to succeed.
+# -----------------------------------------------------------------------
+
+# --- 19a. GET /api/vault/fx reports stale with no rows at all -----------
+# Nothing anywhere in this script writes to fx_rates (that is the daily
+# cron's job - crons.pb.js), so this holds wherever it runs.
+FX_EMPTY_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/fx")"
+[ "$(echo "$FX_EMPTY_JSON" | jval stale)" = "true" ] || fail "GET /api/vault/fx with no fx_rates rows did not report stale: $FX_EMPTY_JSON"
+[ "$(echo "$FX_EMPTY_JSON" | jval fetched_at)" = "" ] || fail "GET /api/vault/fx with no fx_rates rows returned a fetched_at: $FX_EMPTY_JSON"
+[ "$(echo "$FX_EMPTY_JSON" | jval base)" = "GBP" ] || fail "GET /api/vault/fx did not default base to GBP: $FX_EMPTY_JSON"
+ok "GET /api/vault/fx reports stale with an empty rates object when no fx_rates row exists"
+
+# --- 19b. The lookup route serves a fresh card straight from the database,
+#     with no outbound call at all -----------------------------------
+P3_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"code\":\"p3-fresh-set\",\"name\":\"Phase 3 Fresh Set\"}" | jval id)"
+[ -n "$P3_SET_ID" ] || fail "could not create the Phase 3 check's card_sets row"
+
+NOW_ISO="$(node -e 'process.stdout.write(new Date().toISOString())')"
+P3_FRESH_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"199\",\"name\":\"Cached Charizard\",\"last_synced\":\"$NOW_ISO\"}" | jval id)"
+[ -n "$P3_FRESH_CARD_ID" ] || fail "could not create the Phase 3 check's fresh cards row"
+
+LOOKUP_RESP="$(curl -s -w '\n%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup/pokemon/p3-fresh-set/199")"
+LOOKUP_STATUS="$(echo "$LOOKUP_RESP" | tail -n1)"
+LOOKUP_BODY="$(echo "$LOOKUP_RESP" | sed '$d')"
+[ "$LOOKUP_STATUS" = "200" ] || fail "a fresh cached lookup returned $LOOKUP_STATUS, expected 200 (did it try to call out under GG_ADAPTER_TRANSPORT_MODE=offline_fail?): $LOOKUP_BODY"
+[ "$(echo "$LOOKUP_BODY" | jval "cards.0.id")" = "$P3_FRESH_CARD_ID" ] || fail "the cached lookup did not return the expected card: $LOOKUP_BODY"
+[ "$(echo "$LOOKUP_BODY" | jval "cards.0.set_name")" = "Phase 3 Fresh Set" ] || fail "the cached lookup row is missing its set_name: $LOOKUP_BODY"
+ok "the lookup route serves a card whose last_synced is fresh straight from the database, with no outbound call"
+
+# The free-text search's "set number" form goes through the exact same
+# cached path (registry.js's parseSetNumberQuery), so it must be equally
+# network-free for a fresh row.
+LOOKUP_Q_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/lookup?game=pokemon&q=p3-fresh-set%20199")"
+[ "$(echo "$LOOKUP_Q_JSON" | jval "cards.0.id")" = "$P3_FRESH_CARD_ID" ] || fail "the 'set number' search form did not hit the cache: $LOOKUP_Q_JSON"
+ok "a 'set number' search query uses the same cache-first path as the exact lookup route"
+
+# --- 19c. uk-comp writes a price_snapshots row and is chosen first ------
+P3_UKCOMP_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"200\",\"name\":\"UK Comp Card\"}" | jval id)"
+
+UKCOMP_BAD_URL_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/cards/$P3_UKCOMP_CARD_ID/uk-comp" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"finish\":\"holo\",\"condition\":\"NM\",\"price\":5000,\"url\":\"https://www.ebay.com/itm/123\",\"sold_at\":\"$TODAY\"}")"
+[ "$UKCOMP_BAD_URL_STATUS" = "400" ] || fail "a non-ebay.co.uk uk-comp url returned $UKCOMP_BAD_URL_STATUS, expected 400"
+UKCOMP_OLD_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/cards/$P3_UKCOMP_CARD_ID/uk-comp" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"finish\":\"holo\",\"condition\":\"NM\",\"price\":5000,\"url\":\"https://www.ebay.co.uk/itm/123\",\"sold_at\":\"2020-01-01\"}")"
+[ "$UKCOMP_OLD_STATUS" = "400" ] || fail "a uk-comp sold more than 30 days ago returned $UKCOMP_OLD_STATUS, expected 400"
+ok "uk-comp refuses a non-ebay.co.uk url and a sale older than 30 days, both with 400"
+
+UKCOMP_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/cards/$P3_UKCOMP_CARD_ID/uk-comp" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"finish\":\"holo\",\"condition\":\"NM\",\"price\":5000,\"url\":\"https://www.ebay.co.uk/itm/123456789012\",\"sold_at\":\"$TODAY\"}")"
+UKCOMP_STATUS="$(echo "$UKCOMP_RESP" | tail -n1)"
+UKCOMP_BODY="$(echo "$UKCOMP_RESP" | sed '$d')"
+[ "$UKCOMP_STATUS" = "200" ] || fail "uk-comp returned $UKCOMP_STATUS, expected 200: $UKCOMP_BODY"
+[ "$(echo "$UKCOMP_BODY" | jval "chosen.source")" = "uk_sold_manual" ] || fail "uk-comp was not chosen first: $UKCOMP_BODY"
+[ "$(echo "$UKCOMP_BODY" | jval "chosen.gbp_market")" = "5000" ] || fail "uk-comp's chosen gbp_market is '$(echo "$UKCOMP_BODY" | jval "chosen.gbp_market")', expected 5000"
+[ "$(echo "$UKCOMP_BODY" | jval "chosen.native_currency")" = "GBP" ] || fail "uk-comp's native_currency is not GBP: $UKCOMP_BODY"
+[ "$(echo "$UKCOMP_BODY" | jval "chosen.evidence_url")" = "https://www.ebay.co.uk/itm/123456789012" ] || fail "uk-comp did not keep the listing's evidence_url"
+
+UKCOMP_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22uk_comp%22" -H "Authorization: $SUPER_TOKEN")"
+echo "$UKCOMP_AUDIT" | grep -qF "$P3_UKCOMP_CARD_ID" || fail "the uk-comp audit row does not name the card: $UKCOMP_AUDIT"
+ok "uk-comp writes a price_snapshots row, is chosen first ahead of every other source, and is audited"
+
+# --- 19d. The prices route converts a foreign amount and puts the GBP ---
+#     figure beside it, and flags a stale row rather than hiding it ------
+P3_GBP_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"201\",\"name\":\"Native Beside GBP Card\"}" | jval id)"
+NOW_ISO_2="$(node -e 'process.stdout.write(new Date().toISOString())')"
+curl -s -o /dev/null -X POST "$BASE/api/collections/price_snapshots/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"card\":\"$P3_GBP_CARD_ID\",\"finish\":\"\",\"source\":\"cardmarket\",\"native_currency\":\"EUR\",\"native_low\":1500,\"native_mid\":1600,\"native_market\":1650,\"native_trend\":1700,\"fx_rate\":0.8606,\"fx_date\":\"$TODAY\",\"gbp_market\":1420,\"fetched_at\":\"$NOW_ISO_2\",\"evidence_url\":\"\"}"
+
+PRICES_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/cards/$P3_GBP_CARD_ID/prices")"
+[ "$(echo "$PRICES_JSON" | jval "chosen.source")" = "cardmarket" ] || fail "the prices route did not choose the only source available: $PRICES_JSON"
+[ "$(echo "$PRICES_JSON" | jval "chosen.native_currency")" = "EUR" ] || fail "the prices route lost the native currency: $PRICES_JSON"
+[ "$(echo "$PRICES_JSON" | jval "chosen.native_market")" = "1650" ] || fail "the prices route lost the native amount: $PRICES_JSON"
+[ "$(echo "$PRICES_JSON" | jval "chosen.gbp_market")" = "1420" ] || fail "the prices route did not put a GBP figure beside the native amount: $PRICES_JSON"
+[ "$(echo "$PRICES_JSON" | jval "chosen.stale")" = "false" ] || fail "a snapshot fetched moments ago was flagged stale: $PRICES_JSON"
+ok "the prices route returns the native amount with its GBP conversion beside it"
+
+P3_STALE_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"game\":\"$GAME_ID\",\"set\":\"$P3_SET_ID\",\"number\":\"202\",\"name\":\"Stale Row Card\"}" | jval id)"
+TEN_DAYS_AGO_ISO="$(node -e 'const d = new Date(); d.setUTCDate(d.getUTCDate() - 10); process.stdout.write(d.toISOString())')"
+curl -s -o /dev/null -X POST "$BASE/api/collections/price_snapshots/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"card\":\"$P3_STALE_CARD_ID\",\"finish\":\"\",\"source\":\"cardmarket\",\"native_currency\":\"EUR\",\"native_market\":1000,\"fx_rate\":0.86,\"fx_date\":\"$TODAY\",\"gbp_market\":860,\"fetched_at\":\"$TEN_DAYS_AGO_ISO\",\"evidence_url\":\"\"}"
+
+STALE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/cards/$P3_STALE_CARD_ID/prices")"
+[ "$(echo "$STALE_JSON" | jval "sources.0.source")" = "cardmarket" ] || fail "the stale-row check did not find its cardmarket source: $STALE_JSON"
+[ "$(echo "$STALE_JSON" | jval "sources.0.stale")" = "true" ] || fail "a cardmarket row 10 days old was not flagged stale (3-day freshness window): $STALE_JSON"
+[ "$(echo "$STALE_JSON" | jval "sources.0.gbp_market")" = "860" ] || fail "a stale row's figure was hidden rather than returned: $STALE_JSON"
+ok "a price past its source's freshness window is flagged stale rather than hidden"
 
 echo
 echo "All checks passed ($PASS_COUNT)."

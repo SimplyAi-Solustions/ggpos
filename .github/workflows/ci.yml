@@ -89,3 +89,16 @@ jobs:
           else
             echo "pb/scripts/check.sh does not exist yet - nothing to run."
           fi
+
+      - name: Run pb/scripts/check-adapters.mjs
+        # Unit tests for pb_hooks/adapters/*.js against recorded fixtures -
+        # no PocketBase, no network (see pb/README.md, "Card and price
+        # adapters"). `pb` is not a pnpm workspace package, so this is a
+        # plain `node` invocation rather than `pnpm --filter`.
+        run: |
+          set -euo pipefail
+          if [ -f pb/scripts/check-adapters.mjs ]; then
+            node --test pb/scripts/check-adapters.mjs
+          else
+            echo "pb/scripts/check-adapters.mjs does not exist yet - nothing to run."
+          fi

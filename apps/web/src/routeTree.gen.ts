@@ -22,6 +22,7 @@ import { Route as CounterLabelsRouteImport } from "./routes/counter.labels"
 import { Route as CounterReportsRouteImport } from "./routes/counter.reports"
 import { Route as CounterScanRouteImport } from "./routes/counter.scan"
 import { Route as CounterSellRouteImport } from "./routes/counter.sell"
+import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
 import { Route as CounterCustomersIndexRouteImport } from "./routes/counter.customers.index"
 import { Route as CounterCustomersNewRouteImport } from "./routes/counter.customers.new"
@@ -32,6 +33,8 @@ import { Route as CounterTradeIndexRouteImport } from "./routes/counter.trade.in
 import { Route as CounterTradeNewRouteImport } from "./routes/counter.trade.new"
 import { Route as CounterCustomersCodeIndexRouteImport } from "./routes/counter.customers.$code.index"
 import { Route as CounterCustomersCodeCardRouteImport } from "./routes/counter.customers.$code.card"
+import { Route as CounterStockCountIndexRouteImport } from "./routes/counter.stock.count.index"
+import { Route as CounterStockCountIdRouteImport } from "./routes/counter.stock.count.$id"
 import { Route as CounterTradeIdIndexRouteImport } from "./routes/counter.trade.$id.index"
 import { Route as CounterTradeIdReceiptRouteImport } from "./routes/counter.trade.$id.receipt"
 
@@ -100,6 +103,11 @@ const CounterSellRoute = CounterSellRouteImport.update({
   path: "/sell",
   getParentRoute: () => CounterRoute,
 } as any)
+const CounterSettingsRoute = CounterSettingsRouteImport.update({
+  id: "/settings",
+  path: "/settings",
+  getParentRoute: () => CounterRoute,
+} as any)
 const LabelsPrintRoute = LabelsPrintRouteImport.update({
   id: "/labels/print",
   path: "/labels/print",
@@ -152,6 +160,16 @@ const CounterCustomersCodeCardRoute =
     path: "/customers/$code/card",
     getParentRoute: () => CounterRoute,
   } as any)
+const CounterStockCountIndexRoute = CounterStockCountIndexRouteImport.update({
+  id: "/stock/count/",
+  path: "/stock/count/",
+  getParentRoute: () => CounterRoute,
+} as any)
+const CounterStockCountIdRoute = CounterStockCountIdRouteImport.update({
+  id: "/stock/count/$id",
+  path: "/stock/count/$id",
+  getParentRoute: () => CounterRoute,
+} as any)
 const CounterTradeIdIndexRoute = CounterTradeIdIndexRouteImport.update({
   id: "/trade/$id/",
   path: "/trade/$id/",
@@ -176,6 +194,7 @@ export interface FileRoutesByFullPath {
   "/counter/reports": typeof CounterReportsRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
+  "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/counter/": typeof CounterIndexRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
@@ -186,8 +205,10 @@ export interface FileRoutesByFullPath {
   "/counter/stock/": typeof CounterStockIndexRoute
   "/counter/trade/": typeof CounterTradeIndexRoute
   "/counter/customers/$code/card": typeof CounterCustomersCodeCardRoute
+  "/counter/stock/count/$id": typeof CounterStockCountIdRoute
   "/counter/trade/$id/receipt": typeof CounterTradeIdReceiptRoute
   "/counter/customers/$code/": typeof CounterCustomersCodeIndexRoute
+  "/counter/stock/count/": typeof CounterStockCountIndexRoute
   "/counter/trade/$id/": typeof CounterTradeIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -202,6 +223,7 @@ export interface FileRoutesByTo {
   "/counter/reports": typeof CounterReportsRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
+  "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/counter": typeof CounterIndexRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
@@ -212,8 +234,10 @@ export interface FileRoutesByTo {
   "/counter/stock": typeof CounterStockIndexRoute
   "/counter/trade": typeof CounterTradeIndexRoute
   "/counter/customers/$code/card": typeof CounterCustomersCodeCardRoute
+  "/counter/stock/count/$id": typeof CounterStockCountIdRoute
   "/counter/trade/$id/receipt": typeof CounterTradeIdReceiptRoute
   "/counter/customers/$code": typeof CounterCustomersCodeIndexRoute
+  "/counter/stock/count": typeof CounterStockCountIndexRoute
   "/counter/trade/$id": typeof CounterTradeIdIndexRoute
 }
 export interface FileRoutesById {
@@ -230,6 +254,7 @@ export interface FileRoutesById {
   "/counter/reports": typeof CounterReportsRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
+  "/counter/settings": typeof CounterSettingsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/counter/": typeof CounterIndexRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
@@ -240,8 +265,10 @@ export interface FileRoutesById {
   "/counter/stock/": typeof CounterStockIndexRoute
   "/counter/trade/": typeof CounterTradeIndexRoute
   "/counter/customers/$code/card": typeof CounterCustomersCodeCardRoute
+  "/counter/stock/count/$id": typeof CounterStockCountIdRoute
   "/counter/trade/$id/receipt": typeof CounterTradeIdReceiptRoute
   "/counter/customers/$code/": typeof CounterCustomersCodeIndexRoute
+  "/counter/stock/count/": typeof CounterStockCountIndexRoute
   "/counter/trade/$id/": typeof CounterTradeIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -259,6 +286,7 @@ export interface FileRouteTypes {
     | "/counter/reports"
     | "/counter/scan"
     | "/counter/sell"
+    | "/counter/settings"
     | "/labels/print"
     | "/counter/"
     | "/counter/customers/new"
@@ -269,8 +297,10 @@ export interface FileRouteTypes {
     | "/counter/stock/"
     | "/counter/trade/"
     | "/counter/customers/$code/card"
+    | "/counter/stock/count/$id"
     | "/counter/trade/$id/receipt"
     | "/counter/customers/$code/"
+    | "/counter/stock/count/"
     | "/counter/trade/$id/"
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -285,6 +315,7 @@ export interface FileRouteTypes {
     | "/counter/reports"
     | "/counter/scan"
     | "/counter/sell"
+    | "/counter/settings"
     | "/labels/print"
     | "/counter"
     | "/counter/customers/new"
@@ -295,8 +326,10 @@ export interface FileRouteTypes {
     | "/counter/stock"
     | "/counter/trade"
     | "/counter/customers/$code/card"
+    | "/counter/stock/count/$id"
     | "/counter/trade/$id/receipt"
     | "/counter/customers/$code"
+    | "/counter/stock/count"
     | "/counter/trade/$id"
   id:
     | "__root__"
@@ -312,6 +345,7 @@ export interface FileRouteTypes {
     | "/counter/reports"
     | "/counter/scan"
     | "/counter/sell"
+    | "/counter/settings"
     | "/labels/print"
     | "/counter/"
     | "/counter/customers/new"
@@ -322,8 +356,10 @@ export interface FileRouteTypes {
     | "/counter/stock/"
     | "/counter/trade/"
     | "/counter/customers/$code/card"
+    | "/counter/stock/count/$id"
     | "/counter/trade/$id/receipt"
     | "/counter/customers/$code/"
+    | "/counter/stock/count/"
     | "/counter/trade/$id/"
   fileRoutesById: FileRoutesById
 }
@@ -431,6 +467,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterSellRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/counter/settings": {
+      id: "/counter/settings"
+      path: "/settings"
+      fullPath: "/counter/settings"
+      preLoaderRoute: typeof CounterSettingsRouteImport
+      parentRoute: typeof CounterRoute
+    }
     "/labels/print": {
       id: "/labels/print"
       path: "/labels/print"
@@ -501,6 +544,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterCustomersCodeCardRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/counter/stock/count/": {
+      id: "/counter/stock/count/"
+      path: "/stock/count"
+      fullPath: "/counter/stock/count/"
+      preLoaderRoute: typeof CounterStockCountIndexRouteImport
+      parentRoute: typeof CounterRoute
+    }
+    "/counter/stock/count/$id": {
+      id: "/counter/stock/count/$id"
+      path: "/stock/count/$id"
+      fullPath: "/counter/stock/count/$id"
+      preLoaderRoute: typeof CounterStockCountIdRouteImport
+      parentRoute: typeof CounterRoute
+    }
     "/counter/trade/$id/": {
       id: "/counter/trade/$id/"
       path: "/trade/$id"
@@ -524,6 +581,7 @@ interface CounterRouteChildren {
   CounterReportsRoute: typeof CounterReportsRoute
   CounterScanRoute: typeof CounterScanRoute
   CounterSellRoute: typeof CounterSellRoute
+  CounterSettingsRoute: typeof CounterSettingsRoute
   CounterIndexRoute: typeof CounterIndexRoute
   CounterCustomersNewRoute: typeof CounterCustomersNewRoute
   CounterStockSkuRoute: typeof CounterStockSkuRoute
@@ -533,8 +591,10 @@ interface CounterRouteChildren {
   CounterStockIndexRoute: typeof CounterStockIndexRoute
   CounterTradeIndexRoute: typeof CounterTradeIndexRoute
   CounterCustomersCodeCardRoute: typeof CounterCustomersCodeCardRoute
+  CounterStockCountIdRoute: typeof CounterStockCountIdRoute
   CounterTradeIdReceiptRoute: typeof CounterTradeIdReceiptRoute
   CounterCustomersCodeIndexRoute: typeof CounterCustomersCodeIndexRoute
+  CounterStockCountIndexRoute: typeof CounterStockCountIndexRoute
   CounterTradeIdIndexRoute: typeof CounterTradeIdIndexRoute
 }
 
@@ -544,6 +604,7 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterReportsRoute: CounterReportsRoute,
   CounterScanRoute: CounterScanRoute,
   CounterSellRoute: CounterSellRoute,
+  CounterSettingsRoute: CounterSettingsRoute,
   CounterIndexRoute: CounterIndexRoute,
   CounterCustomersNewRoute: CounterCustomersNewRoute,
   CounterStockSkuRoute: CounterStockSkuRoute,
@@ -553,8 +614,10 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterStockIndexRoute: CounterStockIndexRoute,
   CounterTradeIndexRoute: CounterTradeIndexRoute,
   CounterCustomersCodeCardRoute: CounterCustomersCodeCardRoute,
+  CounterStockCountIdRoute: CounterStockCountIdRoute,
   CounterTradeIdReceiptRoute: CounterTradeIdReceiptRoute,
   CounterCustomersCodeIndexRoute: CounterCustomersCodeIndexRoute,
+  CounterStockCountIndexRoute: CounterStockCountIndexRoute,
   CounterTradeIdIndexRoute: CounterTradeIdIndexRoute,
 }
 

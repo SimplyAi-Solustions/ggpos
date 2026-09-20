@@ -1,0 +1,11 @@
+{
+  "_fixture_note": "Hand-written from PriceCharting's documented /api/products response shape. Nobody on this build has a PriceCharting key to record a real search.",
+  "status": "success",
+  "products": [
+    {
+      "id": "ntsc-snes-super-mario-kart-1",
+      "product-name": "Super Mario Kart",
+      "console-name": "super-nintendo"
+    }
+  ]
+}

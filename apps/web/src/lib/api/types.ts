@@ -1010,3 +1010,80 @@ export interface CounterConfig {
   /** The programme, its live rules and its tiers. */
   loyalty: LoyaltySetup
 }
+
+// ---------------------------------------------------------------------------
+// Settings and stock counts (Phase 3)
+//
+// Field names read off pb/pb_migrations/1789819560_ops_collections.js
+// (`settings`, `pricing_rules`) and 1789819320_stock_collections.js
+// (`stock_counts`, `stock_count_lines`). `settings` and `pricing_rules` are
+// admin-only collections written straight through the collection API with an
+// admin token; every other screen reads them through GET /api/vault/config.
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole `settings` row as an admin edits it. The secrets on the record
+ * (`api_keys`, the mail key, the VAPID keys) are deliberately absent: they
+ * are never read into the browser and never written from it.
+ */
+export interface SettingsRecord extends BaseRecord, VaultSettingsRow {
+  id: string
+}
+
+/** One `pricing_rules` row on its way to the server. No id means create. */
+export interface PricingRuleWrite {
+  id?: string
+  game?: string
+  kind?: string
+  condition?: string
+  finish?: string
+  rarity?: string
+  band_min: number
+  band_max: number
+  cash_pct: number
+  credit_pct: number
+  rounding: number
+  priority: number
+  active: boolean
+}
+
+export type StockCountStatus = "open" | "closed"
+
+/** One line of a count: what the shelf should hold, and what was found. */
+export interface StockCountLine {
+  id: string
+  itemId: string
+  sku: string
+  title: string
+  /** "SV151 199/165 Holo", from the shared item-shape helper. */
+  detail: string
+  expectedQty: number
+  scannedQty: number
+  /** Where the item is recorded now, which is not always where it turned up. */
+  locationName: string
+}
+
+/** A count with its lines, which is everything the count screen draws. */
+export interface StockCountDetail {
+  id: string
+  locationId: string
+  locationName: string
+  status: StockCountStatus
+  startedAt: string
+  startedByName: string
+  closedAt: string | null
+  lines: StockCountLine[]
+}
+
+/** One row of the past counts list. */
+export interface StockCountSummary {
+  id: string
+  locationName: string
+  status: StockCountStatus
+  startedAt: string
+  closedAt: string | null
+  expected: number
+  scanned: number
+  missing: number
+  unexpected: number
+}

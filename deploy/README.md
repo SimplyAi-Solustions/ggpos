@@ -177,6 +177,42 @@ daily FX rate fetch (from Frankfurter) is a PocketBase cron job defined
 inside `pb_hooks`, so it runs automatically inside the `pocketbase`
 container itself and needs nothing set up here.
 
+**pricesync configuration.** Its environment comes from `.env` (see the
+"pricesync" section of `.env.example`: `PB_SUPERUSER_EMAIL` and
+`PB_SUPERUSER_PASSWORD`) plus one variable `docker-compose.yml` sets
+itself and that never needs editing (`PB_URL`, always the in-network
+`http://pocketbase:8090`). It also reads `CACHE_DIR`, which defaults to
+`/app/cache` - already the path `docker-compose.yml` mounts as a volume -
+so there is nothing to set for that either unless you are changing the
+image's layout. That cache is what makes an unchanged Cardmarket or
+TCGCSV file skip re-downloading on the next run; if prices ever look
+stuck, `docker compose exec pricesync sh -c 'rm -rf /app/cache/*'` clears
+it (safe any time - the next run just re-downloads everything).
+
+Before the first run, **turn PocketBase's Batch API on**: sign in at
+`/_/`, open Settings > Application (the "Batch requests" section, API
+tab in older PocketBase dashboards), enable it, and set "Max requests" to
+at least 200. It ships **off** in a stock PocketBase install, and its
+default cap when on is 50. pricesync writes `price_snapshots` in batches
+of 200 through `POST /api/batch` (docs/PLAN.md's pricesync sidecar
+paragraph) and copes without this - it falls back to writing one record
+at a time, logging a line saying so - but that is far slower for no
+benefit, so there is no reason to leave it off. This is also on the
+go-live checklist below.
+
+Check a run went well with `docker compose logs pricesync` (see "Logs"
+below): it logs one line per game with counts (entries seen, matched,
+written) and a final summary line, and exits non-zero on any hard
+failure. Two exit codes mean something specific:
+
+- **exit 2**: the latest `fx_rates` row is missing or more than 3 days
+  old. Check the FX cron ran (`docker compose logs pocketbase | grep
+  '\[cron:fx\]'`) rather than re-running pricesync - it will keep
+  refusing until a fresh rate exists.
+- **exit 1**: anything else (cannot reach or authenticate to PocketBase,
+  a Cardmarket/TCGCSV fetch failed, or some rows failed to write). The
+  log line right before the summary names what failed.
+
 Rehearse a full restore before go-live and every quarter after that -
 see `deploy/restore.md`.
 
@@ -309,3 +345,6 @@ that supports "install as app":
       `curl -i https://vault.ggentertainment.co.uk/_/` and confirm they
       get a plain `404`, then confirm it loads normally from inside the
       shop
+- [ ] PocketBase's Batch API is turned on with Max requests at least 200
+      (Settings > Application in `/_/`) - see "pricesync configuration"
+      above; pricesync works without this but is much slower

@@ -98,4 +98,23 @@ onRecordCreate((e) => {
   deriveTitleIfEmpty();
 
   e.next();
+
+  // Phase 3 (docs/PLAN.md, "Card images and market prices"): the first time
+  // an item is created against a card whose image is still a bare
+  // third-party URL, fetch it once and cache it in PocketBase, so a label
+  // or a receipt printed years later never depends on that host still
+  // being up. Only after e.next() has actually committed the item, and
+  // wrapped so that a slow or unreachable image host can never turn into a
+  // failed item create - a card with no image, or one already re-hosted
+  // (YGOPRODeck/OPTCG results are re-hosted immediately at lookup time, so
+  // this is a no-op for them), costs nothing here.
+  const cardId = e.record.getString("card");
+  if (cardId) {
+    try {
+      const images = require(`${__hooks}/adapters/images.js`);
+      images.ensureCardImageCached(e.app, cardId);
+    } catch (err) {
+      console.log(`[items] could not cache the image for card ${cardId}: ${err}`);
+    }
+  }
 }, "items");

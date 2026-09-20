@@ -49,6 +49,9 @@ const ROUTES = [
   ["customer-card", `/counter/customers/${CUSTOMER}/card`],
   ["trade", "/counter/trade"],
   ["buyin-new", "/counter/trade/new"],
+  // Phase 3: settings, stock counts and the offline strip.
+  ["settings", "/counter/settings"],
+  ["stock-count", "/counter/stock/count"],
 ]
 
 mkdirSync(outDir, { recursive: true })
@@ -181,5 +184,32 @@ await snap("buyin-done", "/counter/trade/new", async (page) => {
 })
 
 await snap("buyin-receipt", "/counter/trade/trade_demo_1/receipt")
+
+// --- Phase 3: the states a static URL cannot reach ------------------------
+
+const SKU = ggCode("S", "7F3K2")
+
+await snap("count-open", "/counter/stock/count", async (page) => {
+  await page.getByRole("button", { name: "Showcase", exact: true }).click()
+  await primary(page, "Start count").click()
+  await page.getByTestId("count-scan-field").waitFor()
+  const field = page.getByTestId("count-scan-field")
+  await field.fill(SKU)
+  await field.press("Enter")
+  await page.getByTestId("count-scan-note").waitFor()
+  await field.fill(ggCode("S", "T4M9P"))
+  await field.press("Enter")
+  await page.getByTestId("extra-lines").waitFor()
+})
+
+await snap("offline-strip", "/counter/sell", async (page) => {
+  await page.getByRole("button", { name: /Account menu/ }).click()
+  await page.getByRole("menuitem", { name: /Simulate offline/ }).click()
+  const field = page.getByTestId("sell-scan-field")
+  await field.fill(SKU)
+  await field.press("Enter")
+  await page.getByTestId("basket").waitFor()
+  await page.getByTestId("offline-strip").waitFor()
+})
 
 await browser.close()

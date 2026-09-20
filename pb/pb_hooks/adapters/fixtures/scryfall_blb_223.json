@@ -1,0 +1,36 @@
+{
+  "id": "a9ee50d4-c878-457b-964d-29c039ce9852",
+  "name": "Lunar Convocation",
+  "set": "blb",
+  "set_name": "Bloomburrow",
+  "collector_number": "223",
+  "rarity": "rare",
+  "type_line": "Enchantment",
+  "finishes": [
+    "nonfoil",
+    "foil"
+  ],
+  "image_uris": {
+    "small": "https://cards.scryfall.io/small/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.jpg?1783910794",
+    "normal": "https://cards.scryfall.io/normal/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.jpg?1783910794",
+    "large": "https://cards.scryfall.io/large/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.jpg?1783910794",
+    "png": "https://cards.scryfall.io/png/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.png?1783910794",
+    "art_crop": "https://cards.scryfall.io/art_crop/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.jpg?1783910794",
+    "border_crop": "https://cards.scryfall.io/border_crop/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.jpg?1783910794",
+    "thumb": "https://cards.scryfall.io/thumb/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.webp?1783910794",
+    "grid": "https://cards.scryfall.io/grid/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.webp?1783910794",
+    "display": "https://cards.scryfall.io/display/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.webp?1783910794",
+    "art": "https://cards.scryfall.io/art/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.webp?1783910794",
+    "crop": "https://cards.scryfall.io/crop/front/a/9/a9ee50d4-c878-457b-964d-29c039ce9852.webp?1783910794"
+  },
+  "prices": {
+    "usd": "0.81",
+    "usd_foil": "1.11",
+    "usd_etched": null,
+    "eur": "0.80",
+    "eur_foil": "1.08",
+    "tix": "0.03"
+  },
+  "cardmarket_id": 778438,
+  "tcgplayer_id": 559480
+}

@@ -1,0 +1,10 @@
+{
+  "_fixture_note": "Hand-written from PriceCharting's documented /api/product response shape. Integer US cents, as the real API returns them - nobody on this build has a PriceCharting key to record a real one.",
+  "status": "success",
+  "id": "ntsc-snes-super-mario-kart-1",
+  "product-name": "Super Mario Kart",
+  "console-name": "super-nintendo",
+  "loose-price": 900,
+  "cib-price": 1800,
+  "new-price": 6000
+}

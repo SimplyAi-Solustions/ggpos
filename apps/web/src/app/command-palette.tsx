@@ -132,6 +132,16 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   )
   // --- end Customers and trade ---
 
+  // --- Settings and counts ---
+  const adminActions = React.useMemo<PaletteAction[]>(
+    () => [
+      { id: "settings", label: "Settings", run: () => go("/counter/settings") },
+      { id: "stock-count", label: "Stock count", run: () => go("/counter/stock/count") },
+    ],
+    [go]
+  )
+  // --- end Settings and counts ---
+
   const needle = query.trim().toLowerCase()
   const visibleActions = needle
     ? actions.filter((action) => action.label.toLowerCase().includes(needle))
@@ -139,6 +149,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const visibleCustomerActions = needle
     ? customerActions.filter((action) => action.label.toLowerCase().includes(needle))
     : customerActions
+  const visibleAdminActions = needle
+    ? adminActions.filter((action) => action.label.toLowerCase().includes(needle))
+    : adminActions
 
   const deferred = React.useDeferredValue(query)
   const { data: cards = [], isFetching } = useQuery({
@@ -222,6 +235,27 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               </Command.Group>
             ) : null}
             {/* --- end Customers and trade --- */}
+
+            {/* --- Settings and counts --- */}
+            {visibleAdminActions.length > 0 ? (
+              <Command.Group
+                heading="Settings and counts"
+                className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pt-4 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:tracking-[0.16em] [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:uppercase"
+              >
+                {visibleAdminActions.map((action) => (
+                  <Command.Item
+                    key={action.id}
+                    value={action.id}
+                    onSelect={action.run}
+                    className="flex cursor-default items-center justify-between gap-4 rounded-[var(--radius)] px-3 py-2.5 text-[15px] text-foreground select-none data-[selected=true]:bg-secondary"
+                  >
+                    <span>{action.label}</span>
+                    {action.hint ? <Kbd>{action.hint}</Kbd> : null}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ) : null}
+            {/* --- end Settings and counts --- */}
 
             {cards.length > 0 ? (
               <Command.Group

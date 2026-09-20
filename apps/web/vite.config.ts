@@ -3,6 +3,42 @@ import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
+import { VitePWA } from "vite-plugin-pwa"
+
+/**
+ * What the service worker is allowed to keep, and for how long.
+ *
+ * Network first everywhere: the counter is on the shop's own network almost
+ * all the time, so a cached answer is the fallback and never the first
+ * choice. The cache is a day old at the most, which is long enough to get
+ * through a dead router and short enough that nobody prices off last week.
+ *
+ * docs/PLAN.md, "Core flows and rules > Offline": the stock list, customer
+ * lookups and the pricing rules are the three reads that have to survive
+ * without a connection.
+ */
+const READ_THROUGH = [
+  // GET /api/vault/config: pricing rules, offer bands, loyalty and the
+  // non-secret settings. Every counter screen loads it.
+  { name: "gg-config", pattern: /\/api\/vault\/config(\?|$)/ },
+  // The stock list and item lookups.
+  { name: "gg-stock", pattern: /\/api\/collections\/(items|locations|games)\/records/ },
+  // Customer lookups at the counter: the `customers` record only, which is
+  // the name, code and contact details. `customer_private` carries the
+  // address, the date of birth and the ID fields, and none of that belongs
+  // in a browser cache for a day (docs/dpia.md, docs/retention-schedule.md),
+  // so it is deliberately absent and a lookup that needs it fails offline.
+  { name: "gg-customers", pattern: /\/api\/collections\/customers\/records/ },
+].map(({ name, pattern }) => ({
+  urlPattern: pattern,
+  handler: "NetworkFirst" as const,
+  options: {
+    cacheName: name,
+    networkTimeoutSeconds: 4,
+    expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 },
+    cacheableResponse: { statuses: [200] },
+  },
+}))
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -20,6 +56,56 @@ export default defineConfig({
     }),
     react(),
     tailwindcss(),
+    // The PWA shell: installed on the counter PC and on staff phones, and the
+    // thing that keeps the app on screen when the connection drops. Writes do
+    // not go near it; they go in the IndexedDB queue in src/lib/offline.
+    VitePWA({
+      registerType: "autoUpdate",
+      includeAssets: ["favicon.svg", "icon.svg", "icon-maskable.svg"],
+      manifest: {
+        name: "GG Vault",
+        short_name: "Vault",
+        description:
+          "Stock, trade-ins, customers and the GG Guild for GG Entertainment.",
+        start_url: "/",
+        scope: "/",
+        display: "standalone",
+        lang: "en-GB",
+        // The paper canvas, so the splash and the address bar match the app
+        // rather than flashing white before it paints.
+        background_color: "#fbfbfa",
+        theme_color: "#fbfbfa",
+        icons: [
+          { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          {
+            src: "/icon-maskable-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+          { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+        ],
+      },
+      workbox: {
+        // The shell, its fonts included: the three faces are the design
+        // system, and a fallback sans on a dead connection is not GG.
+        globPatterns: ["**/*.{js,css,html,svg,ico,png,webp,woff2}"],
+        // The three reference screenshots are 2.4 MB of design material for
+        // the kit page, which nobody opens on a phone and nobody needs
+        // offline. The counter shell is what has to be installed.
+        globIgnores: ["kit/**", "logo-dark.png"],
+        // bwip-js is one 900 kB module that cannot be split.
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        cleanupOutdatedCaches: true,
+        navigateFallback: "/index.html",
+        // Never answer an API call or the PocketBase dashboard with the app.
+        navigateFallbackDenylist: [/^\/api\//, /^\/_\//],
+        runtimeCaching: READ_THROUGH,
+      },
+      // The dev server is the one place a stale shell would waste an hour.
+      devOptions: { enabled: false },
+    }),
   ],
   resolve: {
     alias: {

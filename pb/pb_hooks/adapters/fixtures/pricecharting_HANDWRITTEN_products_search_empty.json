@@ -1,0 +1,5 @@
+{
+  "_fixture_note": "Hand-written: PriceCharting's documented empty-result shape for /api/products, used to exercise the 'NTSC only when no PAL entry exists' fallback (docs/PLAN.md).",
+  "status": "success",
+  "products": []
+}

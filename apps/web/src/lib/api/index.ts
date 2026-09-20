@@ -364,3 +364,23 @@ export * from "@/lib/api/items"
 export * from "@/lib/api/sales"
 export * from "@/lib/api/cash"
 export * from "@/lib/api/labels"
+
+// ---------------------------------------------------------------------------
+// Settings, stock counts and the offline queue (Phase 3)
+//
+// `completeSale` and `queueLabels` are deliberately re-exported from
+// `./offline` rather than from `./sales` and `./labels`: an explicit export
+// wins over an `export *` of the same name, so every screen that already
+// imports them from `@/lib/api` gets the offline-aware call without changing
+// a line. Online the wrappers are the same request; offline the sale goes in
+// the IndexedDB queue and the strip under the nav says how many are waiting.
+// docs/PLAN.md, "Core flows and rules > Offline". A buy-in is never queued.
+// ---------------------------------------------------------------------------
+export * from "@/lib/api/settings"
+export * from "@/lib/api/stockcounts"
+export * from "@/lib/api/offline"
+export {
+  completeSaleQueued as completeSale,
+  getSaleQueued as getSale,
+  queueLabelsQueued as queueLabels,
+} from "@/lib/api/offline"

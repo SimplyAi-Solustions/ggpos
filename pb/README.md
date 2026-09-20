@@ -35,6 +35,7 @@ Environment variables:
 | `PB_PORT` | Local dev port for `pb/scripts/dev.sh` (default `8091`). |
 | `GG_ADMIN_EMAIL`, `GG_ADMIN_PASSWORD` | See "Creating the first admin" below. |
 | `GG_ID_PHOTO_KEY` | **Required in production.** Exactly 32 characters (`$security.encrypt` is AES-256-GCM and rejects any other length). Encrypts every ID photo before it is written, and peppers the step-up token signing key. `POST /api/vault/customers/:id/id-check` refuses with 500 rather than storing a photo in the clear without it, and `GET /api/vault/id-photo/:id` cannot decrypt without it. It lives in the environment, never in `pb_data`, so a stolen database backup has no readable ID photos in it. Add it to `deploy/.env.example` and generate one per install, for example `openssl rand -base64 24 \| cut -c1-32`. **Changing it makes every stored photo undecryptable** - rotate only alongside a purge. |
+| `GG_ADAPTER_TRANSPORT_MODE` | Set to `offline_fail` to make every adapter in `pb_hooks/adapters/*.js` throw the instant it tries to reach the real network, instead of calling out. `pb/scripts/check.sh` runs its whole throwaway server this way, so its route-level Phase 3 checks fail loudly rather than silently passing because a live call happened to succeed. Unset (the default) in dev and production - adapters call out normally. |
 
 ## Migrations and seeds
 
@@ -55,6 +56,7 @@ concern per file:
 | `..._phase2_refunds_and_protection.js` | `sale_lines.refunded_qty`, `sales.refunded_total` and `trade_ins.id_document`; makes `trade_ins.signature` and `quotes.photos` `protected`; and adds the partial unique index that allows only one open `cash_sessions` row (`WHERE closed_at = ''`) |
 | `..._single_bands_any_condition.js` | Data fix: the seeded single `pricing_rules` bands were NM-only, so every other condition matched no rule. Condition is applied by `adjustForCondition` before a rule is chosen, so the bands are condition wildcards |
 | `..._trade_in_line_overrides.js` | `trade_in_lines.override_reason` (which is also the override flag), `.override_cash`, `.override_credit` and `.cosmetic_grade` |
+| `..._phase3_adapter_state.js` | `adapter_state` (new, superuser-only: OAuth tokens and small caches the catalogue and price adapters need between requests); `cards.image_file` (a cached local copy of a card's artwork, re-hosted by `pb_hooks/adapters/images.js`); `settings.ebay_haircut_pct` (percent, default 15) |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -137,7 +139,7 @@ retrying `e.next()` on a unique-constraint failure.
 | `lib/stepup.js` | `issue(staff)` and `requireStepUp(e)` - see "Step-up" below. |
 | `lib/base64.js` | `encode`, `decode`, `fromDataUrl`. goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, so the signature data URL carries its own codec. Both directions are linear (accumulate into an array, join once). ID photos no longer come through here at all - see "ID photos" below. |
 | `lib/receipts.js` | `build(app, tradeIn, settings, fileToken)` (the receipt JSON) and `render(receipt)` (the plain-text and HTML email bodies), so the print page and the email can never drift. |
-| `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty. |
+| `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty; after the item is saved, opportunistically re-hosts its card's image through `adapters/images.js` if it is still a bare third-party URL - never blocks the create on a failure. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
 | `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
 | `staff.pb.js` | `onRecordAuthRequest` on `staff`: refuses to authenticate (issue a token, refresh one, ...) an account with `active: false`, with "This account is inactive. Ask an admin to reactivate it." A deactivated staff member keeps their row (for `audit_log` actor references and historic sales/trade-ins) but cannot sign in again. |
@@ -153,7 +155,10 @@ retrying `e.next()` on a unique-constraint failure.
 | `sales.pb.js` | Sale completion and refunds. |
 | `cash.pb.js` | Cash sessions. |
 | `exports.pb.js` | The stock book CSV. |
-| `crons.pb.js` | Registers `fx`, `prices`, `retention` and `stats`. `retention` does real work (see below); the other three still only log, because day-to-day price ingestion runs in `services/pricesync`, not here (hooks cannot stream the 15-26 MB Cardmarket files) and `daily_stats` is a later phase. |
+| `crons.pb.js` | Registers `fx`, `prices`, `retention` and `stats`. `fx` (daily 07:00) fetches today's GBP rate from Frankfurter and writes it to `fx_rates` - `GET /api/vault/fx` only ever reads that row. `prices` (weekly, Sunday 03:00, despite its name) syncs `card_sets` from TCGdex, Scryfall, Lorcast and OPTCG's own set listings; day-to-day *price* ingestion still runs in `services/pricesync`, not here (hooks cannot stream the 15-26 MB Cardmarket files). `retention` does real work (see below); `stats` still only logs, because `daily_stats` is a later phase. |
+| `lookup.pb.js` | `GET /api/vault/lookup`, `GET /api/vault/lookup/:game/:set/:number`, `GET /api/vault/retro/lookup` - see "Card and price adapters" below and `docs/api-contract.md`'s Phase 3 section. |
+| `prices.pb.js` | `GET`/`POST /api/vault/cards/:id/prices` and `:id/refresh-prices` and `:id/uk-comp`, `GET /api/vault/retro/:id/prices`. |
+| `fx.pb.js` | `GET /api/vault/fx` - reads the latest `fx_rates` row; never calls Frankfurter itself. |
 
 ## Custom API routes (`/api/vault/*`)
 
@@ -176,6 +181,9 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/cash-sessions/current` | `{ session, expected, movements }`, `null` session when none is open. |
 | `POST /api/vault/cash-sessions/{id}/close` | Expected, counted, variance; audited as `cash_session_variance` when the variance is over `settings.cash_variance_alert`. |
 | `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. One row per sale line for what is still sold, plus one for what is still on the shelf. |
+| `GET /api/vault/lookup`, `/lookup/:game/:set/:number`, `/retro/lookup` | Catalogue and retro-title search, writing through to `cards`/`card_sets`/`retro_titles`. See "Card and price adapters" below. |
+| `GET`/`POST /api/vault/cards/:id/prices`, `/refresh-prices`, `/uk-comp`; `GET /api/vault/retro/:id/prices` | Valuation, reading (GET) or writing (POST) `price_snapshots`. See "Card and price adapters" below. |
+| `GET /api/vault/fx` | The latest `fx_rates` row. |
 | `GET /api/vault/config` | The read-only window onto `settings`, `pricing_rules` and the `loyalty_*` rows, which are admin-only collections an ordinary staff member still has to price against. Every settings field named `api_keys`, `email`, or containing "key" or "secret", is dropped. No audit row: every counter screen loads it. |
 | `GET /api/vault/customers/{id}/id-document` | The newest `id_documents` row for that customer whose photo file is still present, as ids and timestamps only. `id_documents` has every rule null, so this is the app's only way to know whether the cash ID gate will pass. |
 | `POST /api/vault/customers/{id}/merge` | **step-up**. Folds a duplicate customer into the one being kept: every relation re-pointed, `perk_usage` counts summed where the two records clash on its unique `(customer, perk_type, period)` index, `customer_private` gaps filled, balances recomputed from the moved ledgers, the duplicate deleted. |
@@ -268,6 +276,53 @@ audit row carrying the collection and the record id and nothing else: an
 erased record whose identifying fields survive in a permanent,
 superuser-only table is not really erased. Quote photos ninety days after
 their quote closes still wait on a "closed at" field on `quotes`.
+
+### Card and price adapters
+
+`pb_hooks/adapters/*.js` are plain CommonJS modules, not `.pb.js` hook
+files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
+`crons.pb.js` `require()` them, same as any other `lib/` module (see
+"Hooks" above on why every `require()` lives inside a handler body).
+
+| Module | What it talks to |
+|---|---|
+| `tcgdex.js` | Pokemon: TCGdex, no key. |
+| `scryfall.js` | Magic: Scryfall, no key, real User-Agent required. |
+| `ygoprodeck.js` | Yu-Gi-Oh!: YGOPRODeck, no key. Images **must be re-hosted** (hotlinking gets IPs banned) - every result comes back with `rehostImage: true` and `imageSmall`/`imageLarge` left blank until re-hosted. |
+| `optcg.js` | One Piece: OPTCG API, no key. Images are cached locally, same reasoning as YGOPRODeck. |
+| `lorcast.js` | Disney Lorcana: Lorcast, no key, under 10 req/s. |
+| `igdb.js` | Retro titles: IGDB v4 over Twitch client-credentials auth. Behind `settings.api_keys.igdb` being set. |
+| `pricecharting.js` | Retro prices: PriceCharting, a paid API ($49/month). PAL category searched first, NTSC only when PAL has no entry; prices are integer US cents, never a string. Behind `settings.api_keys.pricecharting` being set. |
+| `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then `settings.ebay_haircut_pct` (default 15) off. Behind `settings.api_keys.ebay` being set. |
+| `frankfurter.js` | FX: the ECB reference rate, base GBP. No key. Inverts Frankfurter's own "units of X per GBP" into "GBP per unit of X" once, here - see `docs/api-contract.md`'s Phase 3 section. |
+| `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit and a `qs(params)` query-string builder. Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). Throws immediately, naming the call, when `GG_ADAPTER_TRANSPORT_MODE=offline_fail` is set (see "Environment variables" above). |
+| `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens and eBay's 24-hour price cache. `forApp(app)` for PocketBase, `memory()` for tests. |
+| `registry.js` | Which adapter answers for which `games.key`; recognises the "set number" query forms (`docs/api-contract.md`'s Phase 3 section). |
+| `storage.js` | Write-through: one adapter search result into `card_sets`/`cards`, and a `cards` row back out as the row shape the contract promises. `isFresh()` is the whole 30-day lookup cache. |
+| `pricing_policy.js` | The valuation policy behind the prices routes: this build's freshness windows (stricter than `packages/shared/src/pricing.ts`'s own default - see the contract), an adapter candidate's decimal-string-or-cents figure converted to GBP pence exactly once, and `price_snapshots` reads and writes. |
+| `images.js` | Re-hosts a URL (or bytes an adapter already fetched) into a record's file field and rewrites its `image_*` text fields to the resulting local URL. Never throws - a failed fetch must never block whatever is happening (an item create, a lookup). |
+
+Every adapter's outbound call carries `User-Agent: GGVault/1.0
+(+https://vault.ggentertainment.co.uk)` and a timeout (`http.js`), and API
+keys are read from `settings.api_keys` only, straight off the record
+server-side - never returned by any route, logged, or written to
+`audit_log` (matching `config.pb.js`'s existing rule for the same
+collection).
+
+`pb/scripts/check-adapters.mjs` (`node --test pb/scripts/check-adapters.mjs`,
+no PocketBase, no network) unit-tests every adapter against fixtures in
+`pb_hooks/adapters/fixtures/` - recorded live where a source needs no key
+(TCGdex, Scryfall, YGOPRODeck, OPTCG, Lorcast, Frankfurter), hand-written
+from each API's documented shape where one does (IGDB, PriceCharting,
+eBay - every such fixture's filename says `HANDWRITTEN`). `pb` is not a
+pnpm workspace package (`pnpm-workspace.yaml` only covers `apps/*`,
+`packages/*`, `services/*`), so this runs as a plain `node` invocation
+rather than through `pnpm --filter`; `.github/workflows/ci.yml`'s
+`pocketbase` job runs it straight after `pb/scripts/check.sh`.
+`GG_ADAPTER_SMOKE=1 node pb/scripts/check-adapters.mjs` additionally calls
+every keyless source for real, for the exact cards named above, and prints
+the image URL and the price shape each one returned - it registers no
+tests at all, so it skips cleanly, without the flag.
 
 ## API rules
 
@@ -434,6 +489,21 @@ re-pointed relations, the filled gaps and the recomputed balances) and an
 erasure (refused while credit is outstanding, then anonymising the record,
 deleting the ID photo and leaving the buy-in register's seller snapshot
 alone).
+
+Section 19 is Phase 3's, added with the lookup, prices and FX routes: the
+server for this whole script runs under `GG_ADAPTER_TRANSPORT_MODE=offline_fail`
+(see "Environment variables" above), so any of the following that
+mistakenly called an adapter out to the real network would throw and be
+caught here immediately, rather than the check silently passing because a
+live call happened to succeed. It confirms `GET /api/vault/fx` reports
+stale with an empty `rates` object before any `fx_rates` row exists; that a
+`cards` row with a fresh `last_synced` is served by the exact lookup route,
+and by a "set number" search query, with no outbound call at all; that
+`uk-comp` refuses a non-`ebay.co.uk` URL and a sale older than 30 days
+(both 400), then writes a `price_snapshots` row that is chosen ahead of
+every other source and audited; that the prices route puts a converted GBP
+figure beside a snapshot's native amount; and that a snapshot past its
+source's freshness window is flagged stale rather than hidden.
 
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),

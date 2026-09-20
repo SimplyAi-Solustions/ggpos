@@ -1,0 +1,6 @@
+{
+  "_fixture_note": "Hand-written from eBay's documented client-credentials token response shape (https://developer.ebay.com/api-docs/static/oauth-client-credentials-grant.html). Nobody on this build has an eBay developer key to record a real one.",
+  "access_token": "handwritten0000000000000000000000000000000000",
+  "expires_in": 7200,
+  "token_type": "Application Access Token"
+}

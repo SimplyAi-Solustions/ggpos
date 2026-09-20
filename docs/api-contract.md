@@ -200,3 +200,71 @@ Where the routes differ from the text above, the built behaviour is the truth an
 - ID photo bytes go into `$security.encrypt` as an array of numbers and come back through `toBytes($security.decrypt(...))`, so nothing on that path is base64'd. `pb_hooks/lib/base64.js` is now only the signature data URL's codec.
 - The refund route and the stock book both price through the shared `saleline` evaluator (`packages/shared/src/saleline.ts`, built into `pb_hooks/lib/shared/saleline.js`), so the server and the counter's refund sheet cannot drift. The lines are always read in `created,id` order before the breakdown, via `vaultutil.saleLineRows`: lines written in one transaction share a `created` timestamp to the millisecond, and the rounding remainder has to land on the same line every time.
 - The seeded `pricing_rules` single bands are condition wildcards. Condition is applied by `adjustForCondition` before a rule is picked, so a condition on the band would leave every non-NM single matching no rule at all.
+
+## Phase 3: lookup, prices and FX
+
+The catalogue and price adapters (`pb_hooks/adapters/*.js`), driving `cards`, `card_sets`, `retro_titles`, `price_snapshots` and `fx_rates`. Every route below needs a `staff` token; none needs admin or step-up. Money and error conventions are as above.
+
+`GET /api/vault/lookup?game=<key>&q=<text>`
+
+`game` is one of `pokemon`, `mtg`, `yugioh`, `onepiece`, `lorcana`. Searches that game's adapter (name, or the "set number" forms `sv151 199` / `blb 223` for Pokemon/MTG/Lorcana, `OP01-001` / `CT13-EN003` for One Piece/Yu-Gi-Oh!), writes every match through to `cards` (and `card_sets` when the set is new), and returns at most 25 rows:
+
+```json
+{ "cards": [ { "id": "...", "game": "...", "set": "...", "set_code": "sv03.5", "set_name": "151", "number": "199", "name": "Charizard ex", "rarity": "Special illustration rare", "image_small": "...", "image_large": "...", "finishes_available": ["holo"], "external_ids": { "tcgdex": "sv03.5-199" }, "last_synced": "..." } ] }
+```
+
+A "set number" query is treated as an exact lookup and gets the same cache as the dedicated exact route below: a `cards` row whose `last_synced` is under 30 days old is returned straight from the database, with no adapter call at all. A plain name search always asks the adapter (discovering a card that is not in the database yet is the point of it), so it is never itself served from cache.
+
+`GET /api/vault/lookup/:game/:set/:number`
+
+The exact card, same row shape as above, wrapped in `{ "cards": [ ... ] }` (one row, for the same shape every lookup response uses). 30-day cache as above. 404 `"Card not found in <set name>. Check the number or add it manually."` (the set's own name once known, its code otherwise) when the adapter has nothing either.
+
+`GET /api/vault/cards/:id/prices?finish=<finish>&condition=<NM|LP|MP|HP|DMG>`
+
+Reads `price_snapshots` only - **never calls an adapter**, so a routine price check makes no outbound call at all; only `refresh-prices` and `uk-comp` below write anything.
+
+```json
+{
+  "chosen": { "source": "cardmarket", "gbp_market": 31674, "native_currency": "EUR", "native_market": 36830, "fx_rate": 0.86, "fx_date": "2026-09-20", "fetched_at": "...", "stale": false, "evidence_url": "" } ,
+  "sources": [ /* same shape, one row per source that has a value, in settings.source_priority order, every stale one flagged rather than hidden */ ],
+  "condition_adjusted": 26923
+}
+```
+
+`chosen` is `null` and `condition_adjusted` is `null` when there is no snapshot at all for that card and finish. `native_market` and `native_low`/`native_mid`/`native_trend` (on each `sources` row) are minor units of `native_currency`, exactly as stored; `gbp_market` sits beside them on the same row, per CLAUDE.md's "Pricing" (a foreign amount is never returned on its own). Freshness (`stale`) is UK sold comp 30 days, eBay asking 24 hours, Cardmarket and TCGplayer 3 days, either PriceCharting region 3 days - a stricter eBay window than `packages/shared/src/pricing.ts`'s own `DEFAULT_FRESHNESS` (48 hours), passed as this route's own policy to the shared `chooseMarketPrice` rather than its default. `condition_adjusted` is `chosen.gbp_market` after `settings.condition_multipliers` for `condition` (default `NM`).
+
+`POST /api/vault/cards/:id/refresh-prices` with `{ "finish": "..." }`
+
+Bypasses the price cache: calls the card's game adapter's `getPrices` plus eBay (when `settings.api_keys.ebay` is set), converts every candidate to GBP pence at the latest `fx_rates` row, writes one `price_snapshots` row per source that returned a usable figure, and returns the same body as the GET, freshly recomputed. A foreign candidate is silently skipped (not written, not chosen) when no `fx_rates` row exists yet to convert it - "never returned on its own" applies to a rate-less conversion too, not just to the response shape.
+
+`POST /api/vault/cards/:id/uk-comp` with `{ "finish", "condition", "price": <pence>, "url": "https://www.ebay.co.uk/itm/...", "sold_at": "YYYY-MM-DD" }`
+
+Writes a `price_snapshots` row (`source: "uk_sold_manual"`, native and GBP both `price`, `fx_rate: 1`, `evidence_url: url`, `fetched_at` set to `sold_at`), audits it (the card id, finish, condition and price - no customer data is ever involved), and returns the same `{ chosen, sources, condition_adjusted }` body as the GET, so the UI can confirm the new comp was actually chosen. 400 `"That is not an ebay.co.uk item link. Paste the listing's own URL (ebay.co.uk/itm/...)."` when the URL is not `https://(www.)ebay.co.uk/itm/...`; 400 `"That sale date is in the future."`; 400 `"That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days."`.
+
+`GET /api/vault/retro/lookup?q=<text>&platform=<key>`
+
+IGDB search (`platform` is one of `platforms.key`, mapped to IGDB's own numeric platform id) writing through to `retro_titles` (name, platform, cover; `external_ids.igdb`) when a `platform` is given - `platform` is a required field on `retro_titles`, so a search with no platform is preview-only (`id: ""` on every row, nothing written). 422 `"Retro title search needs an IGDB key. Add settings.api_keys.igdb first."` when that key is not configured.
+
+```json
+{ "titles": [ { "id": "...", "platform": "...", "name": "Super Mario Kart", "region": "", "cover": "...", "external_ids": { "igdb": "1074" } } ] }
+```
+
+`GET /api/vault/retro/:id/prices?completeness=<loose|boxed|cib>`
+
+Same shape as the cards GET above (`chosen`, `sources`, and `condition_adjusted: null` - condition multipliers are a TCG-card concept, not a retro one). `retro_source_priority` order (UK sold comp, PriceCharting PAL, eBay UK asking, PriceCharting NTSC). `completeness` is read off `price_snapshots.finish` - PLAN.md's data model gives `price_snapshots` one such column, shared by a card's finish and a retro item's completeness, rather than adding a second that would mean the same thing.
+
+`GET /api/vault/fx`
+
+```json
+{ "base": "GBP", "rates": { "EUR": 0.8606, "USD": 0.75 }, "fetched_at": "...", "stale": false }
+```
+
+Reads the latest `fx_rates` row only - the daily 07:00 cron (`crons.pb.js`) is the only thing that ever calls Frankfurter. `rates[code]` is **GBP per one unit of `code`** (so `£1 = €1 / 0.8606`), the same direction as every helper in `packages/shared/src/money.ts`. Stale after 3 days. With no `fx_rates` row at all (a fresh install before the first 07:00 run), returns `{ "base": "GBP", "rates": {}, "fetched_at": null, "stale": true }` rather than an error.
+
+### Implementation notes (as built in Phase 3)
+
+- **The GET price routes never call an adapter.** Only `POST .../refresh-prices` (cards) does; there is no retro equivalent of `refresh-prices` or `uk-comp` in this phase - only `GET /api/vault/retro/lookup` and `GET /api/vault/retro/:id/prices` were built, matching this document. A retro `refresh-prices`/`uk-comp` pair (wiring `pb_hooks/adapters/pricecharting.js` and `.../ebay.js` into a live route for `retro_titles`) is a natural follow-up, not yet scheduled.
+- **`price_snapshots.source` has no `"optcg"` value** (its enum is fixed by `packages/shared/src/pricing.ts`'s `PriceSource` union, which this package does not own). One Piece's own `market_price` fallback (PLAN.md: "OPTCG `market_price` as fallback") is therefore written under `source: "tcgplayer"`, alongside whatever `services/pricesync` also writes there from the TCGCSV One Piece file - `chooseMarketPrice` already takes the freshest row per source, so the two coexist correctly without a schema change.
+- **eBay and PriceCharting cache their own OAuth tokens and, for eBay, the computed candidate itself** in the new `adapter_state` collection (superuser-only; see the Phase 3 migration), keyed by `card+finish+condition` for eBay's 24-hour "asking price" cache (docs/PLAN.md). This is separate from, and in addition to, `price_snapshots`' own freshness windows above.
+- **Every adapter re-hosts an image it must not hotlink before writing anything.** YGOPRODeck and OPTCG images are fetched into `cards.image_file` (a new file field - see the Phase 3 migration) the moment an exact lookup resolves them, never as a bare URL, even transiently; a name search against either game therefore returns `image_small`/`image_large` empty for a card the database has not resolved exactly yet, rather than a hotlinked URL a picker would render. TCGdex, Scryfall and Lorcast images may be linked directly, and are lazily re-hosted the first time an item is created against that card (`items.pb.js`'s `onRecordCreate`, `pb_hooks/adapters/images.js`) - a failed fetch there never blocks the item create.
+- **`GET /api/vault/retro/lookup`'s IGDB platform ids are hand-derived**, not confirmed against a live key (nobody on this build has one - see `pb_hooks/adapters/fixtures/igdb_HANDWRITTEN_*.json`). Confirm `pb_hooks/adapters/igdb.js`'s `PLATFORM_IGDB_IDS` against IGDB's own `/platforms` once a key exists. The same caveat applies to `pb_hooks/adapters/pricecharting.js`'s PAL/NTSC console-category slugs.

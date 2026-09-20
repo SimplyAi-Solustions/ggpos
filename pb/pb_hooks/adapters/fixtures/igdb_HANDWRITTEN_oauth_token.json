@@ -1,0 +1,6 @@
+{
+  "_fixture_note": "Hand-written from Twitch's documented client-credentials response shape (https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/#client-credentials-grant-flow). Nobody on this build has an IGDB/Twitch key to record a real one.",
+  "access_token": "handwritten0000000000000000000000000000000000",
+  "expires_in": 5011200,
+  "token_type": "bearer"
+}

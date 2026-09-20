@@ -1,0 +1,11 @@
+{
+  "_fixture_note": "Hand-written from PriceCharting's documented /api/products response shape (https://www.pricecharting.com/api-documentation). Nobody on this build has a PriceCharting key ($49/month) to record a real search.",
+  "status": "success",
+  "products": [
+    {
+      "id": "pal-snes-super-mario-kart-1",
+      "product-name": "Super Mario Kart",
+      "console-name": "pal-super-nintendo"
+    }
+  ]
+}

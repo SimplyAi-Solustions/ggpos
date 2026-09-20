@@ -18,6 +18,7 @@ import {
   MenuContent,
   MenuItem,
   MenuLabel,
+  MenuPrimitive,
   MenuSeparator,
   MenuTrigger,
 } from "@/components/ui/menu"
@@ -38,7 +39,9 @@ import { useShortcuts } from "@/app/shortcuts"
 import { isScanField } from "@/app/focus-registry"
 import { createWedgeListener } from "@/lib/scanning/wedge"
 import { initials, logout, useStaff } from "@/lib/auth"
-import { isDemo, isServerUnreachable } from "@/lib/api"
+import { isDemo, isServerUnreachable, setSimulatedOffline } from "@/lib/api"
+import { netSnapshot, subscribeNet } from "@/lib/offline/net"
+import { OfflineStrip } from "@/lib/offline/OfflineStrip"
 import { ServerUnreachable } from "@/app/server-unreachable"
 
 const NAV = [
@@ -59,6 +62,10 @@ function AvatarMenu() {
   const staff = useStaff()
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
+  // Demo mode only: one switch so the offline queue can be walked, shown to
+  // staff and tested without unplugging anything.
+  const demo = isDemo()
+  const net = React.useSyncExternalStore(subscribeNet, netSnapshot)
 
   return (
     <Menu>
@@ -76,12 +83,28 @@ function AvatarMenu() {
         </Avatar>
       </MenuTrigger>
       <MenuContent>
-        <MenuLabel>{staff?.name ?? "Signed in"}</MenuLabel>
-        <MenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-          <span>Night mode</span>
-          <Hint>{theme === "dark" ? "On" : "Off"}</Hint>
-        </MenuItem>
-        <MenuItem onClick={() => void navigate({ to: "/account" })}>My Vault</MenuItem>
+        {/* The signed-in name is a group label, and Base UI refuses one
+            outside a group: without this the menu throws the moment it
+            opens. */}
+        <MenuPrimitive.Group>
+          <MenuLabel>{staff?.name ?? "Signed in"}</MenuLabel>
+          <MenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+            <span>Night mode</span>
+            <Hint>{theme === "dark" ? "On" : "Off"}</Hint>
+          </MenuItem>
+          <MenuItem onClick={() => void navigate({ to: "/account" })}>My Vault</MenuItem>
+          {staff?.role === "admin" ? (
+            <MenuItem onClick={() => void navigate({ to: "/counter/settings" })}>
+              Settings
+            </MenuItem>
+          ) : null}
+          {demo ? (
+            <MenuItem onClick={() => setSimulatedOffline(!net.simulated)}>
+              <span>Simulate offline</span>
+              <Hint>{net.simulated ? "On" : "Off"}</Hint>
+            </MenuItem>
+          ) : null}
+        </MenuPrimitive.Group>
         <MenuSeparator />
         <MenuItem
           onClick={() => {
@@ -240,6 +263,10 @@ export function CounterShell() {
           <AvatarMenu />
         </nav>
       </header>
+
+      {/* One hairline line, and only when the queue or the connection has
+          something to say. */}
+      <OfflineStrip />
 
       <main
         id="counter-main"
