@@ -130,9 +130,20 @@ Rules:
   and stack to label-above below that. `Field` does this; do not hand-roll it.
 - Navigation: wordmark top left, text links with a 2px volt underline on the
   active one, avatar top right. No sidebar. On phones the nav links drop and a
-  bottom bar takes over (to come with the router).
+  bottom bar of five thin icons with Space Mono labels takes over.
 - On phones the primary action docks to the bottom in the thumb zone, and every
   secondary action is a bottom sheet. Targets are at least 48px.
+- My Vault (`/account`) is built for one person in one hand, so its column is
+  560px, not 1,040px, with the same 20px gutters below 640px and 40px above.
+  The header carries the "My Vault" wordmark and the notification bell only.
+  Its bar has five slots, Card, Quotes, Wants, Credit and Me: below 900px it
+  is fixed to the bottom with a hairline top edge and the safe-area inset, and
+  the screen's one block button sits directly on top of it as one fixed group
+  (`usePortalDock` in `features/portal/dock.ts` gives a screen the slot to
+  portal its button into; the shell publishes the group's measured height as
+  `--gg-portal-dock-h`, and the column pads by exactly that). From 900px the
+  same five become text links under the header with the nav's volt underline,
+  the button returns to the flow, and the micro-copy footer comes back.
 
 ---
 
@@ -163,6 +174,8 @@ already exempts this folder from `react-refresh/only-export-components`.
 | `Seal` | The done seal: an 84px volt disc, 2px edge, 4px offset shadow, Anton "DONE" or a tick. Success screens only, once. This is the one place in the app with a zero-blur offset shadow, quoting the marketing site's `--shadow: 6px 6px 0 var(--ink)`. The edge and shadow follow the foreground so the seal survives night mode. |
 | `StickerRing`, `StickerOrbit`, `StickerCards` | The site's doodles at a 4px stroke. Empty states, the customer card, and in My Vault the one call-to-action block a screen may carry (the sign-up pitch, the add-to-home-screen prompt, the demo note); nowhere else, and never on a counter screen's working surface. |
 | `Skeleton`, `SkeletonText` | Loading drawn as hairline blocks. Never a spinner, never a shimmer gradient. |
+| `Note` (in `features/portal/`) | The small grey line under a row or a figure in My Vault: Jost 13px at `#73736d`. It exists because two things a `Hint` cannot carry come up on every portal screen: money (never set in Space Mono) and a sentence longer than about 24 characters (an uppercase run that long stops being readable). A date beside a reference, a balance beside a hold, or a line about the email address is a `Note`; a tracked label is still a `Hint`. |
+| `Timeline` (in `features/portal/`) | A quote's progress as a hairline rail with a 10px marker per step. The current step is the only one in ink at full weight, carries `aria-current="step"`, and is the only one with a sentence under it; reached steps are grey, unreached ones an outlined dot. A stopped step (declined, expired) keeps the same ink marker and says what happened in words, so status never rests on a colour. Steps come from the pure `timeline.ts` so the same order shows for every status. |
 | `Tabs`, `Tooltip`, `Separator`, `Label`, `Toggle` | Restyled shadcn parts. Tabs use the same 2px volt underline as the nav. |
 
 ---
