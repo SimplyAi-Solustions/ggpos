@@ -1,6 +1,7 @@
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
+import { displayCode } from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
@@ -13,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { registerScanField } from "@/app/focus-registry"
 import { applyScanOutcome, setScanHandler } from "@/app/scan-bus"
 import { CameraSheet } from "@/features/scan/CameraSheet"
+import { VoucherSheet } from "@/features/loyalty/VoucherSheet"
 import { PriceCheck } from "@/features/scan/PriceCheck"
 import {
   recordScan,
@@ -90,6 +92,7 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
   const [mode, setMode] = React.useState<ScanMode>("scan")
   const [lookup, setLookup] = React.useState("")
   const [card, setCard] = React.useState<CardHit | null>(null)
+  const [voucher, setVoucher] = React.useState<string | null>(null)
   const recent = useRecentScans()
 
   // Price check asks the catalogue instead of routing a code: nothing is
@@ -143,8 +146,16 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
           recordScan({ raw: trimmed, display: outcome.ean, kind: "Barcode" })
           break
         case "voucher":
-          setError(outcome.message)
-          recordScan({ raw: trimmed, display: trimmed, kind: "Voucher" })
+          // A reward code is a conversation at the counter, not a route: the
+          // sheet says whose it is, what it is worth and what can be done
+          // with it.
+          setError(null)
+          setVoucher(outcome.code)
+          recordScan({
+            raw: trimmed,
+            display: displayCode(outcome.code),
+            kind: "Voucher",
+          })
           return
         default:
           setError(outcome.message)
@@ -359,6 +370,13 @@ export function ScanScreen({ incoming }: ScanScreenProps) {
         open={cameraOpen}
         onOpenChange={setCameraOpen}
         onResult={commit}
+      />
+
+      <VoucherSheet
+        code={voucher}
+        onOpenChange={(open) => {
+          if (!open) setVoucher(null)
+        }}
       />
     </section>
   )
