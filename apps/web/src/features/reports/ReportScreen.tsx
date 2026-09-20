@@ -33,6 +33,7 @@ import type {
   ReportEnvelope,
   ReportGroup,
   ReportKey,
+  ReportPoint,
   ReportRow,
   SavedReportRecord,
 } from "@/lib/api/types"
@@ -220,7 +221,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const chartData: ChartDatum[] = React.useMemo(() => {
     if (!envelope || !spec.chart) return []
     const earlier = before.data?.series ?? []
-    return envelope.series.map((point, index) => {
+    return envelope.series.map((point: ReportPoint, index: number) => {
       const row: ChartDatum = { label: point.label }
       for (const [key, value] of Object.entries(point.values)) row[key] = value
       const other = earlier[index]

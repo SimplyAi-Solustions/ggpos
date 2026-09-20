@@ -395,6 +395,15 @@ export {
 // different question with the same name; it is exported here as `lookupCards`
 // and the screens that want it import `@/lib/api/lookup` directly.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Reports, exports, imports and SumUp (Phase 4)
+//
+// `lib/api/reports.ts` never imports Recharts or the chart component: the
+// chart code belongs to the report routes alone, so nothing that reaches
+// this barrel can drag it into the entry chunk.
+// ---------------------------------------------------------------------------
+export * from "@/lib/api/reports"
+
 export {
   createManualCard,
   getCard as lookupCard,
