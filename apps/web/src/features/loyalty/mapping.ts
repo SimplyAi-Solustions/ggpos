@@ -11,6 +11,7 @@
  */
 import { formatGBP, parseTierPerk, type LoyaltyTier, type TierPerk } from "@gg/shared"
 
+import { formatShortDate } from "@/features/customers/format"
 import {
   parseCount,
   penceToPounds,
@@ -24,6 +25,7 @@ import type {
   LoyaltyRuleWrite,
   LoyaltyTierRecord,
   LoyaltyTierWrite,
+  MembershipRecord,
   RewardType,
 } from "@/lib/api/types"
 
@@ -733,4 +735,40 @@ export function validateAdjust(form: AdjustForm, balance: number): Errors {
     errors.reason = "That reason is too long. Keep it under 500 characters."
   }
   return errors
+}
+
+// ---------------------------------------------------------------------------
+// The lines the lists show
+//
+// They live here rather than beside the components that render them so a
+// component file exports nothing but components, which is what keeps fast
+// refresh working (apps/web/eslint.config.js exempts components/ui only).
+// ---------------------------------------------------------------------------
+
+/** What a reward is worth, in the right units for its type. */
+export function rewardWorth(reward: LoyaltyRewardRecord): string {
+  if (reward.type === "money_off") return `${formatGBP(reward.value ?? 0)} off`
+  if (reward.type === "store_credit") return `${formatGBP(reward.value ?? 0)} credit`
+  if (reward.type === "event_entry") return "One entry"
+  if (reward.type === "free_item") return "One item"
+  return "Custom"
+}
+
+/** "20 in total, 1 each" or "No limit", the grey line on a reward row. */
+export function rewardLimits(reward: LoyaltyRewardRecord): string {
+  const parts: string[] = []
+  if (reward.stock_limit) parts.push(`${reward.stock_limit} in total`)
+  if (reward.per_customer_limit) parts.push(`${reward.per_customer_limit} each`)
+  if (parts.length === 0) parts.push("No limit")
+  if (reward.starts_at) parts.push(`from ${reward.starts_at.slice(0, 10)}`)
+  if (reward.ends_at) parts.push(`to ${reward.ends_at.slice(0, 10)}`)
+  return parts.join(" · ")
+}
+
+/** "Renews 12 Oct 2027", or what happened to a plan that is not running. */
+export function planLine(membership: MembershipRecord): string {
+  const renews = formatShortDate(membership.renews_at)
+  if (membership.status === "cancelled") return "Cancelled"
+  if (membership.status === "lapsed") return `Lapsed on ${renews}`
+  return `Renews ${renews}`
 }

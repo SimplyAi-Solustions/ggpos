@@ -22,15 +22,24 @@ import { IdStep } from "@/features/tradein/steps/IdStep"
 import { ItemsStep } from "@/features/tradein/steps/ItemsStep"
 import { OfferStep } from "@/features/tradein/steps/OfferStep"
 import {
+  handoffSettled,
+  type DisplayHandoff,
+} from "@/features/display/handoff"
+import { buyInPayload } from "@/features/display/payload"
+import { clearDisplay, publishDisplay, subscribeDisplay } from "@/lib/api/display"
+import { displayFrom } from "@/lib/api/config"
+import {
   canAdvance,
   idGate,
   initialState,
+  lineOffer,
   nextStep,
   payoutFor,
   reducer,
   toLineInputs,
   totals,
   visibleSteps,
+  type TradeLine,
   type WizardState,
   type WizardStep,
 } from "@/features/tradein/machine"
@@ -52,6 +61,11 @@ import {
   type IdCheckPayload,
   type TradeInLineInput,
 } from "@/lib/api"
+
+/** The grey line under a title on the customer-facing display. */
+function lineDetail(line: TradeLine): string {
+  return [line.setName, line.number, line.condition].filter(Boolean).join(" · ")
+}
 
 export interface BuyInWizardProps {
   /**
@@ -79,6 +93,13 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [emailNote, setEmailNote] = React.useState<string | null>(null)
   const [labelNote, setLabelNote] = React.useState<string | null>(null)
+  // Where the offer has got to on the customer-facing screen, and the token
+  // of the publish being waited on, so a stale accept cannot settle a newer
+  // offer. Nothing about this reaches the completion route: the server has
+  // no field for it yet, so the flag lives on this screen only.
+  const [handoff, setHandoff] = React.useState<DisplayHandoff>("idle")
+  const [handoffToken, setHandoffToken] = React.useState<string | null>(null)
+  const [displayError, setDisplayError] = React.useState<string | null>(null)
 
   // One read of `/api/vault/config` for the session, shared with the Sell
   // and Cash screens' own slice of it. The offer bands, the cash cap and the
@@ -112,6 +133,81 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
         new Date()
       )
     : 0
+
+  // ---- The customer-facing display ---------------------------------------
+
+  const display = config ? displayFrom(config) : null
+  const displayEnabled = display?.enabled === true
+  /** `off` is what the Offer step is told when the shop has no display. */
+  const handoffState: DisplayHandoff = displayEnabled ? handoff : "off"
+
+  // Whether anything has been put on the tablet from this buy-in, so it is
+  // only cleared when there is something to clear.
+  const published = React.useRef(false)
+
+  const showCustomer = useMutation({
+    mutationFn: () =>
+      publishDisplay(
+        "buy_in",
+        buyInPayload({
+          lines: state.lines
+            .filter((line) => line.accepted)
+            .map((line) => ({
+              title: line.title,
+              detail: lineDetail(line),
+              qty: line.kind === "bulk" ? 1 : line.qty,
+              offerPrice:
+                state.payoutType === "credit"
+                  ? lineOffer(line, rules, settings, conditionMultipliers).credit
+                  : lineOffer(line, rules, settings, conditionMultipliers).cash,
+              image: line.image,
+            })),
+          totalMarket: sums.market,
+          totalOffer: payout.cash + payout.credit,
+          payoutType: state.payoutType,
+          // Shortened to a first name and a last initial by the payload
+          // builder, because the tablet faces the shop.
+          customerName: state.customer?.name ?? "",
+          creditBonusPoints: payout.credit > 0 ? creditPoints : 0,
+        })
+      ),
+    onSuccess: ({ token }) => {
+      setDisplayError(null)
+      published.current = true
+      setHandoffToken(token)
+      setHandoff("waiting")
+    },
+    onError: (error) =>
+      setDisplayError(
+        refusalOrFallback(
+          error,
+          "That did not reach the display. Check the tablet, or skip the display."
+        )
+      ),
+  })
+
+  /**
+   * The accept comes back over the same realtime row the tablet is on, so
+   * the phone in the staff member's hand learns about it without anybody
+   * pressing anything. Only the token that was published is listened for:
+   * a later publish carries a new one.
+   */
+  React.useEffect(() => {
+    if (!handoffToken || handoff !== "waiting") return undefined
+    return subscribeDisplay((live) => {
+      if (live.token === handoffToken && live.customer_accepted_at) {
+        setHandoff("accepted")
+      }
+    })
+  }, [handoffToken, handoff])
+
+  // Whatever is on the tablet when this screen goes away is not the next
+  // customer's business.
+  React.useEffect(() => {
+    return () => {
+      if (published.current) void clearDisplay().catch(() => {})
+    }
+  }, [])
 
   // ---- The draft ---------------------------------------------------------
   const draft = useMutation({
@@ -257,9 +353,14 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
     onSuccess: (result) => {
       setStepError(null)
       // The photo blob, the date of birth and the address belong to the
-      // person who has just walked away.
+      // person who has just walked away, and so does the offer on the
+      // tablet.
       setCapture(EMPTY_CAPTURE)
       storedDocument.current = null
+      if (published.current) {
+        published.current = false
+        void clearDisplay().catch(() => {})
+      }
       void queryClient.invalidateQueries({ queryKey: ["customer"] })
       void queryClient.invalidateQueries({ queryKey: ["trade-ins"] })
       dispatch({
@@ -317,6 +418,14 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
     nextStep(state.step, { cashRequired }) === "done" && state.step !== "done"
 
   function advance() {
+    // The customer accepts the offer on the screen in front of them before
+    // anything is read out or signed, so that gate comes first.
+    if (state.step === "offer" && !handoffSettled(handoffState)) {
+      setStepError(
+        "Send the offer to the display and wait for the customer to accept it, or skip the display."
+      )
+      return
+    }
     if (!advanceGate.ok) {
       setStepError(advanceGate.reason)
       return
@@ -353,6 +462,9 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
     setEmailNote(null)
     setLabelNote(null)
     setStepError(null)
+    setHandoff("idle")
+    setHandoffToken(null)
+    setDisplayError(null)
     dispatch({ type: "reset" })
   }
 
@@ -469,6 +581,14 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
                   dispatch({ type: "set-signature", signature })
                 }
                 blockReason={stepError}
+                handoff={handoffState}
+                sending={showCustomer.isPending}
+                displayError={displayError}
+                onShowCustomer={() => showCustomer.mutate()}
+                onSkipDisplay={() => {
+                  setDisplayError(null)
+                  setHandoff("skipped")
+                }}
               />
             ) : null}
 

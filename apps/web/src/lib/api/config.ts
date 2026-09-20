@@ -72,6 +72,10 @@ async function wireConfig(): Promise<VaultConfig> {
       // rather than the line telling you to go and set a key up. The key
       // itself never reaches a browser, in demo mode or out of it.
       sumup: { merchant_code: DEMO_SETTINGS.sumup_merchant_code },
+      // The demo Settings screen writes `display` to its own settings
+      // record, so an admin can switch the customer screen on and watch it
+      // follow the till without a server.
+      display: demoSettings().display,
     },
     loyalty: {
       ...config.loyalty,
@@ -88,10 +92,6 @@ async function wireConfig(): Promise<VaultConfig> {
       })),
       tiers: DEMO_TIER_ROWS,
     },
-    // The demo Settings screen writes `display` to its own settings record,
-    // so an admin can switch the customer screen on and watch it follow the
-    // till without a server.
-    display: demoSettings().display,
   }
 }
 

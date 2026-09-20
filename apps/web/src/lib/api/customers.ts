@@ -12,11 +12,6 @@ import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { isNotFound } from "@/lib/api/refusal"
 import {
-  demoRecordReferral,
-  demoResolveReferral,
-  demoWelcomeBonus,
-} from "@/lib/api/demo/loyalty"
-import {
   demoCreateCustomer,
   demoCreditLedgerFor,
   demoEraseCustomer,
@@ -277,13 +272,20 @@ export async function findCustomerByScan(
 /** The server assigns `code` and `qr_token` in pb_hooks/customers.pb.js. */
 export async function createCustomer(input: NewCustomerInput): Promise<CustomerRecord> {
   if (isDemo()) {
+    // Loaded here rather than at the top of the file: the demo Guild store
+    // reads the demo shop's seed figures as it is evaluated, and that store
+    // reaches back into this barrel, so importing it up there would make a
+    // cycle that leaves its constants undefined.
+    const guild = await import("@/lib/api/demo/loyalty")
     // The code is resolved before the card is made, so a code that belongs
     // to nobody refuses the whole thing rather than leaving a customer with
     // a referral that was never recorded.
-    const referrer = input.referredBy ? demoResolveReferral(input.referredBy) : null
+    const referrer = input.referredBy
+      ? guild.demoResolveReferral(input.referredBy)
+      : null
     const record = demoCreateCustomer(input)
-    if (referrer) demoRecordReferral(referrer, record.id)
-    demoWelcomeBonus(record.id)
+    if (referrer) guild.demoRecordReferral(referrer, record.id)
+    guild.demoWelcomeBonus(record.id)
     return record
   }
 

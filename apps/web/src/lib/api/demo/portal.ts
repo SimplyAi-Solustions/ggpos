@@ -803,6 +803,31 @@ export const demoNotifications: DemoNotification[] = [
     created: daysAgo(210),
   },
   {
+    id: "note_demo_7",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "reward_used",
+    title: "Voucher GG-V-000006 used",
+    body: "GG lanyard, handed over at the counter. Nothing else to do with this one.",
+    link: "/account/rewards",
+    read_at: daysAgo(57),
+    created: daysAgo(58),
+  },
+  {
+    id: "note_demo_8",
+    customer: DEMO_PORTAL_CUSTOMER_ID,
+    type: "referral_earned",
+    title: "250 points for your referral",
+    body: "A friend who joined on your code made their first visit. You both have the points.",
+    link: "/account/guild",
+    read_at: daysAgo(209),
+    created: daysAgo(210),
+  },
+  // `points_expired`, `membership_started` and `membership_lapsed` are the
+  // three Guild types the demo card cannot carry without contradicting its
+  // own figures: nothing has expired off this ledger, and the plan on the
+  // Guild screen is live. The link normaliser treats all eight alike, and
+  // `notification-link.test.ts` covers the three destinations.
+  {
     id: "note_demo_3",
     customer: DEMO_PORTAL_CUSTOMER_ID,
     type: "trade_in",

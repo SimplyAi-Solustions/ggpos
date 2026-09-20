@@ -27,6 +27,7 @@ const DEFAULTS: CustomerValues = {
   phone: "",
   email: "",
   marketingConsent: false,
+  referredBy: "",
 }
 
 export interface NewCustomerScreenProps {
@@ -83,6 +84,7 @@ export function NewCustomerScreen({
         phone: values.phone,
         email: values.email,
         marketingConsent: values.marketingConsent,
+        referredBy: values.referredBy?.trim() || undefined,
       }),
     onSuccess: (customer) => {
       setServerError(null)
@@ -95,13 +97,21 @@ export function NewCustomerScreen({
         params: { code: customer.code },
       })
     },
-    onError: (error) =>
-      setServerError(
-        refusalOrFallback(
-          error,
-          "That did not save. Check the connection and try again."
-        )
-      ),
+    onError: (error) => {
+      const message = refusalOrFallback(
+        error,
+        "That did not save. Check the connection and try again."
+      )
+      // The one refusal that belongs to a field rather than the form: the
+      // server is the only thing that can say whether a code is anybody's,
+      // and its sentence already says what to do about it.
+      if (/\bcode\b/.test(message) && form.getValues("referredBy")) {
+        form.setError("referredBy", { message })
+        setServerError(null)
+        return
+      }
+      setServerError(message)
+    },
   })
 
   return (
@@ -183,6 +193,34 @@ export function NewCustomerScreen({
                 />
               )}
             />
+          </Field>
+
+          <Field
+            label="Referred by"
+            htmlFor="customer-referred-by"
+            hint="Optional"
+            error={errors.referredBy?.message}
+          >
+            <Controller
+              control={control}
+              name="referredBy"
+              render={({ field }) => (
+                <Input
+                  id="customer-referred-by"
+                  autoComplete="off"
+                  className="tnum font-mono"
+                  placeholder="GGC-4K7M2"
+                  aria-invalid={!!errors.referredBy}
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                />
+              )}
+            />
+            <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+              The code on the card of whoever sent them in. Both of them earn
+              points when this customer first buys or sells something.
+            </p>
           </Field>
 
           <Field label="Marketing">

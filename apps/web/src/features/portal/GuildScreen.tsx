@@ -6,7 +6,7 @@ import { displayCode } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Hint, MicroLabel, SectionHeading } from "@/components/ui/micro-label"
+import { Hint, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { getGuild } from "@/lib/api/guild"
@@ -223,12 +223,15 @@ export function GuildScreen() {
       {summary.vouchers_open > 0 ? (
         <>
           <SectionHeading className="mt-16">Vouchers</SectionHeading>
-          <div className="flex flex-col items-start gap-3">
-            <MicroLabel tone="ink">
+          {/* A sentence rather than a tracked label: a section heading, a
+              micro-label and a text link stacked would be three uppercase
+              lines saying one thing between them. */}
+          <div className="flex flex-col items-start gap-5">
+            <p className="text-base leading-[1.5] text-foreground">
               {summary.vouchers_open === 1
-                ? "1 ready to use"
-                : `${formatPoints(summary.vouchers_open)} ready to use`}
-            </MicroLabel>
+                ? "One voucher is ready to show at the counter."
+                : `${formatPoints(summary.vouchers_open)} vouchers are ready to show at the counter.`}
+            </p>
             <Button variant="text" render={<Link to="/account/rewards" />}>
               My vouchers
             </Button>

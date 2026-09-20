@@ -80,9 +80,12 @@ export function PlanSheet({
 
   // The sheet is mounted while it is open, so a second opening starts from
   // the values it was given rather than from the last one's leftovers.
-  const lastOpen = React.useRef(open)
-  if (open !== lastOpen.current) {
-    lastOpen.current = open
+  // React's own "adjusting state while rendering" pattern: the comparison
+  // is state rather than a ref, so the re-render happens before anything is
+  // painted with the old draft in it.
+  const [wasOpen, setWasOpen] = React.useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setDraft({
         ...EMPTY_MEMBERSHIP,

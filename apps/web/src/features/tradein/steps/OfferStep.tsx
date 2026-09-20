@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button"
 import { Hint, MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Switch } from "@/components/ui/switch"
 import { PRIVACY_SENTENCE } from "@/features/customers/format"
+import {
+  handoffSentence,
+  handoffSettled,
+  type DisplayHandoff,
+} from "@/features/display/handoff"
 import { MoneyField } from "@/features/tradein/MoneyField"
 import { SignaturePad } from "@/features/tradein/SignaturePad"
 import {
@@ -87,6 +92,14 @@ export interface OfferStepProps {
   blockReason: string | null
   /** Points the credit option would earn, from the live programme. */
   creditPoints: number
+  /** `off` while `settings.display.enabled` is false: nothing is published. */
+  handoff: DisplayHandoff
+  /** True while the publish is in flight. */
+  sending: boolean
+  /** What went wrong publishing it, in the server's own words. */
+  displayError: string | null
+  onShowCustomer: () => void
+  onSkipDisplay: () => void
 }
 
 /**
@@ -113,6 +126,11 @@ export function OfferStep({
   onSignature,
   blockReason,
   creditPoints,
+  handoff,
+  sending,
+  displayError,
+  onShowCustomer,
+  onSkipDisplay,
 }: OfferStepProps) {
   const standingBlock = cashBlock(customer.facts, 0, cashCap)
   const cashUnavailable = standingBlock.kind !== "none"
@@ -196,27 +214,48 @@ export function OfferStep({
           </p>
         </div>
 
-        <div className="mt-10 max-w-[40rem]">
-          <SignaturePad onChange={onSignature} />
-          {signature ? (
-            <Hint aria-live="polite" className="mt-3 block">
-              Signature captured
-            </Hint>
-          ) : null}
-        </div>
-      </div>
+        {handoff === "off" ? null : (
+          <div className="mt-10">
+            <div className="flex flex-wrap items-center gap-8">
+              <Button
+                variant="text"
+                type="button"
+                loading={sending}
+                onClick={onShowCustomer}
+              >
+                {handoff === "idle" ? "Show customer" : "Send it again"}
+              </Button>
+              {handoffSettled(handoff) ? null : (
+                <Button variant="text" type="button" onClick={onSkipDisplay}>
+                  Skip the display
+                </Button>
+              )}
+            </div>
+            <p
+              data-testid="handoff-state"
+              aria-live="polite"
+              className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground"
+            >
+              {handoffSentence(handoff)}
+            </p>
+            {displayError ? (
+              <p role="alert" className="mt-3 max-w-[56ch] text-[13px] text-destructive">
+                {displayError}
+              </p>
+            ) : null}
+          </div>
+        )}
 
-      <div className="mt-10 flex flex-wrap items-center gap-8">
-        <Button
-          variant="text"
-          type="button"
-          onClick={() =>
-            window.open("/display", "gg-display", "width=1280,height=800")
-          }
-        >
-          Show customer
-        </Button>
-        <Hint>Opens the display</Hint>
+        {handoffSettled(handoff) ? (
+          <div className="mt-10 max-w-[40rem]">
+            <SignaturePad onChange={onSignature} />
+            {signature ? (
+              <Hint aria-live="polite" className="mt-3 block">
+                Signature captured
+              </Hint>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {blockReason ? (

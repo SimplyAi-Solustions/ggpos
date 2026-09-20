@@ -103,16 +103,21 @@ routerAdd(
       throw e.badRequestError("The accept needs the token the display was published with.", null);
     }
 
+    // A publish nobody dealt with inside fifteen minutes is cleared before
+    // anything else is decided, so a stale token can never be accepted
+    // after the fact. In its own transaction, because the refusal below
+    // throws to roll its own back: a clear made in there would be rolled
+    // back with it and the stale basket would stay on the screen.
+    e.app.runInTransaction((txApp) => {
+      displayLib.clearIfStale(txApp, displayLib.stateRow(txApp), now);
+    });
+
     let halt = null;
     let result = null;
 
     try {
       e.app.runInTransaction((txApp) => {
         const row = displayLib.stateRow(txApp);
-        // A publish nobody dealt with inside fifteen minutes is cleared
-        // before anything else is decided, so a stale token can never be
-        // accepted after the fact.
-        displayLib.clearIfStale(txApp, row, now);
 
         if (row.getString("mode") !== "buy_in") {
           halt = {

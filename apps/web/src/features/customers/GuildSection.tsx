@@ -28,11 +28,10 @@ import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
 import { formatShortDate } from "@/features/customers/format"
 import { AdjustSheet } from "@/features/loyalty/AdjustSheet"
 import { PlanSheet } from "@/features/loyalty/PlanSheet"
-import { planLine } from "@/features/loyalty/MembershipsSection"
 import { PERK_LABEL, isCountedPerk, perkCountLine, perkValueLine, remaining } from "@/features/loyalty/perks"
 import { POINTS_REASON_LABEL } from "@/features/loyalty/ledger"
 import { voucherStatusWord, voucherWorth } from "@/features/loyalty/vouchers"
-import type { MembershipForm } from "@/features/loyalty/mapping"
+import { planLine, type MembershipForm } from "@/features/loyalty/mapping"
 import { parseCount, poundsToPence } from "@/features/settings/mapping"
 import { useStaff } from "@/lib/auth"
 import { refusalOrFallback } from "@/lib/api/refusal"
@@ -42,8 +41,8 @@ import {
   getLoyaltyAdmin,
   getPointsLedger,
   recordMembership,
+  recordPerkUse,
   renewMembership,
-  usePerk,
 } from "@/lib/api/loyalty"
 import type {
   CountedPerkType,
@@ -181,7 +180,7 @@ export function GuildSection({
   }
 
   const spendPerk = useMutation({
-    mutationFn: (type: CountedPerkType) => usePerk(customerId, type, 1),
+    mutationFn: (type: CountedPerkType) => recordPerkUse(customerId, type, 1),
     onSuccess: (entry) => {
       setError(null)
       setNote(
@@ -271,7 +270,11 @@ export function GuildSection({
         <div>
           <MicroLabel className="mb-2">Tier</MicroLabel>
           <span data-testid="guild-tier">
-            <Badge variant="volt">{guild.tier?.name ?? "No tier yet"}</Badge>
+            {/* Volt is the tier badge's own colour, so an absence of one is
+                not dressed up as an achievement. */}
+            <Badge variant={guild.tier ? "volt" : "outline"}>
+              {guild.tier?.name ?? "No tier yet"}
+            </Badge>
           </span>
         </div>
         <div>

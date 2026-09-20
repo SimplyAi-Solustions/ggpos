@@ -8,8 +8,6 @@
  * animation, and the inline guard says so here too rather than leaving it to
  * a file nobody reads).
  */
-import * as React from "react"
-
 export interface TickerProps {
   text: string
   /** Seconds for one pass. Slow: it is read across a counter, not scanned. */

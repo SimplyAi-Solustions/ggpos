@@ -15,7 +15,7 @@ import {
   displayCode,
   normaliseCode,
   parseTierPerk,
-  tierForPoints,
+  resolveTier,
 } from "@gg/shared"
 import type { LoyaltyTier, TierPerk } from "@gg/shared"
 
@@ -438,10 +438,14 @@ export function recomputeTier(customerId: string): string | null {
   const active = memberships.find(
     (row) => row.customer === customerId && row.status === "active"
   )
-  const all = evaluatorTiers()
-  const tier = active
-    ? (all.find((row) => row.id === active.tier) ?? null)
-    : tierForPoints(all, windowPointsFor(customerId))
+  // The shared helper, so the demo shop and the server can never disagree
+  // about who holds what: a paid plan pins the tier, otherwise the rolling
+  // window decides it.
+  const tier = resolveTier(
+    evaluatorTiers(),
+    windowPointsFor(customerId),
+    active?.tier ?? null
+  )
   entry.private.tier = tier?.id ?? undefined
   return tier?.id ?? null
 }
@@ -859,12 +863,14 @@ export function demoRecordReferral(referrerId: string, refereeId: string) {
 export function demoGuild(customerId: string): CustomerGuild {
   const entry = findDemoCustomer(customerId)
   if (!entry) refuse("That customer is not in the demo shop.")
+  // The server re-evaluates a tier after every points row and every
+  // membership change; the demo shop does it as the profile is read, which
+  // is what makes a seeded plan pin a seeded customer's tier.
+  const tierId = recomputeTier(customerId)
   const windowPoints = windowPointsFor(customerId)
   const all = evaluatorTiers()
   const membership = demoMembershipFor(customerId)
-  const tier = entry.private.tier
-    ? (all.find((row) => row.id === entry.private.tier) ?? null)
-    : null
+  const tier = tierId ? (all.find((row) => row.id === tierId) ?? null) : null
   const next = all
     .filter((row) => !row.paidPlan && row.thresholdPoints > windowPoints)
     .sort((a, b) => a.thresholdPoints - b.thresholdPoints)[0]

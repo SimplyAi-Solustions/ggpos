@@ -8,7 +8,7 @@
  */
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { Link } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { displayCode, formatGBP, parseDecimalToMinor } from "@gg/shared"
 
@@ -48,7 +48,12 @@ import {
   summarise,
   voucherProblem,
   type BasketLine,
+  type BasketState,
+  type BasketTotals,
 } from "@/features/sell/basket"
+import { salePayload } from "@/features/display/payload"
+import { useDisplayPublish } from "@/features/display/publish"
+import { getVoucherByCode } from "@/lib/api/loyalty"
 import {
   dispatchBasket,
   getBasket,
@@ -165,9 +170,31 @@ function SplitField({ method, amount }: { method: SplitMethod; amount: number })
   )
 }
 
-export function SellScreen() {
+/** What the display calls the amount that came off, in the till's own words. */
+function discountLabel(basket: BasketState, totals: BasketTotals): string {
+  if (totals.discount <= 0) return ""
+  if (totals.discountSource === "reward") {
+    return basket.voucher?.rewardName ?? "Reward"
+  }
+  if (totals.discountSource === "tier_perk") {
+    return `${basket.customer?.tierName ?? "Tier"} ${totals.perkPercent}% off`
+  }
+  return "Discount"
+}
+
+export interface SellScreenProps {
+  /**
+   * A `GGV-` code handed over by the Scan screen's voucher sheet. The
+   * customer it was issued to is attached with it, because a reward can
+   * only come off their own sale.
+   */
+  voucher?: string
+}
+
+export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
   const basket = useBasket()
   const dock = useCounterDock()
+  const navigate = useNavigate()
   const scanRef = React.useRef<HTMLInputElement>(null)
 
   const [scanError, setScanError] = React.useState<string | null>(null)
@@ -228,6 +255,34 @@ export function SellScreen() {
     cashCap: config?.cashCap,
   })
   const points = pointsPreview(basket, totals, setup, payment.split.points)
+
+  // ---- The customer-facing display ---------------------------------------
+
+  /**
+   * What the tablet shows while this basket is being built. Only what the
+   * customer needs to check the till is right: the lines, what came off and
+   * what it comes to. An empty basket is null, which is what puts the
+   * display back to the shop's own screen after a sale.
+   */
+  const displayPayload =
+    basket.lines.length === 0
+      ? null
+      : salePayload({
+          lines: basket.lines.map((line) => ({
+            title: line.title,
+            detail: line.detail,
+            qty: line.qty,
+            unitPrice: line.unitPrice,
+            image: line.image,
+          })),
+          subtotal: totals.subtotal,
+          discount: totals.discount,
+          discountLabel: discountLabel(basket, totals),
+          total: totals.total,
+          pointsToEarn: points,
+          customerName: basket.customer?.name,
+        })
+  useDisplayPublish(config?.display.enabled === true, "sale", displayPayload)
 
   // ---- The scan field ----------------------------------------------------
 
@@ -319,6 +374,45 @@ export function SellScreen() {
   )
 
   React.useEffect(() => setScanHandler((raw) => void commit(raw)), [commit])
+
+  /**
+   * A voucher handed over by the Scan screen's sheet.
+   *
+   * The sheet already knows whose it is, so the customer comes with it: a
+   * reward only ever comes off its own owner's sale, and asking staff to go
+   * and scan the card again for a code they have just looked at is work for
+   * nothing. The code is taken out of the address once it has been applied,
+   * so a refresh does not apply it twice.
+   */
+  const claimed = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    const code = incomingVoucher?.trim()
+    if (!code || claimed.current === code) return
+    claimed.current = code
+
+    void (async () => {
+      setScanError(null)
+      try {
+        const detail = await getVoucherByCode(code)
+        if (!detail) {
+          setScanError("That voucher has been used or has run out. Check the code.")
+          return
+        }
+        const current = getBasket()
+        if (!current.customer) {
+          const customer = await getCustomerForSale(detail.customer.code)
+          if (customer) dispatchBasket({ type: "attachCustomer", customer })
+        }
+        await commit(code)
+      } catch (error) {
+        setScanError(
+          refusalOrFallback(error, "That voucher could not be looked up. Scan it again.")
+        )
+      } finally {
+        void navigate({ to: "/counter/sell", search: {}, replace: true })
+      }
+    })()
+  }, [incomingVoucher, commit, navigate])
 
   React.useEffect(() => {
     const field = scanRef.current
@@ -644,7 +738,10 @@ export function SellScreen() {
           Customer
         </MicroLabel>
         {basket.customer ? (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-6">
+          <div
+            data-testid="basket-customer"
+            className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-6"
+          >
             <span className="flex min-w-0 flex-col gap-1">
               <span className="truncate text-[15px] text-foreground">
                 {basket.customer.name}

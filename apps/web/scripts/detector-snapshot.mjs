@@ -33,6 +33,57 @@ function ggCode(letter, body) {
   return `GG${letter}${body}${CROCKFORD[sum % 32]}`
 }
 const CUSTOMER = ggCode("C", "4K7M2")
+/** Callum, who is on the paid Guild Pass, and Tom's free-item voucher. */
+const GUILD_CUSTOMER = ggCode("C", "T6D1N")
+const VOUCHER = ggCode("V", "8P2RT")
+
+/** What the counter has published to the customer-facing display. */
+const DISPLAY_SALE = {
+  mode: "sale",
+  payload: {
+    lines: [
+      {
+        title: "Charizard ex",
+        detail: "Scarlet & Violet 151 · 199/165 · Near mint",
+        qty: 1,
+        unit_price: 32499,
+      },
+      { title: "Surging Sparks Elite Trainer Box", detail: "Sealed", qty: 1, unit_price: 4499 },
+    ],
+    subtotal: 36998,
+    discount: 225,
+    discount_label: "Regular 5% off",
+    total: 36773,
+    points_to_earn: 3677,
+    customer_name: "Jasmine O.",
+  },
+  token: "tok_snapshot_sale",
+  customer_accepted_at: "",
+  expires_at: new Date(Date.now() + 900000).toISOString(),
+}
+
+const DISPLAY_BUY_IN = {
+  mode: "buy_in",
+  payload: {
+    lines: [
+      {
+        title: "Charizard ex",
+        detail: "Scarlet & Violet 151 · 199/165 · Near mint",
+        qty: 1,
+        offer_price: 19500,
+      },
+      { title: "Mario Kart 64, boxed", detail: "N64 · Complete", qty: 1, offer_price: 3000 },
+    ],
+    total_market: 32499,
+    total_offer: 22500,
+    payout_type: "credit",
+    customer_name: "Jasmine O.",
+    credit_bonus_points: 1125,
+  },
+  token: "tok_snapshot_buyin",
+  customer_accepted_at: "",
+  expires_at: new Date(Date.now() + 900000).toISOString(),
+}
 
 const DEMO_STAFF = {
   id: "staff_demo",
@@ -57,6 +108,11 @@ const ROUTES = [
   ["quote-new", "/counter/quotes/quote_demo_3"],
   ["quote-offered", "/counter/quotes/quote_demo_1"],
   ["quote-accepted", "/counter/quotes/quote_demo_4"],
+  // Phase 6: the Guild admin screen, the Guild block on a profile, and the
+  // customer-facing display with nothing on it.
+  ["loyalty", "/counter/loyalty"],
+  ["guild-profile", `/counter/customers/${GUILD_CUSTOMER}`],
+  ["display-idle", "/display"],
 ]
 
 mkdirSync(outDir, { recursive: true })
@@ -216,5 +272,27 @@ await snap("offline-strip", "/counter/sell", async (page) => {
   await page.getByTestId("basket").waitFor()
   await page.getByTestId("offline-strip").waitFor()
 })
+
+// Phase 6: the voucher sheet a scanned reward code opens, and the display
+// with a basket and with an offer on it.
+await snap("scan-voucher", "/counter/scan", async (page) => {
+  const field = page.getByTestId("scan-field")
+  await field.fill(VOUCHER)
+  await field.press("Enter")
+  await page.getByTestId("voucher-sheet").waitFor()
+})
+
+for (const [name, state] of [
+  ["display-sale", DISPLAY_SALE],
+  ["display-buyin", DISPLAY_BUY_IN],
+]) {
+  await snap(name, "/display", async (page) => {
+    await page.evaluate((published) => {
+      window.localStorage.setItem("gg-demo-display", JSON.stringify(published))
+    }, state)
+    await page.reload({ waitUntil: "networkidle" })
+    await page.waitForTimeout(300)
+  })
+}
 
 await browser.close()

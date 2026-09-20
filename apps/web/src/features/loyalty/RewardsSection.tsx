@@ -8,7 +8,6 @@
  * saved together.
  */
 import * as React from "react"
-import { formatGBP } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -39,8 +38,10 @@ import {
   REWARD_TYPES,
   REWARD_TYPE_LABEL,
   emptyReward,
+  rewardLimits,
   rewardToForm,
   rewardValueIsMoney,
+  rewardWorth,
   validateReward,
   type RewardForm,
 } from "@/features/loyalty/mapping"
@@ -49,42 +50,17 @@ import type { LoyaltyRewardRecord, RewardType } from "@/lib/api/types"
 const DESCRIPTION_MAX = 500
 
 /**
- * A preview URL for a picked file, revoked when it changes or the sheet
- * closes. Built in an effect rather than during render, so a re-render does
- * not leak a new blob URL every keystroke.
+ * A preview URL for a picked file, revoked when the file changes or the
+ * sheet closes. One URL per file rather than one per render, so a keystroke
+ * in the form beside it never leaks a blob.
  */
 function useObjectUrl(file: File | null): string | null {
-  const [url, setUrl] = React.useState<string | null>(null)
+  const url = React.useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
   React.useEffect(() => {
-    if (!file) {
-      setUrl(null)
-      return undefined
-    }
-    const next = URL.createObjectURL(file)
-    setUrl(next)
-    return () => URL.revokeObjectURL(next)
-  }, [file])
+    if (!url) return undefined
+    return () => URL.revokeObjectURL(url)
+  }, [url])
   return url
-}
-
-/** What a reward is worth, in the right units for its type. */
-export function rewardWorth(reward: LoyaltyRewardRecord): string {
-  if (reward.type === "money_off") return `${formatGBP(reward.value ?? 0)} off`
-  if (reward.type === "store_credit") return `${formatGBP(reward.value ?? 0)} credit`
-  if (reward.type === "event_entry") return "One entry"
-  if (reward.type === "free_item") return "One item"
-  return "Custom"
-}
-
-/** "20 left, 1 each" or "No limit", the grey line on a row. */
-export function rewardLimits(reward: LoyaltyRewardRecord): string {
-  const parts: string[] = []
-  if (reward.stock_limit) parts.push(`${reward.stock_limit} in total`)
-  if (reward.per_customer_limit) parts.push(`${reward.per_customer_limit} each`)
-  if (parts.length === 0) parts.push("No limit")
-  if (reward.starts_at) parts.push(`from ${reward.starts_at.slice(0, 10)}`)
-  if (reward.ends_at) parts.push(`to ${reward.ends_at.slice(0, 10)}`)
-  return parts.join(" · ")
 }
 
 function RewardFormBody({

@@ -379,9 +379,11 @@ test.describe("rewards", () => {
     await expect(voucher.getByRole("img", { name: /^Voucher GGV-/ })).toBeVisible()
     await voucher.getByRole("button", { name: "Done" }).click()
 
-    // The points went with it, and the voucher is on the list.
+    // The points went with it, and the voucher is on the list. Back through
+    // the link rather than a fresh load: the demo shop lives in the tab, so
+    // a reload would start it over and prove nothing about the redemption.
     await expect(page.getByRole("dialog")).toBeHidden()
-    await page.goto("/account/rewards")
+    await page.getByRole("link", { name: "Back to rewards" }).click()
     await expect(page.getByTestId("rewards-points")).toHaveText("1,680")
     await expect(page.getByTestId("voucher-row")).toHaveCount(4)
   })

@@ -1,18 +1,18 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, redirect } from "@tanstack/react-router"
 
-import { Placeholder } from "@/app/placeholder"
+import { DisplayScreen } from "@/features/display/DisplayScreen"
+import { currentStaff } from "@/lib/auth"
 
-function DisplayPlaceholder() {
-  return (
-    <main className="mx-auto w-full max-w-[1040px] px-5 pb-16 sm:px-10">
-      <Placeholder
-        title="Game, trade, play"
-        lede="The customer-facing screen shows the basket, the perks applied and the offer to accept."
-      />
-    </main>
-  )
-}
-
+/**
+ * The customer-facing tablet. It signs in as staff once and stays on this
+ * address, so an unsigned visit is bounced to sign-in carrying where it was
+ * going, exactly as /counter is.
+ */
 export const Route = createFileRoute("/display")({
-  component: DisplayPlaceholder,
+  beforeLoad: ({ location }) => {
+    if (!currentStaff()) {
+      throw redirect({ to: "/login", search: { redirect: location.href } })
+    }
+  },
+  component: DisplayScreen,
 })

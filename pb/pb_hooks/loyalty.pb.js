@@ -9,7 +9,7 @@
  *   cron points_expire                    (03:40)
  *
  * Hooks registered here:
- *  - `customers` on create: resolve a `referred_by` **code** into the
+ *  - `customers` on create request: resolve a `referred_by` **code** into the
  *    customer it names, refusing one nobody holds or the customer's own.
  *  - `customers` after create: the welcome bonus, and the `pending`
  *    referrals row.
@@ -33,15 +33,21 @@
  */
 
 // ---------------------------------------------------------------------
-// customers on create: referred_by is a customer CODE
+// customers on create request: referred_by is a customer CODE
 //
-// A separate registration from customers.pb.js's own create hook, which
-// runs first (hook handlers fire in registration order, and pb_hooks files
-// load in name order) and has already assigned this record's own `code` by
-// the time this one sees it - which is what makes the "a customer cannot
-// refer themselves" check below possible at all.
+// A *Request hook, not the plain onRecordCreate: a refusal thrown from the
+// model-level hook is reported to the caller as PocketBase's own generic
+// "Failed to create record." (confirmed against v0.40.4), and the whole
+// point of this one is to tell whoever typed the code that nobody holds
+// it. The same reason audit.pb.js gives for using the *Request variants.
+//
+// It therefore runs before customers.pb.js's own onRecordCreate has
+// assigned this record its `code`, so the "a customer cannot refer
+// themselves" check below compares the code only when the caller supplied
+// one themselves, and otherwise catches it by record id - which is the
+// only handle a caller has on a customer who does not exist yet.
 // ---------------------------------------------------------------------
-onRecordCreate((e) => {
+onRecordCreateRequest((e) => {
   const util = require(`${__hooks}/lib/vaultutil.js`);
   const referrals = require(`${__hooks}/lib/referrals.js`);
 
@@ -54,9 +60,13 @@ onRecordCreate((e) => {
     return;
   }
 
+  // Both handles a caller has on a record that is not saved yet: the id
+  // they chose for it, and a code they supplied with it. Neither can be
+  // looked up in the database at this point, so both are compared against
+  // the record in hand.
   const ownCode = referrals.normalise(e.record.getString("code"));
   const given = referrals.normalise(raw);
-  if (ownCode && given && ownCode === given) {
+  if (raw === e.record.id || (ownCode && given && ownCode === given)) {
     throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
   }
 
@@ -77,12 +87,21 @@ onRecordCreate((e) => {
 //
 // Runs after customers.pb.js's own after-create hook, which is what
 // creates the paired customer_private row the ledger's cached balance is
-// written to; both writes here go through one transaction so a customer is
-// never left with a bonus and no referral, or the other way round.
+// written to. Both writes go through `e.app` rather than a transaction of
+// their own, the same way that hook writes customer_private and
+// ledgers.pb.js writes the cached balances: an after-create handler is
+// still inside the create's own transaction, and a runInTransaction opened
+// here is a separate one that cannot see any of it. Verified against
+// v0.40.4 - written that way the welcome row went in and customer_private
+// was not there to be found, leaving the customer with a cached balance of
+// 0 and no tier until their next points row repaired both.
 // ---------------------------------------------------------------------
 onRecordAfterCreateSuccess((e) => {
   const util = require(`${__hooks}/lib/vaultutil.js`);
   const referrals = require(`${__hooks}/lib/referrals.js`);
+  const balances = require(`${__hooks}/lib/balances.js`);
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
 
   const customerId = e.record.id;
   const referrerId = e.record.getString("referred_by");
@@ -106,25 +125,38 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   const wantsBonus = programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed;
-  if (wantsBonus || referrerId) {
-    try {
-      e.app.runInTransaction((txApp) => {
-        if (wantsBonus) {
-          txApp.save(
-            new Record(txApp.findCollectionByNameOrId("points_ledger"), {
-              customer: customerId,
-              delta: programme.welcomeBonus,
-              reason: "welcome",
-              ref: customerId,
-            })
-          );
-        }
-        if (referrerId) referrals.createPending(txApp, referrerId, customerId);
-      });
-    } catch (err) {
-      console.log(`[loyalty] welcome bonus or referral failed for ${customerId}: ${err}`);
+  console.log(`[probe] welcome entry ${customerId}: enabled=${programme.enabled} bonus=${programme.welcomeBonus} already=${alreadyWelcomed}`);
+  let pending = [];
+  try {
+    if (wantsBonus) {
+      e.app.save(
+        new Record(e.app.findCollectionByNameOrId("points_ledger"), {
+          customer: customerId,
+          delta: programme.welcomeBonus,
+          reason: "welcome",
+          ref: customerId,
+        })
+      );
+      // That row's own after-create hooks (ledgers.pb.js's cached
+      // balances, this file's tier re-evaluation below) do fire, but only
+      // once the whole create has completed - after the new customer has
+      // gone back to whoever asked for them. Doing both here as well means
+      // a customer created at the counter reads back with their bonus and
+      // their first tier already on them; both are recomputed from the
+      // ledger itself, so the later pass simply finds them right and
+      // changes nothing.
+      const seenRows = e.app.findRecordsByFilter("points_ledger", "customer = {:c}", "", 0, 0, { c: customerId }).length;
+      const b = balances.recompute(e.app, customerId);
+      const t = tiers.recompute(e.app, customerId);
+      console.log(`[probe] welcome ${customerId}: rows=${seenRows} points=${b.points} tier=${t.tier ? t.tier.name : "none"} changed=${t.changed}`);
+      pending = t.pending || [];
     }
+    if (referrerId) referrals.createPending(e.app, referrerId, customerId);
+  } catch (err) {
+    console.log(`[loyalty] welcome bonus or referral failed for ${customerId}: ${err}`);
   }
+  // After the writes, never between them (lib/notify.js).
+  notifyLib.sendPending(e.app, pending);
 
   e.next();
 }, "customers");

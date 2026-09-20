@@ -267,7 +267,7 @@ export async function getPerks(customerId: string): Promise<PerkWalletEntry[]> {
 }
 
 /** One entry or one hour off a monthly allowance. Refused when it is spent. */
-export async function usePerk(
+export async function recordPerkUse(
   customerId: string,
   type: CountedPerkType,
   count = 1
@@ -386,7 +386,7 @@ export async function listCustomerVouchers(
 }
 
 /** Marks a free item, event entry or custom voucher used at the counter. */
-export async function useVoucher(code: string): Promise<VoucherDetail> {
+export async function markVoucherUsed(code: string): Promise<VoucherDetail> {
   if (isDemo()) return demo.demoUseVoucher(code)
   const result = await pb.send<{ voucher: VoucherDetail }>(
     `/api/vault/vouchers/${encodeURIComponent(code)}/use`,

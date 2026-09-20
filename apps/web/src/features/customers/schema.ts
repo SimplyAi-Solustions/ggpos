@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { parseCode } from "@gg/shared"
 
 /**
  * What the customer forms accept, and what they say when they do not.
@@ -34,6 +35,19 @@ export const customerSchema = z.object({
       "That email address is missing an @ or a domain. Check it and try again."
     ),
   marketingConsent: z.boolean(),
+  /**
+   * The GGC code of whoever sent them in. Only the shape is checked here;
+   * whether a customer actually holds it is the server's answer, because
+   * only the server can look it up.
+   */
+  referredBy: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (value) => !value || parseCode(value)?.kind === "customer",
+      "A referral code looks like GGC-4K7M2. Check it and try again."
+    ),
 })
 
 export type CustomerValues = z.input<typeof customerSchema>

@@ -30,6 +30,19 @@ function text(value: string | undefined | null, max = 120): string {
   return (value ?? "").toString().trim().slice(0, max)
 }
 
+/**
+ * The most of a customer's name the display may carry: a first name and a
+ * last initial. The tablet faces the shop, so the queue behind sees enough
+ * to know the screen is theirs and no more than that.
+ */
+export function shortName(name: string | undefined | null): string {
+  const parts = text(name, 120).split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return ""
+  const [first, ...rest] = parts
+  const last = rest[rest.length - 1]
+  return last ? `${first} ${last.charAt(0).toUpperCase()}.` : first
+}
+
 export interface SaleLineInput {
   title: string
   detail?: string
@@ -45,7 +58,7 @@ export interface SalePayloadInput {
   discountLabel?: string
   total: number
   pointsToEarn: number
-  /** The customer's first name and last initial at most, or nothing. */
+  /** Shortened to a first name and a last initial on the way through. */
   customerName?: string
 }
 
@@ -71,7 +84,7 @@ export function salePayload(input: SalePayloadInput): DisplaySalePayload {
   }
   const label = text(input.discountLabel, 60)
   if (label) payload.discount_label = label
-  const name = text(input.customerName, 60)
+  const name = shortName(input.customerName)
   if (name) payload.customer_name = name
   return payload
 }
@@ -89,6 +102,7 @@ export interface BuyInPayloadInput {
   totalMarket: number
   totalOffer: number
   payoutType: PayoutType
+  /** Shortened to a first name and a last initial on the way through. */
   customerName: string
   creditBonusPoints?: number
 }
@@ -111,7 +125,7 @@ export function buyInPayload(input: BuyInPayloadInput): DisplayBuyInPayload {
     total_market: pence(input.totalMarket),
     total_offer: pence(input.totalOffer),
     payout_type: input.payoutType,
-    customer_name: text(input.customerName, 60),
+    customer_name: shortName(input.customerName),
   }
   if (input.creditBonusPoints && input.creditBonusPoints > 0) {
     payload.credit_bonus_points = Math.round(input.creditBonusPoints)

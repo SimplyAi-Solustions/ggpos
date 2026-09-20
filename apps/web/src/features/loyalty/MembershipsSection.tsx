@@ -15,16 +15,8 @@ import { Hint } from "@/components/ui/micro-label"
 import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
 import { formatShortDate } from "@/features/customers/format"
 import { PlanSheet } from "@/features/loyalty/PlanSheet"
-import type { MembershipForm } from "@/features/loyalty/mapping"
+import { planLine, type MembershipForm } from "@/features/loyalty/mapping"
 import type { LoyaltyTierRecord, MembershipRecord } from "@/lib/api/types"
-
-/** "Renews 12 Oct 2027", or what happened to a plan that is not running. */
-export function planLine(membership: MembershipRecord): string {
-  const renews = formatShortDate(membership.renews_at)
-  if (membership.status === "cancelled") return "Cancelled"
-  if (membership.status === "lapsed") return `Lapsed on ${renews}`
-  return `Renews ${renews}`
-}
 
 export interface MembershipsSectionProps {
   memberships: MembershipRecord[]

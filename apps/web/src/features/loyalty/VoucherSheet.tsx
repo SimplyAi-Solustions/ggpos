@@ -32,7 +32,7 @@ import {
   voucherStatusWord,
   voucherWorth,
 } from "@/features/loyalty/vouchers"
-import { cancelVoucher, getVoucherByCode, useVoucher } from "@/lib/api/loyalty"
+import { cancelVoucher, getVoucherByCode, markVoucherUsed } from "@/lib/api/loyalty"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { useStaff } from "@/lib/auth"
 
@@ -70,7 +70,7 @@ export function VoucherSheet({ code, onOpenChange }: VoucherSheetProps) {
   }
 
   const markUsed = useMutation({
-    mutationFn: () => useVoucher(code as string),
+    mutationFn: () => markVoucherUsed(code as string),
     onSuccess: () => {
       setError(null)
       setDone("Marked used. Hand it over.")
