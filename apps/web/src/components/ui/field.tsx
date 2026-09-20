@@ -43,8 +43,11 @@ function Field({
       <div
         className={cn(
           "flex items-baseline justify-between gap-4",
+          // Stacked, the label and its hint sit together at the top of the
+          // column: `justify-between` would otherwise push the hint to the
+          // foot of a tall field, away from the label it belongs to.
           layout === "auto"
-            ? "pt-0 min-[900px]:flex-col min-[900px]:items-start min-[900px]:gap-1 min-[900px]:pt-2"
+            ? "pt-0 min-[900px]:flex-col min-[900px]:items-start min-[900px]:justify-start min-[900px]:gap-1 min-[900px]:pt-2"
             : ""
         )}
       >
