@@ -103,11 +103,11 @@ function salesFile(): string {
         customer: sale.customerName ?? "",
         sku: line.sku,
         title: line.title,
-        qty: line.qty,
-        unit: line.unit_price,
+        qty: line.qty ?? 1,
+        unit: line.unit_price ?? 0,
         discount: line.discount ?? 0,
         payment: sale.payment ?? "",
-        total: sale.total,
+        total: sale.total ?? 0,
         status: line.status ?? "sold",
       })
     }

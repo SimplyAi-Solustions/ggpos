@@ -754,6 +754,12 @@ export interface StockItemRecord extends ItemRecord {
   reserved_for?: string
   reserved_until?: string
   ebay_listing_id?: string
+  /** Card Uploader's own `CS-XXXXXX` custom label, when the item is listed. */
+  ebay_sku?: string
+  /** When the item most recently became `listed_ebay`. */
+  listed_at?: string
+  /** When the item last went into a SumUp export, or empty. */
+  sumup_synced_at?: string
   label_printed_at?: string
   photos?: string[]
 }

@@ -403,6 +403,10 @@ export {
 // this barrel can drag it into the entry chunk.
 // ---------------------------------------------------------------------------
 export * from "@/lib/api/reports"
+export * from "@/lib/api/exports"
+export * from "@/lib/api/imports"
+export * from "@/lib/api/sumup"
+export * from "@/lib/api/csv-parse"
 
 export {
   createManualCard,

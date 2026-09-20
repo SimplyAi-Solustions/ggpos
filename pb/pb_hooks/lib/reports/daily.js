@@ -16,13 +16,59 @@
  * pb/README.md on pb_hooks isolation.
  */
 
-/** date, sales_count, ... daily_stats field values for one UTC day. */
-function buildDayRow(app, dateStr) {
+/**
+ * The stock valuation ("what is held stock worth right now") that every
+ * daily_stats row's stock_value_cost/stock_value_market carries. This is
+ * always "as stock stands when this runs", never a historical
+ * reconstruction of a past day (docs/api-contract.md says so plainly), so
+ * it comes out identical whichever day's row is asking for it.
+ *
+ * A full scan of every held item plus a price_snapshots lookup per item is
+ * real work; computing it once here and threading it through buildDayRow's
+ * own `stockValuation` parameter (see below) is what keeps a multi-day
+ * rebuild - the nightly cron's last-7-UTC-days sweep, POST
+ * /api/vault/stats/rebuild over a longer range, or a report falling back to
+ * several unbuilt days at once - from re-running that scan once per day for
+ * an answer that would come out the same every time. Call this once per
+ * rebuild/read and pass the result to every buildDayRow call it covers;
+ * upsertDayRows and rowsForEachDay below do exactly that.
+ */
+function currentStockValuation(app) {
+  var query = require(`${__hooks}/lib/reports/query.js`);
+  var stockItems = [];
+  try {
+    stockItems = app.findRecordsByFilter("items", query.STOCK_STATUS_FILTER, "", 0, 0);
+  } catch (err) {
+    stockItems = [];
+  }
+  var cost = 0;
+  var market = 0;
+  var snapshotCache = {};
+  for (var i = 0; i < stockItems.length; i++) {
+    var item = stockItems[i];
+    if (!item) continue;
+    var qty = Math.max(0, item.getInt("qty"));
+    cost += item.getInt("cost") * qty;
+    var perUnit = query.currentMarketPerUnit(app, item, snapshotCache);
+    market += perUnit.perUnit * qty;
+  }
+  return { cost: cost, market: market };
+}
+
+/**
+ * date, sales_count, ... daily_stats field values for one UTC day.
+ *
+ * `stockValuation`, when given ({cost, market} from currentStockValuation),
+ * is used as-is instead of scanning the stock table again - pass it when
+ * building more than one day in the same rebuild. Left out, a single day's
+ * own fresh scan is used, so calling this directly for one day still works
+ * with no caller-side setup.
+ */
+function buildDayRow(app, dateStr, stockValuation) {
   var dates = require(`${__hooks}/lib/reports/dates.js`);
   var query = require(`${__hooks}/lib/reports/query.js`);
 
   var bounds = dates.rangeParams(dateStr, dateStr);
-  var now = new Date();
 
   // --- Sales: rung up that day, by payment method --------------------------
   //
@@ -52,7 +98,17 @@ function buildDayRow(app, dateStr) {
   } catch (err) {
     sales = [];
   }
+  // sales_refunded sums sales.refunded_total for every sale that occurred
+  // this day, whichever day the refund itself was actually processed on -
+  // the same "belongs to the day the sale occurred" rule items_out already
+  // follows below. A sale refunded weeks later still moves this day's
+  // net-of-refunds figure when this row is next rebuilt; sales_total_by_
+  // payment itself stays gross (what was actually taken by each method),
+  // so every revenue total the reports package returns is gross minus this
+  // one field, computed the one place both live - see
+  // docs/api-contract.md's Phase 4 section.
   var salesTotalByPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0, none: 0 };
+  var salesRefunded = 0;
   for (var i = 0; i < sales.length; i++) {
     var sale = sales[i];
     if (!sale) continue;
@@ -60,6 +116,7 @@ function buildDayRow(app, dateStr) {
     if (method === "") method = "none";
     else if (!Object.prototype.hasOwnProperty.call(salesTotalByPayment, method)) method = "mixed";
     salesTotalByPayment[method] += sale.getInt("total");
+    salesRefunded += sale.getInt("refunded_total");
   }
 
   // --- Buy-ins: completed that day, by payout type -------------------------
@@ -121,24 +178,10 @@ function buildDayRow(app, dateStr) {
     if (net > 0) itemsOut += net;
   }
 
-  // --- Stock value at build time: cost and market, held stock only --------
-  var stockItems = [];
-  try {
-    stockItems = app.findRecordsByFilter("items", query.STOCK_STATUS_FILTER, "", 0, 0);
-  } catch (err) {
-    stockItems = [];
-  }
-  var stockValueCost = 0;
-  var stockValueMarket = 0;
-  var snapshotCache = {};
-  for (var si = 0; si < stockItems.length; si++) {
-    var stockItem = stockItems[si];
-    if (!stockItem) continue;
-    var qty = Math.max(0, stockItem.getInt("qty"));
-    stockValueCost += stockItem.getInt("cost") * qty;
-    var market = query.currentMarketPerUnit(app, stockItem, snapshotCache);
-    stockValueMarket += market.perUnit * qty;
-  }
+  // --- Stock value: shared across a whole rebuild - see currentStockValuation ---
+  var valuation = stockValuation || currentStockValuation(app);
+  var stockValueCost = valuation.cost;
+  var stockValueMarket = valuation.market;
 
   // --- Credit ledger: issued (money in) vs redeemed (money out) -----------
   var creditRows = [];
