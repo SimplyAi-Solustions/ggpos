@@ -1,15 +1,25 @@
 // Runs the streaming filter against a real Cardmarket price guide file.
 //
 // Fixture provenance: test/fixtures/cardmarket-price-guide-19-lorcana.json
-// is the REAL, complete, unmodified response from
+// is the real, complete, unmodified response from
 // https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_19.json
-// (Lorcana, game id 19 per docs/PLAN.md), fetched live on 2026-09-20
-// through this environment's configured proxy. It is used whole rather
-// than trimmed to a slice: at 764,520 bytes it is already the smallest of
-// the five real files this service reads (Magic runs 26 MB, Yu-Gi-Oh! 17
-// MB, Pokemon 15 MB, One Piece 2.7 MB - all confirmed via a live HEAD
-// request the same day) and comes in under the 1 MB fixture size the task
-// brief asks for without needing to cut it down.
+// (Lorcana, game id 19 per docs/PLAN.md). Fetched live once while building
+// this, then re-fetched live a second time, independently, while
+// addressing review feedback questioning that claim (idProduct 727001 has
+// low=2200 against avg=3.4, a real outlier worth doubting on sight) - the
+// second pull came back byte-for-byte identical to the committed file,
+// 727001 included, so this is genuine Cardmarket data, not a corrupted or
+// partial download. A "low" more than two orders of magnitude above "avg"
+// is plausible for a thinly traded card: "low" is the single cheapest
+// active listing right now, "avg" a recent completed-sales average, and
+// for a card with almost no sellers those can diverge sharply (727001's
+// own avg1/avg7/avg30 spread - 3.4, 51.13, 51.13 - already shows how few
+// data points its average is built from). It is used whole rather than
+// trimmed to a slice: at 764,520 bytes it is already the smallest of the
+// five real files this service reads (Magic runs 26 MB, Yu-Gi-Oh! 17 MB,
+// Pokemon 15 MB, One Piece 2.7 MB - all confirmed via a live HEAD request
+// the same day) and comes in under the 1 MB fixture size the task brief
+// asks for without needing to cut it down.
 //
 // idProduct 726997 and 726998 (this file's first two entries) are used
 // directly below rather than invented, so every assertion here traces back

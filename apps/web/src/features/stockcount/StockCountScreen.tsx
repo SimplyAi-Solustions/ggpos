@@ -390,6 +390,7 @@ export function StockCountScreen({ id }: { id: string }) {
       setError(null)
       queryClient.setQueryData(["stock-count", id], result)
       void queryClient.invalidateQueries({ queryKey: ["stock-counts"] })
+      void queryClient.invalidateQueries({ queryKey: ["stock-count-open"] })
       void queryClient.invalidateQueries({ queryKey: ["items"] })
     },
     onError: (err) =>

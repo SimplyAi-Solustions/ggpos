@@ -8,7 +8,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "@tanstack/react-router"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -48,6 +48,7 @@ function when(iso: string): string {
 export function StockCountStartScreen() {
   const dock = useCounterDock()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [locationId, setLocationId] = React.useState<string>("")
   const [error, setError] = React.useState<string | null>(null)
 
@@ -68,7 +69,10 @@ export function StockCountStartScreen() {
     queryKey: ["stock-count-open", locationId],
     queryFn: () => getOpenStockCount(locationId),
     enabled: locationId !== "",
-    staleTime: 10_000,
+    // Never cached: somebody else may have started one on the shop phone a
+    // second ago, and two counts of a shelf are two wrong answers.
+    staleTime: 0,
+    refetchOnMount: "always",
   })
   const resume = locationId ? (open.data ?? null) : null
 
@@ -76,6 +80,8 @@ export function StockCountStartScreen() {
     mutationFn: () => startStockCount(locationId),
     onSuccess: (count) => {
       setError(null)
+      void queryClient.invalidateQueries({ queryKey: ["stock-count-open"] })
+      void queryClient.invalidateQueries({ queryKey: ["stock-counts"] })
       void navigate({ to: "/counter/stock/count/$id", params: { id: count.id } })
     },
     onError: (err) =>

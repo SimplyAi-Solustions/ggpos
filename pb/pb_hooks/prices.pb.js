@@ -73,10 +73,10 @@ routerAdd(
     }
 
     const settingsRow = util.settings(e.app);
-    const priority = pricingPriority(util, settingsRow);
-    const multipliers = conditionMultipliers(util, settingsRow);
+    const priority = policy.tcgPriority(settingsRow);
+    const multipliers = policy.conditionMultipliers(settingsRow);
 
-    const candidates = snapshotsFor(e.app, policy, "card", cardId, finish);
+    const candidates = policy.snapshotsFor(e.app, "card", cardId, finish);
     const now = new Date();
     const result = policy.choose(candidates, priority, now);
     const conditionAdjusted = result.chosen
@@ -214,9 +214,9 @@ routerAdd(
     });
 
     // Same body as the GET, read straight back from what was just written.
-    const priority = pricingPriority(util, settingsRow);
-    const multipliers = conditionMultipliers(util, settingsRow);
-    const candidates = snapshotsFor(e.app, policy, "card", cardId, finish);
+    const priority = policy.tcgPriority(settingsRow);
+    const multipliers = policy.conditionMultipliers(settingsRow);
+    const candidates = policy.snapshotsFor(e.app, "card", cardId, finish);
     const result = policy.choose(candidates, priority, now);
     const conditionAdjusted = result.chosen
       ? policy.adjustForConditionSafe(result.chosen.gbp_market, condition, multipliers)
@@ -257,7 +257,7 @@ routerAdd(
       throw e.badRequestError("Pick a condition: NM, LP, MP, HP or DMG.", null);
     }
 
-    const ukComp = validateUkComp(e, util, body);
+    const ukComp = policy.validateUkComp(e, util, body);
 
     let snapshot = null;
     e.app.runInTransaction((txApp) => {
@@ -288,9 +288,9 @@ routerAdd(
     });
 
     const settingsRow = util.settings(e.app);
-    const priority = pricingPriority(util, settingsRow);
-    const multipliers = conditionMultipliers(util, settingsRow);
-    const candidates = snapshotsFor(e.app, policy, "card", cardId, finish);
+    const priority = policy.tcgPriority(settingsRow);
+    const multipliers = policy.conditionMultipliers(settingsRow);
+    const candidates = policy.snapshotsFor(e.app, "card", cardId, finish);
     const now = new Date();
     const result = policy.choose(candidates, priority, now);
     const conditionAdjusted = result.chosen
@@ -343,9 +343,9 @@ routerAdd(
 
     const completeness = queryParam("completeness");
     const settingsRow = util.settings(e.app);
-    const priority = retroPriority(util, settingsRow);
+    const priority = policy.retroPriority(settingsRow);
 
-    const candidates = snapshotsFor(e.app, policy, "retro_title", retroId, completeness);
+    const candidates = policy.snapshotsFor(e.app, "retro_title", retroId, completeness);
     const now = new Date();
     const result = policy.choose(candidates, priority, now);
 
@@ -465,8 +465,8 @@ routerAdd(
     });
 
     // Same body as the GET, read straight back from what was just written.
-    const priority = retroPriority(util, settingsRow);
-    const candidates = snapshotsFor(e.app, policy, "retro_title", retroId, completeness);
+    const priority = policy.retroPriority(settingsRow);
+    const candidates = policy.snapshotsFor(e.app, "retro_title", retroId, completeness);
     const result = policy.choose(candidates, priority, now);
 
     return e.json(200, { chosen: result.chosen, sources: result.sources, condition_adjusted: null });
@@ -497,7 +497,7 @@ routerAdd(
     // completeness stands in for finish/condition here - retro has neither
     // (docs/api-contract.md's Phase 3 section).
     const completeness = util.asStr(body.completeness) || "loose";
-    const ukComp = validateUkComp(e, util, body);
+    const ukComp = policy.validateUkComp(e, util, body);
 
     let snapshot = null;
     e.app.runInTransaction((txApp) => {
@@ -528,8 +528,8 @@ routerAdd(
     });
 
     const settingsRow = util.settings(e.app);
-    const priority = retroPriority(util, settingsRow);
-    const candidates = snapshotsFor(e.app, policy, "retro_title", retroId, completeness);
+    const priority = policy.retroPriority(settingsRow);
+    const candidates = policy.snapshotsFor(e.app, "retro_title", retroId, completeness);
     const now = new Date();
     const result = policy.choose(candidates, priority, now);
 
