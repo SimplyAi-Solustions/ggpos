@@ -301,3 +301,42 @@ export async function verifyPassword(
     throw error
   }
 }
+
+// ---------------------------------------------------------------------------
+// Customers and trade
+//
+// The customers area and the buy-in wizard call through these; the record
+// shapes they use are already re-exported from `./types` at the top of this
+// file. Both modules branch on `isDemo()` themselves, exactly as the calls
+// above do.
+// ---------------------------------------------------------------------------
+
+export {
+  createCustomer,
+  eraseCustomer,
+  getCreditLedger,
+  getCustomer,
+  mergeCustomers,
+  searchCustomers,
+  updateCustomer,
+} from "@/lib/api/customers"
+
+export {
+  completeTradeIn,
+  createDraftTradeIn,
+  emailReceipt,
+  fetchIdPhoto,
+  getCustomerTradeIns,
+  getOfferSettings,
+  getPricingRules,
+  getReceipt,
+  getTradeIn,
+  getTradeInLines,
+  latestIdDocument,
+  listTradeIns,
+  saveTradeInLines,
+  stepUp,
+  submitIdCheck,
+} from "@/lib/api/tradeins"
+
+export { isNotFound, refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
