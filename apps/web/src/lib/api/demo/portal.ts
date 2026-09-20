@@ -831,12 +831,23 @@ export function demoQuoteQueue(statuses: QuoteStatus[] = []): QuoteQueuePage {
 }
 
 export function demoStaffQuote(id: string): StaffQuoteDetail {
-  const { messages, photos, ...quote } = findQuote(id)
+  const found = demoQuotes.find((entry) => entry.id === id)
+  // The staff voice, not the customer's: this is the counter's own read,
+  // and the screen prints whatever it is handed.
+  if (!found) throw new Error("That quote is not on file. It may have been cancelled.")
+  const { messages, photos, ...quote } = found
   const customer = demoCustomerFor(quote.customer)
   return {
-    quote,
-    messages: [...messages],
-    photos: [...photos],
+    // Copies, never the store's own arrays: TanStack keeps the previous
+    // reference when a refetch is deeply equal to what it holds, so handing
+    // back the very objects the demo mutates would leave the screen showing
+    // the state before the write.
+    quote: {
+      ...quote,
+      lines: quote.lines ? quote.lines.map((line) => ({ ...line })) : undefined,
+    },
+    messages: messages.map((message) => ({ ...message })),
+    photos: photos.map((photo) => ({ ...photo })),
     customer: customer
       ? {
           id: customer.id,

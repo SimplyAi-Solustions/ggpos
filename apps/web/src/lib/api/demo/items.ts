@@ -170,14 +170,14 @@ export function listItems(filters: ItemFilters, page: number): ItemListPage {
   }
 }
 
-/** Forty-eight hours, as PLAN.md's want-list hold does. */
-export function reserveItem(id: string, customerId: string): ItemDetail {
+/** The shop's own hold window, which the caller reads from settings. */
+export function reserveItem(id: string, customerId: string, hours = 48): ItemDetail {
   ensureSeeded()
   const item = itemStore().find((row) => row.id === id)
   if (!item) throw new Error("That item is no longer in stock.")
   if (item.status === "sold") throw new Error("That item is already sold.")
   const until = new Date()
-  until.setHours(until.getHours() + 48)
+  until.setHours(until.getHours() + hours)
   item.status = "reserved"
   item.reserved_for = customerId
   item.reserved_until = until.toISOString()

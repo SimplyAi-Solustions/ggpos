@@ -65,6 +65,7 @@ import {
   writeOffItem,
 } from "@/lib/api"
 import { useCardPrices, usePricingSettings, useRetroPrices } from "@/lib/api/prices"
+import { useVaultConfig } from "@/lib/api/config"
 import type { ItemDetail, ItemStatus } from "@/lib/api/types"
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
@@ -345,6 +346,10 @@ export function ItemPage({ sku }: { sku: string }) {
   // is; anything else (sealed, an accessory) has no catalogue row to price
   // against and shows no market section at all.
   const pricing = usePricingSettings()
+  // `settings.holds.hours` is the want-list hold's one home, so the Hold
+  // button here reads the same figure rather than a second copy of 48.
+  const { data: config } = useVaultConfig()
+  const holdHours = config?.settings.holds?.hours ?? 48
   const cardPrices = useCardPrices(item?.card, item?.finish ?? "", item?.condition || "NM")
   const retroPrices = useRetroPrices(item?.retro_title, item?.completeness ?? "")
   const priced = item?.card ? cardPrices.data : retroPrices.data
@@ -387,10 +392,12 @@ export function ItemPage({ sku }: { sku: string }) {
   })
 
   const reserve = useMutation({
-    mutationFn: (customerId: string) => reserveItem(item?.id ?? "", customerId),
+    mutationFn: (customerId: string) => reserveItem(item?.id ?? "", customerId, holdHours),
     onSuccess: (updated) => {
       setError(null)
-      setNote(`Held for ${updated.reservedForName ?? "the customer"} for 48 hours`)
+      setNote(
+        `Held for ${updated.reservedForName ?? "the customer"} for ${holdHours} hours`
+      )
       settle()
     },
     onError: onFailure("That reservation did not stick. Try again."),
@@ -771,7 +778,7 @@ export function ItemPage({ sku }: { sku: string }) {
         open={reserveOpen}
         onOpenChange={setReserveOpen}
         title="Reserve"
-        description="Held for 48 hours for the customer you choose."
+        description={`Held for ${holdHours} hours for the customer you choose.`}
         onChoose={(customer) => reserve.mutate(customer.id)}
       />
 

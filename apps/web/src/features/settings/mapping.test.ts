@@ -375,6 +375,15 @@ describe("the notification settings", () => {
     expect(formToPatch({ ...form(), holdHours: "72" }).holds).toEqual({ hours: 72 })
   })
 
+  it("refuses a quote that stands for no days at all", () => {
+    // The server reads 0 as "unset" and substitutes fourteen days, so the
+    // shop would be quoting a fortnight it never asked for.
+    expect(validateSettings({ ...form(), quoteExpiryDays: "0" }).quoteExpiryDays).toContain(
+      "for example 7."
+    )
+    expect(validateSettings({ ...form(), quoteExpiryDays: "7" }).quoteExpiryDays).toBeUndefined()
+  })
+
   it("says what to do about a hold window that is not a number of hours", () => {
     expect(validateSettings({ ...form(), holdHours: "nought" }).holdHours).toBe(
       "Enter the number of hours a hold lasts, for example 48."

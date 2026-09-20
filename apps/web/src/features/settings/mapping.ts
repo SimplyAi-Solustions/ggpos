@@ -516,7 +516,10 @@ export function validateSettings(form: SettingsForm): FormErrors {
   })
   requirePounds(errors, "cashCap", form.cashCap)
   requirePounds(errors, "cashVarianceAlert", form.cashVarianceAlert)
-  if (parseCount(form.quoteExpiryDays) === null) {
+  const quoteDays = parseCount(form.quoteExpiryDays)
+  // Zero is not "no expiry": the server substitutes fourteen days for it,
+  // so a shop that typed 0 would be quoting a fortnight without knowing.
+  if (quoteDays === null || quoteDays < 1) {
     errors.quoteExpiryDays = "Enter the number of days a quote stands for, for example 7."
   }
   const holdHours = parseCount(form.holdHours)

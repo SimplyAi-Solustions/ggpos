@@ -476,7 +476,7 @@ export function QuotePage({ id }: { id: string }) {
             <p className="mt-3 text-[13px] leading-[1.45] text-muted-foreground">
               {expired
                 ? `Ran out on ${formatDate(quote.offer_expires_at)}`
-                : `Holds until ${formatDateTime(quote.offer_expires_at)}`}
+                : `Stands until ${formatDateTime(quote.offer_expires_at)}`}
             </p>
           ) : null}
 
@@ -523,13 +523,24 @@ export function QuotePage({ id }: { id: string }) {
           <ul data-testid="quote-thread" className="flex flex-col gap-6">
             {messages.map((entry) => (
               <li key={entry.id} className="flex flex-col gap-1.5">
-                <MicroLabel>
-                  {entry.author === "staff" ? "The counter" : customer?.name || "Customer"}
-                </MicroLabel>
+                {/* "The counter" is a label and takes the label treatment.
+                    A person's name is not: uppercase at length is hard to
+                    read, and a name can be long. It is set in Jost, and the
+                    timestamp under it is a code, so it is Space Mono 400 at
+                    13px rather than the 11px label weight. */}
+                {entry.author === "staff" ? (
+                  <MicroLabel>The counter</MicroLabel>
+                ) : (
+                  <p className="text-[15px] leading-[1.4] font-medium text-foreground">
+                    {customer?.name || "The customer"}
+                  </p>
+                )}
                 <p className="max-w-[56ch] text-[15px] leading-[1.5] text-foreground">
                   {entry.body}
                 </p>
-                <Hint>{formatDateTime(entry.created)}</Hint>
+                <p className="tnum font-mono text-[13px] leading-[1.45] text-muted-foreground-2">
+                  {formatDateTime(entry.created)}
+                </p>
               </li>
             ))}
           </ul>

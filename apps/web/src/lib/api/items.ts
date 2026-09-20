@@ -215,14 +215,23 @@ export async function listItems(
   }
 }
 
-/** A 48-hour hold, the same window a want-list match gets. */
+/**
+ * A hold, for the window the shop has set.
+ *
+ * `settings.holds.hours` is that figure's one home: the want-list match
+ * hook reads it, so the counter's own Hold button has to read it too, or a
+ * shop that moved it to 72 hours would get 48 from one and 72 from the
+ * other. The caller passes it in from the config it already holds; 48 is
+ * the server's own default and nothing more.
+ */
 export async function reserveItem(
   id: string,
-  customerId: string
+  customerId: string,
+  hours = 48
 ): Promise<ItemDetail> {
-  if (isDemo()) return demo.reserveItem(id, customerId)
+  if (isDemo()) return demo.reserveItem(id, customerId, hours)
   const until = new Date()
-  until.setHours(until.getHours() + 48)
+  until.setHours(until.getHours() + hours)
   const item = await pb.collection("items").update<ExpandedItem>(
     id,
     {
