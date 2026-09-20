@@ -1,14 +1,14 @@
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react"
-import { formatGBP } from "@gg/shared"
+import { formatGBP, type PriceSource } from "@gg/shared"
 import type { OfferSettings, PricingRule } from "@gg/shared/pricing"
 
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Field } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Hint, MicroLabel, SectionHeading } from "@/components/ui/micro-label"
+import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import {
   Select,
   SelectContent,
@@ -62,6 +62,309 @@ function platformFor(kind: LineKind): string {
   return "tcg_card"
 }
 
+/**
+ * One line on the buy-in, priced.
+ *
+ * The market comes from the price routes now: a card line asks
+ * `/api/vault/cards/:id/prices` for its finish and condition, a retro line
+ * asks the retro route for its completeness, and the figure that comes back
+ * fills the line once. A staff member can still type over it, which marks the
+ * line manual, and a line with no catalogue row behind it (a sealed box, a
+ * lot, a title nobody recognised) is manual from the start, exactly as it was
+ * before. The cash and credit offers below are unchanged: the shared
+ * `computeOffer` over the condition-adjusted market, every time.
+ */
+function LineRow({
+  line,
+  offer,
+  onUpdate,
+  onRemove,
+  onOverride,
+}: {
+  line: TradeLine
+  offer: LineOffer
+  onUpdate: (key: string, patch: Partial<TradeLine>) => void
+  onRemove: (key: string) => void
+  onOverride: () => void
+}) {
+  const [expanded, setExpanded] = React.useState(false)
+  const isRetro = line.kind === "retro"
+  const isBulk = line.kind === "bulk"
+  const isCard = CARD_KINDS.has(line.kind)
+
+  // Only one of these ever has an id, and a query with no id never runs.
+  const cardPrices = useCardPrices(line.cardId, line.finish ?? "", line.condition ?? "NM")
+  const retroPrices = useRetroPrices(line.retroTitleId, line.condition ?? "")
+  const priced = Boolean(line.cardId || line.retroTitleId)
+  const view = line.cardId ? cardPrices.data : retroPrices.data
+  const waiting = line.marketSource === PENDING_SOURCE
+
+  // The figure lands on the line once, and only while nobody has typed over
+  // it: the offer, the totals and the saved draft all read `marketPence`, so
+  // it has to be on the line rather than only on screen.
+  React.useEffect(() => {
+    if (!waiting || !view) return
+    const chosen = view.chosen
+    onUpdate(
+      line.key,
+      chosen
+        ? { marketPence: chosen.gbp_market, marketSource: chosen.source }
+        : { marketSource: MANUAL_SOURCE }
+    )
+  }, [waiting, view, line.key, onUpdate])
+
+  /** A lot's count lives in its title as well, so the two move together. */
+  function setCount(count: number) {
+    onUpdate(line.key, {
+      qty: count,
+      ...(line.kind === "bulk" ? { title: bulkTitle(count) } : {}),
+    })
+  }
+
+  const manual = !priced || line.marketSource === MANUAL_SOURCE
+  const marketNote = manual
+    ? priced
+      ? "Entered by hand"
+      : "Manual"
+    : waiting && !view
+      ? "Looking up the price"
+      : marketLine(view, { gameKey: line.gameKey })
+
+  return (
+    <li
+      data-testid="trade-line"
+      className="border-b border-hairline-soft py-6 first:border-t first:border-hairline-soft"
+    >
+      <div className="flex items-start gap-4">
+        {!isBulk ? (
+          <ProductImage
+            src={line.image}
+            alt=""
+            platform={line.platformKey ?? platformFor(line.kind)}
+            height={56}
+            className="shrink-0"
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] leading-[1.4] text-foreground">{line.title}</p>
+          {line.setName || line.number ? (
+            <p className="mt-1 text-[13px] text-muted-foreground-2">
+              {[line.setName, line.number].filter(Boolean).join(" · ")}
+            </p>
+          ) : null}
+        </div>
+        <Button
+          variant="ghost-icon"
+          type="button"
+          aria-label={`Remove ${line.title}`}
+          onClick={() => onRemove(line.key)}
+        >
+          <XIcon />
+        </Button>
+      </div>
+
+      {/* A sealed box has no condition and no finish: it is sealed.
+          Cards take NM to DMG plus a finish, retro takes how
+          complete it is plus a cosmetic grade. */}
+      {isRetro || isCard ? (
+        <div className="mt-5 flex flex-col gap-5">
+          <ChipGroup
+            aria-label={isRetro ? "Completeness" : "Condition"}
+            value={line.condition ? [line.condition] : []}
+            onValueChange={(next) => onUpdate(line.key, { condition: next[0] })}
+          >
+            {isRetro
+              ? RETRO_COMPLETENESS.map((option) => (
+                  <Chip key={option.value} value={option.value}>
+                    {option.label}
+                  </Chip>
+                ))
+              : CARD_CONDITIONS.map((option) => (
+                  <Chip key={option} value={option}>
+                    {option}
+                  </Chip>
+                ))}
+          </ChipGroup>
+
+          {isRetro ? (
+            <ChipGroup
+              aria-label="Cosmetic grade"
+              value={line.cosmetic ? [line.cosmetic] : []}
+              onValueChange={(next) =>
+                onUpdate(line.key, { cosmetic: next[0] as TradeLine["cosmetic"] })
+              }
+            >
+              {COSMETIC_GRADES.map((grade) => (
+                <Chip key={grade} value={grade}>
+                  {grade}
+                </Chip>
+              ))}
+            </ChipGroup>
+          ) : (
+            <ChipGroup
+              aria-label="Finish"
+              value={line.finish ? [line.finish] : []}
+              onValueChange={(next) => onUpdate(line.key, { finish: next[0] })}
+            >
+              {LINE_FINISHES.map((finish) => (
+                <Chip key={finish.value} value={finish.value}>
+                  {finish.label}
+                </Chip>
+              ))}
+            </ChipGroup>
+          )}
+        </div>
+      ) : null}
+
+      <div className="mt-5 flex flex-wrap items-end gap-x-8 gap-y-5">
+        {line.kind === "sealed" || isBulk ? (
+          <div>
+            <MicroLabel className="mb-2">{isBulk ? "Cards" : "Quantity"}</MicroLabel>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost-icon"
+                type="button"
+                aria-label="One fewer"
+                disabled={line.qty <= 1}
+                onClick={() => setCount(Math.max(1, line.qty - 1))}
+              >
+                <MinusIcon />
+              </Button>
+              <Input
+                aria-label={`Quantity for ${line.title}`}
+                inputMode="numeric"
+                containerClassName="w-14"
+                className="tnum text-center"
+                value={String(line.qty)}
+                onChange={(event) => {
+                  const next = Number(event.target.value.replace(/\D/g, ""))
+                  setCount(Number.isFinite(next) && next > 0 ? next : 1)
+                }}
+              />
+              <Button
+                variant="ghost-icon"
+                type="button"
+                aria-label="One more"
+                onClick={() => setCount(line.qty + 1)}
+              >
+                <PlusIcon />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {isBulk ? (
+          <div className="w-36">
+            <MicroLabel className="mb-2">Offer for the lot</MicroLabel>
+            <MoneyField
+              id={`lot-${line.key}`}
+              label={`Flat offer for ${line.title}`}
+              value={line.bulkOffer ?? 0}
+              onChange={(pence) =>
+                onUpdate(line.key, { bulkOffer: pence, marketPence: pence })
+              }
+            />
+          </div>
+        ) : (
+          <div className="w-44">
+            <MicroLabel className="mb-2">Market</MicroLabel>
+            <MoneyField
+              id={`market-${line.key}`}
+              label={`Market value for ${line.title}`}
+              value={line.marketPence}
+              onChange={(pence) =>
+                onUpdate(line.key, { marketPence: pence, marketSource: MANUAL_SOURCE })
+              }
+            />
+            {priced ? (
+              <button
+                type="button"
+                data-testid="market-source"
+                aria-expanded={expanded}
+                onClick={() => setExpanded((open) => !open)}
+                className="mt-1 block max-w-full text-left text-[13px] leading-[1.45] text-muted-foreground-2 underline-offset-4 hover:underline"
+              >
+                {marketNote}
+              </button>
+            ) : (
+              <span
+                data-testid="market-source"
+                className="mt-1 block text-[13px] leading-[1.45] text-muted-foreground-2"
+              >
+                {marketNote}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div>
+          <MicroLabel className="mb-2">Cash</MicroLabel>
+          <p className="tnum text-[20px] leading-none font-medium text-foreground">
+            {formatGBP(offer.cashTotal)}
+          </p>
+        </div>
+        <div>
+          <MicroLabel className="mb-2">Credit</MicroLabel>
+          <p className="tnum text-[20px] leading-none font-medium text-foreground">
+            {formatGBP(offer.creditTotal)}
+          </p>
+        </div>
+        <div className="pb-1">
+          <Button variant="text" type="button" onClick={onOverride}>
+            Override
+          </Button>
+        </div>
+      </div>
+
+      {/* Every source side by side, on the line that is being offered for. */}
+      {expanded && priced ? (
+        <div className="mt-6">
+          <PriceSources
+            subject={
+              line.cardId
+                ? {
+                    kind: "card",
+                    id: line.cardId,
+                    finish: line.finish ?? "",
+                    condition: line.condition ?? "NM",
+                    gameKey: line.gameKey,
+                    title: line.title,
+                  }
+                : {
+                    kind: "retro",
+                    id: line.retroTitleId as string,
+                    finish: line.condition ?? "",
+                    title: line.title,
+                  }
+            }
+            picked={line.marketSource === MANUAL_SOURCE ? null : (line.marketSource as PriceSource)}
+            onPick={(choice) =>
+              onUpdate(line.key, {
+                marketPence: choice.gbp,
+                marketSource: choice.source,
+                // docs/PLAN.md: picking another source needs a reason, and on
+                // a buy-in that reason is the line's override reason, which
+                // the completion route puts in the audit log.
+                overrideReason: choice.reason,
+              })
+            }
+          />
+        </div>
+      ) : null}
+
+      {line.overrideReason ? (
+        <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+          Overridden: {line.overrideReason}
+        </p>
+      ) : offer.source === "none" ? (
+        <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+          No band matches this line. Override the offer to price it.
+        </p>
+      ) : null}
+    </li>
+  )
+}
+
 export interface ItemsStepProps {
   lines: TradeLine[]
   rules: PricingRule[]
@@ -100,6 +403,8 @@ export function ItemsStep({
   const [bulkCount, setBulkCount] = React.useState(1)
   const [bulkOffer, setBulkOffer] = React.useState(0)
   const [gameId, setGameId] = React.useState("")
+  const [platformKey, setPlatformKey] = React.useState("")
+  const [cardGameKey, setCardGameKey] = React.useState("")
   const [overrideKey, setOverrideKey] = React.useState<string | null>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
 
@@ -126,13 +431,37 @@ export function ItemsStep({
       setName: card.setName,
       number: card.number,
       image: card.image,
+      gameKey: card.gameKey,
       finish: card.finishes[0],
       condition: "NM",
       qty: 1,
-      marketPence: card.marketPence ?? 0,
-      marketSource: "Manual",
+      // The line's own price query fills these in the moment the route
+      // answers; until then the market reads as still being looked up.
+      marketPence: 0,
+      marketSource: PENDING_SOURCE,
       accepted: true,
     })
+    window.setTimeout(() => searchRef.current?.focus(), 0)
+  }
+
+  function addRetroTitle(hit: RetroHit) {
+    onAdd({
+      key: newKey(),
+      kind: "retro",
+      title: hit.name,
+      retroTitleId: hit.id || undefined,
+      gameId: gameFor("retro"),
+      platformKey: hit.platformKey,
+      image: hit.image,
+      condition: "cib",
+      cosmetic: "B",
+      qty: 1,
+      marketPence: 0,
+      // A preview-only hit has no id to price against, so it starts manual.
+      marketSource: hit.id ? PENDING_SOURCE : MANUAL_SOURCE,
+      accepted: true,
+    })
+    setTitle("")
     window.setTimeout(() => searchRef.current?.focus(), 0)
   }
 
@@ -146,9 +475,10 @@ export function ItemsStep({
       gameId: gameFor(kind),
       condition: kind === "retro" ? "boxed" : undefined,
       cosmetic: kind === "retro" ? "B" : undefined,
+      platformKey: kind === "retro" ? (platformKey || undefined) : undefined,
       qty: 1,
       marketPence: 0,
-      marketSource: "Manual",
+      marketSource: MANUAL_SOURCE,
       accepted: true,
     })
     setTitle("")
@@ -172,14 +502,6 @@ export function ItemsStep({
     })
     setBulkCount(1)
     setBulkOffer(0)
-  }
-
-  /** A lot's count lives in its title as well, so the two move together. */
-  function setCount(line: TradeLine, count: number) {
-    onUpdate(line.key, {
-      qty: count,
-      ...(line.kind === "bulk" ? { title: bulkTitle(count) } : {}),
-    })
   }
 
   const overridden = lines.find((line) => line.key === overrideKey)
@@ -210,6 +532,8 @@ export function ItemsStep({
           <Field label="Set and number" htmlFor="buyin-card" layout="stacked">
             <CardSearchField
               id="buyin-card"
+              gameKey={cardGameKey}
+              onGameChange={setCardGameKey}
               value={null}
               onChange={addCard}
               inputRef={searchRef}
@@ -325,208 +649,16 @@ export function ItemsStep({
 
       {/* ---- The lines ------------------------------------------------- */}
       <ul className="mt-12 pb-4" aria-label="Lines on this buy-in">
-        {lines.map((line) => {
-          const offer = lineOffer(line, rules, settings)
-          const isRetro = line.kind === "retro"
-          const isBulk = line.kind === "bulk"
-          return (
-            <li
-              key={line.key}
-              data-testid="trade-line"
-              className="border-b border-hairline-soft py-6 first:border-t first:border-hairline-soft"
-            >
-              <div className="flex items-start gap-4">
-                {!isBulk ? (
-                  <ProductImage
-                    src={line.image}
-                    alt=""
-                    platform={platformFor(line.kind)}
-                    height={56}
-                    className="shrink-0"
-                  />
-                ) : null}
-                <div className="min-w-0 flex-1">
-                  <p className="text-[15px] leading-[1.4] text-foreground">
-                    {line.title}
-                  </p>
-                  {line.setName || line.number ? (
-                    <p className="mt-1 text-[13px] text-muted-foreground-2">
-                      {[line.setName, line.number].filter(Boolean).join(" · ")}
-                    </p>
-                  ) : null}
-                </div>
-                <Button
-                  variant="ghost-icon"
-                  type="button"
-                  aria-label={`Remove ${line.title}`}
-                  onClick={() => onRemove(line.key)}
-                >
-                  <XIcon />
-                </Button>
-              </div>
-
-              {/* A sealed box has no condition and no finish: it is sealed.
-                  Cards take NM to DMG plus a finish, retro takes how
-                  complete it is plus a cosmetic grade. */}
-              {isRetro || CARD_KINDS.has(line.kind) ? (
-                <div className="mt-5 flex flex-col gap-5">
-                  <ChipGroup
-                    aria-label={isRetro ? "Completeness" : "Condition"}
-                    value={line.condition ? [line.condition] : []}
-                    onValueChange={(next) =>
-                      onUpdate(line.key, { condition: next[0] })
-                    }
-                  >
-                    {isRetro
-                      ? RETRO_COMPLETENESS.map((option) => (
-                          <Chip key={option.value} value={option.value}>
-                            {option.label}
-                          </Chip>
-                        ))
-                      : CARD_CONDITIONS.map((option) => (
-                          <Chip key={option} value={option}>
-                            {option}
-                          </Chip>
-                        ))}
-                  </ChipGroup>
-
-                  {isRetro ? (
-                    <ChipGroup
-                      aria-label="Cosmetic grade"
-                      value={line.cosmetic ? [line.cosmetic] : []}
-                      onValueChange={(next) =>
-                        onUpdate(line.key, {
-                          cosmetic: next[0] as TradeLine["cosmetic"],
-                        })
-                      }
-                    >
-                      {COSMETIC_GRADES.map((grade) => (
-                        <Chip key={grade} value={grade}>
-                          {grade}
-                        </Chip>
-                      ))}
-                    </ChipGroup>
-                  ) : (
-                    <ChipGroup
-                      aria-label="Finish"
-                      value={line.finish ? [line.finish] : []}
-                      onValueChange={(next) =>
-                        onUpdate(line.key, { finish: next[0] })
-                      }
-                    >
-                      {LINE_FINISHES.map((finish) => (
-                        <Chip key={finish.value} value={finish.value}>
-                          {finish.label}
-                        </Chip>
-                      ))}
-                    </ChipGroup>
-                  )}
-                </div>
-              ) : null}
-
-              <div className="mt-5 flex flex-wrap items-end gap-x-8 gap-y-5">
-                {line.kind === "sealed" || isBulk ? (
-                  <div>
-                    <MicroLabel className="mb-2">
-                      {isBulk ? "Cards" : "Quantity"}
-                    </MicroLabel>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost-icon"
-                        type="button"
-                        aria-label="One fewer"
-                        disabled={line.qty <= 1}
-                        onClick={() => setCount(line, Math.max(1, line.qty - 1))}
-                      >
-                        <MinusIcon />
-                      </Button>
-                      <Input
-                        aria-label={`Quantity for ${line.title}`}
-                        inputMode="numeric"
-                        containerClassName="w-14"
-                        className="tnum text-center"
-                        value={String(line.qty)}
-                        onChange={(event) => {
-                          const next = Number(
-                            event.target.value.replace(/\D/g, "")
-                          )
-                          setCount(line, Number.isFinite(next) && next > 0 ? next : 1)
-                        }}
-                      />
-                      <Button
-                        variant="ghost-icon"
-                        type="button"
-                        aria-label="One more"
-                        onClick={() => setCount(line, line.qty + 1)}
-                      >
-                        <PlusIcon />
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {isBulk ? (
-                  <div className="w-36">
-                    <MicroLabel className="mb-2">Offer for the lot</MicroLabel>
-                    <MoneyField
-                      id={`lot-${line.key}`}
-                      label={`Flat offer for ${line.title}`}
-                      value={line.bulkOffer ?? 0}
-                      onChange={(pence) =>
-                        onUpdate(line.key, { bulkOffer: pence, marketPence: pence })
-                      }
-                    />
-                  </div>
-                ) : (
-                  <div className="w-36">
-                    <MicroLabel className="mb-2">Market</MicroLabel>
-                    <MoneyField
-                      id={`market-${line.key}`}
-                      label={`Market value for ${line.title}`}
-                      value={line.marketPence}
-                      onChange={(pence) =>
-                        onUpdate(line.key, { marketPence: pence })
-                      }
-                    />
-                    <Hint className="mt-1 block">Manual</Hint>
-                  </div>
-                )}
-
-                <div>
-                  <MicroLabel className="mb-2">Cash</MicroLabel>
-                  <p className="tnum text-[20px] leading-none font-medium text-foreground">
-                    {formatGBP(offer.cashTotal)}
-                  </p>
-                </div>
-                <div>
-                  <MicroLabel className="mb-2">Credit</MicroLabel>
-                  <p className="tnum text-[20px] leading-none font-medium text-foreground">
-                    {formatGBP(offer.creditTotal)}
-                  </p>
-                </div>
-                <div className="pb-1">
-                  <Button
-                    variant="text"
-                    type="button"
-                    onClick={() => setOverrideKey(line.key)}
-                  >
-                    Override
-                  </Button>
-                </div>
-              </div>
-
-              {line.overrideReason ? (
-                <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
-                  Overridden: {line.overrideReason}
-                </p>
-              ) : offer.source === "none" ? (
-                <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
-                  No band matches this line. Override the offer to price it.
-                </p>
-              ) : null}
-            </li>
-          )
-        })}
+        {lines.map((line) => (
+          <LineRow
+            key={line.key}
+            line={line}
+            offer={lineOffer(line, rules, settings)}
+            onUpdate={onUpdate}
+            onRemove={onRemove}
+            onOverride={() => setOverrideKey(line.key)}
+          />
+        ))}
       </ul>
 
       {lines.length === 0 ? (

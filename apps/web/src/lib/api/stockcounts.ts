@@ -14,6 +14,7 @@ import { normaliseCode } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
+import { noteNetworkSuccess } from "@/lib/offline/net"
 import { itemDetailLine } from "@/lib/api/item-shape"
 import * as demo from "@/lib/api/demo/stockcounts"
 import type { ScannedItem } from "@/features/stockcount/reconcile"
@@ -288,6 +289,7 @@ export async function saveCountLine(
       },
       { expand: LINE_EXPAND }
     )
+    noteNetworkSuccess()
     return { ...line, id: created.id }
   }
 
@@ -295,6 +297,7 @@ export async function saveCountLine(
     scanned_qty: line.scannedQty,
     variance,
   })
+  noteNetworkSuccess()
   return line
 }
 

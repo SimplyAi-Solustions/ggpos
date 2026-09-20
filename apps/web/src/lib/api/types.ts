@@ -586,6 +586,13 @@ export interface SaleDetail extends SaleRecord {
 
 /** docs/api-contract.md, POST /api/vault/sales/complete. */
 export interface CompleteSalePayload {
+  /**
+   * The counter's own id for this sale, sent on every attempt including the
+   * first, so a reply lost on the way back does not become a second sale:
+   * the server dedupes on it and answers with the sale it already wrote.
+   * `lib/api/offline.ts` sets it, and it is the queue's key too.
+   */
+  client_id?: string
   lines: { item: string; qty: number; unit_price: number; discount: number }[]
   customer: string | null
   payment: PaymentMethod

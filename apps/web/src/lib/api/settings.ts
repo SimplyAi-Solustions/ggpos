@@ -13,6 +13,7 @@
  */
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
+import { noteNetworkSuccess } from "@/lib/offline/net"
 import {
   demoRules,
   demoSaveRules,
@@ -96,6 +97,7 @@ export async function getSettings(): Promise<SettingsRecord> {
   const page = await pb
     .collection("settings")
     .getList<SettingsRecord>(1, 1, { fields: SETTINGS_FIELDS })
+  noteNetworkSuccess()
   const row = page.items[0]
   if (!row) {
     throw new Error("This shop has no settings record yet. Run the migrations first.")
@@ -112,15 +114,19 @@ export async function saveSettings(
   const row = await pb
     .collection("settings")
     .update<SettingsRecord>(id, patch, { fields: SETTINGS_FIELDS })
+  noteNetworkSuccess()
   return pick(row)
 }
 
 /** Every rule, active or not, highest priority first: the matrix shows both. */
 export async function listPricingRules(): Promise<PricingRuleRow[]> {
   if (isDemo()) return demoRules()
-  return pb
+  const rows = await pb
     .collection("pricing_rules")
     .getFullList<PricingRuleRow>({ sort: "-priority,band_min" })
+  // Any answer at all means the line is up, whatever it said.
+  noteNetworkSuccess()
+  return rows
 }
 
 /**

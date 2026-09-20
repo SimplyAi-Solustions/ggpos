@@ -155,14 +155,16 @@ export function OfflineStrip() {
 
   const pendingCount = queue.pending.length
   const conflictCount = queue.conflicts.length
+  const authNeeded = queue.authNeeded
 
   // Back online with work waiting: send it. A refusal stops the line, and
   // nothing goes automatically again until staff have cleared it, because
-  // what they decide about one basket may change the ones behind it.
+  // what they decide about one basket may change the ones behind it. A
+  // refused token stops it too: signing in again is what fixes that.
   React.useEffect(() => {
-    if (net.offline || pendingCount === 0 || conflictCount > 0) return
+    if (net.offline || pendingCount === 0 || conflictCount > 0 || authNeeded) return
     void replayOfflineQueue()
-  }, [net.offline, pendingCount, conflictCount])
+  }, [net.offline, pendingCount, conflictCount, authNeeded])
 
   const sales = queue.pending.filter((entry) => entry.work.kind === "mark_sold").length
   const labels = pendingCount - sales
@@ -170,7 +172,7 @@ export function OfflineStrip() {
   // The line goes as soon as there is nothing to say, but never while the
   // sheet is open: clearing the last conflict must not close the panel that
   // somebody is still reading.
-  const speaking = net.offline || pendingCount > 0 || conflictCount > 0
+  const speaking = net.offline || pendingCount > 0 || conflictCount > 0 || authNeeded
   if (!speaking && !sheetOpen) return null
 
   const retry = async () => {
@@ -183,7 +185,9 @@ export function OfflineStrip() {
   }
 
   let message: string
-  if (net.offline && pendingCount > 0) {
+  if (authNeeded) {
+    message = "Sign in again to send the sales that are waiting."
+  } else if (net.offline && pendingCount > 0) {
     message = `Offline, ${waitingPhrase(sales, labels)} waiting.`
   } else if (net.offline) {
     message = "Offline. Sales are held here and sent when the connection is back."
@@ -210,7 +214,10 @@ export function OfflineStrip() {
                 Review {conflictCount}
               </Button>
             ) : null}
-            {pendingCount > 0 && !net.offline ? (
+            {/* Always offered while anything is waiting: `navigator.onLine`
+                lies on a tether, so the person at the counter is often the
+                first to know the line is back. */}
+            {pendingCount > 0 ? (
               <Button variant="text" loading={retrying} onClick={() => void retry()}>
                 Retry
               </Button>

@@ -24,6 +24,7 @@ import {
   isOffline,
   noteNetworkFailure,
   noteNetworkSuccess,
+  registerNetProbe,
 } from "@/lib/offline/net"
 import {
   enqueue,
@@ -99,15 +100,25 @@ function itemWord(count: number): string {
   return count === 1 ? "item" : "items"
 }
 
+/**
+ * The payload with a client id on it. The same id is the queue's key, so a
+ * sale that goes straight out, a sale that is retried and a sale that waits
+ * in the queue are all the one sale as far as the server is concerned.
+ */
+function identified(payload: CompleteSalePayload): CompleteSalePayload {
+  return payload.client_id ? payload : { ...payload, client_id: newClientId() }
+}
+
 async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResult> {
-  const total = saleTotal(payload)
-  const count = payload.lines.reduce((sum, line) => sum + line.qty, 0)
+  const body = identified(payload)
+  const total = saleTotal(body)
+  const count = body.lines.reduce((sum, line) => sum + line.qty, 0)
   const entry = await enqueue({
-    id: newClientId(),
-    work: { kind: "mark_sold", body: payload },
+    id: body.client_id as string,
+    work: { kind: "mark_sold", body },
     summary: `Sale, ${count} ${itemWord(count)}, ${formatGBP(total)}`,
     total,
-    lines: saleLines(payload),
+    lines: saleLines(body),
   })
   return {
     sale: {
@@ -134,9 +145,13 @@ async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResu
 export async function completeSaleQueued(
   payload: CompleteSalePayload
 ): Promise<CompleteSaleResult> {
-  if (isOffline()) return queueSale(payload)
+  // The id is minted before the first attempt, not when the sale is queued:
+  // a request that the server took but whose reply never arrived is sent
+  // again under the same id rather than ringing the basket up twice.
+  const body = identified(payload)
+  if (isOffline()) return queueSale(body)
   try {
-    const result = await completeSale(payload)
+    const result = await completeSale(body)
     noteNetworkSuccess()
     // Something may have been waiting behind this; send it now the line is up.
     void replayQueue()
@@ -144,7 +159,7 @@ export async function completeSaleQueued(
   } catch (error) {
     if (!noAnswer(error)) throw error
     noteNetworkFailure()
-    return queueSale(payload)
+    return queueSale(body)
   }
 }
 
@@ -214,6 +229,21 @@ registerSender(async (entry: QueuedEntry) => {
     return
   }
   await queueLabels(entry.work.itemIds, entry.work.template)
+})
+
+/**
+ * How the network flag unlatches itself.
+ *
+ * On a tether the browser never fires `online`, so a failure that latched
+ * would hide the Retry action for good. `GET /api/vault/config` is the
+ * cheapest thing a staff token can ask for and writes no audit row
+ * (docs/api-contract.md, "Config"); any answer, including a refusal, proves
+ * the line is up. In demo mode the fixtures always answer, so the probe is
+ * left unregistered and the switch in the menu stays in charge.
+ */
+registerNetProbe(async () => {
+  if (isDemo()) throw new Error("Demo mode has no server to probe.")
+  await pb.send("/api/vault/config", { method: "GET" })
 })
 
 /** Send everything waiting. The strip's retry action and the reconnect both call it. */
