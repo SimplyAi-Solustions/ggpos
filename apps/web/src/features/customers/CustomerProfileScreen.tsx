@@ -393,7 +393,11 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
             <span className="tnum">
               {priv?.id_verified_at
                 ? `${formatDate(priv.id_verified_at)}${
-                    priv.id_verified_by ? ` by ${priv.id_verified_by}` : ""
+                    profile.verifiedByName
+                      ? ` by ${profile.verifiedByName}`
+                      : priv.id_verified_by
+                        ? " by a staff member"
+                        : ""
                   }`
                 : "-"}
             </span>

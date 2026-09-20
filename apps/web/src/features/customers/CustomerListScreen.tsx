@@ -23,7 +23,7 @@ import {
 import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
 import { ID_STATUS_LABEL, formatShortDate } from "@/features/customers/format"
-import { searchCustomers } from "@/lib/api"
+import { searchCustomerPage } from "@/lib/api"
 
 /**
  * The customer book: one field, one table, one black block.
@@ -42,11 +42,12 @@ export function CustomerListScreen() {
   React.useEffect(() => registerSearchField(searchRef.current), [])
 
   const deferred = React.useDeferredValue(query)
-  const { data: customers = [], isPending } = useQuery({
+  const { data: page, isPending } = useQuery({
     queryKey: ["customers", deferred.trim()],
-    queryFn: () => searchCustomers(deferred),
+    queryFn: () => searchCustomerPage(deferred),
     staleTime: 10_000,
   })
+  const customers = page?.items ?? []
 
   const newCustomer = () => void navigate({ to: "/counter/customers/new" })
 
@@ -141,7 +142,10 @@ export function CustomerListScreen() {
         <Button type="button" trailingArrow onClick={newCustomer}>
           New customer
         </Button>
-        <Hint>{customers.length} on file</Hint>
+        {/* What the server matched in all, not the size of this page. */}
+        <Hint>
+          {page ? page.total : 0} {query.trim() ? "found" : "on file"}
+        </Hint>
       </div>
 
       {dock

@@ -16,6 +16,7 @@ import type {
   LoyaltyTier,
 } from "@gg/shared"
 
+import { DEMO_CUSTOMERS } from "@/lib/api/demo/customers"
 import { DEMO_CARDS } from "@/lib/api/fixtures"
 import { demoItemStore } from "@/lib/api/index"
 import { itemDetailLine, templateForItem } from "@/lib/api/item-shape"
@@ -125,38 +126,28 @@ function perksFor(tierId: string) {
   return DEMO_TIERS.find((tier) => tier.id === tierId)?.perks ?? []
 }
 
-export const DEMO_SALE_CUSTOMERS: SaleCustomer[] = [
-  {
-    id: "cust_demo_1",
-    name: "Ash Ketchum",
-    code: buildCode("customer", "4K7M2").encoded,
-    tierId: "tier_regular",
-    tierName: "Regular",
-    perks: perksFor("tier_regular"),
-    creditBalance: 1250,
-    pointsBalance: 3120,
-  },
-  {
-    id: "cust_demo_2",
-    name: "Misty Waterflower",
-    code: buildCode("customer", "9P3T6").encoded,
-    tierId: "tier_member",
-    tierName: "Member",
-    perks: perksFor("tier_member"),
-    creditBalance: 0,
-    pointsBalance: 240,
-  },
-  {
-    id: "cust_demo_3",
-    name: "Brock Harrison",
-    code: buildCode("customer", "2X5N8").encoded,
-    tierId: "tier_legend",
-    tierName: "Legend",
-    perks: perksFor("tier_legend"),
-    creditBalance: 4500,
-    pointsBalance: 11400,
-  },
-]
+/**
+ * The same four people the customers area holds, under the same ids, codes
+ * and balances (`lib/api/demo/customers.ts` is where they are written).
+ * Two demo books naming different people under one id made a customer
+ * change their name between the Sell screen and their own profile.
+ */
+export const DEMO_SALE_CUSTOMERS: SaleCustomer[] = DEMO_CUSTOMERS.map(
+  (entry) => {
+    const tierId = entry.private.tier ?? "tier_member"
+    return {
+      id: entry.customer.id,
+      name: entry.customer.name,
+      code: entry.customer.code,
+      tierId,
+      tierName:
+        DEMO_TIERS.find((tier) => tier.id === tierId)?.name ?? "Member",
+      perks: perksFor(tierId),
+      creditBalance: entry.private.credit_balance ?? 0,
+      pointsBalance: entry.private.points_balance ?? 0,
+    }
+  }
+)
 
 /** One issued voucher, so scanning a GGV code on the Sell screen does something. */
 export const DEMO_VOUCHERS: RewardVoucher[] = [

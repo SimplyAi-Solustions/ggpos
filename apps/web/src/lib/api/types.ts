@@ -232,6 +232,13 @@ export interface CustomerProfile {
   lastVisit: string | null
   /** Other customers sharing this phone or email. */
   duplicates: CustomerSummary[]
+  /**
+   * Who signed the ID off, by name. Null when the relation could not be
+   * expanded, which is what an ordinary staff token gets: `staff` is
+   * admin-only, so the profile says "by a staff member" rather than
+   * printing a record id at somebody.
+   */
+  verifiedByName: string | null
 }
 
 export interface NewCustomerInput {

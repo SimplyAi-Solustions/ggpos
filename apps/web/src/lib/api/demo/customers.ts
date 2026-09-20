@@ -63,8 +63,8 @@ function seed(
   }
 }
 
-/** Mutable: the demo session adds, edits and merges these. */
-export const demoCustomers: DemoCustomer[] = [
+/** The demo shop's four people, in the order they were carded. */
+export const DEMO_CUSTOMERS: DemoCustomer[] = [
   seed(
     "cust_demo_1",
     "4K7M2",
@@ -88,6 +88,7 @@ export const demoCustomers: DemoCustomer[] = [
       id_verified_at: daysAgo(96),
       credit_balance: 4500,
       points_balance: 2180,
+      tier: "tier_regular",
       notes: "Collects Scarlet & Violet promos. Happy to be called about new stock.",
     }
   ),
@@ -107,6 +108,7 @@ export const demoCustomers: DemoCustomer[] = [
       id_status: "none",
       credit_balance: 0,
       points_balance: 340,
+      tier: "tier_member",
     }
   ),
   seed(
@@ -126,6 +128,7 @@ export const demoCustomers: DemoCustomer[] = [
       id_status: "none",
       credit_balance: 1250,
       points_balance: 90,
+      tier: "tier_member",
       notes: "Store credit only, agreed with Richard on 4 June.",
     }
   ),
@@ -449,3 +452,10 @@ export function demoEraseCustomer(customerId: string): CustomerProfile {
   entry.private.flags = []
   return demoGetCustomer(customerId) as CustomerProfile
 }
+
+/**
+ * Mutable: the demo session adds to, edits and merges these. The array is
+ * seeded from `DEMO_CUSTOMERS`, which stays as written so the Sell screen
+ * and this book can never name two different people under one id.
+ */
+export const demoCustomers: DemoCustomer[] = DEMO_CUSTOMERS

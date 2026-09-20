@@ -319,6 +319,7 @@ export {
   getCustomer,
   mergeCustomers,
   qrTokenFrom,
+  searchCustomerPage,
   searchCustomers,
   updateCustomer,
 } from "@/lib/api/customers"

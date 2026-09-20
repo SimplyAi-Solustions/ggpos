@@ -197,7 +197,29 @@ export async function getCustomer(idOrCode: string): Promise<CustomerProfile | n
     lastVisitFor(customer.id),
     duplicatesFor(customer),
   ])
-  return { customer, private: priv, lastVisit, duplicates }
+  return {
+    customer,
+    private: priv,
+    lastVisit,
+    duplicates,
+    verifiedByName: await staffName(priv?.id_verified_by),
+  }
+}
+
+/**
+ * The name behind `customer_private.id_verified_by`, or null.
+ *
+ * `staff` is admin-only, so this is null for an ordinary token and the
+ * profile falls back to "by a staff member". Never a record id on screen.
+ */
+async function staffName(id: string | undefined): Promise<string | null> {
+  if (!id) return null
+  try {
+    const record = await pb.collection("staff").getOne<{ name?: string }>(id)
+    return record.name || null
+  } catch {
+    return null
+  }
 }
 
 /**
