@@ -1,10 +1,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtemp, readFile, writeFile, unlink, chmod } from "node:fs/promises";
+import { mkdtemp, unlink, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Socket } from "node:net";
 
 import { fetchCachedStream, fetchCachedJson, requestJson, HttpError } from "../src/lib/http.mjs";
 
@@ -103,31 +102,29 @@ describe("fetchCachedStream", () => {
 });
 
 describe("fetchCachedJson", () => {
-  test("a cache write failure is a warning, not a failed read", async () => {
+  test("a cache write failure after a successful fetch is a warning, not a failed read (finding #5: a root-owned /app/cache under a node USER)", async () => {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end('{"ok":true}');
+      res.end('{"ok":true,"n":42}');
     });
     const port = await listenOnFreePort(server);
+    const cacheDir = await mkdtemp(path.join(tmpdir(), "pricesync-http-"));
     try {
-      // A cache "directory" that is actually a file: mkdir(recursive)
-      // inside fetchCachedStream will fail, which should surface as a
-      // warning from fetchCachedJson, not an exception that fails the
-      // whole read.
-      const bogusCacheDir = await mkdtemp(path.join(tmpdir(), "pricesync-http-"));
-      const fileNotDir = path.join(bogusCacheDir, "not-a-directory");
-      await writeFile(fileNotDir, "x");
-
+      // Read-only after creation: the directory itself exists (mkdir
+      // succeeds, matching a cache VOLUME that is already there but
+      // owned by the wrong user), so the failure happens later, writing
+      // the temp/meta files - exactly the EACCES this finding describes.
+      await chmod(cacheDir, 0o555);
       const warnings = [];
-      await assert.rejects(() => fetchCachedJson(`http://127.0.0.1:${port}/x`, fileNotDir, "k", undefined, (m) => warnings.push(m)));
-      // mkdir itself fails before any request is made, so this specific
-      // setup still throws (there is no stream to read at all) - the
-      // real "warning not failure" case is a cache *write* failing after
-      // a successful read, covered by the pipeline test's cache-dir
-      // permission scenario in deploy (documented in deploy/README.md).
-      // What matters here is that fetchCachedJson does not silently
-      // swallow every error - only the cache write step's.
+      const { json, fromCache } = await fetchCachedJson(`http://127.0.0.1:${port}/x`, cacheDir, "readonly-dir", undefined, (m) =>
+        warnings.push(m)
+      );
+      assert.deepEqual(json, { ok: true, n: "42" });
+      assert.equal(fromCache, false);
+      assert.equal(warnings.length, 1, `expected exactly one warning, got: ${JSON.stringify(warnings)}`);
+      assert.match(warnings[0], /could not update the on-disk cache/);
     } finally {
+      await chmod(cacheDir, 0o755).catch(() => {});
       server.close();
     }
   });

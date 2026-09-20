@@ -52,6 +52,8 @@ describe("writing count lines", () => {
 
     calls[0]!.settle(line({ id: "count_line_1", scannedQty: 1 }))
     await first
+    // Let the chained write be dispatched before looking for it.
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(write).toHaveBeenCalledTimes(2)
     // And it goes out against the row the first one created, not a second.

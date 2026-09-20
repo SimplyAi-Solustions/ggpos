@@ -15,6 +15,7 @@ import {
   poundsToPence,
   recordToForm,
   ruleChanged,
+  RULE_CONDITIONS,
   ruleRowToForm,
   validateRules,
   validateSettings,
@@ -183,6 +184,44 @@ describe("the preview computes what the counter will offer", () => {
     expect(offer.cash).toBe(7000)
   })
 
+  it("matches a game-scoped rule on the game's record id", () => {
+    const current = form()
+    // What the matrix writes when an admin picks Pokemon: the relation's id.
+    const pokemonOnly = [
+      ...rules().map(formToPricingRule),
+      {
+        ...formToPricingRule(rules()[2]!),
+        id: "rule_pokemon_high",
+        game: "game_pokemon",
+        cashPct: 80,
+        creditPct: 90,
+        priority: 99,
+      },
+    ]
+
+    const pokemon = computeOffer(
+      10000,
+      { game: "game_pokemon", kind: "single", condition: "NM", finish: "" },
+      pokemonOnly,
+      formToOfferSettings(current),
+      formToMultipliers(current)
+    )
+    const mtg = computeOffer(
+      10000,
+      { game: "game_mtg", kind: "single", condition: "NM", finish: "" },
+      pokemonOnly,
+      formToOfferSettings(current),
+      formToMultipliers(current)
+    )
+
+    expect(pokemon.rule?.id).toBe("rule_pokemon_high")
+    expect(pokemon.cash).toBe(8000)
+    // The key is not the id, so a preview passing "pokemon" would match
+    // nothing here and quietly fall back to the wildcard band.
+    expect(mtg.rule?.id).toBe("rule_single_high")
+    expect(mtg.cash).toBe(6000)
+  })
+
   it("applies the condition multiplier before it picks a band", () => {
     const current = form()
     const offer = computeOffer(
@@ -205,6 +244,46 @@ describe("the preview computes what the counter will offer", () => {
   })
 })
 
+describe("what a rule can key on", () => {
+  it("offers retro completeness beside the card conditions", () => {
+    expect([...RULE_CONDITIONS]).toEqual([
+      "NM",
+      "LP",
+      "MP",
+      "HP",
+      "DMG",
+      "loose",
+      "boxed",
+      "cib",
+    ])
+  })
+
+  it("prices a boxed retro line off a completeness rule", () => {
+    const current = form()
+    const withBoxed = [
+      ...rules().map(formToPricingRule),
+      {
+        ...formToPricingRule(rules()[3]!),
+        id: "rule_retro_boxed",
+        condition: "boxed",
+        cashPct: 70,
+        priority: 99,
+      },
+    ]
+
+    const boxed = computeOffer(
+      4000,
+      { game: "", kind: "retro", condition: "boxed", finish: "" },
+      withBoxed,
+      formToOfferSettings(current),
+      formToMultipliers(current)
+    )
+
+    expect(boxed.rule?.id).toBe("rule_retro_boxed")
+    expect(boxed.cash).toBe(2800)
+  })
+})
+
 describe("validation", () => {
   it("passes the seeded settings", () => {
     expect(validateSettings(form())).toEqual({})
@@ -214,6 +293,21 @@ describe("validation", () => {
   it("says what to do about an amount that is not money", () => {
     const errors = validateSettings({ ...form(), cashCap: "eight thousand" })
     expect(errors.cashCap).toBe("Enter an amount in pounds and pence, for example 12.50.")
+  })
+
+  it("refuses an amount with a minus sign in front of it", () => {
+    expect(validateSettings({ ...form(), cashCap: "-10.00" }).cashCap).toBe(
+      "Enter an amount in pounds and pence, for example 12.50."
+    )
+    expect(validateSettings({ ...form(), minimumOffer: "-0.25" }).minimumOffer).toBe(
+      "Enter an amount in pounds and pence, for example 12.50."
+    )
+
+    const [first] = rules()
+    const errors = validateRules([{ ...first!, bandMin: "-5.00" }])
+    expect(errors[`rules.${first!.key}.bandMin`]).toBe(
+      "Enter an amount in pounds and pence, for example 12.50."
+    )
   })
 
   it("refuses a percent over a hundred", () => {
