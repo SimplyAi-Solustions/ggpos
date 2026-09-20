@@ -3038,6 +3038,73 @@ EO_IMPORT2_STATUS="$(curl -s -o "$TMP_DIR/eo-import2.json" -w '%{http_code}' -X 
 grep -qF "already sold" "$TMP_DIR/eo-import2.json" || fail "the second run's errors do not say already sold: $(cat "$TMP_DIR/eo-import2.json")"
 ok "a second run of the same eBay orders file reports already sold rather than selling it twice"
 
+# --- 22g2. Re-importing a Card Uploader row for an item that has since
+#     sold (through the eBay orders import above) is refused as
+#     already_sold, not resurrected to listed_ebay ------------------------
+CU_REIMPORT_STATUS="$(curl -s -o "$TMP_DIR/cu-reimport.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/card-uploader" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/card-uploader.csv;type=text/csv")"
+[ "$CU_REIMPORT_STATUS" = "200" ] || fail "the Card Uploader re-import returned $CU_REIMPORT_STATUS: $(cat "$TMP_DIR/cu-reimport.json")"
+grep -qF "already_sold" "$TMP_DIR/cu-reimport.json" || fail "re-importing a sold item's row was not reported already_sold: $(cat "$TMP_DIR/cu-reimport.json")"
+CU_ITEM_AFTER_REIMPORT="$(curl -s "$BASE/api/collections/items/records/$CU_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval status)"
+[ "$CU_ITEM_AFTER_REIMPORT" = "sold" ] || fail "re-importing the same Card Uploader row resurrected a sold item to '$CU_ITEM_AFTER_REIMPORT'"
+ok "re-importing a Card Uploader row for an item that has since sold is refused as already_sold, not resurrected"
+
+# --- 22g3. A partial sale of a multi-unit stock line stays listed_ebay ----
+CU_MULTI_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"title\":\"Multi Unit Listing\",\"qty\":3,\"price\":1000,\"status\":\"listed_ebay\",\"ebay_sku\":\"CS-MULTI-001\",\"tax_scheme\":\"margin\",\"source\":\"supplier\"}" | jval id)"
+[ -n "$CU_MULTI_ITEM_ID" ] || fail "could not create the partial-sale check's multi-unit item"
+
+cat >"$TMP_DIR/ebay-orders-partial.csv" <<'EOF'
+Custom Label,Item Number,Order Number,Sale Date,Sold For,Quantity,Sale Currency
+CS-MULTI-001,220011,ORDER-PARTIAL-1,2026-09-20,10.00,1,GBP
+EOF
+EO_PARTIAL_STATUS="$(curl -s -o "$TMP_DIR/eo-partial.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/ebay-orders" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/ebay-orders-partial.csv;type=text/csv")"
+[ "$EO_PARTIAL_STATUS" = "200" ] || fail "the partial-sale eBay orders import returned $EO_PARTIAL_STATUS: $(cat "$TMP_DIR/eo-partial.json")"
+[ "$(jval sold <"$TMP_DIR/eo-partial.json")" = "1" ] || fail "the partial-sale import's sold count is wrong: $(cat "$TMP_DIR/eo-partial.json")"
+
+CU_MULTI_AFTER="$(curl -s "$BASE/api/collections/items/records/$CU_MULTI_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$CU_MULTI_AFTER" | jval status)" = "listed_ebay" ] || fail "selling 1 of 3 units marked the whole line sold: $CU_MULTI_AFTER"
+[ "$(echo "$CU_MULTI_AFTER" | jval qty)" = "2" ] || fail "the multi-unit item's qty after selling 1 of 3 is wrong: $CU_MULTI_AFTER"
+ok "a partial sale of a multi-unit stock line stays listed_ebay with its qty reduced, not sold"
+
+# --- 22g4. Two rows sharing one order number produce one sale with two
+#     lines, and occurred_at is taken from the file's own sale date -------
+CU_ORDER_A_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"title\":\"Two Row Order A\",\"qty\":1,\"price\":1000,\"status\":\"listed_ebay\",\"ebay_sku\":\"CS-ORDER2-A\"}" | jval id)"
+CU_ORDER_B_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"title\":\"Two Row Order B\",\"qty\":1,\"price\":700,\"status\":\"listed_ebay\",\"ebay_sku\":\"CS-ORDER2-B\"}" | jval id)"
+[ -n "$CU_ORDER_A_ID" ] && [ -n "$CU_ORDER_B_ID" ] || fail "could not create the two-row-order check's items"
+
+cat >"$TMP_DIR/ebay-orders-tworow.csv" <<'EOF'
+Custom Label,Item Number,Order Number,Sale Date,Sold For,Quantity,Sale Currency
+CS-ORDER2-A,330011,ORDER-TWO-1,2026-09-01,10.00,1,GBP
+CS-ORDER2-B,330012,ORDER-TWO-1,2026-09-01,7.00,1,GBP
+EOF
+EO_TWOROW_STATUS="$(curl -s -o "$TMP_DIR/eo-tworow.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/ebay-orders" \
+  -H "Authorization: $STAFF_TOKEN" \
+  -F "file=@$TMP_DIR/ebay-orders-tworow.csv;type=text/csv")"
+[ "$EO_TWOROW_STATUS" = "200" ] || fail "the two-row-order eBay orders import returned $EO_TWOROW_STATUS: $(cat "$TMP_DIR/eo-tworow.json")"
+[ "$(jval sold <"$TMP_DIR/eo-tworow.json")" = "2" ] || fail "the two-row-order import's sold count is wrong: $(cat "$TMP_DIR/eo-tworow.json")"
+
+EO_TWOROW_SALE_JSON="$(curl -s "$BASE/api/collections/sales/records?filter=external_ref%3D%22ORDER-TWO-1%22" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$EO_TWOROW_SALE_JSON" | jval totalItems)" = "1" ] || fail "two rows of one order produced more than one sale: $EO_TWOROW_SALE_JSON"
+EO_TWOROW_SALE_ID="$(echo "$EO_TWOROW_SALE_JSON" | jval "items.0.id")"
+[ "$(echo "$EO_TWOROW_SALE_JSON" | jval "items.0.total")" = "1700" ] || fail "the two-row-order sale's total is not the sum of both rows: $EO_TWOROW_SALE_JSON"
+[ "$(echo "$EO_TWOROW_SALE_JSON" | jval "items.0.occurred_at")" != "" ] || fail "the two-row-order sale has no occurred_at: $EO_TWOROW_SALE_JSON"
+echo "$EO_TWOROW_SALE_JSON" | jval "items.0.occurred_at" | grep -qF "2026-09-01" \
+  || fail "the two-row-order sale's occurred_at was not taken from the file's own Sale Date: $(echo "$EO_TWOROW_SALE_JSON" | jval "items.0.occurred_at")"
+ok "two rows sharing one order number produce one sale with occurred_at from the file's own sale date"
+
+EO_TWOROW_LINES="$(curl -s "$BASE/api/collections/sale_lines/records?filter=sale%3D%22$EO_TWOROW_SALE_ID%22" -H "Authorization: $STAFF_TOKEN" | jval totalItems)"
+[ "$EO_TWOROW_LINES" = "2" ] || fail "the two-row-order sale does not have exactly two sale_lines: $EO_TWOROW_LINES"
+ok "the two-row order's sale carries two sale_lines, one per row"
+
 # An ordinary counter sale (sales.pb.js, untouched this round) still gets
 # channel defaulted to "counter" by imports.pb.js's own onRecordCreate hook.
 CHANNEL_ITEM_ID="$(make_item "Channel Default Item" 1 200 650)"
