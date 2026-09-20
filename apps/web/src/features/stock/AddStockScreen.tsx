@@ -233,12 +233,17 @@ export function AddStockScreen({
   // A source a staff member picked over the one the rules chose. On Add stock
   // it only changes the figure the suggestion is worked out from; nothing
   // records it, because nothing here is an offer to anybody.
-  const [picked, setPicked] = React.useState<{ source: PriceSource; gbp: number } | null>(
-    null
-  )
-  React.useEffect(() => setPicked(null), [card?.id, finish])
+  // Keyed by the card and finish it was picked for, so changing either drops
+  // it without an effect reaching in to clear the state.
+  const [picked, setPicked] = React.useState<{
+    key: string
+    source: PriceSource
+    gbp: number
+  } | null>(null)
+  const pickKey = `${card?.id ?? ""}:${finish ?? ""}`
+  const pick = picked && picked.key === pickKey ? picked : null
 
-  const market = picked?.gbp ?? prices.data?.chosen?.gbp_market ?? null
+  const market = pick?.gbp ?? prices.data?.chosen?.gbp_market ?? null
   const adjustedMarket =
     market === null
       ? null
@@ -746,8 +751,10 @@ export function AddStockScreen({
                   gameKey: card.gameKey,
                   title: card.name,
                 }}
-                picked={picked?.source ?? null}
-                onPick={(choice) => setPicked({ source: choice.source, gbp: choice.gbp })}
+                picked={pick?.source ?? null}
+                onPick={(choice) =>
+                  setPicked({ key: pickKey, source: choice.source, gbp: choice.gbp })
+                }
               />
               {suggested !== null ? (
                 <div className="mt-8 flex flex-wrap items-baseline gap-x-10 gap-y-4">
