@@ -135,8 +135,11 @@ function build(app, util, params) {
     var key = "";
     var label2 = "";
     if (by === "payment") {
-      key = held.sale.getString("payment") || "";
-      label2 = key || "(none)";
+      // Blank payment is an eBay-import sale (eBay took the money) -
+      // "none", the same bucket name daily_stats.sales_total_by_payment
+      // uses, never blank and never folded into some other method.
+      key = held.sale.getString("payment") || "none";
+      label2 = key === "none" ? "(none)" : key;
     } else if (by === "staff") {
       key = held.sale.getString("staff") || "";
       var staffRow = staffLookup(key);

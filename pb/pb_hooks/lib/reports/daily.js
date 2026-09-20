@@ -24,7 +24,15 @@ function buildDayRow(app, dateStr) {
   var bounds = dates.rangeParams(dateStr, dateStr);
   var now = new Date();
 
-  // --- Sales: rung up that day, by payment method -------------------------
+  // --- Sales: rung up that day, by payment method --------------------------
+  //
+  // A sale imported from an eBay order (docs/PLAN.md's "Card Uploader and
+  // the eBay round trip"; sales.channel/.external_ref) has no shop-side
+  // payment at all - eBay took the money - so sales.payment is left blank
+  // on those rows, never "mixed" (which means the shop itself split a
+  // payment across methods). "none" is its own bucket so that revenue is
+  // never dropped or folded into a bucket that would misstate how it was
+  // actually paid; totals.revenue still sums every bucket, "none" included.
   var sales = [];
   try {
     sales = app.findRecordsByFilter(
@@ -38,12 +46,13 @@ function buildDayRow(app, dateStr) {
   } catch (err) {
     sales = [];
   }
-  var salesTotalByPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0 };
+  var salesTotalByPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0, none: 0 };
   for (var i = 0; i < sales.length; i++) {
     var sale = sales[i];
     if (!sale) continue;
     var method = sale.getString("payment");
-    if (!Object.prototype.hasOwnProperty.call(salesTotalByPayment, method)) method = "mixed";
+    if (method === "") method = "none";
+    else if (!Object.prototype.hasOwnProperty.call(salesTotalByPayment, method)) method = "mixed";
     salesTotalByPayment[method] += sale.getInt("total");
   }
 

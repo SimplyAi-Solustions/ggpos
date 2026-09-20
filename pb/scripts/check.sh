@@ -2404,10 +2404,12 @@ EXPECTED_JSON="$(node -e '
   const lines = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).items || [];
   const tradeIns = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).items || [];
 
-  const byPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0 };
+  const byPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0, none: 0 };
   let salesTotal = 0;
   for (const s of sales) {
-    const m = Object.prototype.hasOwnProperty.call(byPayment, s.payment) ? s.payment : "mixed";
+    // Blank payment (an eBay-import sale: eBay took the money) is its own
+    // "none" bucket, never folded into "mixed" - see lib/reports/daily.js.
+    const m = s.payment === "" ? "none" : Object.prototype.hasOwnProperty.call(byPayment, s.payment) ? s.payment : "mixed";
     byPayment[m] += s.total;
     salesTotal += s.total;
   }
@@ -2448,7 +2450,8 @@ D_CASH="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.cash")"
 D_CREDIT="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.store_credit")"
 D_POINTS="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.points")"
 D_MIXED="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.mixed")"
-DAILY_SALES_TOTAL=$((${D_SUMUP:-0} + ${D_CASH:-0} + ${D_CREDIT:-0} + ${D_POINTS:-0} + ${D_MIXED:-0}))
+D_NONE="$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.none")"
+DAILY_SALES_TOTAL=$((${D_SUMUP:-0} + ${D_CASH:-0} + ${D_CREDIT:-0} + ${D_POINTS:-0} + ${D_MIXED:-0} + ${D_NONE:-0}))
 [ "$DAILY_SALES_TOTAL" = "$EXPECTED_SALES_TOTAL" ] \
   || fail "daily_stats.sales_total_by_payment sums to $DAILY_SALES_TOTAL, expected $EXPECTED_SALES_TOTAL from the raw sales rows"
 [ "$(echo "$DAILY_ROW_JSON" | jval "items.0.sales_count")" = "$EXPECTED_SALES_COUNT" ] \
@@ -2623,33 +2626,66 @@ echo "$SCHEDULED_AUDIT" | grep -q '"sent":false' || fail "the scheduled report a
 ok "the weekly scheduled-report cron, run under settings.email.test_mode, logs a send and writes an audit row"
 
 # --- 21l. The Monday digest names the three biggest price movers --------
+# A distinct, brand new game (not $GAME_ID/pokemon, which is used all over
+# this script) so these three cards can never collide with a card_sets
+# code or a cards (game, set, number) tuple anything earlier created -
+# the whole point is a clean, deterministic "3 movers and only these 3".
+MOVER_GAME_ID="$(curl -s -X POST "$BASE/api/collections/games/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"key":"mover-check-game","name":"Mover Check Game","enabled":true}' | jval id)"
+[ -n "$MOVER_GAME_ID" ] || fail "could not create the mover-check's own game"
+
 MOVER_TITLES=()
 for pct in 20 30 50; do
-  MOVER_SET_ID="$(curl -s -X POST "$BASE/api/collections/card_sets/records" \
+  MOVER_SET_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/card_sets/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"game\":\"$GAME_ID\",\"code\":\"mover-set-$pct\",\"name\":\"Mover Set $pct\"}" | jval id)"
-  MOVER_CARD_ID="$(curl -s -X POST "$BASE/api/collections/cards/records" \
+    -d "{\"game\":\"$MOVER_GAME_ID\",\"code\":\"mover-set-$pct\",\"name\":\"Mover Set $pct\"}")"
+  MOVER_SET_STATUS="$(echo "$MOVER_SET_RESP" | tail -n1)"
+  MOVER_SET_BODY="$(echo "$MOVER_SET_RESP" | head -n -1)"
+  [ "$MOVER_SET_STATUS" = "200" ] || fail "creating the mover-check card_sets row ($pct%) returned $MOVER_SET_STATUS: $MOVER_SET_BODY"
+  MOVER_SET_ID="$(echo "$MOVER_SET_BODY" | jval id)"
+  [ -n "$MOVER_SET_ID" ] || fail "the mover-check card_sets row ($pct%) has no id: $MOVER_SET_BODY"
+
+  MOVER_CARD_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/cards/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"game\":\"$GAME_ID\",\"set\":\"$MOVER_SET_ID\",\"number\":\"$pct\",\"name\":\"Mover Card $pct\"}" | jval id)"
+    -d "{\"game\":\"$MOVER_GAME_ID\",\"set\":\"$MOVER_SET_ID\",\"number\":\"$pct\",\"name\":\"Mover Card $pct\"}")"
+  MOVER_CARD_STATUS="$(echo "$MOVER_CARD_RESP" | tail -n1)"
+  MOVER_CARD_BODY="$(echo "$MOVER_CARD_RESP" | head -n -1)"
+  [ "$MOVER_CARD_STATUS" = "200" ] || fail "creating the mover-check cards row ($pct%) returned $MOVER_CARD_STATUS: $MOVER_CARD_BODY"
+  MOVER_CARD_ID="$(echo "$MOVER_CARD_BODY" | jval id)"
+  [ -n "$MOVER_CARD_ID" ] || fail "the mover-check cards row ($pct%) has no id: $MOVER_CARD_BODY"
+
   MOVER_MARKET=$((1000 + pct * 10))
   MOVER_FETCHED_AT="$(node -e 'process.stdout.write(new Date().toISOString())')"
-  curl -s -o /dev/null -X POST "$BASE/api/collections/price_snapshots/records" \
+  MOVER_SNAP_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/price_snapshots/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"card\":\"$MOVER_CARD_ID\",\"finish\":\"\",\"source\":\"uk_sold_manual\",\"native_currency\":\"GBP\",\"native_market\":$MOVER_MARKET,\"fx_rate\":1,\"gbp_market\":$MOVER_MARKET,\"fetched_at\":\"$MOVER_FETCHED_AT\"}"
-  MOVER_ITEM_ID="$(curl -s -X POST "$BASE/api/collections/items/records" \
+    -d "{\"card\":\"$MOVER_CARD_ID\",\"finish\":\"\",\"source\":\"uk_sold_manual\",\"native_currency\":\"GBP\",\"native_market\":$MOVER_MARKET,\"fx_rate\":1,\"gbp_market\":$MOVER_MARKET,\"fetched_at\":\"$MOVER_FETCHED_AT\"}")"
+  MOVER_SNAP_STATUS="$(echo "$MOVER_SNAP_RESP" | tail -n1)"
+  MOVER_SNAP_BODY="$(echo "$MOVER_SNAP_RESP" | head -n -1)"
+  [ "$MOVER_SNAP_STATUS" = "200" ] || fail "creating the mover-check price_snapshots row ($pct%) returned $MOVER_SNAP_STATUS: $MOVER_SNAP_BODY"
+  [ "$(echo "$MOVER_SNAP_BODY" | jval card)" = "$MOVER_CARD_ID" ] \
+    || fail "the mover-check price_snapshots row ($pct%) did not save against card $MOVER_CARD_ID: $MOVER_SNAP_BODY"
+
+  MOVER_ITEM_RESP="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/items/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$MOVER_CARD_ID\",\"condition\":\"NM\",\"qty\":1,\"cost\":500,\"market_at_intake\":1000,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}" | jval id)"
-  [ -n "$MOVER_ITEM_ID" ] || fail "could not create the mover-check item for $pct percent"
-  MOVER_SKU="$(curl -s "$BASE/api/collections/items/records/$MOVER_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sku)"
-  [ -n "$MOVER_SKU" ] || fail "the mover-check item for $pct percent has no sku"
+    -d "{\"kind\":\"single\",\"game\":\"$MOVER_GAME_ID\",\"card\":\"$MOVER_CARD_ID\",\"condition\":\"NM\",\"qty\":1,\"cost\":500,\"market_at_intake\":1000,\"status\":\"in_stock\",\"tax_scheme\":\"margin\",\"source\":\"supplier\",\"acquired_at\":\"$TODAY 09:00:00.000Z\"}")"
+  MOVER_ITEM_STATUS="$(echo "$MOVER_ITEM_RESP" | tail -n1)"
+  MOVER_ITEM_BODY="$(echo "$MOVER_ITEM_RESP" | head -n -1)"
+  [ "$MOVER_ITEM_STATUS" = "200" ] || fail "creating the mover-check items row ($pct%) returned $MOVER_ITEM_STATUS: $MOVER_ITEM_BODY"
+  MOVER_SKU="$(echo "$MOVER_ITEM_BODY" | jval sku)"
+  [ -n "$MOVER_SKU" ] || fail "the mover-check item ($pct%) has no sku: $MOVER_ITEM_BODY"
   MOVER_TITLES+=("$MOVER_SKU")
 done
 
 STOCK_MOVERS_STATUS="$(curl -s -o "$TMP_DIR/stock-movers.json" -w '%{http_code}' -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/stock?from=$TODAY&to=$TODAY")"
 [ "$STOCK_MOVERS_STATUS" = "200" ] || fail "GET reports/stock returned $STOCK_MOVERS_STATUS: $(cat "$TMP_DIR/stock-movers.json")"
-STOCK_MOVERS_JSON="$(cat "$TMP_DIR/stock-movers.json")"
-[ "$(echo "$STOCK_MOVERS_JSON" | jlen table)" = "3" ] \
-  || fail "reports/stock's price-movers table has $(echo "$STOCK_MOVERS_JSON" | jlen table) rows, expected exactly the 3 seeded here: $STOCK_MOVERS_JSON"
+
+STOCK_MOVERS_TABLE_LEN="$(node -e '
+  const body = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  process.stdout.write(String((body.table || []).length));
+' "$TMP_DIR/stock-movers.json")"
+[ "$STOCK_MOVERS_TABLE_LEN" = "3" ] \
+  || fail "reports/stock's price-movers table has $STOCK_MOVERS_TABLE_LEN rows, expected exactly the 3 seeded here: $(cat "$TMP_DIR/stock-movers.json")"
 
 DIGEST_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/weekly_digest" -H "Authorization: $SUPER_TOKEN")"
 [ "$DIGEST_STATUS" = "204" ] || fail "POST /api/crons/weekly_digest returned $DIGEST_STATUS, expected 204"
@@ -2660,6 +2696,39 @@ for title in "${MOVER_TITLES[@]}"; do
   echo "$DIGEST_AUDIT" | grep -qF "$title" || fail "the digest audit meta does not name mover $title: $DIGEST_AUDIT"
 done
 ok "the weekly digest names the three biggest price movers"
+
+# --- 21m. An eBay-import-shaped sale (sales.channel/.external_ref, added
+#     by the exports/imports package this same phase): channel "ebay",
+#     payment left blank because eBay took the money. Not dropped, and
+#     not folded into sales_total_by_payment's "mixed" bucket, which means
+#     the shop itself split a payment across methods - see
+#     lib/reports/daily.js. Created directly against the collection (the
+#     eBay orders import route itself belongs to that other package). ----
+EBAY_SALE_NUMBER="GG-S-EBAYCHECK1"
+EBAY_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/sales/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"number\":\"$EBAY_SALE_NUMBER\",\"channel\":\"ebay\",\"external_ref\":\"EBAY-ORDER-99\",\"subtotal\":1234,\"discount\":0,\"total\":1234,\"payment\":\"\",\"status\":\"complete\"}")"
+EBAY_SALE_STATUS="$(echo "$EBAY_SALE_JSON" | tail -n1)"
+EBAY_SALE_BODY="$(echo "$EBAY_SALE_JSON" | head -n -1)"
+[ "$EBAY_SALE_STATUS" = "200" ] || fail "creating an eBay-channel sale with blank payment returned $EBAY_SALE_STATUS: $EBAY_SALE_BODY"
+
+EBAY_REBUILD_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$EBAY_REBUILD_JSON" | tail -n1)" = "200" ] || fail "rebuilding stats after the eBay-channel sale returned $(echo "$EBAY_REBUILD_JSON" | tail -n1): $(echo "$EBAY_REBUILD_JSON" | head -n -1)"
+
+EBAY_DAILY_ROW_JSON="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=date>='${TODAY} 00:00:00.000Z' && date<='${TODAY} 23:59:59.999Z'" \
+  "$BASE/api/collections/daily_stats/records")"
+EBAY_D_NONE="$(echo "$EBAY_DAILY_ROW_JSON" | jval "items.0.sales_total_by_payment.none")"
+[ "${EBAY_D_NONE:-0}" -ge 1234 ] \
+  || fail "daily_stats.sales_total_by_payment.none is '$EBAY_D_NONE', expected at least 1234 (the eBay-channel sale with no shop-side payment)"
+
+EBAY_CHANNELS_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/channels?from=$TODAY&to=$TODAY")"
+echo "$EBAY_CHANNELS_JSON" | node -e '
+  const body = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const ebayRow = (body.table || []).find((r) => r.key === "ebay");
+  process.exit(ebayRow && ebayRow.revenue >= 1234 ? 0 : 1);
+' || fail "reports/channels did not attribute the eBay-channel sale to an 'ebay' row keyed off sales.channel: $EBAY_CHANNELS_JSON"
+ok "an eBay-import-shaped sale (channel ebay, blank payment) lands in sales_total_by_payment's 'none' bucket and the channels report's 'ebay' row"
 
 # -----------------------------------------------------------------------
 # 22. Phase 4: exports, imports and SumUp. Still under

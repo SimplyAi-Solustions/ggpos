@@ -38,11 +38,14 @@ function build(app, util, params) {
 
   var valueCost = 0;
   var valueMarket = 0;
+  // max: null (never Infinity, which is not a JSON value and breaks
+  // response encoding) means "no upper bound" for the open-ended 180+
+  // bucket - see the matching loop below.
   var buckets = [
     { bucket: "0-30", min: 0, max: 30, count: 0, value_cost: 0, value_market: 0 },
     { bucket: "31-90", min: 31, max: 90, count: 0, value_cost: 0, value_market: 0 },
     { bucket: "91-180", min: 91, max: 180, count: 0, value_cost: 0, value_market: 0 },
-    { bucket: "180+", min: 181, max: Infinity, count: 0, value_cost: 0, value_market: 0 },
+    { bucket: "180+", min: 181, max: null, count: 0, value_cost: 0, value_market: 0 },
   ];
   var deadStock = [];
   var movers = [];
@@ -59,7 +62,7 @@ function build(app, util, params) {
 
     var days = query.daysSince(item.getString("acquired_at"), now);
     for (var b = 0; b < buckets.length; b++) {
-      if (days >= buckets[b].min && days <= buckets[b].max) {
+      if (days >= buckets[b].min && (buckets[b].max === null || days <= buckets[b].max)) {
         buckets[b].count += 1;
         buckets[b].value_cost += cost;
         buckets[b].value_market += marketValue;
