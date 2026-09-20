@@ -59,7 +59,13 @@ export function ProfileScreen() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const { data: me, isPending } = useQuery({ queryKey: ["portal", "me"], queryFn: getMe })
+  const {
+    data: me,
+    isPending,
+    isError,
+    error: readError,
+    refetch,
+  } = useQuery({ queryKey: ["portal", "me"], queryFn: getMe })
   const { data: push } = useQuery({
     queryKey: ["portal", "push-config"],
     queryFn: getPushConfig,
@@ -71,7 +77,17 @@ export function ProfileScreen() {
   const [marketing, setMarketing] = React.useState(false)
   const [birthday, setBirthday] = React.useState("")
   const [emailNotices, setEmailNotices] = React.useState(true)
-  const [pushNotices, setPushNotices] = React.useState(false)
+  /**
+   * Two separate things, deliberately.
+   *
+   * `pushWanted` is the customer's own preference, which lives on their
+   * record and follows them to every device. `state` is whether *this*
+   * browser actually holds a subscription. The switch shows the device,
+   * because that is what the switch can change; the preference is only ever
+   * written when a subscribe or an unsubscribe really succeeded, so a failed
+   * permission prompt cannot quietly turn push off everywhere else.
+   */
+  const [pushWanted, setPushWanted] = React.useState(true)
   const [state, setState] = React.useState<PushState>("off")
   const [saved, setSaved] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -89,18 +105,17 @@ export function ProfileScreen() {
     setPhone(me.customer.phone)
     setMarketing(me.customer.marketing_consent)
     setBirthday(me.customer.birthday_month ? String(me.customer.birthday_month) : "")
-    setEmailNotices(me.notifications?.email ?? true)
-    setPushNotices(me.notifications?.push ?? false)
+    setEmailNotices(me.customer.notifications?.email ?? true)
+    setPushWanted(me.customer.notifications?.push ?? true)
   }, [me])
 
   const vapid = push?.vapid_public_key ?? ""
   React.useEffect(() => {
     let cancelled = false
     void pushState(vapid).then((next) => {
-      if (!cancelled) {
-        setState(next)
-        setPushNotices(next === "on")
-      }
+      // Only the device state: the preference came off the record and is
+      // not what this call is about.
+      if (!cancelled) setState(next)
     })
     return () => {
       cancelled = true
@@ -114,7 +129,7 @@ export function ProfileScreen() {
         phone: phone.trim(),
         marketing_consent: marketing,
         birthday_month: birthday ? Number(birthday) : null,
-        notifications: { email: emailNotices, push: pushNotices },
+        notifications: { email: emailNotices, push: pushWanted },
       }),
     onSuccess: async () => {
       setSaved(true)
@@ -144,24 +159,46 @@ export function ProfileScreen() {
       ),
   })
 
+  /**
+   * Subscribe or unsubscribe this device, and only then move the preference.
+   *
+   * A customer who says no to the browser prompt has not asked us to stop
+   * pushing to their other devices, so nothing is persisted until the
+   * subscription itself has actually changed.
+   */
   async function togglePush(next: boolean) {
     setError(null)
     try {
       if (next) {
         await enablePush(vapid)
-        setPushNotices(true)
         setState("on")
+        setPushWanted(true)
+        await updateMe({ notifications: { email: emailNotices, push: true } })
       } else {
         await disablePush()
-        setPushNotices(false)
         setState("off")
+        setPushWanted(false)
+        await updateMe({ notifications: { email: emailNotices, push: false } })
       }
+      await queryClient.invalidateQueries({ queryKey: ["portal", "me"] })
     } catch (cause) {
-      setPushNotices(false)
+      // Put the switch back where the device actually is.
+      setState(await pushState(vapid))
       setError(
-        refusalOrFallback(cause, "Notifications could not be turned on for this device.")
+        refusalOrFallback(
+          cause,
+          next
+            ? "Notifications could not be turned on for this device."
+            : "Notifications could not be turned off for this device."
+        )
       )
     }
+  }
+
+  function signOutAndLeave() {
+    signOut()
+    queryClient.clear()
+    void navigate({ to: "/account" })
   }
 
   async function download() {
@@ -172,13 +209,48 @@ export function ProfileScreen() {
       const anchor = document.createElement("a")
       anchor.href = url
       anchor.download = "my-vault-data.json"
+      // Firefox ignores a click on an anchor that is not in the document,
+      // and revoking the URL in the same tick cancels the download that has
+      // only just started, so: append, click, then clean up on a timeout.
+      document.body.append(anchor)
       anchor.click()
-      URL.revokeObjectURL(url)
+      window.setTimeout(() => {
+        anchor.remove()
+        URL.revokeObjectURL(url)
+      }, 0)
     } catch (cause) {
       setError(
         refusalOrFallback(cause, "That download could not be prepared. Try again.")
       )
     }
+  }
+
+  if (isError || (!isPending && !me)) {
+    // Signing out has to stay reachable even when nothing else loads: a
+    // shared tablet with a broken connection must not be stuck on somebody
+    // else's session.
+    return (
+      <section className="pt-12 sm:pt-20">
+        <PageTitle>Profile</PageTitle>
+        <p
+          role="alert"
+          className="mt-4 max-w-[56ch] text-base leading-[1.5] text-muted-foreground"
+        >
+          {refusalOrFallback(
+            readError,
+            "We could not read your details just now. Check your connection and try again."
+          )}
+        </p>
+        <div className="mt-10 flex flex-col items-start gap-8">
+          <Button type="button" variant="text" onClick={() => void refetch()}>
+            Try again
+          </Button>
+          <Button type="button" variant="text" onClick={signOutAndLeave}>
+            Sign out
+          </Button>
+        </div>
+      </section>
+    )
   }
 
   if (isPending || !me) {
@@ -292,12 +364,19 @@ export function ProfileScreen() {
             </label>
             <span className="max-w-[44ch] text-[15px] leading-[1.5] text-muted-foreground-2">
               {PUSH_NOTE[state]}
+              {state !== "on" && pushWanted && state !== "unsupported"
+                ? " Push is on for your account, so your other devices still get it."
+                : ""}
             </span>
           </span>
           <Switch
             id="profile-push"
-            checked={pushNotices}
-            disabled={state === "unsupported" || state === "unconfigured" || state === "blocked"}
+            checked={state === "on"}
+            disabled={
+              state === "unsupported" ||
+              state === "unconfigured" ||
+              state === "blocked"
+            }
             onCheckedChange={(next) => void togglePush(next)}
           />
         </li>
@@ -342,15 +421,7 @@ export function ProfileScreen() {
       </div>
 
       <SectionHeading className="mt-16">This device</SectionHeading>
-      <Button
-        type="button"
-        variant="text"
-        onClick={() => {
-          signOut()
-          queryClient.clear()
-          void navigate({ to: "/account" })
-        }}
-      >
+      <Button type="button" variant="text" onClick={signOutAndLeave}>
         Sign out
       </Button>
 
@@ -387,11 +458,15 @@ export function ProfileScreen() {
                 },
                 {
                   heading: "Who sees it",
-                  body: "Staff who need it to do their job, SumUp for card payments, and our email provider. We do not sell your data.",
+                  body: "Staff who need it to do their job, SumUp for card payments, and our email and text message provider. We do not sell your data.",
                 },
                 {
                   heading: "Your rights",
                   body: "See what we hold, correct it, delete your profile, or stop marketing at any time. Complaints go to us first, then to the Information Commissioner's Office at ico.org.uk.",
+                },
+                {
+                  heading: "Download my data",
+                  body: "The download carries your record, your trade-ins and sales, your credit and points, your quotes, your want list and your notifications. It never includes an ID number, an expiry date, a date of birth, an address or a photo of your ID. Ask at the counter if you need those.",
                 },
               ].map((entry) => (
                 <li key={entry.heading} className="flex flex-col gap-1.5">

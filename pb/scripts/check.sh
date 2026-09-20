@@ -4346,6 +4346,20 @@ P5_ESTIMATE_SEARCH_STATUS="$(curl -s -o "$TMP_DIR/p5-estimate-search.json" -w '%
 grep -qF "Phase 5 Card A" "$TMP_DIR/p5-estimate-search.json" || fail "the estimate search did not find the card: $(cat "$TMP_DIR/p5-estimate-search.json")"
 ok "GET /api/vault/estimate/search finds a card by name with no auth"
 
+# every hit carries finishes (the card's own finishes_available, [] when
+# never set) so the estimate page can offer finish chips straight off a
+# search result - Phase 5 Card A never had finishes_available set, so its
+# own hit proves the "[] when none" half; a second card with the field set
+# proves the other half.
+[ "$(jlen "cards.0.finishes" < "$TMP_DIR/p5-estimate-search.json")" = "0" ] || fail "Phase 5 Card A's search hit has a non-empty finishes array, expected [] (finishes_available was never set on it): $(cat "$TMP_DIR/p5-estimate-search.json")"
+P5_CARD_FINISHES="$(p5_make_card "Phase 5 Card Finishes" "71")"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/cards/records/$P5_CARD_FINISHES" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"finishes_available":["normal","holo"]}'
+P5_ESTIMATE_SEARCH_FINISHES_JSON="$(curl -s "$BASE/api/vault/estimate/search?q=Phase%205%20Card%20Finishes")"
+[ "$(echo "$P5_ESTIMATE_SEARCH_FINISHES_JSON" | jlen "cards.0.finishes")" = "2" ] || fail "a card with finishes_available set does not carry both finishes in its search hit: $P5_ESTIMATE_SEARCH_FINISHES_JSON"
+[ "$(echo "$P5_ESTIMATE_SEARCH_FINISHES_JSON" | jval "cards.0.finishes")" = "normal,holo" ] || fail "a search hit's finishes are '$(echo "$P5_ESTIMATE_SEARCH_FINISHES_JSON" | jval "cards.0.finishes")', expected normal,holo"
+ok "GET /api/vault/estimate/search includes each card's finishes, [] when none are set"
+
 P5_ESTIMATE_JSON="$(curl -s -w '\n%{http_code}' "$BASE/api/vault/estimate?card=$P5_CARD_A&condition=NM")"
 [ "$(echo "$P5_ESTIMATE_JSON" | tail -n1)" = "200" ] || fail "the public estimate returned $(echo "$P5_ESTIMATE_JSON" | tail -n1): $(echo "$P5_ESTIMATE_JSON" | head -n -1)"
 P5_ESTIMATE_BODY="$(echo "$P5_ESTIMATE_JSON" | head -n -1)"
