@@ -14,7 +14,9 @@ import {
   bucketTick,
   bucketTitle,
   compareLabel,
+  crossesYear,
   formatDay,
+  formatWhen,
   formatDelta,
   formatRange,
   presetFor,
@@ -201,5 +203,56 @@ describe("the range the routes will refuse", () => {
 
   it("passes an ordinary range", () => {
     expect(rangeError({ from: "2026-09-01", to: SUNDAY })).toBeNull()
+  })
+})
+
+describe("a date that is shaped right and is not a day", () => {
+  it("refuses 30 February, which no year has", () => {
+    expect(rangeError({ from: "2026-02-30", to: SUNDAY })).toBe(
+      "Pick a date range. Both from and to are needed, as YYYY-MM-DD."
+    )
+    // The 29th exists in a leap year and does not in this one.
+    expect(rangeError({ from: "2026-02-29", to: SUNDAY })).toBe(
+      "Pick a date range. Both from and to are needed, as YYYY-MM-DD."
+    )
+    expect(rangeError({ from: "2028-02-29", to: "2028-03-01" })).toBeNull()
+  })
+})
+
+describe("the phrase an empty state is built round", () => {
+  it("names one day on its own", () => {
+    expect(formatWhen({ from: SUNDAY, to: SUNDAY })).toBe("on 20 Sep 2026")
+  })
+
+  it("names two days in one month once", () => {
+    expect(formatWhen({ from: "2026-09-01", to: "2026-09-07" })).toBe(
+      "between 1 and 7 Sep 2026"
+    )
+  })
+
+  it("names both months inside one year", () => {
+    expect(formatWhen({ from: "2026-08-20", to: "2026-09-07" })).toBe(
+      "between 20 Aug and 7 Sep 2026"
+    )
+  })
+
+  it("names both years when the range crosses one", () => {
+    expect(formatWhen({ from: "2025-12-20", to: "2026-01-05" })).toBe(
+      "between 20 Dec 2025 and 5 Jan 2026"
+    )
+  })
+})
+
+describe("a month tick", () => {
+  it("is the month alone inside one year, and carries the year across one", () => {
+    expect(bucketTick("2026-09", "month")).toBe("Sep")
+    expect(bucketTick("2026-09", "month", true)).toBe("Sep 26")
+    // A day tick never needs it: the day is already unique on the axis.
+    expect(bucketTick("2026-09-20", "day", true)).toBe("20 Sep")
+  })
+
+  it("knows when a range crosses a year", () => {
+    expect(crossesYear({ from: "2026-01-01", to: "2026-12-31" })).toBe(false)
+    expect(crossesYear({ from: "2025-12-31", to: "2026-01-01" })).toBe(true)
   })
 })

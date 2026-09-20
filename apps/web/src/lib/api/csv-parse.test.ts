@@ -170,3 +170,30 @@ describe("what the eBay orders importer will do with a row", () => {
     )
   })
 })
+
+describe("a blank line in the middle of a file", () => {
+  const file = [
+    "Card Name,Price,TCGplayer ID",
+    "Charizard ex,240.00,558123",
+    "",
+    "Pikachu VMAX,18.50,551900",
+  ].join("\r\n")
+
+  it("is skipped as a row but still counted as a line", () => {
+    const mapped = mapRows(file, CARD_UPLOADER_MAPPING)
+    expect(mapped.rows).toHaveLength(2)
+    expect(mapped.rows[1]?.name).toBe("Pikachu VMAX")
+    // The second card is on line 4 of the file, not line 3: the server's
+    // own error entries name that line, so the preview has to agree.
+    expect(mapped.lines).toEqual([2, 4])
+  })
+
+  it("keeps the blank line in the parse, so nothing renumbers", () => {
+    expect(parseCsv(file)).toHaveLength(4)
+    expect(parseCsv(file)[2]).toEqual([""])
+  })
+
+  it("still drops the phantom row a trailing newline leaves", () => {
+    expect(parseCsv("a,b\r\n1,2\r\n")).toHaveLength(2)
+  })
+})

@@ -7,6 +7,13 @@ import {
   csvRow,
   poundsCell,
 } from "@/features/reports/csv"
+import {
+  REPORT_SPECS,
+  countColumn,
+  moneyColumn,
+  percentColumn,
+  textColumn,
+} from "@/features/reports/specs"
 
 describe("the report CSV's formula-injection guard", () => {
   it("quotes a cell that opens with a formula character", () => {
@@ -87,5 +94,50 @@ describe("the file name", () => {
     expect(csvFilename("sales", "2026-09-01", "2026-09-20")).toBe(
       "gg-vault-sales-2026-09-01-2026-09-20.csv"
     )
+  })
+})
+
+describe("the column specs the table and the file share", () => {
+  it("writes a money column as pounds and pence, never a float", () => {
+    const column = moneyColumn("revenue", "Revenue")
+    // 500 / 100 is 5 in JavaScript, and "5" is not money.
+    expect(column.csv?.({ revenue: 500 })).toBe("5.00")
+    expect(column.csv?.({ revenue: 1234 })).toBe("12.34")
+    expect(column.csv?.({ revenue: -50 })).toBe("-0.50")
+    expect(column.csv?.({ revenue: 0 })).toBe("0.00")
+    // What it shows and what it exports are the same amount.
+    expect(column.text({ revenue: 500 })).toBe("£5.00")
+  })
+
+  it("writes a count and a percent as plain numbers", () => {
+    expect(countColumn("count", "Sales").csv?.({ count: 1200 })).toBe(1200)
+    expect(countColumn("count", "Sales").text({ count: 1200 })).toBe("1,200")
+    expect(percentColumn("rate", "Rate").csv?.({ rate: 44.2 })).toBe(44.2)
+    expect(percentColumn("rate", "Rate").text({ rate: 44.2 })).toBe("44.2%")
+  })
+
+  it("reads a missing or unreadable figure as zero rather than NaN", () => {
+    const column = moneyColumn("revenue", "Revenue")
+    expect(column.csv?.({})).toBe("0.00")
+    expect(column.text({ revenue: "nonsense" })).toBe("£0.00")
+    expect(textColumn("label", "Name").text({})).toBe("")
+  })
+
+  it("sorts a money column on its pence and a name on its own text", () => {
+    expect(moneyColumn("revenue", "Revenue").sortValue?.({ revenue: 1234 })).toBe(1234)
+    expect(textColumn("label", "Name").sortValue?.({ label: "Pokemon" })).toBe("pokemon")
+  })
+
+  it("puts every column of a report through the same writer", () => {
+    const rows = [{ label: "Pokemon", revenue: 500, count: 2 }]
+    const text = buildCsv(
+      REPORT_SPECS.sales.columns.map((column) => ({
+        label: column.label,
+        value: (row: typeof rows[number]) =>
+          column.csv ? column.csv(row) : column.text(row),
+      })),
+      rows
+    )
+    expect(text).toBe("Name,Revenue,Sales\r\nPokemon,5.00,2\r\n")
   })
 })

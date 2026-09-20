@@ -34,12 +34,12 @@ import type {
   ReportEnvelope,
   ReportGroup,
   ReportKey,
-  ReportPoint,
   ReportRow,
   SavedReportRecord,
 } from "@/lib/api/types"
 import { Heatmap, SeriesChart, type ChartDatum } from "@/features/reports/charts"
 import { busiestSlot } from "@/features/reports/heatmap-summary"
+import { canOverlay, overlayRows } from "@/features/reports/overlay"
 import { buildCsv, csvFilename, downloadCsv } from "@/features/reports/csv"
 import { DateRangeControl } from "@/features/reports/DateRangeControl"
 import { ReportTable } from "@/features/reports/ReportTable"
@@ -234,23 +234,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
 
   const chartData: ChartDatum[] = React.useMemo(() => {
     if (!envelope || !spec.chart) return []
-    const earlier = before.data?.series ?? []
-    // The two periods are the same length in days, but a week or month
-    // grouping can still put a different number of buckets in each (a range
-    // that starts mid-week has a short first bucket). Lining them up from
-    // the end pairs the most recent bucket with the most recent one before
-    // it, which is the comparison anybody reading it means; a genuine
-    // mismatch in length is left unpaired rather than drawn wrong.
-    const aligned = earlier.length === envelope.series.length ? earlier : []
-    return envelope.series.map((point: ReportPoint, index: number) => {
-      const row: ChartDatum = { label: point.label }
-      for (const [key, value] of Object.entries(point.values)) row[key] = value
-      const other = aligned[index]
-      if (other && spec.chart) {
-        row.compare = other.values[spec.chart.summaryKey] ?? 0
-      }
-      return row
-    })
+    return overlayRows(envelope.series, before.data?.series ?? [], spec.chart.summaryKey)
   }, [envelope, before.data, spec.chart])
 
   const chartSeries = React.useMemo(() => {
@@ -259,9 +243,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
     // Only when the two periods actually produced the same buckets, and in
     // `--chart-3`: `--chart-4` is a surface tone, not a series colour.
     const overlay =
-      compare &&
-      (before.data?.series.length ?? 0) > 0 &&
-      before.data?.series.length === query.data?.series.length
+      compare && canOverlay(query.data?.series ?? [], before.data?.series ?? [])
     return overlay
       ? [...base, { key: "compare", label: "Period before", tone: 3 as const }]
       : base
