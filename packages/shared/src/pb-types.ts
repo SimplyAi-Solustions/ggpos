@@ -8,6 +8,7 @@ export const Collections = {
 	Mfas: "_mfas",
 	Otps: "_otps",
 	Superusers: "_superusers",
+	AdapterState: "adapter_state",
 	AuditLog: "audit_log",
 	CardSets: "card_sets",
 	Cards: "cards",
@@ -136,6 +137,15 @@ export type SuperusersRecord = {
 	verified?: boolean
 }
 
+export type AdapterStateRecord<Tvalue = unknown> = {
+	created: IsoAutoDateString
+	expires_at?: IsoDateString
+	id: string
+	key: string
+	updated: IsoAutoDateString
+	value?: null | Tvalue
+}
+
 export type AuditLogRecord<Tmeta = unknown> = {
 	action?: string
 	actor?: string
@@ -174,6 +184,7 @@ export type CardsRecord<Texternal_ids = unknown, Tfinishes_available = unknown, 
 	finishes_available?: null | Tfinishes_available
 	game: RecordIdString
 	id: string
+	image_file?: FileNameString
 	image_large?: string
 	image_small?: string
 	last_synced?: IsoDateString
@@ -922,6 +933,7 @@ export const SalesStatusOptions = {
 export type SalesStatusOptions = typeof SalesStatusOptions[keyof typeof SalesStatusOptions]
 export type SalesRecord<Tpayment_split = unknown> = {
 	cash_session?: RecordIdString
+	client_id?: string
 	created: IsoAutoDateString
 	customer?: RecordIdString
 	discount?: number
@@ -1223,6 +1235,7 @@ export type ExternalauthsResponse<Texpand = unknown> = Required<ExternalauthsRec
 export type MfasResponse<Texpand = unknown> = Required<MfasRecord> & BaseSystemFields<Texpand>
 export type OtpsResponse<Texpand = unknown> = Required<OtpsRecord> & BaseSystemFields<Texpand>
 export type SuperusersResponse<Texpand = unknown> = Required<SuperusersRecord> & AuthSystemFields<Texpand>
+export type AdapterStateResponse<Tvalue = unknown, Texpand = unknown> = Required<AdapterStateRecord<Tvalue>> & BaseSystemFields<Texpand>
 export type AuditLogResponse<Tmeta = unknown, Texpand = unknown> = Required<AuditLogRecord<Tmeta>> & BaseSystemFields<Texpand>
 export type CardSetsResponse<Texternal_ids = unknown, Texpand = unknown> = Required<CardSetsRecord<Texternal_ids>> & BaseSystemFields<Texpand>
 export type CardsResponse<Texternal_ids = unknown, Tfinishes_available = unknown, Tprices = unknown, Texpand = unknown> = Required<CardsRecord<Texternal_ids, Tfinishes_available, Tprices>> & BaseSystemFields<Texpand>
@@ -1279,6 +1292,7 @@ export type CollectionRecords = {
 	_mfas: MfasRecord
 	_otps: OtpsRecord
 	_superusers: SuperusersRecord
+	adapter_state: AdapterStateRecord
 	audit_log: AuditLogRecord
 	card_sets: CardSetsRecord
 	cards: CardsRecord
@@ -1334,6 +1348,7 @@ export type CollectionResponses = {
 	_mfas: MfasResponse
 	_otps: OtpsResponse
 	_superusers: SuperusersResponse
+	adapter_state: AdapterStateResponse
 	audit_log: AuditLogResponse
 	card_sets: CardSetsResponse
 	cards: CardsResponse
