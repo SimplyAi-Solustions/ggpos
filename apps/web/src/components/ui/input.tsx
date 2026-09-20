@@ -41,7 +41,9 @@ function Input({
       data-disabled={props.disabled || undefined}
       className={cn(
         "group/input relative flex w-full items-center gap-3",
-        size === "scan" ? "min-h-16 pt-2 pb-3" : "min-h-10 pt-1 pb-3.5",
+        // 48px on a phone: tapping a field is the commonest target in the
+        // whole app, and the underline row is what a thumb aims at.
+        size === "scan" ? "min-h-16 pt-2 pb-3" : "min-h-10 max-sm:min-h-12 pt-1 pb-3.5",
         "data-disabled:opacity-50",
         containerClassName
       )}

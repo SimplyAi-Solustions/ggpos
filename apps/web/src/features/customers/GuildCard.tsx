@@ -1,5 +1,4 @@
 import * as React from "react"
-import { toSVG } from "bwip-js/browser"
 import { displayCode } from "@gg/shared"
 import { cn } from "cn"
 
@@ -26,7 +25,17 @@ const SIZES: Record<GuildCardSize, { width: number; height: number; qr: number }
   wallet: { width: 85.6, height: 53.98, qr: 34 },
 }
 
-/** The QR as an inline SVG, so it stays sharp at 203 dpi and in a PDF. */
+/**
+ * The QR as an inline SVG, so it stays sharp at 203 dpi and in a PDF.
+ *
+ * bwip-js is one 900 kB module that cannot be split further, so it is
+ * imported dynamically rather than at the top of this file: the card's own
+ * text, name, code and tier paint on the first frame and the QR fills in
+ * when the module lands. That matters most on My Vault, where the card is
+ * the whole screen and the customer is standing at the counter on a phone;
+ * it costs the counter's card and label pages nothing, because both render
+ * the same placeholder for one frame and then the same SVG.
+ */
 export function QrCode({
   text,
   className,
@@ -38,17 +47,28 @@ export function QrCode({
   style?: React.CSSProperties
   title: string
 }) {
-  const markup = React.useMemo(() => {
-    try {
-      // Scale 3 keeps the module grid sharp when the SVG is scaled to the
-      // millimetre box; error correction stays at BWIPP's default M.
-      return toSVG({ bcid: "qrcode", text, scale: 3, padding: 0 })
-    } catch {
-      return null
+  const [markup, setMarkup] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    void import("bwip-js/browser")
+      .then(({ toSVG }) => {
+        if (cancelled) return
+        // Scale 3 keeps the module grid sharp when the SVG is scaled to the
+        // millimetre box; error correction stays at BWIPP's default M.
+        setMarkup(toSVG({ bcid: "qrcode", text, scale: 3, padding: 0 }))
+      })
+      .catch(() => {
+        if (!cancelled) setMarkup(null)
+      })
+    return () => {
+      cancelled = true
     }
   }, [text])
 
   if (!markup) {
+    // The frame the QR will fill, at the size it will be, so nothing on the
+    // card moves when it arrives.
     return (
       <div
         role="img"

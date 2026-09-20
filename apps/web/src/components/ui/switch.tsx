@@ -16,6 +16,8 @@ function Switch({
       data-size={size}
       className={cn(
         "group/switch relative inline-flex shrink-0 items-center rounded-full p-0.5 outline-none",
+        // Same again: the track keeps its size, the thumb target does not.
+        "max-sm:after:absolute max-sm:after:inset-x-0 max-sm:after:top-1/2 max-sm:after:h-12 max-sm:after:min-w-12 max-sm:after:-translate-y-1/2 max-sm:after:content-['']",
         "transition-colors duration-150 ease-gg",
         "data-[size=default]:h-6 data-[size=default]:w-11",
         "data-[size=sm]:h-5 data-[size=sm]:w-9",

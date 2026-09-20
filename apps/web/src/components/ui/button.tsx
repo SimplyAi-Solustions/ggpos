@@ -31,9 +31,13 @@ const buttonVariants = cva(
         /** Destroying something: the same link in the error colour. */
         "text-destructive":
           "h-auto max-sm:min-h-12 gap-2 rounded-none bg-transparent p-0 font-mono text-[11px] font-bold tracking-[0.16em] text-destructive uppercase after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-destructive after:transition-transform after:duration-150 after:ease-gg hover:after:scale-x-100 [&_svg]:size-4 [&_svg]:stroke-[1.25]",
-        /** A bare 40px icon target: close, more, back. */
+        /**
+         * A bare 40px icon target: close, more, back. On a phone it keeps
+         * the 40px square but takes a 48px hit area, the same way `text`
+         * already does with `max-sm:min-h-12`.
+         */
         "ghost-icon":
-          "size-10 rounded-[var(--radius)] bg-transparent text-foreground hover:bg-secondary [&_svg]:size-5 [&_svg]:stroke-[1.25]",
+          "size-10 rounded-[var(--radius)] bg-transparent text-foreground hover:bg-secondary [&_svg]:size-5 [&_svg]:stroke-[1.25] max-sm:after:absolute max-sm:after:inset-x-0 max-sm:after:top-1/2 max-sm:after:h-12 max-sm:after:min-w-12 max-sm:after:-translate-y-1/2 max-sm:after:content-['']",
       },
     },
     defaultVariants: { variant: "block" },

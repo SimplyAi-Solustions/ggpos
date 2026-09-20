@@ -11,7 +11,12 @@ function Chip({ className, ...props }: TogglePrimitive.Props) {
     <TogglePrimitive
       data-slot="chip"
       className={cn(
-        "inline-flex h-8 shrink-0 items-center justify-center rounded-full border border-hairline px-4",
+        // The pill stays 32px, which is the shape the reference screens
+        // draw; on a phone it carries a 48px hit area through a pseudo
+        // element instead, so the thumb target clears the bar without the
+        // chips growing into each other.
+        "relative inline-flex h-8 shrink-0 items-center justify-center rounded-full border border-hairline px-4",
+        "max-sm:after:absolute max-sm:after:inset-x-0 max-sm:after:top-1/2 max-sm:after:h-12 max-sm:after:-translate-y-1/2 max-sm:after:content-['']",
         "font-sans text-[13px] leading-none font-medium text-foreground whitespace-nowrap",
         "transition-[background-color,color,border-color] duration-150 ease-gg outline-none",
         "hover:border-foreground",

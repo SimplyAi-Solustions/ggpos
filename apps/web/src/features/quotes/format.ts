@@ -96,10 +96,10 @@ export const QUOTE_STATUS_NOTE: Record<QuoteStatus, string> = {
   expired: "The offer ran out before it was answered.",
 }
 
-/** How the items are getting to the shop. */
+/** How the items are getting to the shop. Set as a tracked micro-label. */
 export const DROP_OFF_LABEL: Record<"in_store" | "post", string> = {
-  in_store: "Bringing it in",
-  post: "Posting it",
+  in_store: "In store",
+  post: "By post",
 }
 
 /** "4 photos", "1 photo", "No photos". */

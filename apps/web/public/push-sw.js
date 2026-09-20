@@ -56,12 +56,22 @@ self.addEventListener("notificationclick", (event) => {
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((windows) => {
-        // Reuse a tab that is already on the portal rather than piling up
-        // one window per notification.
-        for (const client of windows) {
-          if (client.url.startsWith(self.location.origin) && "navigate" in client) {
-            return client.focus().then(() => client.navigate(target))
-          }
+        // Only a tab already on My Vault or the estimate page is reused. A
+        // staff member with the counter open in another tab must not have it
+        // navigated out from under them by a customer notification, and
+        // neither must anything else this origin happens to be serving.
+        const portal = windows.find((client) => {
+          if (!client.url.startsWith(self.location.origin)) return false
+          const path = new URL(client.url).pathname
+          return (
+            path === "/account" ||
+            path.startsWith("/account/") ||
+            path === "/estimate" ||
+            path.startsWith("/c/")
+          )
+        })
+        if (portal && "navigate" in portal) {
+          return portal.focus().then(() => portal.navigate(target))
         }
         return self.clients.openWindow(target)
       })

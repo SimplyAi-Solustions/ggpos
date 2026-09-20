@@ -85,8 +85,10 @@ export function PhotoViewer({ photos }: { photos: QuotePhoto[] }) {
             <img
               src={photo.url}
               alt={`Photo ${at + 1} of ${count} from this quote`}
-              // Two fingers zoom, one finger moves to the next photo.
-              className="max-h-[300px] w-auto max-w-full border border-hairline-soft bg-background object-contain touch-[pan-x_pinch-zoom] sm:max-h-[420px] min-[900px]:max-h-[560px]"
+              // A set height rather than a maximum, so a photo of any size
+              // fills the same frame and the page does not jump between one
+              // photo and the next. Two fingers zoom, one finger moves on.
+              className="h-[280px] w-auto max-w-full border border-hairline-soft bg-background object-contain touch-[pan-x_pinch-zoom] sm:h-[380px] min-[900px]:h-[460px]"
               loading={at === 0 ? "eager" : "lazy"}
             />
           </div>
