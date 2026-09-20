@@ -15,7 +15,9 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 
-import { buildTcgcsvRow, mapWithConcurrency } from "../src/lib/tcgcsv.mjs";
+import http from "node:http";
+
+import { buildTcgcsvRow, mapWithConcurrency, findRelevantGroups } from "../src/lib/tcgcsv.mjs";
 import { parseJsonStream } from "../src/lib/json-stream.mjs";
 
 // A trimmed but verbatim slice of the real /tcgplayer/71/17690/prices
@@ -57,15 +59,40 @@ describe("buildTcgcsvRow", () => {
     });
   });
 
-  test("uses the entry's own subTypeName as the finish, lower-cased", async () => {
+  test("maps the entry's own subTypeName through the finish alias table, not raw and lower-cased", async () => {
     const { results } = await parseJsonStream(Readable.from(REAL_PRICES_RESPONSE));
     const entry = results.find((r) => r.productId === "559532");
     const cardsByTcgplayerId = new Map([["559532", { id: "card_holo" }]]);
 
     const row = buildTcgcsvRow(entry, cardsByTcgplayerId, FX, FETCHED_AT);
-    assert.equal(row.finish, "holofoil");
+    // subTypeName is "Holofoil" (see REAL_PRICES_RESPONSE) - the app's own
+    // finish vocabulary (apps/web's stock/tradein schemas) calls this
+    // "holo", not the raw TCGplayer term, so cards priced from Cardmarket
+    // and from TCGCSV read the same way on screen.
+    assert.equal(row.finish, "holo");
     assert.equal(row.native_low, 22500);
     assert.equal(row.native_market, 20905);
+  });
+
+  test("maps every finish alias table entry as expected, and falls back sensibly for an unlisted one", async () => {
+    const base = { productId: 1, lowPrice: "1", midPrice: "1", marketPrice: "1" };
+    const cardsByTcgplayerId = new Map([["1", { id: "card_x" }]]);
+    const cases = [
+      ["Normal", "normal"],
+      ["Foil", "foil"],
+      ["Holofoil", "holo"],
+      ["Reverse Holofoil", "reverse"],
+      ["1st Edition", "first_edition"],
+      ["1st Edition Holofoil", "first_edition_holo"],
+      ["Unlimited", "normal"],
+      ["", "normal"],
+      [null, "normal"],
+      ["Some Future Variant", "some_future_variant"],
+    ];
+    for (const [subTypeName, expectedFinish] of cases) {
+      const row = buildTcgcsvRow({ ...base, subTypeName }, cardsByTcgplayerId, FX, FETCHED_AT);
+      assert.equal(row.finish, expectedFinish, `subTypeName ${JSON.stringify(subTypeName)} should map to ${expectedFinish}`);
+    }
   });
 
   test("a productId with no price data at all still yields a row of zeros, not a crash", async () => {

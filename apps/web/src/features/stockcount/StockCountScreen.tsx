@@ -56,6 +56,7 @@ import {
   summarise,
   unexpectedLines,
 } from "@/features/stockcount/reconcile"
+import { createWriteQueue } from "@/features/stockcount/writes"
 import type { StockCountDetail, StockCountLine } from "@/lib/api/types"
 
 const BLOCKED = "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
@@ -150,6 +151,7 @@ function CloseSheet({
   count,
   lines,
   pending,
+  saving,
   onClose,
 }: {
   open: boolean
@@ -157,6 +159,8 @@ function CloseSheet({
   count: StockCountDetail
   lines: StockCountLine[]
   pending: boolean
+  /** A scan is still on its way to the server. */
+  saving: boolean
   onClose: (moveUnexpected: boolean) => void
 }) {
   const [move, setMove] = React.useState(false)
@@ -197,6 +201,12 @@ function CloseSheet({
               Nothing turned up that belongs somewhere else.
             </p>
           )}
+          {saving ? (
+            <p className="mt-6 text-[13px] leading-[1.45] text-muted-foreground">
+              A scan is still going to the server. The count closes as soon as
+              it lands.
+            </p>
+          ) : null}
           {totals.missing > 0 ? (
             <p className="mt-6 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
               {totals.missing} {totals.missing === 1 ? "unit is" : "units are"} still
@@ -206,7 +216,12 @@ function CloseSheet({
           ) : null}
         </SheetBody>
         <SheetFooter>
-          <Button loading={pending} trailingArrow onClick={() => onClose(move)}>
+          <Button
+            loading={pending}
+            disabled={saving}
+            trailingArrow
+            onClick={() => onClose(move)}
+          >
             Close count
           </Button>
           <Button variant="text" onClick={() => onOpenChange(false)}>
@@ -255,18 +270,36 @@ export function StockCountScreen({ id }: { id: string }) {
   const closed = data?.status === "closed"
   const admin = staff?.role === "admin"
 
-  const write = useMutation({
-    mutationFn: (line: StockCountLine) => saveCountLine(id, line),
-    // A line written for the first time comes back with its real id, which
-    // replaces the draft one so the next scan updates it rather than
-    // creating a second row for the same item.
-    onSuccess: (saved) =>
-      setLines((rows) =>
-        (rows ?? []).map((row) => (row.itemId === saved.itemId ? { ...row, id: saved.id } : row))
-      ),
-    onError: (err) =>
-      setError(refusalOrFallback(err, "That scan did not save. Scan it again.")),
-  })
+  // One chain per item, so two scans of one card cannot race into two rows
+  // or lose a count. The close drains it before it asks the server to close.
+  const writes = React.useMemo(
+    () => createWriteQueue((line) => saveCountLine(id, line)),
+    [id]
+  )
+  const [writing, setWriting] = React.useState(0)
+
+  const write = React.useCallback(
+    (line: StockCountLine) => {
+      setWriting((count) => count + 1)
+      writes
+        .push(line)
+        .then((saved) => {
+          // A line written for the first time comes back with its real id,
+          // which replaces the draft one so the next scan updates it rather
+          // than creating a second row for the same item.
+          setLines((rows) =>
+            (rows ?? []).map((row) =>
+              row.itemId === saved.itemId ? { ...row, id: saved.id } : row
+            )
+          )
+        })
+        .catch((err: unknown) =>
+          setError(refusalOrFallback(err, "That scan did not save. Scan it again."))
+        )
+        .finally(() => setWriting((count) => count - 1))
+    },
+    [writes]
+  )
 
   const commit = React.useCallback(
     async (raw: string) => {
@@ -297,7 +330,7 @@ export function StockCountScreen({ id }: { id: string }) {
           return
         }
         setLines(result.lines)
-        write.mutate(result.outcome.line)
+        write(result.outcome.line)
 
         const line = result.outcome.line
         if (result.outcome.kind === "extra") {
@@ -345,7 +378,12 @@ export function StockCountScreen({ id }: { id: string }) {
   }, [closed, scanField])
 
   const finish = useMutation({
-    mutationFn: (moveUnexpected: boolean) => closeStockCount(id, moveUnexpected),
+    mutationFn: async (moveUnexpected: boolean) => {
+      // Everything scanned is on the server before the variance is worked
+      // out from it.
+      await writes.drain()
+      return closeStockCount(id, moveUnexpected)
+    },
     onSuccess: (result) => {
       setCloseOpen(false)
       setLines(result.lines)
@@ -502,6 +540,7 @@ export function StockCountScreen({ id }: { id: string }) {
         count={data}
         lines={current}
         pending={finish.isPending}
+        saving={writing > 0}
         onClose={(move) => finish.mutate(move)}
       />
     </section>

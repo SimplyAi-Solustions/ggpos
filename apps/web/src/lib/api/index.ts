@@ -384,3 +384,26 @@ export {
   getSaleQueued as getSale,
   queueLabelsQueued as queueLabels,
 } from "@/lib/api/offline"
+
+// ---------------------------------------------------------------------------
+// Lookup, prices and FX (Phase 3)
+//
+// `searchCards` above reads the `cards` collection directly, which is what the
+// command palette wants: it searches what the shop already holds. The lookup
+// route asks the game's own adapter and writes new cards through, so it is a
+// different question with the same name; it is exported here as `lookupCards`
+// and the screens that want it import `@/lib/api/lookup` directly.
+// ---------------------------------------------------------------------------
+export {
+  createManualCard,
+  getCard as lookupCard,
+  isCardNotFound,
+  isLookupGame,
+  LOOKUP_GAMES,
+  RETRO_PLATFORMS,
+  searchCards as lookupCards,
+  searchRetro,
+  stockForCard,
+  toCardHit,
+} from "@/lib/api/lookup"
+export * from "@/lib/api/prices"
