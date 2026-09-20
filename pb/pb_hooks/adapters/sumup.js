@@ -21,12 +21,28 @@
 // GG_ADAPTER_TRANSPORT_MODE.
 "use strict";
 
-var BASE_URL = "https://api.sumup.com/v2.1";
+var ORIGIN = "https://api.sumup.com";
+var BASE_URL = ORIGIN + "/v2.1";
 var HISTORY_LIMIT = 100;
 var DEFAULT_MAX_PAGES = 20;
 
 function authHeaders(apiKey) {
   return { Authorization: "Bearer " + apiKey };
+}
+
+/**
+ * `links[].href` resolved to a URL worth following, or null when it is
+ * not one - a relative, path-absolute link ("/v2.1/...") is resolved
+ * against SumUp's own origin; anything that does not end up on that
+ * origin (a different host entirely, or a malformed value) is refused,
+ * so a response this adapter did not expect can never walk paging off to
+ * some other server. Paging simply stops when this returns null.
+ */
+function resolveNextUrl(href) {
+  if (!href || typeof href !== "string") return null;
+  if (href.indexOf(ORIGIN) === 0) return href;
+  if (href.charAt(0) === "/") return ORIGIN + href;
+  return null;
 }
 
 /**
@@ -44,7 +60,7 @@ function fetchHistoryPage(url, apiKey, transport) {
   var next = null;
   for (var i = 0; i < links.length; i++) {
     if (links[i] && links[i].rel === "next" && links[i].href) {
-      next = links[i].href;
+      next = resolveNextUrl(links[i].href);
       break;
     }
   }
@@ -96,6 +112,8 @@ function fetchTransaction(merchantCode, apiKey, transactionId, transport) {
 
 module.exports = {
   BASE_URL: BASE_URL,
+  ORIGIN: ORIGIN,
+  resolveNextUrl: resolveNextUrl,
   fetchHistoryPage: fetchHistoryPage,
   fetchHistory: fetchHistory,
   fetchTransaction: fetchTransaction,

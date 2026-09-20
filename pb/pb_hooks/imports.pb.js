@@ -17,12 +17,19 @@
  * Both routes run the whole import - the csv_imports bookkeeping row and
  * every item or sale it creates - inside one $app.runInTransaction, so a
  * file that goes wrong partway through leaves nothing behind. A single
- * bad row never aborts that transaction by itself, though: row-level
- * problems (no ids and no name, an unreadable price, an unknown custom
- * label, an already-sold item) are collected into the csv_imports row's
- * own `errors` list (lib/imports.js) so the rest of the file still goes
- * through - only a file whose header row this build cannot recognise at
- * all is refused up front, before any transaction opens.
+ * bad row never aborts that transaction by itself: row-level problems (no
+ * ids and no name, an unreadable price, an unknown custom label, an
+ * already-sold item) are collected into the csv_imports row's own
+ * `errors` list (lib/imports.js, which also wraps every row's own writes
+ * in try/catch) so the rest of the file still goes through - only a file
+ * whose header row this build cannot recognise at all is refused up
+ * front, before any transaction opens, and the rare case of the
+ * transaction itself failing (the bookkeeping row could not be saved) is
+ * still a clean 400, not a bare 500.
+ *
+ * `$apis.bodyLimit` on both POST routes refuses an oversized request
+ * before any of that even starts - see lib/imports.js's own MAX_CSV_BYTES
+ * for the matching in-handler check once the body has been read.
  *
  * See docs/api-contract.md's "Phase 4" section for the exact refusals and
  * response shapes.
@@ -32,20 +39,24 @@
  */
 
 // ---------------------------------------------------------------------
-// sales.channel defaults to "counter" when a sale is created with it
-// left empty. This lives here, not in sales.pb.js (another package's
-// file this round - see the Phase 4 brief), because imports.pb.js is
-// what actually needs the field: an eBay-orders-imported sale sets
-// channel: "ebay" itself, but every ordinary counter sale sales.pb.js
-// creates has never heard of this field at all, and "default counter"
-// (docs/PLAN.md's Phase 4 plan) has to happen somewhere. onRecordCreate
-// hooks from separate files both fire normally - see items.pb.js and
-// customers.pb.js for two more that already coexist with other files'
-// hooks on collections they do not otherwise own.
+// sales.channel defaults to "counter", and sales.occurred_at to now, when
+// a sale is created with either left empty. This lives here, not in
+// sales.pb.js (another package's file this round - see the Phase 4
+// brief), because imports.pb.js is what actually needs both fields: an
+// eBay-orders-imported sale sets channel: "ebay" and occurred_at from the
+// file's own sale date itself (lib/imports.js), but an ordinary counter
+// sale sales.pb.js creates has never heard of either field, and each
+// needs a sensible default somewhere. onRecordCreate hooks from separate
+// files both fire normally - see items.pb.js and customers.pb.js for two
+// more that already coexist with other files' hooks on collections they
+// do not otherwise own.
 // ---------------------------------------------------------------------
 onRecordCreate((e) => {
   if (!e.record.getString("channel")) {
     e.record.set("channel", "counter");
+  }
+  if (!e.record.getString("occurred_at")) {
+    e.record.set("occurred_at", new Date().toISOString());
   }
   e.next();
 }, "sales");
@@ -81,40 +92,45 @@ routerAdd(
     }
 
     let result = null;
-    e.app.runInTransaction((txApp) => {
-      const record = new Record(txApp.findCollectionByNameOrId("csv_imports"), {
-        type: "card_uploader",
-        status: "processing",
-        rows_total: mapped.records.length,
-        rows_ok: 0,
-        errors: [],
-        staff: staff.id,
+    try {
+      e.app.runInTransaction((txApp) => {
+        const record = new Record(txApp.findCollectionByNameOrId("csv_imports"), {
+          type: "card_uploader",
+          status: "processing",
+          rows_total: mapped.records.length,
+          rows_ok: 0,
+          errors: [],
+          staff: staff.id,
+        });
+        record.set("file", $filesystem.fileFromBytes(upload.bytes, `card-uploader-${Date.now()}.csv`));
+        txApp.save(record);
+
+        const outcome = importsLib.processCardUploaderRows(txApp, staff.id, mapped.records);
+
+        record.set("rows_ok", outcome.matched + outcome.review);
+        record.set("errors", outcome.errors);
+        record.set("status", "done");
+        txApp.save(record);
+
+        auditLib.writeAuditLog(txApp, {
+          actor: staff.id,
+          action: "import_card_uploader",
+          collection: "csv_imports",
+          record: record.id,
+          meta: { rows_total: mapped.records.length, matched: outcome.matched, review: outcome.review },
+          ip: e.realIP(),
+        });
+
+        result = { import: record, matched: outcome.matched, review: outcome.review };
       });
-      record.set("file", $filesystem.fileFromBytes(upload.bytes, `card-uploader-${Date.now()}.csv`));
-      txApp.save(record);
-
-      const outcome = importsLib.processCardUploaderRows(txApp, staff.id, mapped.records);
-
-      record.set("rows_ok", outcome.matched + outcome.review);
-      record.set("errors", outcome.errors);
-      record.set("status", "done");
-      txApp.save(record);
-
-      auditLib.writeAuditLog(txApp, {
-        actor: staff.id,
-        action: "import_card_uploader",
-        collection: "csv_imports",
-        record: record.id,
-        meta: { rows_total: mapped.records.length, matched: outcome.matched, review: outcome.review },
-        ip: e.realIP(),
-      });
-
-      result = { import: record, matched: outcome.matched, review: outcome.review };
-    });
+    } catch (err) {
+      throw e.badRequestError("This import could not be saved. Check the file and try again.", null);
+    }
 
     return e.json(200, result);
   },
-  $apis.requireAuth("staff")
+  $apis.requireAuth("staff"),
+  $apis.bodyLimit(10 << 20)
 );
 
 // ---------------------------------------------------------------------
@@ -152,40 +168,45 @@ routerAdd(
     const vatRegistered = settingsRow ? settingsRow.getBool("vat_registered") : false;
 
     let result = null;
-    e.app.runInTransaction((txApp) => {
-      const record = new Record(txApp.findCollectionByNameOrId("csv_imports"), {
-        type: "ebay_orders",
-        status: "processing",
-        rows_total: mapped.records.length,
-        rows_ok: 0,
-        errors: [],
-        staff: staff.id,
+    try {
+      e.app.runInTransaction((txApp) => {
+        const record = new Record(txApp.findCollectionByNameOrId("csv_imports"), {
+          type: "ebay_orders",
+          status: "processing",
+          rows_total: mapped.records.length,
+          rows_ok: 0,
+          errors: [],
+          staff: staff.id,
+        });
+        record.set("file", $filesystem.fileFromBytes(upload.bytes, `ebay-orders-${Date.now()}.csv`));
+        txApp.save(record);
+
+        const outcome = importsLib.processEbayOrdersRows(txApp, staff.id, mapped.records, vatRegistered);
+
+        record.set("rows_ok", outcome.sold);
+        record.set("errors", outcome.errors);
+        record.set("status", "done");
+        txApp.save(record);
+
+        auditLib.writeAuditLog(txApp, {
+          actor: staff.id,
+          action: "import_ebay_orders",
+          collection: "csv_imports",
+          record: record.id,
+          meta: { rows_total: mapped.records.length, sold: outcome.sold, already_sold: outcome.alreadySold },
+          ip: e.realIP(),
+        });
+
+        result = { import: record, sold: outcome.sold, already_sold: outcome.alreadySold };
       });
-      record.set("file", $filesystem.fileFromBytes(upload.bytes, `ebay-orders-${Date.now()}.csv`));
-      txApp.save(record);
-
-      const outcome = importsLib.processEbayOrdersRows(txApp, staff.id, mapped.records, vatRegistered);
-
-      record.set("rows_ok", outcome.sold);
-      record.set("errors", outcome.errors);
-      record.set("status", "done");
-      txApp.save(record);
-
-      auditLib.writeAuditLog(txApp, {
-        actor: staff.id,
-        action: "import_ebay_orders",
-        collection: "csv_imports",
-        record: record.id,
-        meta: { rows_total: mapped.records.length, sold: outcome.sold, already_sold: outcome.alreadySold },
-        ip: e.realIP(),
-      });
-
-      result = { import: record, sold: outcome.sold, already_sold: outcome.alreadySold };
-    });
+    } catch (err) {
+      throw e.badRequestError("This import could not be saved. Check the file and try again.", null);
+    }
 
     return e.json(200, result);
   },
-  $apis.requireAuth("staff")
+  $apis.requireAuth("staff"),
+  $apis.bodyLimit(10 << 20)
 );
 
 // ---------------------------------------------------------------------
@@ -195,12 +216,24 @@ routerAdd(
   "GET",
   "/api/vault/imports/{id}",
   (e) => {
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+
     let record = null;
     try {
       record = e.app.findRecordById("csv_imports", e.request.pathValue("id"));
     } catch (err) {
       throw e.notFoundError("Import not found. Check the id and try again.", null);
     }
+
+    auditLib.writeAuditLog(e.app, {
+      actor: e.auth.id,
+      action: "import_view",
+      collection: "csv_imports",
+      record: record.id,
+      meta: {},
+      ip: e.realIP(),
+    });
+
     return e.json(200, record);
   },
   $apis.requireAuth("staff")

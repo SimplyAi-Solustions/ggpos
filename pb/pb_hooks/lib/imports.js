@@ -196,8 +196,12 @@ function capErrors(errors) {
  * the (c) case above still counts as `matched` (an item really was
  * created) even though it also adds a review-kind note to `errors`, so
  * `rows_ok` (matched + review) never double-counts a single row.
+ *
+ * `defaultLocation` (a `locations` id, or "") is `settings.default_intake_location` -
+ * only the (c) path uses it, on a genuinely new item; (a) and (b) update
+ * an item that already has its own location, which is never touched.
  */
-function processCardUploaderRows(txApp, staffId, records) {
+function processCardUploaderRows(txApp, staffId, records, defaultLocation) {
   var errors = [];
   var matched = 0;
   var review = 0;

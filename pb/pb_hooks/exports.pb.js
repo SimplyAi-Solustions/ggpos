@@ -491,7 +491,7 @@ routerAdd(
       action: "export_ebay_listings_csv",
       collection: "items",
       record: "",
-      meta: { ids: ids, written: written },
+      meta: { id_count: ids.length, ids: ids.slice(0, 20), written: written },
       ip: e.realIP(),
     });
 
@@ -979,10 +979,14 @@ routerAdd(
 /**
  * GET /api/vault/exports/end-listings.csv  (staff)
  *
- * Every item with an ebay_listing_id whose status is sold, so the
- * listings can be ended by hand on eBay - docs/csv-formats.md,
- * "End-listings export". Marks nothing; POST .../items/end-listings below
- * is the one route that clears them.
+ * Every item with an ebay_listing_id or an ebay_sku whose status is sold,
+ * so the listings can be ended by hand on eBay - docs/csv-formats.md,
+ * "End-listings export". `ebay_sku` alone (never mind `ebay_listing_id`,
+ * which nothing in this build actually writes yet - a Card Uploader
+ * listing carries only its own `CS-XXXXXX` custom label) still means
+ * "this item is listed somewhere and needs that listing ended" once it
+ * has sold, whichever counter or import route sold it. Marks nothing;
+ * POST .../items/end-listings below is the one route that clears them.
  */
 routerAdd(
   "GET",
@@ -997,7 +1001,7 @@ routerAdd(
     try {
       items = e.app.findRecordsByFilter(
         "items",
-        'status = "sold" && ebay_listing_id != ""',
+        'status = "sold" && (ebay_listing_id != "" || ebay_sku != "")',
         "sku",
         0,
         0
@@ -1065,9 +1069,8 @@ routerAdd(
  *
  * `{ "ids": [...] }` - once those listings are actually ended on eBay by
  * hand, clears `ebay_listing_id` and `ebay_sku` on each so it drops off
- * end-listings.csv. An id that does not exist, or has no
- * `ebay_listing_id` to clear, is silently skipped rather than failing the
- * whole request.
+ * end-listings.csv. An id that does not exist, or has neither field set,
+ * is silently skipped rather than failing the whole request.
  */
 routerAdd(
   "POST",
@@ -1092,7 +1095,7 @@ routerAdd(
         } catch (err) {
           continue;
         }
-        if (!item.getString("ebay_listing_id")) continue;
+        if (!item.getString("ebay_listing_id") && !item.getString("ebay_sku")) continue;
         item.set("ebay_listing_id", "");
         item.set("ebay_sku", "");
         txApp.save(item);
@@ -1104,7 +1107,7 @@ routerAdd(
         action: "end_ebay_listings",
         collection: "items",
         record: "",
-        meta: { ids: ended },
+        meta: { id_count: ended.length, ids: ended.slice(0, 20) },
         ip: e.realIP(),
       });
     });

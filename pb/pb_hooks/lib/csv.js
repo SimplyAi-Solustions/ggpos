@@ -9,13 +9,16 @@
  * hand-rolling it again per route.
  *
  * Reading: parse() is a small RFC 4180 reader (quoted fields, "" for an
- * embedded quote, commas and newlines inside quotes, CRLF or bare LF line
- * endings) and mapRows() resolves a parsed file's header row against a
- * mapping config's own header-name aliases (docs/csv-formats.md) - the
- * same shape imports.pb.js reads from settings.import_mappings, with a
- * seeded default from a migration.
+ * embedded quote, commas and newlines inside quotes, CRLF, bare LF or
+ * bare CR line endings, a leading UTF-8 BOM stripped) and mapRows()
+ * resolves a parsed file's header row against a mapping config's own
+ * header-name aliases (docs/csv-formats.md) - the same shape imports.pb.js
+ * reads from settings.import_mappings, with a seeded default from a
+ * migration.
  *
- * queryParam()/dateParam() read a GET route's own query string. They live
+ * queryParam()/dateParam() read a GET route's own query string.
+ * isValidDateStr() checks a real calendar date, not just the YYYY-MM-DD
+ * shape - "2026-13-45" is shaped right and still refused. All four live
  * here, not in lib/vaultutil.js, because every route handler is its own
  * isolated goja context (pb/README.md): a routerAdd handler cannot see a
  * function declared at the top of its own .pb.js file, only one it
@@ -59,28 +62,60 @@ function queryParam(e, name) {
   }
 }
 
-/** A YYYY-MM-DD query parameter, or "" when absent or not that shape. */
+/**
+ * True when `s` is a real calendar date, not merely YYYY-MM-DD-shaped -
+ * "2026-13-45" matches the shape but is refused here, rather than reaching
+ * `new Date(...)` downstream and producing an Invalid Date whose
+ * `.toISOString()` throws (the 500 this exists to prevent). Written here
+ * rather than reused from `lib/reports/dates.js`'s own `isValidDateStr` -
+ * that module belongs to a different package this round.
+ */
+function isValidDateStr(s) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+  if (!m) return false;
+  var year = Number(m[1]);
+  var month = Number(m[2]);
+  var day = Number(m[3]);
+  if (month < 1 || month > 12) return false;
+  if (day < 1) return false;
+  var daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= daysInMonth;
+}
+
+/** A YYYY-MM-DD query parameter that is a real calendar date, or "" otherwise. */
 function dateParam(e, name) {
   var raw = queryParam(e, name);
-  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+  return isValidDateStr(raw) ? raw : "";
 }
 
 /**
  * Parse CSV text into an array of rows, each an array of raw string
  * cells. Handles double-quoted fields ("" is an escaped quote inside
- * one), commas and newlines inside quotes, and CRLF or bare LF line
- * endings. A file that ends cleanly on a newline produces no spurious
- * trailing empty row.
+ * one, and a comma or a newline inside quotes is literal content, not a
+ * separator), CRLF, bare LF or bare CR (classic Mac) line endings, and a
+ * leading UTF-8 BOM. A file that ends cleanly on a newline produces no
+ * spurious trailing empty row.
+ *
+ * Builds each field from index slices rather than one character at a
+ * time: goja turns a `str += char` loop into a fresh string allocation
+ * per character (pb/README.md's ID-photo base64 note has the same
+ * finding for a different codec), which is unnoticeable on a handful of
+ * short cells but real on a file with thousands of rows.
  */
 function parse(text) {
   var rows = [];
   var current = [];
-  var field = "";
-  var inQuotes = false;
   var source = text || "";
+  if (source.length && source.charCodeAt(0) === 0xfeff) source = source.slice(1);
   var n = source.length;
   var i = 0;
+  var field = ""; // completed chunks of the current field (quoted content, or a prior escaped quote)
+  var fieldStart = 0; // start of the pending literal slice not yet folded into `field`
+  var inQuotes = false;
 
+  function takeSlice(end) {
+    if (end > fieldStart) field += source.slice(fieldStart, end);
+  }
   function endField() {
     current.push(field);
     field = "";
@@ -96,40 +131,57 @@ function parse(text) {
     if (inQuotes) {
       if (c === '"') {
         if (source.charAt(i + 1) === '"') {
+          takeSlice(i);
           field += '"';
           i += 2;
+          fieldStart = i;
           continue;
         }
+        takeSlice(i);
         inQuotes = false;
         i += 1;
+        fieldStart = i;
         continue;
       }
-      field += c;
-      i += 1;
+      i += 1; // literal content (including a comma or a newline) - folded in when the quote closes
       continue;
     }
     if (c === '"') {
+      takeSlice(i);
       inQuotes = true;
       i += 1;
+      fieldStart = i;
       continue;
     }
     if (c === ",") {
+      takeSlice(i);
       endField();
       i += 1;
+      fieldStart = i;
       continue;
     }
     if (c === "\r") {
-      i += 1; // swallowed; the \n (or end of file) that follows closes the row
+      takeSlice(i);
+      if (source.charAt(i + 1) === "\n") {
+        i += 1; // swallow the \r; the \n right after ends the row below
+        fieldStart = i;
+        continue;
+      }
+      endRow(); // a lone \r (classic Mac) ends the row on its own
+      i += 1;
+      fieldStart = i;
       continue;
     }
     if (c === "\n") {
+      takeSlice(i);
       endRow();
       i += 1;
+      fieldStart = i;
       continue;
     }
-    field += c;
     i += 1;
   }
+  takeSlice(i);
   if (field !== "" || current.length > 0) endRow();
 
   return rows;
@@ -148,7 +200,10 @@ function parse(text) {
  * exact row a spreadsheet would show. `columnIndexByField[field]` is -1
  * when that field's header was not found at all, which is how callers
  * detect a file whose header row does not look like this mapping's at
- * all (docs/api-contract.md's "not a CSV we recognise" refusal).
+ * all (docs/api-contract.md's "not a CSV we recognise" refusal). A line
+ * that parses into cells that are all empty (a blank line, or a run of
+ * bare commas) is skipped rather than becoming a row a caller might
+ * count as a processing failure.
  */
 function mapRows(rows, mapping) {
   var headerRowIndex = (mapping.headerRow || 1) - 1;
@@ -174,10 +229,18 @@ function mapRows(rows, mapping) {
     columnIndexByField[field] = foundAt;
   }
 
+  function isBlankRow(raw) {
+    if (!raw || raw.length === 0) return true;
+    for (var c = 0; c < raw.length; c++) {
+      if (String(raw[c] || "").trim() !== "") return false;
+    }
+    return true;
+  }
+
   var records = [];
   for (var r = headerRowIndex + 1; r < rows.length; r++) {
     var raw = rows[r];
-    if (!raw || raw.length === 0 || (raw.length === 1 && raw[0] === "")) continue; // blank line
+    if (isBlankRow(raw)) continue;
     var record = { _row: r + 1 };
     for (var k = 0; k < fields.length; k++) {
       var colIdx = columnIndexByField[fields[k]];
@@ -204,6 +267,7 @@ module.exports = {
   pounds: pounds,
   queryParam: queryParam,
   dateParam: dateParam,
+  isValidDateStr: isValidDateStr,
   parse: parse,
   mapRows: mapRows,
   looksRecognised: looksRecognised,

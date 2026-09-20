@@ -668,6 +668,87 @@ test("packages/shared's default source priority puts a UK sold comp first, for c
 });
 
 // =======================================================================
+// SumUp - the transactions pull's own history/detail calls. Hand-written
+// fixtures (no SumUp merchant account on this build); see
+// pb_hooks/adapters/fixtures/sumup_HANDWRITTEN_*.json.
+// =======================================================================
+
+test("sumup.fetchHistory: sends changes_since as real ISO 8601, never PocketBase's space-separated date shape", () => {
+  const sumup = adapter("sumup.js");
+  let seenUrl = "";
+  const transport = (req) => {
+    seenUrl = req.url;
+    assert.equal(req.headers.Authorization, "Bearer test-key");
+    return { statusCode: 200, json: { items: [{ id: "t1" }], links: [] } };
+  };
+  // The exact bug this guards: lib/sumup.js used to read this value off
+  // PocketBase's own stored `fetched_at` text ("...12:00:00.000Z" with a
+  // space, not a "T"), which SumUp's API cannot parse - every pull after
+  // the first silently sent it a `changes_since` it would reject.
+  const since = "2026-09-20T12:00:00.000Z";
+  const items = sumup.fetchHistory("MFIX1", "test-key", since, 5, transport);
+  assert.equal(items.length, 1);
+  const match = /changes_since=([^&]+)/.exec(seenUrl);
+  assert.ok(match, "changes_since missing from the request URL: " + seenUrl);
+  const sent = decodeURIComponent(match[1]);
+  assert.match(sent, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/, "changes_since is not ISO 8601 (has a space, not a T?): " + sent);
+  assert.doesNotMatch(sent, / /, "changes_since contains a literal space - PocketBase's stored date shape, not ISO 8601");
+});
+
+test("sumup.fetchHistory: pages via links[].next up to maxPages", () => {
+  const sumup = adapter("sumup.js");
+  let calls = 0;
+  const transport = () => {
+    calls += 1;
+    if (calls === 1) {
+      return {
+        statusCode: 200,
+        json: { items: [{ id: "a" }], links: [{ rel: "next", href: sumup.BASE_URL + "/merchants/M/transactions/history?cursor=2" }] },
+      };
+    }
+    return { statusCode: 200, json: { items: [{ id: "b" }], links: [] } };
+  };
+  const items = sumup.fetchHistory("M", "k", "2026-09-20T00:00:00.000Z", 5, transport);
+  assert.equal(calls, 2);
+  assert.deepEqual(items.map((i) => i.id), ["a", "b"]);
+});
+
+test("sumup.resolveNextUrl: follows the real origin and a path-absolute link, refuses anything else", () => {
+  const sumup = adapter("sumup.js");
+  assert.equal(sumup.resolveNextUrl(sumup.BASE_URL + "/merchants/M/transactions/history?cursor=2"), sumup.BASE_URL + "/merchants/M/transactions/history?cursor=2");
+  assert.equal(sumup.resolveNextUrl("/v2.1/merchants/M/transactions/history?cursor=2"), sumup.ORIGIN + "/v2.1/merchants/M/transactions/history?cursor=2");
+  assert.equal(sumup.resolveNextUrl("https://evil.example.com/steal"), null, "a different host must never be followed");
+  assert.equal(sumup.resolveNextUrl(""), null);
+  assert.equal(sumup.resolveNextUrl(null), null);
+});
+
+test("sumup.fetchHistory: a links[].href on a different host stops paging rather than following it", () => {
+  const sumup = adapter("sumup.js");
+  let calls = 0;
+  const transport = () => {
+    calls += 1;
+    return {
+      statusCode: 200,
+      json: { items: [{ id: "only" }], links: [{ rel: "next", href: "https://evil.example.com/steal" }] },
+    };
+  };
+  const items = sumup.fetchHistory("M", "k", "2026-09-20T00:00:00.000Z", 5, transport);
+  assert.equal(calls, 1, "paging must stop, not follow an off-origin link");
+  assert.deepEqual(items.map((i) => i.id), ["only"]);
+});
+
+test("sumup.fetchTransaction: returns the detail body, products[] included", () => {
+  const sumup = adapter("sumup.js");
+  const transport = (req) => {
+    assert.match(req.url, /transactions\?id=txn-1/);
+    return { statusCode: 200, json: { id: "txn-1", products: [{ name: "GGP-AAAAAY Item", quantity: 1 }] } };
+  };
+  const detail = sumup.fetchTransaction("M", "k", "txn-1", transport);
+  assert.equal(detail.id, "txn-1");
+  assert.equal(detail.products[0].name, "GGP-AAAAAY Item");
+});
+
+// =======================================================================
 // Live smoke (GG_ADAPTER_SMOKE=1): calls the keyless sources for real, for
 // the exact cards named in the brief, and prints what came back. Skips
 // cleanly - no tests registered at all - without the flag.
