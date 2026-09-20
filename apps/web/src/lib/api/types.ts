@@ -1568,23 +1568,25 @@ export interface VaultMeCustomer {
   birthday_month: number | null
   qr_token: string
   created: string
+  /**
+   * What the customer has asked us to send. Optional because an older
+   * server may not carry it; both default to true when it is absent, which
+   * is what `customers.notify_email` / `.notify_push` default to.
+   */
+  notifications?: { email: boolean; push: boolean }
 }
 
-/**
- * `GET /api/vault/me`, and what `PATCH /api/vault/me` gives back.
- *
- * `notifications` is optional because the route list does not name it in the
- * GET shape while the PATCH body sets it. The Profile screen therefore holds
- * the two switches locally when the server does not echo them back, so a
- * customer who turns email off still sees it off after a save.
- */
+/** `GET /api/vault/me`, and what `PATCH /api/vault/me` gives back. */
 export interface VaultMe {
   customer: VaultMeCustomer
   balances: { credit: number; points: number }
   tier: { id: string; name: string } | null
   id_status: IdStatus
+  /**
+   * `trade_ins` is every trade-in at any status; `open_quotes` is submitted,
+   * reviewing, offered, accepted or received; `want_list` is open or matched.
+   */
   counts: { trade_ins: number; open_quotes: number; want_list: number }
-  notifications?: { email: boolean; push: boolean }
 }
 
 /** The body of `PATCH /api/vault/me`. The email is the sign-in identity. */
@@ -1725,6 +1727,16 @@ export interface WantListRecord extends BaseRecord {
   notified_at?: string
 }
 
+/** The hold `GET /api/vault/want-list` reports on a matched row. */
+export interface WantHold {
+  /** ISO: `items.reserved_until`. */
+  until: string
+  /** Integer GBP pence: the held item's price. */
+  price: number
+  /** The item's own title, which may differ from the card's name. */
+  title: string
+}
+
 /** A want-list row with the card and any hold already joined. */
 export interface WantListRow {
   id: string
@@ -1733,10 +1745,7 @@ export interface WantListRow {
   image?: string
   maxPrice: number | null
   status: WantListStatus
-  /** ISO, when an item is being held: `items.reserved_until`. */
-  heldUntil: string | null
-  /** Integer GBP pence, the held item's price. */
-  heldPrice: number | null
+  hold: WantHold | null
   created: string
 }
 
@@ -1776,20 +1785,27 @@ export interface EstimateCardHit {
   set: string
   number: string
   image?: string
+  /** The printings this card exists in, when the catalogue knows them. */
   finishes?: string[]
+}
+
+/** A band's two ends, both null when there is no cached price at all. */
+export interface EstimateBand {
+  low: number | null
+  high: number | null
 }
 
 /** `GET /api/vault/estimate`. Money is integer GBP pence. */
 export interface EstimateResult {
   card: { name: string; set: string; number: string; image?: string }
   market: number | null
-  as_of: string
-  cash: { low: number; high: number }
-  credit: { low: number; high: number }
+  as_of: string | null
+  cash: EstimateBand
+  credit: EstimateBand
   note: string
 }
 
-export type NotificationKind =
+export type NotificationType =
   | "quote_offer"
   | "quote_expiring"
   | "quote_expired"
@@ -1802,7 +1818,7 @@ export type NotificationKind =
 /** `notifications`, as `GET /api/vault/me/notifications` returns them. */
 export interface NotificationRow {
   id: string
-  kind: NotificationKind
+  type: NotificationType
   title: string
   body: string
   /** An in-app path the notification opens, for example `/account/quotes/x`. */
@@ -1811,11 +1827,22 @@ export interface NotificationRow {
   created: string
 }
 
-/** `GET /api/vault/c/:token` for a signed-out visitor, or for staff. */
+/** The page `GET /api/vault/me/notifications` returns. */
+export interface NotificationPage {
+  items: NotificationRow[]
+  unread: number
+}
+
+/**
+ * `GET /api/vault/c/:token`, as the portal reads it.
+ *
+ * The route answers three ways: `{ known: true }` to a stranger, the staff
+ * triple to a staff token, and the whole `/me` shape to the customer whose
+ * token it is. The landing screen only ever needs the first bit, so that is
+ * all this carries; staff are sent to the counter by its own lookup.
+ */
 export interface CardLanding {
   known: boolean
-  /** Staff only: enough to open the customer at the counter. */
-  staff?: { customer_id: string; code: string; name: string }
 }
 
 /** One completed trade-in as My Vault lists it. */

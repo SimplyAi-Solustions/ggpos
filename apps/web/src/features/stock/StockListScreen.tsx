@@ -47,10 +47,15 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
   written_off: "Written off",
 }
 
-export function StockListScreen() {
+export interface StockListScreenProps {
+  /** The filter the list opens on. Home's waiting line links in on "reserved". */
+  initialStatus?: ItemStatus
+}
+
+export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenProps) {
   const navigate = useNavigate()
   const searchRef = React.useRef<HTMLInputElement>(null)
-  const [status, setStatus] = React.useState<ItemStatus | null>("in_stock")
+  const [status, setStatus] = React.useState<ItemStatus | null>(initialStatus)
   const [search, setSearch] = React.useState("")
   const deferred = React.useDeferredValue(search)
 

@@ -14,6 +14,8 @@ import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Sparkline } from "@/components/ui/sparkline"
 import { getCurrentCashSession, getTodayStats } from "@/lib/api"
+import { countQuotesWaiting } from "@/lib/api/quotes"
+import { countHoldsEndingToday } from "@/lib/api/wants"
 import { getSparklines } from "@/lib/api/reports"
 import type { SparklineSeries, TodayStats } from "@/lib/api/types"
 
@@ -86,6 +88,18 @@ export function HomeScreen() {
     queryFn: () => getSparklines(30),
     staleTime: 30 * 60_000,
   })
+  // The two things waiting on somebody rather than on the day: quotes
+  // nobody has priced, and holds that run out before the shop shuts.
+  const { data: quotesWaiting = 0 } = useQuery({
+    queryKey: ["quotes-waiting"],
+    queryFn: countQuotesWaiting,
+    staleTime: 60_000,
+  })
+  const { data: holdsToday = 0 } = useQuery({
+    queryKey: ["holds-ending-today"],
+    queryFn: () => countHoldsEndingToday(),
+    staleTime: 60_000,
+  })
 
   const session = cash?.session ?? null
 
@@ -156,6 +170,44 @@ export function HomeScreen() {
             <Button variant="text" render={<Link to="/counter/cash" />}>
               Open
             </Button>
+          </>
+        )}
+      </div>
+
+      <div
+        data-testid="waiting-line"
+        className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft py-6"
+      >
+        <MicroLabel>Waiting</MicroLabel>
+        {quotesWaiting === 0 && holdsToday === 0 ? (
+          <span className="text-[15px] text-muted-foreground">
+            No quotes to price and no holds ending today.
+          </span>
+        ) : (
+          <>
+            {quotesWaiting > 0 ? (
+              <span className="flex items-center gap-4">
+                <span className="tnum text-[15px] text-foreground">
+                  {quotesWaiting} {quotesWaiting === 1 ? "quote" : "quotes"} to price
+                </span>
+                <Button variant="text" render={<Link to="/counter/quotes" />}>
+                  Quotes
+                </Button>
+              </span>
+            ) : null}
+            {holdsToday > 0 ? (
+              <span className="flex items-center gap-4">
+                <span className="tnum text-[15px] text-foreground">
+                  {holdsToday} {holdsToday === 1 ? "hold ends" : "holds end"} today
+                </span>
+                <Button
+                  variant="text"
+                  render={<Link to="/counter/stock" search={{ status: "reserved" }} />}
+                >
+                  Holds
+                </Button>
+              </span>
+            ) : null}
           </>
         )}
       </div>

@@ -144,11 +144,25 @@ describe("offerProblem", () => {
     )
   })
 
-  it("names the line that has no offer on it", () => {
-    const lines = convert([line(), line({ key: "b", marketPence: 0, marketSource: MANUAL_SOURCE })])
+  it("names the line whose price has not landed yet", () => {
+    // A line still waiting on its price lookup is worth nothing until the
+    // figure arrives, which is exactly what `lineOffer` refuses to price.
+    const lines = convert([
+      line(),
+      line({ key: "b", marketPence: 0, marketSource: PENDING_SOURCE }),
+    ])
+    expect(lines[1]?.offer_price).toBe(0)
     expect(offerProblem(lines)).toBe(
       "Line 2 has no offer on it. Price it, or override the offer."
     )
+  })
+
+  it("still prices a line with no market at the shop's own bulk rate", () => {
+    // Not a hole: £0 is under the bulk threshold, so the band pays the bulk
+    // figure rather than nothing, and the offer can be sent.
+    const lines = convert([line({ marketPence: 0, marketSource: MANUAL_SOURCE })])
+    expect(lines[0]?.offer_price).toBe(SETTINGS.bulkCash)
+    expect(offerProblem(lines)).toBeNull()
   })
 
   it("is happy with a priced offer", () => {
