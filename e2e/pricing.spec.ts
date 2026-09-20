@@ -42,18 +42,29 @@ test.describe("live pricing", () => {
     await expect(hit).toBeVisible()
     await hit.click()
 
+    // A card is priced in a real finish, never in none: the routes match
+    // `price_snapshots.finish` exactly, so the card's first printing is
+    // chosen for it and the chip says so.
+    await expect(page.getByRole("button", { name: "Normal", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    )
+
     // Every source in the shop's order, whether it has a figure or not.
     await expect(page.getByTestId("price-sources")).toBeVisible()
     await expect(page.getByTestId("price-source")).toHaveCount(4)
     await expect(source(page, "uk_sold_manual")).toContainText("No value")
     await expect(source(page, "ebay_uk_asking")).toContainText("Stale")
+    await expect(source(page, "ebay_uk_asking")).toContainText(
+      "eBay UK asking, after the 15% haircut"
+    )
     await expect(source(page, "cardmarket")).toHaveAttribute("data-chosen", "true")
-    await expect(source(page, "cardmarket")).toContainText("£316.96")
+    await expect(source(page, "cardmarket")).toContainText("£253.02")
     // The foreign amount only ever appears beside its conversion.
     await expect(source(page, "cardmarket")).toContainText(
-      /from Cardmarket €368\.30 at 0\.8606/
+      /from Cardmarket €294\.00 at 0\.8606/
     )
-    await expect(source(page, "tcgplayer")).toContainText(/from TCGplayer \$421\.00/)
+    await expect(source(page, "tcgplayer")).toContainText(/from TCGplayer \$340\.00/)
 
     // A four-day-old rate is said out loud and blocks nothing.
     await expect(
@@ -61,8 +72,8 @@ test.describe("live pricing", () => {
     ).toBeVisible()
 
     // Market times the top band's markup, rounded to a retail ending.
-    await expect(page.getByTestId("suggested-price")).toHaveText("£316.99")
-    await expect(page.getByLabel("Price")).toHaveValue("316.99")
+    await expect(page.getByTestId("suggested-price")).toHaveText("£253.49")
+    await expect(page.getByLabel("Price")).toHaveValue("253.49")
 
     // A UK sold comp leads every automated source for 30 days.
     await page.getByRole("button", { name: "Add UK comp" }).click()
@@ -132,6 +143,71 @@ test.describe("live pricing", () => {
     // Nothing was created: the scan history is still empty.
     await page.getByRole("button", { name: "Scan", exact: true }).click()
     await expect(page.getByText("Nothing scanned yet at this till.")).toBeVisible()
+  })
+
+  test("says so when no source has a figure, and prices the finish that does", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/counter/stock/new")
+
+    // Alakazam ex is priced in holo only, which is the ordinary state of a
+    // shop that has handled one printing and not the other.
+    await page.getByLabel("Set and number").fill("sv151 201")
+    await page.getByRole("option", { name: /Alakazam ex/ }).click()
+
+    await expect(page.getByTestId("price-source")).toHaveCount(4)
+    for (const key of ["uk_sold_manual", "ebay_uk_asking", "cardmarket", "tcgplayer"]) {
+      await expect(source(page, key)).toContainText("No value")
+    }
+    await expect(
+      page.getByText(
+        "No source has a value for this one yet. Refresh, add a UK comp, or price it by hand."
+      )
+    ).toBeVisible()
+    await expect(page.getByTestId("suggested-price")).toHaveCount(0)
+    await expect(page.getByLabel("Price")).toHaveValue("")
+
+    // The holo printing does have a figure, and the chip is how you say so.
+    await page.getByRole("button", { name: "Holo", exact: true }).click()
+    await expect(source(page, "cardmarket")).toHaveAttribute("data-chosen", "true")
+    await expect(page.getByTestId("suggested-price")).toHaveText("£98.49")
+  })
+
+  test("prices a retro line from PriceCharting, by platform and completeness", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/counter/trade/new")
+
+    await page.getByLabel("Find them").fill("Jasmine")
+    await page.getByRole("button", { name: /Jasmine Okafor/ }).click()
+    await primary(page, "Add items").click()
+
+    await page.getByRole("button", { name: "Retro", exact: true }).click()
+    await page.getByRole("button", { name: "SNES PAL box", exact: true }).click()
+    await page.getByLabel("Title").fill("mario")
+    await page.getByRole("option", { name: /Super Mario Kart/ }).click()
+
+    const line = page.getByTestId("trade-line").first()
+    await expect(line).toContainText("Super Mario Kart")
+    // $94.00 at 0.75, complete in box.
+    await expect(line.getByLabel("Market value for Super Mario Kart")).toHaveValue("70.50")
+    await expect(line.getByTestId("market-source")).toContainText(/PriceCharting PAL/)
+    await expect(page.getByTestId("total-cash")).toHaveText("£31.50")
+    await expect(page.getByTestId("total-credit")).toHaveText("£42.50")
+
+    // The retro order, with its own sources, on the line itself.
+    await line.getByTestId("market-source").click()
+    await expect(
+      line.locator('[data-testid="price-source"][data-source="pricecharting_pal"]')
+    ).toHaveAttribute("data-chosen", "true")
+    await expect(
+      line.locator('[data-testid="price-source"][data-source="pricecharting_ntsc"]')
+    ).toContainText("£53.25")
+    await expect(
+      line.locator('[data-testid="price-source"][data-source="ebay_uk_asking"]')
+    ).toContainText("Stale")
   })
 
   test("prices a buy-in line from the source view, with a reason on the line", async ({

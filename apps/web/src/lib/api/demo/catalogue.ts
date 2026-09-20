@@ -166,12 +166,20 @@ const SEED: SeedRow[] = [
   { subject: "card_sv151_199", finish: "normal", source: "cardmarket", currency: "EUR", native: 29400, age: 6 },
   { subject: "card_sv151_199", finish: "normal", source: "tcgplayer", currency: "USD", native: 34000, age: 20 },
 
-  // Mew ex and Pikachu, so the rest of the demo set prices itself too.
+  // Mew ex, Pikachu and Pidgeot, so the rest of the demo set prices itself
+  // in the printing a counter reaches for first as well as in its holo.
+  { subject: "card_sv151_205", finish: "normal", source: "cardmarket", currency: "EUR", native: 6800, age: 5 },
   { subject: "card_sv151_205", finish: "holo", source: "cardmarket", currency: "EUR", native: 7250, age: 5 },
   { subject: "card_sv151_205", finish: "holo", source: "tcgplayer", currency: "USD", native: 8400, age: 26 },
+  { subject: "card_sv151_025", finish: "normal", source: "cardmarket", currency: "EUR", native: 90, age: 7 },
   { subject: "card_sv151_025", finish: "reverse", source: "cardmarket", currency: "EUR", native: 180, age: 7 },
-  { subject: "card_sv151_201", finish: "holo", source: "cardmarket", currency: "EUR", native: 11400, age: 9 },
+  { subject: "card_sv8_113", finish: "normal", source: "cardmarket", currency: "EUR", native: 2100, age: 8 },
   { subject: "card_sv8_113", finish: "holo", source: "cardmarket", currency: "EUR", native: 2450, age: 8 },
+
+  // Alakazam ex is deliberately priced in holo only: a card the shop has a
+  // figure for in one printing and none at all in another is the state the
+  // source view has to be honest about, and the e2e checks it.
+  { subject: "card_sv151_201", finish: "holo", source: "cardmarket", currency: "EUR", native: 11400, age: 9 },
 
   // Mabel: eBay UK is fresh here, so a GBP source wins and nothing converts.
   { subject: "card_blb_223", finish: "foil", source: "ebay_uk_asking", currency: "GBP", native: 1275, age: 9 },
