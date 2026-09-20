@@ -8,6 +8,15 @@ describe("portalLinkFrom", () => {
     expect(portalLinkFrom("/account/want-list")).toBe("/account/want-list")
   })
 
+  it("takes the Guild's own three destinations", () => {
+    // `tier_up` and `referral_earned` link to the Guild, `reward_issued` and
+    // `reward_used` to the rewards screen, and the two points rows to the
+    // history. All three are real routes, so none of them is rewritten.
+    expect(portalLinkFrom("/account/guild")).toBe("/account/guild")
+    expect(portalLinkFrom("/account/rewards")).toBe("/account/rewards")
+    expect(portalLinkFrom("/account/points")).toBe("/account/points")
+  })
+
   it("puts a path that names no section inside the portal", () => {
     expect(portalLinkFrom("/wants")).toBe("/account/wants")
   })
