@@ -982,6 +982,10 @@ export interface VaultSettingsRow {
   shop_phone?: string
   shop_email?: string
   receipt_terms?: string
+  /** The SumUp merchant code. Not a key, so the config route serves it. */
+  sumup?: { merchant_code?: string }
+  /** The importers' header-name mappings, seeded by the Phase 4 migration. */
+  import_mappings?: Record<string, { headerRow?: number; columns?: Record<string, string[]> }>
 }
 
 export interface VaultConfig {
@@ -1025,6 +1029,12 @@ export interface CounterConfig {
   cashVarianceAlert: number
   /** `settings.cash_cap` in integer GBP pence. */
   cashCap: number
+  /**
+   * `settings.sumup.merchant_code`, or "" when SumUp is not set up. The key
+   * itself never leaves the server, so the merchant code is what tells the
+   * Cash screen whether a SumUp pull can work at all.
+   */
+  sumupMerchantCode: string
   /** The programme, its live rules and its tiers. */
   loyalty: LoyaltySetup
 }
@@ -1224,4 +1234,245 @@ export interface FxRatesView {
   /** The ECB's own date for the rate, when the route reports one. */
   date?: string | null
   stale: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: stats, reports, exports, imports and SumUp
+//
+// Shapes read off docs/api-contract.md, "Phase 4: stats and reports" and
+// "Phase 4: exports, imports and SumUp". Every money figure is integer GBP
+// pence and every date bound is a UTC day as `YYYY-MM-DD`, the same as the
+// routes themselves.
+// ---------------------------------------------------------------------------
+
+export const REPORT_KEYS = [
+  "sales",
+  "buyins",
+  "margin",
+  "stock",
+  "channels",
+  "customers",
+  "loyalty",
+  "cash",
+  "compliance",
+] as const
+
+export type ReportKey = (typeof REPORT_KEYS)[number]
+
+export type ReportGroup = "day" | "week" | "month"
+
+/** The query a report page asks with. `from` and `to` are required by the route. */
+export interface ReportQuery {
+  from: string
+  to: string
+  group?: ReportGroup
+  /** Report-specific; the route falls back to its own first dimension. */
+  by?: string
+  compare?: "previous" | "none"
+}
+
+/** One point on a report's series: a labelled bucket of named figures. */
+export interface ReportPoint {
+  label: string
+  values: Record<string, number>
+}
+
+/** A row of a report's table. Column names differ per report key. */
+export type ReportRow = Record<string, unknown>
+
+/** The one envelope every `GET /api/vault/reports/:key` answers with. */
+export interface ReportEnvelope {
+  key: ReportKey
+  from: string
+  to: string
+  group: ReportGroup
+  series: ReportPoint[]
+  table: ReportRow[]
+  totals: Record<string, unknown>
+  compare: { totals: Record<string, unknown>; from: string; to: string } | null
+}
+
+/** One `daily_stats` row, as the collection stores it. */
+export interface DailyStatRow {
+  id?: string
+  /** The UTC day, `YYYY-MM-DD` on the way in and a timestamp on the way out. */
+  date: string
+  sales_count?: number
+  sales_total_by_payment?: Record<string, number>
+  buy_in_count?: number
+  buy_in_total_by_payout?: { cash?: number; credit?: number }
+  items_in?: number
+  items_out?: number
+  stock_value_cost?: number
+  stock_value_market?: number
+  credit_issued?: number
+  credit_redeemed?: number
+  points_earned?: number
+  points_redeemed?: number
+  cash_variance?: number
+  new_customers?: number
+  returning_customers?: number
+}
+
+/** The four Home tiles over the last 30 days, one figure per UTC day. */
+export interface SparklineSeries {
+  /** `YYYY-MM-DD`, oldest first. */
+  dates: string[]
+  /** Integer pence per day. */
+  sales: number[]
+  buyIns: number[]
+  cashOut: number[]
+  creditIssued: number[]
+}
+
+export type ReportSchedule = "none" | "weekly" | "monthly"
+
+/** A `saved_reports` row: named filters, and optionally an email schedule. */
+export interface SavedReportRecord {
+  id: string
+  owner?: string
+  report_key: string
+  /** `{ by, group }` only: the period is always computed fresh from the schedule. */
+  filters?: { by?: string; group?: ReportGroup }
+  name?: string
+  schedule?: ReportSchedule
+  recipients?: string[]
+  created?: string
+  updated?: string
+}
+
+/** What the "Save view" sheet sends. No id means create. */
+export interface SavedReportInput {
+  id?: string
+  report_key: string
+  name: string
+  filters: { by?: string; group?: ReportGroup }
+  schedule: ReportSchedule
+  recipients: string[]
+}
+
+// --- Exports ---------------------------------------------------------------
+
+export type ExportKey =
+  | "sumup"
+  | "ebay-listings"
+  | "inventory"
+  | "sales"
+  | "buy-in-register"
+  | "stock-book"
+  | "audit"
+  | "end-listings"
+
+/** A file a screen downloads: the route's own path and the name to save it as. */
+export interface ExportRequest {
+  path: string
+  filename: string
+}
+
+// --- Imports ---------------------------------------------------------------
+
+export type CsvImportType = "card_uploader" | "ebay_orders" | "sumup_sales"
+
+/**
+ * One entry of a `csv_imports` row's `errors` list. `kind` is `review` for a
+ * Card Uploader row that matched no card, `already_sold` for an eBay order
+ * whose item has already gone, `truncated` for the one entry the server adds
+ * when a file had more than 200 problems, and `error` for a hard failure.
+ */
+export interface CsvImportError {
+  row?: number
+  kind?: "review" | "error" | "already_sold" | "truncated"
+  message?: string
+  name?: string
+  set?: string
+  number?: string
+  price?: number
+  custom_label?: string
+  ebay_sku?: string
+  item?: string
+  sku?: string
+}
+
+/** The `csv_imports` row as stored, which is what the review screen reads. */
+export interface CsvImportRecord {
+  id: string
+  type?: string
+  filename?: string
+  rows_total?: number
+  rows_ok?: number
+  errors?: CsvImportError[]
+  staff?: string
+  created?: string
+}
+
+/** `POST /api/vault/imports/card-uploader`. */
+export interface CardUploaderResult {
+  import: CsvImportRecord
+  matched: number
+  review: number
+}
+
+/** `POST /api/vault/imports/ebay-orders`. */
+export interface EbayOrdersResult {
+  import: CsvImportRecord
+  sold: number
+  already_sold: number
+}
+
+/** One item still listed on eBay that has sold in the shop. */
+export interface EndListingRow {
+  item_id: string
+  sku: string
+  title: string
+  ebay_sku?: string
+  ebay_listing_id?: string
+  sale_number?: string
+  sold_at?: string
+}
+
+// --- SumUp -----------------------------------------------------------------
+
+export interface SumUpTransaction {
+  id: string
+  sumup_id: string
+  transaction_code?: string
+  /** Integer GBP pence, parsed on the server from SumUp's decimal amount. */
+  amount: number
+  timestamp: string
+  status?: string
+}
+
+export interface SumUpSale {
+  id: string
+  number: string
+  total: number
+  payment?: string
+  created?: string
+  occurred_at?: string
+  /** A mixed sale's card share, which is what the card totals compare. */
+  card_amount?: number
+}
+
+export interface SumUpMatch {
+  transaction: SumUpTransaction
+  sale: SumUpSale
+}
+
+/** `GET /api/vault/sumup/reconcile?date=YYYY-MM-DD`. */
+export interface SumUpReconcile {
+  date: string
+  matched: SumUpMatch[]
+  unmatched_transactions: SumUpTransaction[]
+  unmatched_sales: SumUpSale[]
+  /** Refunds and anything not SUCCESSFUL are counted apart from the takings. */
+  refunds?: SumUpTransaction[]
+  other?: SumUpTransaction[]
+  totals: { sumup: number; sales: number; difference: number }
+}
+
+/** `POST /api/vault/sumup/pull`. */
+export interface SumUpPullResult {
+  fetched: number
+  matched: number
+  unmatched: number
 }

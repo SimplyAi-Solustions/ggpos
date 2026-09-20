@@ -50,11 +50,13 @@ carduploader.com's per-card CSV headers are only visible inside a logged-in acco
 
 Each field lists the header names the importer will accept, in order of preference; the real headers replace these placeholders once we have a real export to check against, a Phase 1 prerequisite. Rows that carry a `tcgplayerId` or `cardmarketId` match directly to a `cards` row, since our `cards` collection indexes both. Rows with only a name go into a review queue for manual matching. `csSku` is Card Uploader's own SKU, written into eBay's custom label field under Managed Inventory (format `CS-XXXXXX`), and is stored on our `items` row as `ebay_sku` so a later eBay orders import can match the sale back to the item.
 
+A matched card connects to stock in order: an existing item that already carries this row's `ebay_sku` (unless it has since sold, been returned or been written off, which is reported rather than resurrected); failing that, the oldest still-in-stock item already linked to the same card (so a card already on the shelf from a trade-in or a supplier order is connected to the listing, not duplicated); only then is a brand new item created, flagged for review since it carries no cost. See `docs/api-contract.md`'s Phase 4 section for the full rule.
+
 As of Phase 4 this skeleton is also the seeded value of `settings.import_mappings.card_uploader` (a migration writes it once, merged into the settings row rather than overwriting the whole `import_mappings` blob), which is what `POST /api/vault/imports/card-uploader` actually reads its header names from. Editing that settings field - not this file - is how Richard corrects the header names once a real export is in hand; this file stays the record of what the seeded default is and where to change it.
 
 ## eBay orders import
 
-Marks an item sold, with the order reference, once it has sold on eBay. Skeleton mapping, also to be confirmed against a real export:
+Marks an item sold, with the order reference, once it has sold on eBay. Every row sharing the same order number becomes one sale with one line per row, not a separate sale per row, booked on the order's own sale date rather than whenever the file happens to be imported. Skeleton mapping, also to be confirmed against a real export:
 
 ```json
 {

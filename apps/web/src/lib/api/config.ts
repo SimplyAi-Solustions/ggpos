@@ -89,6 +89,10 @@ export async function getCounterConfig(): Promise<CounterConfig> {
     // it too. Nothing here invents a threshold of its own.
     cashVarianceAlert: config.settings.cash_variance_alert ?? 0,
     cashCap: config.settings.cash_cap ?? 0,
+    // Empty when the shop has not set SumUp up. The API key stays on the
+    // server (the config route drops `api_keys` wholesale), so the merchant
+    // code is the one honest signal the Cash screen has.
+    sumupMerchantCode: config.settings.sumup?.merchant_code ?? "",
     loyalty: {
       programme: programmeFrom(config),
       rules: loyaltyRulesFrom(config),
