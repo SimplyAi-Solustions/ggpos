@@ -97,9 +97,33 @@ export interface LineOffer {
   creditPct: number
 }
 
-/** The `items` kind a line becomes when the trade-in completes. */
+/**
+ * The `items` kind a line becomes when the trade-in completes.
+ *
+ * A bulk lot is "other": it is one row on the shelf holding several hundred
+ * cards, not several hundred singles, and pricing it as singles is how the
+ * completion route would come to multiply a flat figure by the card count.
+ */
 export function itemKindFor(kind: LineKind): ItemKind {
-  return kind === "bulk" ? "single" : kind
+  return kind === "bulk" ? "other" : kind
+}
+
+/**
+ * The market source a saved lot carries, so a reopened draft can tell one
+ * from an ordinary line: `trade_in_lines` has no column for "this is a lot".
+ */
+export const BULK_SOURCE = "Bulk lot"
+
+/** "Bulk lot, 400 cards". The count lives in the title and nowhere else. */
+export function bulkTitle(count: number): string {
+  return `Bulk lot, ${count} ${count === 1 ? "card" : "cards"}`
+}
+
+/** The count back out of a lot's title, for a reopened draft. */
+export function bulkCountFrom(title: string): number {
+  const match = /(\d+)\s+cards?/.exec(title)
+  const count = match ? Number(match[1]) : 1
+  return Number.isFinite(count) && count > 0 ? count : 1
 }
 
 /**
@@ -192,7 +216,8 @@ export function totals(
           cash: sum.cash + offer.cashTotal,
           credit: sum.credit + offer.creditTotal,
           lines: sum.lines + 1,
-          units: sum.units + (line.kind === "bulk" ? line.qty : line.qty),
+          // A lot is one row on the shelf however many cards are in it.
+          units: sum.units + (line.kind === "bulk" ? 1 : line.qty),
         }
       },
       { market: 0, cash: 0, credit: 0, lines: 0, units: 0 }
@@ -218,6 +243,7 @@ export type CashBlock =
   | { kind: "none"; message: null }
   | { kind: "flag"; message: string }
   | { kind: "under_18"; message: string }
+  | { kind: "off"; message: string }
   | { kind: "cap"; message: string }
 
 /** Whole years between a date of birth and now; null when it is unknown. */
@@ -256,6 +282,11 @@ export function cashBlock(
       message: "This customer is under 18, so cash is not an option. Offer store credit.",
     }
   }
+  // A cap of zero is how the shop switches cash off altogether, and the
+  // server says so in those words rather than quoting a cap of £0.00.
+  if (cashCap <= 0) {
+    return { kind: "off", message: "Cash payouts are switched off in settings." }
+  }
   if (cashPence > cashCap) {
     return {
       kind: "cap",
@@ -265,16 +296,57 @@ export function cashBlock(
   return { kind: "none", message: null }
 }
 
-/** True when a cash payout still needs an ID captured before it can happen. */
-export function needsIdGate(
+/** True when the ID fields on file are verified and still in date. */
+export function idFieldsGood(
   facts: CustomerGateFacts,
   now: Date = new Date()
 ): boolean {
-  if (facts.idStatus !== "verified") return true
-  if (!facts.idExpiry) return true
+  if (facts.idStatus !== "verified") return false
+  if (!facts.idExpiry) return false
   const expiry = new Date(facts.idExpiry)
-  if (Number.isNaN(expiry.getTime())) return true
-  return expiry.getTime() <= now.getTime()
+  if (Number.isNaN(expiry.getTime())) return false
+  return expiry.getTime() > now.getTime()
+}
+
+/** What the ID step still has to collect before cash can be paid. */
+export type IdGate =
+  /** Nothing: verified fields, a photo still on file, and an address. */
+  | { needed: false }
+  /** The lot: photo, type, expiry, last four, date of birth and address. */
+  | { needed: true; reason: "full" }
+  /** The fields are good and the photo is there; only the address is not. */
+  | { needed: true; reason: "address" }
+
+export interface IdGateFacts {
+  /**
+   * Whether `/api/vault/customers/:id/id-document` found a photo that has
+   * not been purged. Null while the answer is still on its way.
+   */
+  hasPhoto: boolean | null
+}
+
+/**
+ * What a cash payout still needs.
+ *
+ * The completion route wants three things, not one: verified ID fields that
+ * are in date, an ID photo that the retention cron has not purged, and an
+ * address on `customer_private`. A customer verified a year ago whose photo
+ * has since gone needs the whole check again; one whose photo is there but
+ * who has never given an address needs only the address.
+ */
+export function idGate(
+  facts: CustomerGateFacts,
+  gate: IdGateFacts,
+  now: Date = new Date()
+): IdGate {
+  if (!idFieldsGood(facts, now)) return { needed: true, reason: "full" }
+  // Null means the lookup has not answered yet; ask for the whole check
+  // rather than letting the counter past a gate nobody has checked.
+  if (gate.hasPhoto !== true) return { needed: true, reason: "full" }
+  if (!facts.address || facts.address.trim().length < 6) {
+    return { needed: true, reason: "address" }
+  }
+  return { needed: false }
 }
 
 // ---------------------------------------------------------------------------

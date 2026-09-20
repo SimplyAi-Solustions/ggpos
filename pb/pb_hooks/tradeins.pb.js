@@ -356,6 +356,9 @@ routerAdd(
       }
 
       const qty = Math.max(1, line.getInt("qty"));
+      // A bulk lot arrives as one "other" line of qty 1 with a flat
+      // offer_price, so it falls out of the rule below as a single stock
+      // row with one label, which is what a lot on a shelf is.
       // Singles, graded cards and retro are one row per unit with one label
       // each; sealed and accessories are one stock line of qty n
       // (docs/PLAN.md, "Quantity model").
@@ -374,11 +377,17 @@ routerAdd(
         finish: line.getString("finish"),
         condition: line.getString("condition"),
         completeness: line.getString("completeness"),
+        cosmeticGrade: line.getString("cosmetic_grade"),
         qty: qty,
         rows: perUnit ? qty : 1,
         rowQty: perUnit ? 1 : qty,
+        // offer_price stays the figure actually paid for the payout type
+        // chosen, overridden or not, so the payout arithmetic above reads
+        // it alone. override_cash and override_credit are the record of
+        // what the staff member typed, not an input to this.
         cost: line.getInt("offer_price"),
         market: line.getInt("market_price"),
+        overridden: !!line.getString("override_reason"),
       });
     }
 
@@ -466,11 +475,16 @@ routerAdd(
         const itemsCollection = txApp.findCollectionByNameOrId("items");
         const labelJobsCollection = txApp.findCollectionByNameOrId("label_jobs");
         const createdItems = [];
+        const overriddenLines = [];
         let labelsQueued = 0;
 
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i];
           let firstItemId = "";
+          // Ids only. The reason stays on the line row: audit_log is
+          // permanent and superuser-only, and a reason is free text a staff
+          // member typed about a named seller.
+          if (plan.overridden) overriddenLines.push(plan.line.id);
 
           for (let n = 0; n < plan.rows; n++) {
             const item = new Record(itemsCollection, {
@@ -494,6 +508,11 @@ routerAdd(
             if (plan.finish) item.set("finish", plan.finish);
             if (plan.condition) item.set("condition", plan.condition);
             if (plan.completeness) item.set("completeness", plan.completeness);
+            // Cosmetic grading is a retro thing: a boxed game's wear, not a
+            // card's, which carries a condition instead.
+            if (plan.kind === "retro" && plan.cosmeticGrade) {
+              item.set("cosmetic_grade", plan.cosmeticGrade);
+            }
             if (plan.region) item.set("region", plan.region);
             if (intakeLocation) item.set("location", intakeLocation);
             txApp.save(item);
@@ -619,6 +638,8 @@ routerAdd(
             cash_session: session ? session.id : "",
             // The id alone, never a field off the document.
             id_document: idDocument ? idDocument.id : "",
+            // Line ids only; each line keeps its own override_reason.
+            overridden_lines: overriddenLines,
           },
           ip: e.realIP(),
         });
