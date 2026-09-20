@@ -108,11 +108,47 @@ export function rangeError(range: DateRange): string | null {
   return null
 }
 
+/**
+ * The month names are written out rather than taken from `toLocaleDateString`
+ * on purpose: current ICU gives en-GB "Sept" for September, and every date in
+ * this app reads "19 Sep 2026" (CLAUDE.md). A fixed table also means a tick
+ * label is the same string on every machine a screenshot is taken on.
+ */
+const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+]
+
+const LONG_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+]
+
 function parts(iso: string): { day: number; month: string; year: number } {
   const date = fromIsoDay(iso)
   return {
     day: date.getUTCDate(),
-    month: date.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }),
+    month: SHORT_MONTHS[date.getUTCMonth()] ?? "",
     year: date.getUTCFullYear(),
   }
 }
@@ -166,10 +202,7 @@ export function formatDelta(
 
 /** The short tick under a bar: "19 Sep", "14 Sep", "Sep". */
 export function bucketTick(label: string, group: ReportGroup): string {
-  if (group === "month") {
-    const date = fromIsoDay(`${label}-01`)
-    return date.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })
-  }
+  if (group === "month") return parts(`${label}-01`).month
   const { day, month } = parts(label)
   return `${day} ${month}`
 }
@@ -178,11 +211,7 @@ export function bucketTick(label: string, group: ReportGroup): string {
 export function bucketTitle(label: string, group: ReportGroup): string {
   if (group === "month") {
     const date = fromIsoDay(`${label}-01`)
-    return date.toLocaleDateString("en-GB", {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    })
+    return `${LONG_MONTHS[date.getUTCMonth()] ?? ""} ${date.getUTCFullYear()}`
   }
   if (group === "week") return `Week of ${formatDay(label)}`
   return formatDay(label)
