@@ -23,12 +23,13 @@ import { formatGBP } from "@gg/shared"
 import { Button } from "@/components/ui/button"
 import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
+import { SkeletonText } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useCounterDock } from "@/app/counter-dock"
 import { useStaff } from "@/lib/auth"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { getReport, listSavedReports } from "@/lib/api/reports"
-import { todayIso } from "@/lib/api/dates"
+import { useToday } from "@/lib/use-today"
 import type {
   ReportEnvelope,
   ReportGroup,
@@ -37,7 +38,12 @@ import type {
   ReportRow,
   SavedReportRecord,
 } from "@/lib/api/types"
-import { Heatmap, SeriesChart, type ChartDatum } from "@/features/reports/charts"
+import {
+  busiestSlot,
+  Heatmap,
+  SeriesChart,
+  type ChartDatum,
+} from "@/features/reports/charts"
 import { buildCsv, csvFilename, downloadCsv } from "@/features/reports/csv"
 import { DateRangeControl } from "@/features/reports/DateRangeControl"
 import { ReportTable } from "@/features/reports/ReportTable"
@@ -77,9 +83,15 @@ function rowsOf(totals: Record<string, unknown> | undefined, key: string): Repor
   return Array.isArray(value) ? (value as ReportRow[]) : []
 }
 
-/** True once anything in the envelope has a figure worth drawing. */
-function hasData(envelope: ReportEnvelope): boolean {
-  if (envelope.table.length > 0) return true
+/**
+ * True once the series has a figure worth drawing.
+ *
+ * Only the chart asks: a table and the lists under it say for themselves
+ * what is empty, and hiding them behind one sentence hides the panels that
+ * did have something in them (a stock report's ageing buckets are worth
+ * reading even in a week nothing sold).
+ */
+function hasSeriesFigures(envelope: ReportEnvelope): boolean {
   return envelope.series.some((point) =>
     Object.values(point.values).some((value) => value !== 0)
   )
@@ -140,16 +152,23 @@ function Panel({
   rows,
   columns,
   empty,
+  imagePlatform,
 }: {
   heading: string
   rows: ReportRow[]
   columns: ColumnSpec[]
   empty: string
+  imagePlatform?: string
 }) {
   return (
     <section className="mt-16">
       <SectionHeading>{heading}</SectionHeading>
-      <ReportTable columns={columns} rows={rows} empty={empty} />
+      <ReportTable
+        columns={columns}
+        rows={rows}
+        empty={empty}
+        imagePlatform={imagePlatform}
+      />
     </section>
   )
 }
@@ -159,7 +178,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const dock = useCounterDock()
   const staff = useStaff()
   const admin = staff?.role === "admin"
-  const today = React.useMemo(() => todayIso(), [])
+  const today = useToday()
 
   const [range, setRange] = React.useState<DateRange>(() => resolvePreset("last30", today))
   const [group, setGroup] = React.useState<ReportGroup>("day")
@@ -184,7 +203,8 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
         by: by || undefined,
         compare: compare ? "previous" : "none",
       }),
-    enabled: invalid === null,
+    // A staff member never sees the register, so nothing asks for it.
+    enabled: invalid === null && (!spec.admin || admin),
     staleTime: 60_000,
   })
 
@@ -218,10 +238,17 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const chartData: ChartDatum[] = React.useMemo(() => {
     if (!envelope || !spec.chart) return []
     const earlier = before.data?.series ?? []
+    // The two periods are the same length in days, but a week or month
+    // grouping can still put a different number of buckets in each (a range
+    // that starts mid-week has a short first bucket). Lining them up from
+    // the end pairs the most recent bucket with the most recent one before
+    // it, which is the comparison anybody reading it means; a genuine
+    // mismatch in length is left unpaired rather than drawn wrong.
+    const aligned = earlier.length === envelope.series.length ? earlier : []
     return envelope.series.map((point: ReportPoint, index: number) => {
       const row: ChartDatum = { label: point.label }
       for (const [key, value] of Object.entries(point.values)) row[key] = value
-      const other = earlier[index]
+      const other = aligned[index]
       if (other && spec.chart) {
         row.compare = other.values[spec.chart.summaryKey] ?? 0
       }
@@ -232,18 +259,26 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const chartSeries = React.useMemo(() => {
     if (!spec.chart) return []
     const base = spec.chart.series
-    const overlay = compare && (before.data?.series.length ?? 0) > 0
+    // Only when the two periods actually produced the same buckets, and in
+    // `--chart-3`: `--chart-4` is a surface tone, not a series colour.
+    const overlay =
+      compare &&
+      (before.data?.series.length ?? 0) > 0 &&
+      before.data?.series.length === query.data?.series.length
     return overlay
-      ? [...base, { key: "compare", label: "Period before", tone: 4 as const }]
+      ? [...base, { key: "compare", label: "Period before", tone: 3 as const }]
       : base
-  }, [spec.chart, compare, before.data])
+  }, [spec.chart, compare, before.data, query.data])
 
   const chartSummary = React.useMemo(() => {
     if (!envelope || !spec.chart) return ""
     const key = spec.chart.summaryKey
     const money = spec.chart.money
-    let peakLabel = ""
-    let peak = 0
+    // Seeded from the first bucket rather than from zero, so a series that
+    // is negative throughout (a month of cash variances, say) still names
+    // the biggest bucket instead of claiming there is nothing to show.
+    let peakLabel = envelope.series[0]?.label ?? ""
+    let peak = envelope.series[0]?.values[key] ?? 0
     let total = 0
     for (const point of envelope.series) {
       const value = point.values[key] ?? 0
@@ -301,6 +336,20 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   }
 
   const heatmap = reportKey === "sales" ? (envelope?.totals?.heatmap as number[][]) : undefined
+
+  /**
+   * The hidden sentence for the heatmap. It names the busiest slot and what
+   * was in it: "darkest where most sales were" tells a screen reader
+   * nothing, since it cannot see which cell is darkest.
+   */
+  const heatmapSummary = React.useMemo(() => {
+    if (!heatmap || heatmap.length === 0) return ""
+    const best = busiestSlot(heatmap)
+    const when = formatWhen(range)
+    if (!best) return `No sales by hour and weekday ${when}.`
+    const hour = `${String(best.hour).padStart(2, "0")}:00`
+    return `Sales by hour and weekday ${when}, in shop time. Busiest ${best.day} ${hour}, ${best.count} ${best.count === 1 ? "sale" : "sales"}.`
+  }, [heatmap, range])
   const empty = spec.emptyLine.replace("{when}", formatWhen(range))
 
   return (
@@ -353,77 +402,78 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
       ) : null}
 
       {!envelope && !query.error ? (
-        <p className="mt-12 text-[15px] text-muted-foreground-2">
-          {invalid ? "Pick a range to see the figures." : "Working the figures out."}
-        </p>
+        invalid ? (
+          <p className="mt-12 text-[15px] text-muted-foreground-2">
+            Pick a range to see the figures.
+          </p>
+        ) : (
+          <SkeletonText lines={4} className="mt-12 max-w-[40rem]" />
+        )
       ) : null}
 
       {envelope ? (
         <>
           <Kpis spec={spec} totals={envelope.totals} compare={envelope.compare?.totals ?? null} />
 
-          {!hasData(envelope) ? (
-            <p data-testid="report-empty" className="mt-16 text-[15px] text-muted-foreground-2">
-              {empty}
-            </p>
-          ) : (
-            <>
-              {spec.chart && envelope.series.length > 0 ? (
-                <div className="mt-16">
-                  <SectionHeading>Over the period</SectionHeading>
-                  <SeriesChart
-                    kind={spec.chart.kind}
-                    data={chartData}
-                    series={chartSeries}
-                    money={spec.chart.money}
-                    summary={chartSummary}
-                    tickFormatter={(label) => bucketTick(label, group)}
-                    labelFormatter={(label) => bucketTitle(label, group)}
-                  />
-                </div>
-              ) : null}
-
-              <div className="mt-16">
-                <SectionHeading>{spec.tableHeading}</SectionHeading>
-                <ReportTable
-                  testId="report-table"
-                  columns={spec.columns}
-                  rows={envelope.table}
-                  empty={empty}
-                  imagePlatform={ITEM_TABLES[reportKey]}
+          {spec.chart && envelope.series.length > 0 ? (
+            <div className="mt-16">
+              <SectionHeading>Over the period</SectionHeading>
+              {hasSeriesFigures(envelope) ? (
+                <SeriesChart
+                  kind={spec.chart.kind}
+                  data={chartData}
+                  series={chartSeries}
+                  money={spec.chart.money}
+                  summary={chartSummary}
+                  tickFormatter={(label) => bucketTick(label, group)}
+                  labelFormatter={(label) => bucketTitle(label, group)}
                 />
-                {spec.note ? (
-                  <p className="mt-6 max-w-[64ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-                    {spec.note}
-                  </p>
-                ) : null}
-              </div>
+              ) : (
+                <p data-testid="report-empty" className="text-[15px] text-muted-foreground-2">
+                  {empty}
+                </p>
+              )}
+            </div>
+          ) : null}
 
-              {heatmap && heatmap.length > 0 ? (
-                <section className="mt-16">
-                  <SectionHeading>When the shop is busy</SectionHeading>
-                  <Heatmap
-                    rows={heatmap}
-                    summary={`Sales by hour and weekday ${formatWhen(range)}, darkest where most sales were rung up.`}
-                  />
-                  <p className="mt-6 max-w-[64ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-                    Sales by hour of the day, for working out when to put
-                    somebody on.
-                  </p>
-                </section>
-              ) : null}
+          <div className="mt-16">
+            <SectionHeading>{spec.tableHeading}</SectionHeading>
+            <ReportTable
+              testId="report-table"
+              columns={spec.columns}
+              rows={envelope.table}
+              empty={empty}
+              imagePlatform={ITEM_TABLES[reportKey]}
+            />
+            {spec.note ? (
+              <p className="mt-6 max-w-[64ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                {spec.note}
+              </p>
+            ) : null}
+          </div>
 
-              {spec.panels.map((panel) => (
-                <Panel
-                  key={panel.totalsKey}
-                  heading={panel.heading}
-                  columns={panel.columns}
-                  rows={rowsOf(envelope.totals, panel.totalsKey)}
-                  empty={panel.empty}
-                />
-              ))}
-            </>
-          )}
+          {heatmap && heatmap.length > 0 ? (
+            <section className="mt-16">
+              <SectionHeading>When the shop is busy</SectionHeading>
+              <Heatmap rows={heatmap} summary={heatmapSummary} />
+              <p className="mt-6 max-w-[64ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                Sales by hour of the day, for working out when to put somebody
+                on. The hours are shop time; every other figure on this page
+                counts a day as a UTC day.
+              </p>
+            </section>
+          ) : null}
+
+          {spec.panels.map((panel) => (
+            <Panel
+              key={panel.totalsKey}
+              heading={panel.heading}
+              columns={panel.columns}
+              rows={rowsOf(envelope.totals, panel.totalsKey)}
+              empty={panel.empty}
+              imagePlatform={panel.imagePlatform}
+            />
+          ))}
         </>
       ) : null}
 
