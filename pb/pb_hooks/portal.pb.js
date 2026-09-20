@@ -399,16 +399,20 @@ routerAdd(
     } catch (err) {
       rows = [];
     }
-    const notifications = rows.map((n) => ({
-      id: n.id,
-      type: n.getString("type"),
-      title: n.getString("title"),
-      body: n.getString("body"),
-      link: n.getString("link"),
-      read_at: n.getString("read_at"),
-      created: n.getString("created"),
-    }));
-    return e.json(200, { notifications: notifications });
+    let unread = 0;
+    const items = rows.map((n) => {
+      if (!n.getString("read_at")) unread += 1;
+      return {
+        id: n.id,
+        type: n.getString("type"),
+        title: n.getString("title"),
+        body: n.getString("body"),
+        link: n.getString("link"),
+        read_at: n.getString("read_at"),
+        created: n.getString("created"),
+      };
+    });
+    return e.json(200, { items: items, unread: unread });
   },
   $apis.requireAuth("customers")
 );
