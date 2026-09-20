@@ -36,10 +36,20 @@ function ukDateTime(iso) {
 
 /**
  * One want_list row as the portal reads it: the bare relation id is
- * expanded into `{ id, name, set, number }` (or null for a free-text row)
- * so the screen has a title without a follow-up request - the same
- * name/set/number shape the public estimate route already returns a card
- * as, for the same reason.
+ * expanded into `{ id, name, set, number, image }` (or null for a
+ * free-text row) so the screen has a title and a picture without a
+ * follow-up request - the same name/set/number shape the public estimate
+ * route already returns a card as, plus `image` the same way that route's
+ * own `image_large || image_small` fallback reads it.
+ *
+ * `hold` is taken from the matched `items` row at read time - never cached
+ * on the want_list row itself, since `items` is staff-only and the row's
+ * own `matched_item` is otherwise just a bare id the customer has no rule
+ * letting them resolve on their own. It is only ever non-null while the
+ * row is actually `matched`: a `closed` row (holds_release already cleared
+ * the item's own `reserved_until`) or a `fulfilled` one (the item is sold)
+ * has nothing currently held, so both read back `hold: null`, the same as
+ * an `open` row that was never matched at all.
  */
 function wantRowShape(app, row) {
   var cardId = row.getString("card");
@@ -58,11 +68,28 @@ function wantRowShape(app, row) {
         name: cardRow.getString("name"),
         set: setName,
         number: cardRow.getString("number"),
+        image: cardRow.getString("image_large") || cardRow.getString("image_small") || "",
       };
     } catch (err) {
       card = null;
     }
   }
+
+  var hold = null;
+  var matchedItemId = row.getString("matched_item");
+  if (matchedItemId && row.getString("status") === "matched") {
+    try {
+      var itemRow = app.findRecordById("items", matchedItemId);
+      hold = {
+        until: itemRow.getString("reserved_until"),
+        price: itemRow.getInt("price"),
+        title: itemRow.getString("title"),
+      };
+    } catch (err) {
+      hold = null;
+    }
+  }
+
   return {
     id: row.id,
     card: card,
@@ -72,6 +99,7 @@ function wantRowShape(app, row) {
     matched_item: row.getString("matched_item"),
     notified_at: row.getString("notified_at"),
     created: row.getString("created"),
+    hold: hold,
   };
 }
 
@@ -137,7 +165,7 @@ function matchOnStock(app, item) {
       type: "want_match",
       title: "It is in and held for you",
       body: `${title} is in. Held for you until ${ukDateTime(until.toISOString())}.`,
-      link: "/account/want-list",
+      link: "/account/wants",
       email: true,
     });
   } catch (err) {
@@ -244,7 +272,7 @@ function releaseExpiredHolds(app) {
           type: "hold_released",
           title: "Hold released",
           body: `The hold on ${title} has ended, so it is back on the shelf. Ask at the counter if you would still like it.`,
-          link: "/account/want-list",
+          link: "/account/wants",
           email: true,
         });
       }

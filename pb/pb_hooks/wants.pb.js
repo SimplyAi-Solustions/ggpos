@@ -4,6 +4,7 @@
  * wants.pb.js - want lists with holds (docs/PLAN.md, "Want lists";
  * docs/api-contract.md's Phase 5 section).
  *
+ *   GET  /api/vault/want-list              (customer, own rows)
  *   POST /api/vault/want-list              (customer)
  *   POST /api/vault/want-list/{id}/close   (customer own)
  *
@@ -15,6 +16,49 @@
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
+
+// ---------------------------------------------------------------------
+// GET /api/vault/want-list   (customer, own rows)
+//
+// Additive, the same reasoning GET /api/vault/quotes documents in
+// quotes.pb.js: the collection read (`GET /api/collections/want_list/
+// records?filter=customer=<id>`) keeps working under its own unchanged
+// rule, but it can never carry `hold` or an expanded `card` - `items` is
+// staff-only, so a customer's own token cannot expand `matched_item`
+// itself, and this route exists so the portal never has to ask staff for
+// that detail some other way.
+// ---------------------------------------------------------------------
+routerAdd(
+  "GET",
+  "/api/vault/want-list",
+  (e) => {
+    const wantsLib = require(`${__hooks}/lib/wants.js`);
+    const customer = e.auth;
+
+    let rows = [];
+    try {
+      rows = e.app.findRecordsByFilter(
+        "want_list",
+        "customer = {:customer}",
+        "-created",
+        50,
+        0,
+        { customer: customer.id }
+      );
+    } catch (err) {
+      rows = [];
+    }
+
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      if (!rows[i]) continue;
+      out.push(wantsLib.wantRowShape(e.app, rows[i]));
+    }
+
+    return e.json(200, { rows: out });
+  },
+  $apis.requireAuth("customers")
+);
 
 // ---------------------------------------------------------------------
 // POST /api/vault/want-list   (customer)

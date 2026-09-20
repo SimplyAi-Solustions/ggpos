@@ -1,5 +1,6 @@
 import * as React from "react"
 import { Link, Outlet, useNavigate } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
 import {
   ArrowLeftRightIcon,
   EllipsisIcon,
@@ -119,6 +120,44 @@ function AvatarMenu() {
   )
 }
 
+/**
+ * How many quotes are waiting on somebody at the counter.
+ *
+ * The module is imported at call time rather than at the top of this file:
+ * the shell is the entry chunk, and `lib/api/quotes` carries the demo shop
+ * with it, which belongs in the quotes route's own chunk. Zero while it
+ * loads, and zero on a failure, so the nav never shows a number it cannot
+ * stand behind.
+ */
+function useQuotesWaiting(): number {
+  const { data = 0 } = useQuery({
+    queryKey: ["quotes-waiting"],
+    queryFn: () =>
+      import("@/lib/api/quotes").then((module) => module.countQuotesWaiting()),
+    staleTime: 60_000,
+  })
+  return data
+}
+
+/** The count as a Space Mono superscript, and in words for a screen reader. */
+function WaitingCount({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <>
+      <sup
+        data-testid="nav-quote-count"
+        aria-hidden="true"
+        className="tnum ml-1 font-mono text-[11px] font-bold tracking-[0.08em] text-foreground"
+      >
+        {count}
+      </sup>
+      <span className="sr-only">
+        , {count} {count === 1 ? "quote" : "quotes"} waiting
+      </span>
+    </>
+  )
+}
+
 function MoreSheet({
   open,
   onOpenChange,
@@ -143,6 +182,7 @@ function MoreSheet({
         <SheetBody>
           <ul className="flex flex-col">
             {[
+              { label: "Quotes", to: "/counter/quotes" },
               { label: "Customers", to: "/counter/customers" },
               { label: "Reports", to: "/counter/reports" },
               { label: "Exports and imports", to: "/counter/exports" },
@@ -201,6 +241,7 @@ export function CounterShell() {
   const [dockSlot, setDockSlot] = React.useState<HTMLDivElement | null>(null)
   const dockRef = React.useRef<HTMLDivElement>(null)
   const demo = isDemo()
+  const waiting = useQuotesWaiting()
 
   const openPalette = React.useCallback(() => setPaletteOpen(true), [])
   useShortcuts(openPalette)
@@ -256,6 +297,9 @@ export function CounterShell() {
                   className="relative pb-1 text-[15px] text-muted-foreground-2 transition-colors duration-150 ease-gg hover:text-foreground data-[status=active]:text-foreground data-[status=active]:after:absolute data-[status=active]:after:inset-x-0 data-[status=active]:after:-bottom-px data-[status=active]:after:h-0.5 data-[status=active]:after:bg-volt"
                 >
                   {item.label}
+                  {item.to === "/counter/trade" ? (
+                    <WaitingCount count={waiting} />
+                  ) : null}
                 </Link>
               </li>
             ))}
@@ -308,6 +352,7 @@ export function CounterShell() {
                 <Icon aria-hidden="true" className="size-5 stroke-[1.25]" />
                 <span className="font-mono text-[11px] leading-none font-bold tracking-[0.08em] uppercase">
                   {label}
+                  {to === "/counter/trade" ? <WaitingCount count={waiting} /> : null}
                 </span>
               </Link>
             </li>

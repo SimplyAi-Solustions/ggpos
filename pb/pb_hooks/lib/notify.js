@@ -121,13 +121,21 @@ function notify(app, opts) {
     targets.push({ customer: opts.customer, emailTo: emailTo });
   }
 
+  // A customer-facing row always carries an in-app path, never a blank
+  // link: /account/quotes/<id> for a quote event, /account/wants for a
+  // want-list hold, and this fallback for anything else - the one place
+  // that rule is enforced, rather than trusting every call site to set
+  // its own link. Staff rows have no such fallback: every staffAll call
+  // in this package already sets its own /counter/... link explicitly.
+  var fallbackLink = opts.customer ? "/account/notifications" : "";
+
   var written = [];
   for (var t = 0; t < targets.length; t++) {
     var record = new Record(notifications, {
       type: opts.type || "",
       title: opts.title || "",
       body: opts.body || "",
-      link: opts.link || "",
+      link: opts.link || fallbackLink,
     });
     if (targets[t].customer) record.set("customer", targets[t].customer);
     if (targets[t].staff) record.set("staff", targets[t].staff);
@@ -136,7 +144,8 @@ function notify(app, opts) {
 
     if (opts.email) {
       var text = opts.body || "";
-      if (opts.link) text += "\n\n" + opts.link;
+      var emailLink = opts.link || fallbackLink;
+      if (emailLink) text += "\n\n" + emailLink;
       sendEmail(app, settingsRow, targets[t].emailTo, opts.title || "", text);
     }
   }

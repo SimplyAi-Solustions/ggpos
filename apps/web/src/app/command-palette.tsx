@@ -131,6 +131,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     () => [
       { id: "new-buyin", label: "New buy-in", run: () => go("/counter/trade/new") },
       { id: "recent-buyins", label: "Recent buy-ins", run: () => go("/counter/trade") },
+      // --- Quotes (Phase 5) ---
+      { id: "quotes", label: "Quotes", run: () => go("/counter/quotes") },
+      // --- end Quotes ---
       { id: "find-customer", label: "Find a customer", run: () => go("/counter/customers") },
       { id: "new-customer", label: "New customer", run: () => go("/counter/customers/new") },
     ],
