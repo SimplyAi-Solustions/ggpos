@@ -17,11 +17,17 @@ export async function searchEstimateCards(query: string): Promise<EstimateCardHi
   const raw = query.trim()
   if (raw.length < 2) return []
   if (isDemo()) return demoEstimateSearch(raw)
-  const result = await pbCustomer.send<{ cards: EstimateCardHit[] }>(
+  const result = await pbCustomer.send<{ cards?: EstimateCardHit[] }>(
     `/api/vault/estimate/search?q=${encodeURIComponent(raw)}`,
     { method: "GET" }
   )
-  return result.cards ?? []
+  // `finishes` rides along on each hit, so the estimate screen can offer the
+  // finish chips without a second lookup. A hit without one simply has no
+  // finish to choose, which is also what a card with a single printing means.
+  return (result.cards ?? []).map((card) => ({
+    ...card,
+    finishes: Array.isArray(card.finishes) ? card.finishes : [],
+  }))
 }
 
 export async function getEstimate(

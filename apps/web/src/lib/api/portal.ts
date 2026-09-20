@@ -5,9 +5,9 @@
  * Every call here goes through `pbCustomer`, the portal's own PocketBase
  * client with its own auth store, so a staff session open in the same
  * browser is never disturbed. The custom routes are the ones in the Phase 5
- * list; the two reads the list does not name (the customer's completed
- * trade-ins and their credit ledger) go through the collection API against
- * the customer's own rows.
+ * list; the customer's own trade-ins and their credit ledger go through the
+ * collection API, under the rules docs/api-contract.md's Phase 5 section
+ * records for `trade_ins`, `trade_in_lines` and `credit_ledger`.
  */
 import { ClientResponseError } from "pocketbase"
 
@@ -136,16 +136,17 @@ export async function deleteMyAccount(): Promise<{ erased: boolean }> {
 /**
  * The QR landing, `GET /api/vault/c/:token`.
  *
- * Signed out it answers `{ known: true }` or 404, and never a name. A signed
- * in customer whose token it is gets their own `/me` shape back, which the
- * landing screen uses only to decide that this card is theirs.
+ * Signed out it answers `{ known: true }` or 404, and never a name. Staff get
+ * `{ customer_id, code, name }` and the owning customer gets their whole
+ * `/me` shape; this screen needs neither, so any 200 at all means the token
+ * belongs to a card and nothing else is read off the body.
  */
 export async function getCardLanding(token: string): Promise<CardLanding> {
   if (isDemo()) return demoCardLanding(token)
-  return pbCustomer.send<CardLanding>(
-    `/api/vault/c/${encodeURIComponent(token)}`,
-    { method: "GET" }
-  )
+  await pbCustomer.send(`/api/vault/c/${encodeURIComponent(token)}`, {
+    method: "GET",
+  })
+  return { known: true }
 }
 
 /** The VAPID key, from the public half of `GET /api/vault/config`. */
@@ -171,7 +172,7 @@ function toVaultTradeIn(record: TradeInRecord): VaultTradeIn {
   return {
     id: record.id,
     number: record.number,
-    status: record.status ?? "completed",
+    status: record.status ?? "draft",
     at: record.completed_at ?? record.created ?? "",
     payoutType: record.payout_type ?? null,
     payoutCash: record.payout_cash ?? 0,
@@ -180,13 +181,22 @@ function toVaultTradeIn(record: TradeInRecord): VaultTradeIn {
   }
 }
 
+/**
+ * Every trade-in on the customer's record, newest first.
+ *
+ * Not only the completed ones: `counts.trade_ins` in the `/me` shape counts
+ * every status, and a remote quote that has been accepted sits here as a
+ * draft for days before it is paid. Filtering those out would have the card
+ * screen and this list disagree about how many there are, and would hide the
+ * one a customer is most likely to be looking for.
+ */
 export async function getMyTradeIns(): Promise<VaultTradeIn[]> {
   if (isDemo()) return demoMyTradeIns()
   const id = customerAuthId()
   if (!id) return []
   const page = await pbCustomer.collection("trade_ins").getList<TradeInRecord>(1, 50, {
-    filter: `customer = "${escapeFilter(id)}" && status = "completed"`,
-    sort: "-completed_at",
+    filter: `customer = "${escapeFilter(id)}"`,
+    sort: "-created",
   })
   return page.items.map(toVaultTradeIn)
 }
