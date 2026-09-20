@@ -317,11 +317,22 @@ CU_CONSENT_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
 [ "$CU_CONSENT_STATUS" = "200" ] || fail "customer updating marketing_consent returned $CU_CONSENT_STATUS, expected 200"
 ok "customer can update their own marketing consent"
 
-QUOTE_JSON="$(curl -s -X POST "$BASE/api/collections/quotes/records" \
+# quotes.createRule is staff-only (a customer's own token could otherwise
+# forge a row with any status, lines and offer_total it liked, which
+# received/complete would then pay out as if staff had priced it) -
+# customers submit only through POST /api/vault/quotes (Phase 5's own
+# multipart route, exercised in section 23).
+QUOTE_CUSTOMER_CREATE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/quotes/records" \
   -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$CUSTOMER_ID\",\"status\":\"accepted\",\"offer_total\":999999,\"message\":\"Loft box of cards\"}")"
+[ "$QUOTE_CUSTOMER_CREATE_STATUS" = "403" ] || fail "a customer token creating a quotes row directly returned $QUOTE_CUSTOMER_CREATE_STATUS, expected 403 (a forged accepted status with a priced total must be refused outright)"
+ok "a customer token cannot create a quotes row directly (403; quotes.createRule is staff-only)"
+
+QUOTE_JSON="$(curl -s -X POST "$BASE/api/collections/quotes/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$CUSTOMER_ID\",\"status\":\"submitted\",\"message\":\"Loft box of cards\"}")"
 QUOTE_ID="$(echo "$QUOTE_JSON" | jval id)"
-[ -n "$QUOTE_ID" ] || fail "customer could not create a quote: $QUOTE_JSON"
+[ -n "$QUOTE_ID" ] || fail "staff could not create a quote: $QUOTE_JSON"
 QUOTE_OFFER_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
   -H "Authorization: $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d '{"offer_total":999999}' "$BASE/api/collections/quotes/records/$QUOTE_ID")"
@@ -4193,7 +4204,9 @@ P5_ACCEPT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P
 [ "$(echo "$P5_ACCEPT_JSON" | head -n -1 | jval "quote.status")" = "accepted" ] || fail "an accepted quote is not status accepted"
 ok "accepting a quote before its offer expires succeeds"
 
-P5_EXPIRE_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
+# Created by staff, not the customer: quotes.createRule is staff-only
+# (section 8's own assertion covers the refusal itself).
+P5_EXPIRE_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d "{\"customer\":\"$P5_CUSTOMER_ID\",\"status\":\"submitted\"}" | jval id)"
 curl -s -o /dev/null -X POST "$BASE/api/vault/quotes/$P5_EXPIRE_QUOTE_ID/offer" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"lines":[{"title":"Old offer","qty":1,"market_price":100,"offer_price":50}]}'
 curl -s -o /dev/null -X PATCH "$BASE/api/collections/quotes/records/$P5_EXPIRE_QUOTE_ID" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"offer_expires_at":"2020-01-01 00:00:00.000Z"}'
 P5_EXPIRED_ACCEPT_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_EXPIRE_QUOTE_ID/accept" -H "Authorization: $P5_CUSTOMER_TOKEN" -H "Content-Type: application/json" -d '{}')"
