@@ -113,10 +113,19 @@ function medianAskingCandidate(listings, haircutPct) {
   if (!lowest.length) return null;
 
   var mid = Math.floor(lowest.length / 2);
-  var medianPence =
-    lowest.length % 2 === 1
-      ? lowest[mid].pricePence
-      : Math.round((lowest[mid - 1].pricePence + lowest[mid].pricePence) / 2);
+  var medianPence, evidenceUrl;
+  if (lowest.length % 2 === 1) {
+    medianPence = lowest[mid].pricePence;
+    evidenceUrl = lowest[mid].url || "";
+  } else {
+    // An even count's median is the average of the two middle listings, so
+    // it is not literally any one of them - roundHalfUp is the house
+    // rounding rule (CLAUDE.md, "Money"), not a bare Math.round. The lower
+    // of the two middle listings is cited as evidence: it is the one that
+    // most conservatively supports the computed figure.
+    medianPence = money.roundHalfUp((lowest[mid - 1].pricePence + lowest[mid].pricePence) / 2);
+    evidenceUrl = lowest[mid - 1].url || "";
+  }
 
   var pct = haircutPct === undefined || haircutPct === null ? DEFAULT_HAIRCUT_PCT : haircutPct;
   var afterHaircutPence = money.applyPercent(medianPence, 100 - pct);
@@ -125,7 +134,7 @@ function medianAskingCandidate(listings, haircutPct) {
     medianPence: medianPence,
     afterHaircutPence: afterHaircutPence,
     sampleSize: lowest.length,
-    evidenceUrl: lowest[mid].url || "",
+    evidenceUrl: evidenceUrl,
   };
 }
 

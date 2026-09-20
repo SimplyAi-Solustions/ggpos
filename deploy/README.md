@@ -166,11 +166,19 @@ unless `pb/Dockerfile` sets a different user):
 0 3 * * * /path/to/ggpos/deploy/backup.sh
 
 # GG Vault: nightly price sync, 04:00
-0 4 * * * cd /path/to/ggpos/deploy && docker compose run --rm pricesync
+0 4 * * * mkdir -p /path/to/ggpos/deploy/logs && cd /path/to/ggpos/deploy && docker compose run --rm pricesync >> /path/to/ggpos/deploy/logs/pricesync.log 2>&1
 ```
 
 Backup runs before pricesync so the previous day's prices are what gets
-backed up, and so the two jobs' load on the box doesn't overlap.
+backed up, and so the two jobs' load on the box doesn't overlap. The
+output redirect on the pricesync line is not optional the way it might
+look: `docker compose run --rm` deletes the container the instant it
+exits, taking `docker compose logs pricesync`'s only copy of what it
+printed with it (see "Logs" below), so without a redirect a run's own
+counts and exit code are gone by the time anyone looks. `backup.sh`
+does not need the same treatment because it writes `deploy/logs/backup.log`
+itself, from inside the script; pricesync has no such wrapper, so the
+cron line does the redirecting instead.
 
 There is deliberately no third cron line for currency conversion: the
 daily FX rate fetch (from Frankfurter) is a PocketBase cron job defined
@@ -182,28 +190,40 @@ container itself and needs nothing set up here.
 `PB_SUPERUSER_PASSWORD`) plus one variable `docker-compose.yml` sets
 itself and that never needs editing (`PB_URL`, always the in-network
 `http://pocketbase:8090`). It also reads `CACHE_DIR`, which defaults to
-`/app/cache` - already the path `docker-compose.yml` mounts as a volume -
-so there is nothing to set for that either unless you are changing the
-image's layout. That cache is what makes an unchanged Cardmarket or
-TCGCSV file skip re-downloading on the next run; if prices ever look
-stuck, `docker compose exec pricesync sh -c 'rm -rf /app/cache/*'` clears
-it (safe any time - the next run just re-downloads everything).
+`/app/cache` - the path both the Dockerfile's `VOLUME` and
+`docker-compose.yml`'s `./data/pricesync-cache:/app/cache` bind mount
+point at - so there is nothing to set for that either unless you are
+changing the image's layout. That cache is what makes an unchanged
+Cardmarket or TCGCSV file skip re-downloading on the next run; if prices
+ever look stuck, clear it with (pricesync is a `run --rm` service, so
+there is no running container for `docker compose exec` to reach - this
+runs the image fresh, the same way the cron line does):
 
-Before the first run, **turn PocketBase's Batch API on**: sign in at
-`/_/`, open Settings > Application (the "Batch requests" section, API
-tab in older PocketBase dashboards), enable it, and set "Max requests" to
-at least 200. It ships **off** in a stock PocketBase install, and its
-default cap when on is 50. pricesync writes `price_snapshots` in batches
-of 200 through `POST /api/batch` (docs/PLAN.md's pricesync sidecar
-paragraph) and copes without this - it falls back to writing one record
-at a time, logging a line saying so - but that is far slower for no
-benefit, so there is no reason to leave it off. This is also on the
-go-live checklist below.
+```bash
+docker compose run --rm pricesync sh -c 'rm -rf /app/cache/*'
+```
 
-Check a run went well with `docker compose logs pricesync` (see "Logs"
-below): it logs one line per game with counts (entries seen, matched,
-written) and a final summary line, and exits non-zero on any hard
-failure. Two exit codes mean something specific:
+This is safe to run any time - the next real run just re-downloads
+everything.
+
+**Verify PocketBase's Batch API is on** the first time you bring this
+stack up: `pb_migrations/1789819980_batch_api_settings.js` turns it on
+(200 requests per call, a 60 second transaction timeout) as part of the
+schema migrations `docker compose up` already applies, so this is a
+confirmation step, not something to configure by hand. Sign in at `/_/`,
+open Settings > Application, and check "Batch requests" is enabled with
+Max requests at 200 or more. pricesync copes even if it somehow is not
+(it detects this and falls back to writing one record at a time, logging
+a line saying so), but that is far slower for no benefit - if you ever
+see that fallback message in the log, something reverted or skipped that
+migration and is worth tracking down rather than leaving as is. This is
+also on the go-live checklist below.
+
+Check a run went well by reading `deploy/logs/pricesync.log` (see "Logs"
+below - not `docker compose logs pricesync`, which shows nothing once a
+`--rm` run has exited): it logs one line per game with counts (entries
+seen, matched, written) and a final summary line, and exits non-zero on
+any hard failure. Two exit codes mean something specific:
 
 - **exit 2**: the latest `fx_rates` row is missing or more than 3 days
   old. Check the FX cron ran (`docker compose logs pocketbase | grep
