@@ -2072,6 +2072,14 @@ export interface PerkWalletEntry {
  */
 export interface PerkWallet {
   tier: { id: string; name: string } | null
+  /**
+   * Points inside the programme's rolling tier window, added up on the
+   * server from the whole ledger. Null only when the wallet could not be
+   * read at all.
+   */
+  windowPoints: number | null
+  /** The next tier up and the points still needed, or null at the top. */
+  next: { name: string; points: number } | null
   perks: PerkWalletEntry[]
 }
 
@@ -2109,9 +2117,10 @@ export interface CustomerGuild {
   /** The server's own answer (`customer_private.tier`), not a guess. */
   tier: { id: string; name: string } | null
   /**
-   * Points earned inside the programme's rolling tier window, or null when
-   * the customer has more ledger rows than one page holds and the counter
-   * cannot work it out without them.
+   * Points earned inside the programme's rolling tier window, as the perks
+   * route adds them up from the whole ledger. Null only when that route
+   * could not be reached and the ledger page the counter read is not the
+   * whole history, so nothing here can add it up either.
    */
   windowPoints: number | null
   pointsBalance: number

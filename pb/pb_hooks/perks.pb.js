@@ -30,6 +30,8 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const perksLib = require(`${__hooks}/lib/perks.js`);
+    const tiersLib = require(`${__hooks}/lib/tiers.js`);
+    const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
 
     const customerId = e.request.pathValue("id");
     try {
@@ -48,9 +50,19 @@ routerAdd(
     }
     const tier = util.tier(e.app, priv ? priv.getString("tier") : "");
 
+    // The window total and the tier above it come from the whole ledger,
+    // read here the same way the portal's /me/guild reads it, so the
+    // counter never adds a page of rows up for itself and lands on a
+    // second answer.
+    const now = new Date();
+    const state = tiersLib.evaluate(e.app, customerId, now);
+    const next = loyalty.pointsToNextTier(state.tiers, state.windowPoints);
+
     return e.json(200, {
       tier: tier ? { id: tier.id, name: tier.name } : null,
-      perks: perksLib.walletFor(e.app, customerId, tier, new Date()),
+      window_points: state.windowPoints,
+      next: next ? { name: next.tier.name, points_needed: next.points } : null,
+      perks: perksLib.walletFor(e.app, customerId, tier, now),
     });
   },
   $apis.requireAuth("staff")

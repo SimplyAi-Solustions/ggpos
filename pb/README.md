@@ -271,7 +271,7 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/vouchers/:code` | **staff**. The voucher by its printed code, hyphened or bare, with the customer and reward on it. 404 for an unknown code. |
 | `POST /api/vault/vouchers/:code/use` | **staff**. `free_item`, `event_entry` and `custom` only; 409 for `money_off` ("Use this one on the sale: scan it at Sell."), for anything not `issued`, and for one past its expiry. |
 | `POST /api/vault/vouchers/:code/cancel` | **admin**. `cancelled`, the points back as an `adjust` row, and a note on the customer saying which voucher. |
-| `GET /api/vault/customers/:id/perks` | **staff**. `{ tier, perks }` - the counted perks with this month's allowance and use, then the informational ones. |
+| `GET /api/vault/customers/:id/perks` | **staff**. `{ tier, window_points, next, perks }` - the tier the server holds, the live window total with the next tier above it (`{ name, points_needed }` or null at the top), then the counted perks with this month's allowance and use and the informational ones. |
 | `POST /api/vault/customers/:id/perks/use` | **staff**. `{ type, count? }`, an upsert of the one `perk_usage` row for that customer, perk and period. 422 when the allowance is spent or the tier has no such perk. |
 | `POST /api/vault/memberships` | **staff**. `{ customer, tier, months, price, payment_note? }` on a `paid_plan` tier. 409 when one is already active. |
 | `POST /api/vault/memberships/:id/renew` | **staff**. Extends `renews_at` from the later of now and the current expiry. 409 for a cancelled membership, and 409 when the customer already has another active one, since renewing makes this one active too. |

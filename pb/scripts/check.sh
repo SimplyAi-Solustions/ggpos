@@ -5451,6 +5451,25 @@ echo "$(p6_perk_field "$P6_PERKS_JSON" free_event_entries period)" | grep -Eq '^
   || fail "the informational percent_off perk is missing from the wallet: $P6_PERKS_JSON"
 ok "the perks wallet reads this month's allowance and use off the tier, with the informational perks beside them"
 
+# The wallet also carries the window total and the next tier up, added up
+# on the server from the whole ledger, so the counter's Guild block never
+# adds a page of rows up for itself. Legend sits at the top (no next tier);
+# the shopper, below Regular, is told the gap to it.
+[ "$(echo "$P6_PERKS_JSON" | jval window_points)" = "10100" ] \
+  || fail "the Legend wallet carries window_points '$(echo "$P6_PERKS_JSON" | jval window_points)', expected 10100"
+[ "$(echo "$P6_PERKS_JSON" | jval next)" = "" ] \
+  || fail "the Legend wallet names a tier above Legend: $(echo "$P6_PERKS_JSON" | jval next.name)"
+P6_SHOPPER_PERKS_JSON="$(curl -s "$BASE/api/vault/customers/$P6_SHOPPER_ID/perks" -H "Authorization: $STAFF_TOKEN")"
+P6_SHOPPER_WINDOW="$(echo "$P6_SHOPPER_PERKS_JSON" | jval window_points)"
+P6_SHOPPER_NEEDED="$(echo "$P6_SHOPPER_PERKS_JSON" | jval next.points_needed)"
+[ "$(echo "$P6_SHOPPER_PERKS_JSON" | jval next.name)" = "Regular" ] \
+  || fail "the shopper's wallet names '$(echo "$P6_SHOPPER_PERKS_JSON" | jval next.name)' as the next tier, expected Regular"
+echo "$P6_SHOPPER_WINDOW $P6_SHOPPER_NEEDED" | grep -Eq '^[0-9]+ [1-9][0-9]*$' \
+  || fail "the shopper's wallet window and gap read '$P6_SHOPPER_WINDOW' and '$P6_SHOPPER_NEEDED', expected two whole numbers"
+[ "$((P6_SHOPPER_WINDOW + P6_SHOPPER_NEEDED))" = "2500" ] \
+  || fail "the shopper's window ($P6_SHOPPER_WINDOW) plus the gap ($P6_SHOPPER_NEEDED) does not land on the Regular threshold of 2500"
+ok "the perks wallet carries the live window total and the next tier, so the counter never adds the ledger up itself"
+
 for P6_PERK_TRY in 1 2; do
   P6_PERK_USE="$(curl -s -o "$TMP_DIR/p6-perk-use.json" -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P6_LEGEND_ID/perks/use" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" -d '{"type":"free_event_entries"}')"

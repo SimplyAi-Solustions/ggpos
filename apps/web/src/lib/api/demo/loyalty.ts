@@ -642,8 +642,12 @@ function tierFor(customerId: string): LoyaltyTier | null {
 export function demoPerksWallet(customerId: string): PerkWallet {
   recomputeTier(customerId)
   const tier = tierFor(customerId)
+  const windowPoints = windowPointsFor(customerId)
+  const next = pointsToNextTier(evaluatorTiers(), windowPoints)
   return {
     tier: tier ? { id: tier.id, name: tier.name } : null,
+    windowPoints,
+    next: next ? { name: next.tier.name, points: next.points } : null,
     perks: demoPerks(customerId),
   }
 }
@@ -882,15 +886,11 @@ export function demoGuild(customerId: string): CustomerGuild {
   // membership change; the demo shop does it as the wallet is read, which
   // is what makes a seeded plan pin a seeded customer's tier.
   const wallet = demoPerksWallet(customerId)
-  const page = demoPointsLedgerPage(customerId)
-  const windowPoints = page.complete ? windowPointsFor(customerId) : null
-  const next =
-    windowPoints === null ? null : pointsToNextTier(evaluatorTiers(), windowPoints)
   return {
     tier: wallet.tier,
-    windowPoints,
+    windowPoints: wallet.windowPoints,
     pointsBalance: entry.private.points_balance ?? 0,
-    next: next ? { name: next.tier.name, points: next.points } : null,
+    next: wallet.next,
     perks: wallet.perks,
     membership: demoMembershipFor(customerId),
     referral: demoReferrals(customerId),

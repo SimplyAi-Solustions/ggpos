@@ -304,7 +304,7 @@ export function GuildSection({
             className="tnum text-[20px] leading-none font-medium text-foreground"
           >
             {guild.windowPoints === null
-              ? "Over 100 rows"
+              ? "Not read"
               : guild.windowPoints.toLocaleString("en-GB")}
           </p>
         </div>
@@ -322,9 +322,9 @@ export function GuildSection({
 
       {guild.windowPoints === null ? (
         <p className="mt-4 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-          This customer has more than 100 points rows, so the window total is
-          worked out on the server rather than here. Their tier above is the
-          shop's own answer.
+          The window total could not be read from the server just now. Their
+          tier above is the shop's own answer, and the total shows once the
+          connection is back.
         </p>
       ) : null}
 

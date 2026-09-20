@@ -303,20 +303,41 @@ export async function cancelMembership(id: string): Promise<MembershipRecord> {
 // Perks
 // ---------------------------------------------------------------------------
 
+interface PerkWalletResponse {
+  tier?: { id: string; name: string } | null
+  window_points?: number | null
+  next?: { name: string; points_needed: number } | null
+  perks?: PerkWalletEntry[]
+}
+
 /**
  * `GET /api/vault/customers/:id/perks`: the tier the server holds for this
  * customer (`customer_private.tier`, which it re-evaluates after every
- * points row and every membership change) and what that tier gives them
- * this month. The counter never works the tier out for itself from a page
- * of the ledger: two answers on one screen is how a badge starts lying.
+ * points row and every membership change), the window total it adds up
+ * from the whole ledger with the next tier above it, and what the tier
+ * gives them this month. The counter never works any of that out for
+ * itself from a page of the ledger: two answers on one screen is how a
+ * badge starts lying.
  */
 export async function getPerksWallet(customerId: string): Promise<PerkWallet> {
   if (isDemo()) return demo.demoPerksWallet(customerId)
-  const result = await pb.send<PerkWallet>(
+  const result = await pb.send<PerkWalletResponse>(
     `/api/vault/customers/${customerId}/perks`,
     { method: "GET" }
   )
-  return { tier: result.tier ?? null, perks: result.perks ?? [] }
+  const windowPoints =
+    typeof result.window_points === "number" && Number.isFinite(result.window_points)
+      ? result.window_points
+      : null
+  return {
+    tier: result.tier ?? null,
+    windowPoints,
+    next:
+      windowPoints !== null && result.next
+        ? { name: result.next.name, points: result.next.points_needed }
+        : null,
+    perks: result.perks ?? [],
+  }
 }
 
 /** One entry or one hour off a monthly allowance. Refused when it is spent. */
@@ -506,13 +527,15 @@ async function referralsFor(customerId: string): Promise<ReferralSummary> {
 /**
  * Everything the Guild section shows.
  *
- * The tier is the server's own (`customer_private.tier`, which the perks
- * route answers with): it is re-evaluated after every points row, every
- * membership change and nightly, so the badge here and the badge on the
- * customer header are the same fact rather than two guesses. The window
- * total is the one figure the counter still works out, and only when the
- * ledger page it read is the whole history; `resolveTier` fills the tier in
- * for a customer the server has not written one for yet.
+ * The tier, the window total and the next tier are the server's own (the
+ * perks route answers with all three: `customer_private.tier`, which it
+ * re-evaluates after every points row, every membership change and
+ * nightly, and a window total added up from the whole ledger), so the
+ * badge here and the badge on the customer header are the same fact
+ * rather than two guesses. Only when that route cannot be reached does the
+ * counter fall back to the ledger page it read, and then only if that page
+ * is the whole history; `resolveTier` fills the tier in for a customer the
+ * server has not written one for yet.
  */
 export async function getCustomerGuild(customerId: string): Promise<CustomerGuild> {
   if (isDemo()) return demo.demoGuild(customerId)
@@ -521,7 +544,9 @@ export async function getCustomerGuild(customerId: string): Promise<CustomerGuil
     getCounterConfig(),
     getPointsLedgerPage(customerId),
     membershipFor(customerId),
-    getPerksWallet(customerId).catch(() => ({ tier: null, perks: [] }) as PerkWallet),
+    getPerksWallet(customerId).catch(
+      (): PerkWallet => ({ tier: null, windowPoints: null, next: null, perks: [] })
+    ),
     listCustomerVouchers(customerId).catch(() => [] as VoucherSummary[]),
     referralsFor(customerId).catch(
       (): ReferralSummary => ({ referredBy: null, earned: 0, pending: 0 })
@@ -529,25 +554,33 @@ export async function getCustomerGuild(customerId: string): Promise<CustomerGuil
   ])
 
   const tiers = config.loyalty.tiers
-  const windowPoints = ledger.complete
-    ? tierWindowPoints(
-        ledgerForWindow(ledger.rows),
-        new Date(),
-        config.loyalty.programme.tierWindowMonths
-      )
-    : null
+  const windowPoints =
+    wallet.windowPoints ??
+    (ledger.complete
+      ? tierWindowPoints(
+          ledgerForWindow(ledger.rows),
+          new Date(),
+          config.loyalty.programme.tierWindowMonths
+        )
+      : null)
   const held =
     wallet.tier ??
     (windowPoints === null
       ? null
       : (resolveTier(tiers, windowPoints, membership?.tier ?? null) ?? null))
-  const next = windowPoints === null ? null : pointsToNextTier(tiers, windowPoints)
+  const computedNext = windowPoints === null ? null : pointsToNextTier(tiers, windowPoints)
+  const next =
+    wallet.windowPoints !== null
+      ? wallet.next
+      : computedNext
+        ? { name: computedNext.tier.name, points: computedNext.points }
+        : null
 
   return {
     tier: held ? { id: held.id, name: held.name } : null,
     windowPoints,
     pointsBalance: ledger.rows[0]?.balance_after ?? 0,
-    next: next ? { name: next.tier.name, points: next.points } : null,
+    next,
     perks: wallet.perks,
     membership,
     referral,
