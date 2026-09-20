@@ -439,3 +439,344 @@ export interface OfferLimits {
   /** Integer GBP pence. A single cash payout may not exceed it. */
   cashCap: number
 }
+
+// ---------------------------------------------------------------------------
+// Selling, cash, labels and the item page (Phase 2)
+//
+// Field names read off pb/pb_migrations/1789819440_selling_cash_collections.js
+// and 1789819560_ops_collections.js; payload shapes off docs/api-contract.md
+// ("Sales", "Cash sessions", "Step-up", "Labels").
+//
+// The import sits here rather than at the top of the file so this block stays
+// one self-contained append while three packages are being written in
+// parallel; ES modules hoist it either way.
+// ---------------------------------------------------------------------------
+
+import type {
+  LoyaltyProgramme,
+  LoyaltyRule,
+  LoyaltyTier,
+  TierPerk,
+} from "@gg/shared"
+
+export type PaymentMethod =
+  | "sumup_card"
+  | "cash"
+  | "store_credit"
+  | "points"
+  | "mixed"
+
+/** Everything but `mixed`: the methods a split is made of. */
+export type SplitMethod = Exclude<PaymentMethod, "mixed">
+
+export type RefundMethod = "cash" | "store_credit" | "sumup_card"
+
+export type DiscountSource = "manual" | "tier_perk" | "reward"
+
+export type SaleStatus = "complete" | "refunded" | "part_refunded"
+
+/** `sales`. Money is integer GBP pence. */
+export interface SaleRecord extends BaseRecord {
+  number: string
+  staff?: string
+  customer?: string
+  subtotal?: number
+  discount?: number
+  discount_source?: DiscountSource | ""
+  total?: number
+  payment?: PaymentMethod
+  payment_split?: Partial<Record<SplitMethod, number>>
+  sumup_ref?: string
+  cash_session?: string
+  points_earned?: number
+  status?: SaleStatus
+}
+
+/** `sale_lines`. */
+export interface SaleLineRecord extends BaseRecord {
+  sale: string
+  item: string
+  qty?: number
+  unit_price?: number
+  discount?: number
+  vat_rate?: number
+  tax_scheme?: "margin" | "standard"
+  status?: "sold" | "refunded"
+}
+
+/** A sale line with the item's own words joined on, for the refund sheet. */
+export interface SaleLineDetail extends SaleLineRecord {
+  sku: string
+  title: string
+  condition?: string
+}
+
+/** One row in the "Today" sales list. */
+export interface SaleSummary {
+  id: string
+  number: string
+  total: number
+  payment: PaymentMethod
+  status: SaleStatus
+  customerName: string | null
+  /** ISO timestamp. */
+  at: string
+  lineCount: number
+}
+
+/** A sale with its lines, for the refund sheet and the undo. */
+export interface SaleDetail extends SaleRecord {
+  lines: SaleLineDetail[]
+  customerName: string | null
+}
+
+/** docs/api-contract.md, POST /api/vault/sales/complete. */
+export interface CompleteSalePayload {
+  lines: { item: string; qty: number; unit_price: number; discount: number }[]
+  customer: string | null
+  payment: PaymentMethod
+  payment_split: Partial<Record<SplitMethod, number>>
+  discount: number
+  discount_source: DiscountSource | null
+  reward_code: string | null
+  cash_session: string | null
+  sumup_ref: string
+}
+
+export interface CompleteSaleResult {
+  sale: { id: string; number: string; total: number; status: SaleStatus }
+  sumup_amount: number
+  points_earned: number
+  credit_balance: number
+  points_balance: number
+}
+
+/** docs/api-contract.md, POST /api/vault/sales/:id/refund (step-up). */
+export interface RefundSalePayload {
+  lines: { sale_line: string; qty: number }[]
+  reason: string
+  refund_method: RefundMethod
+}
+
+export interface RefundSaleResult {
+  sale: { id: string; status: SaleStatus }
+  refunded: number
+}
+
+// ---- Cash -----------------------------------------------------------------
+
+export type CashMovementType =
+  | "float_in"
+  | "payout"
+  | "cash_sale"
+  | "refund"
+  | "bank_drop"
+  | "adjustment"
+
+/** `cash_sessions`. Money is integer GBP pence. */
+export interface CashSessionRecord extends BaseRecord {
+  opened_by?: string
+  opened_at?: string
+  float?: number
+  closed_by?: string
+  closed_at?: string
+  expected?: number
+  counted?: number
+  variance?: number
+  notes?: string
+  /** Joined for the table, never stored. */
+  openedByName?: string
+  closedByName?: string
+}
+
+/** `cash_movements`. `amount` is signed pence. */
+export interface CashMovementRecord extends BaseRecord {
+  session: string
+  type: CashMovementType
+  amount?: number
+  ref?: string
+  staff?: string
+  /** Joined for the table, never stored. */
+  staffName?: string
+}
+
+/** GET /api/vault/cash-sessions/current. */
+export interface CashSessionState {
+  session: CashSessionRecord | null
+  /** float + cash sales + float_in - payouts - refunds - bank drops. */
+  expected: number
+  movements: CashMovementRecord[]
+  /** settings.cash_variance_alert, in pence. */
+  varianceAlert: number
+}
+
+// ---- Step-up --------------------------------------------------------------
+
+/** POST /api/vault/step-up. Valid for ten minutes. */
+export interface StepUpToken {
+  token: string
+  expiresAt: string
+}
+
+// ---- The customer on a sale ----------------------------------------------
+
+/** Everything the Sell screen's customer strip shows, already joined. */
+export interface SaleCustomer {
+  id: string
+  name: string
+  code: string
+  tierId: string | null
+  tierName: string | null
+  /** Parsed `loyalty_tiers.perks`, unknown shapes dropped. */
+  perks: TierPerk[]
+  /** Integer GBP pence. */
+  creditBalance: number
+  pointsBalance: number
+}
+
+/** The live loyalty programme, its rules and its tiers, for the preview. */
+export interface LoyaltySetup {
+  programme: LoyaltyProgramme
+  rules: LoyaltyRule[]
+  tiers: LoyaltyTier[]
+}
+
+/** An issued `reward_redemptions` row, scanned or typed as GGV-xxxxxx. */
+export interface RewardVoucher {
+  id: string
+  code: string
+  customer: string
+  rewardName: string
+  type: "money_off" | "store_credit" | "free_item" | "event_entry" | "custom"
+  /** Pence for money_off and store_credit; otherwise not money. */
+  value: number
+  expiresAt: string | null
+}
+
+// ---- Stock ----------------------------------------------------------------
+
+export interface ItemFilters {
+  /** Blank means every status the list shows. */
+  status?: ItemStatus
+  /** Free text over title, code, set and number. */
+  search?: string
+  locationId?: string
+}
+
+export interface ItemListPage {
+  items: ItemSummary[]
+  page: number
+  perPage: number
+  totalItems: number
+  totalPages: number
+}
+
+/** One row of the stock table: everything the row draws, already joined. */
+export interface ItemSummary {
+  id: string
+  sku: string
+  kind: ItemKind
+  title: string
+  detail: string
+  condition: string
+  price: number
+  status: ItemStatus
+  locationName: string
+  image?: string
+  /** A `PlatformKey` from src/design/platforms.ts. */
+  platform: string
+  qty: number
+}
+
+export type ItemEventKind =
+  | "created"
+  | "sold"
+  | "refunded"
+  | "reserved"
+  | "written_off"
+  | "label"
+
+/** One line of the item page's history list. */
+export interface ItemEvent {
+  kind: ItemEventKind
+  at: string
+  detail: string
+}
+
+/** The item page: the record plus everything it shows about where it came from. */
+export interface ItemDetail extends ItemRecord {
+  image?: string
+  /** A `PlatformKey` from src/design/platforms.ts. */
+  platform: string
+  gameName: string
+  locationName: string
+  /** Provenance: a trade-in number and its seller, or a supplier reference. */
+  tradeInNumber: string | null
+  sellerName: string | null
+  sellerCode: string | null
+  reservedForName: string | null
+  reservedUntil: string | null
+  history: ItemEvent[]
+}
+
+/** What the item page's edit sheets send back. */
+export interface ItemPatch {
+  price?: number
+  locationId?: string
+  status?: ItemStatus
+  notes?: string
+}
+
+// ---- Labels ---------------------------------------------------------------
+
+export type LabelTemplateKey =
+  | "toploader_40x20"
+  | "sleeve_25x15"
+  | "retro_50x30"
+  | "customer_card_80x50"
+
+export type LabelJobStatus = "queued" | "printed" | "cancelled"
+
+/** A queued label with the words the print page puts on it. */
+export interface LabelJobDetail {
+  id: string
+  status: LabelJobStatus
+  copies: number
+  template: LabelTemplateKey
+  itemId: string
+  /** The bare code the QR encodes, for example GGS7F3K2Q. */
+  code: string
+  title: string
+  /** Set code, number and finish, or platform and region for retro. */
+  detail: string
+  condition: string
+  /** Integer GBP pence. */
+  price: number
+  requestedAt: string
+}
+
+// ---- Today ----------------------------------------------------------------
+
+/** The four tiles and the recent list on Home. Money is integer GBP pence. */
+export interface TodayStats {
+  salesCount: number
+  salesTotal: number
+  salesByPayment: Partial<Record<SplitMethod, number>>
+  buyInCount: number
+  buyInTotal: number
+  cashOut: number
+  creditIssued: number
+  itemsIn: number
+  itemsOut: number
+  recent: RecentActivity[]
+}
+
+/** One line of Home's "Recent" list: a sale or a buy-in. */
+export interface RecentActivity {
+  id: string
+  kind: "sale" | "buy_in"
+  number: string
+  total: number
+  detail: string
+  at: string
+}

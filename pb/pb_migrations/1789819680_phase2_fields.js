@@ -52,6 +52,22 @@ migrate((app) => {
   app.save(idDocuments);
 
   // -------------------------------------------------------------------
+  // trade_ins.number: only a completed trade-in has one.
+  //
+  // Drafts and their lines are created through the collection API
+  // (docs/api-contract.md, "Trade-ins") and the number is assigned from
+  // counters.trade_in at completion, so a required `number` would make a
+  // draft impossible to create and would burn a number on every abandoned
+  // one. The unique index becomes partial so the numbers that do exist
+  // stay unique while any number of drafts sit at "".
+  // -------------------------------------------------------------------
+  const tradeIns = app.findCollectionByNameOrId("trade_ins");
+  tradeIns.fields.add(new Field({ name: "number", type: "text", required: false, max: 20 }));
+  tradeIns.removeIndex("idx_trade_ins_number_unique");
+  tradeIns.addIndex("idx_trade_ins_number_unique", true, "number", "number != ''");
+  app.save(tradeIns);
+
+  // -------------------------------------------------------------------
   // trade_in_lines: what an items row needs that a line could not say
   // -------------------------------------------------------------------
   const games = app.findCollectionByNameOrId("games");
@@ -159,6 +175,12 @@ migrate((app) => {
   tradeInLines.fields.removeByName("game");
   tradeInLines.fields.removeByName("kind");
   app.save(tradeInLines);
+
+  const tradeIns = app.findCollectionByNameOrId("trade_ins");
+  tradeIns.fields.add(new Field({ name: "number", type: "text", required: true, max: 20 }));
+  tradeIns.removeIndex("idx_trade_ins_number_unique");
+  tradeIns.addIndex("idx_trade_ins_number_unique", true, "number", "");
+  app.save(tradeIns);
 
   const idDocuments = app.findCollectionByNameOrId("id_documents");
   idDocuments.fields.removeByName("mime");
