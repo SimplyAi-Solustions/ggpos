@@ -21,7 +21,9 @@ import { customerSchema } from "@/features/customers/schema"
 import type { WizardCustomer } from "@/features/tradein/machine"
 import {
   createCustomer,
+  findCustomerByScan,
   getCustomer,
+  qrTokenFrom,
   refusalOrFallback,
   searchCustomers,
   type CustomerProfile,
@@ -49,6 +51,8 @@ function toWizardCustomer(profile: CustomerProfile): WizardCustomer {
 export interface CustomerStepProps {
   customer: WizardCustomer | null
   onChoose: (customer: WizardCustomer) => void
+  /** Forgets the chosen customer so the search comes back. */
+  onClear: () => void
 }
 
 /**
@@ -60,7 +64,11 @@ export interface CustomerStepProps {
  * ends with their ID status, their flags and their credit on screen, because
  * those are what decide whether the rest of the wizard can offer cash.
  */
-export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
+export function CustomerStep({
+  customer,
+  onChoose,
+  onClear,
+}: CustomerStepProps) {
   const [query, setQuery] = React.useState("")
   const [cameraOpen, setCameraOpen] = React.useState(false)
   const [newName, setNewName] = React.useState("")
@@ -73,7 +81,7 @@ export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
   React.useEffect(() => registerSearchField(searchRef.current), [])
 
   const load = useMutation({
-    mutationFn: (idOrCode: string) => getCustomer(idOrCode),
+    mutationFn: (raw: string) => findCustomerByScan(raw),
     onSuccess: (profile) => {
       if (!profile) {
         setError("That card is not on file. Search by name, or make a new one.")
@@ -90,9 +98,10 @@ export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
   React.useEffect(
     () =>
       setScanHandler((raw) => {
-        const parsed = parseCode(raw)
-        if (parsed?.kind === "customer") {
-          load.mutate(parsed.encoded)
+        // Two shapes reach here: the portal link the Guild card's QR
+        // carries (docs/label-spec.md) and the GGC code printed beside it.
+        if (qrTokenFrom(raw) || parseCode(raw)?.kind === "customer") {
+          load.mutate(raw)
           return
         }
         setError("That is not a customer card. Scan the QR on their Guild card.")
@@ -173,7 +182,7 @@ export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
             type="button"
             onClick={() => {
               setQuery("")
-              onChooseNobody()
+              onClear()
             }}
           >
             Choose someone else
@@ -181,13 +190,6 @@ export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
         </div>
       </div>
     )
-
-    function onChooseNobody() {
-      // Reaching this clears the chosen customer by handing back a blank
-      // one is wrong; the wizard owns that, so the button simply reopens
-      // the search by clearing the field and asking the parent to forget.
-      window.location.reload()
-    }
   }
 
   return (
@@ -219,8 +221,9 @@ export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
           onKeyDown={(event) => {
             if (event.key !== "Enter") return
             event.preventDefault()
-            const parsed = parseCode(query)
-            if (parsed?.kind === "customer") load.mutate(parsed.encoded)
+            if (qrTokenFrom(query) || parseCode(query)?.kind === "customer") {
+              load.mutate(query)
+            }
           }}
         />
       </Field>
@@ -327,9 +330,11 @@ export function CustomerStep({ customer, onChoose }: CustomerStepProps) {
         open={cameraOpen}
         onOpenChange={setCameraOpen}
         onResult={(value) => {
-          const parsed = parseCode(value)
-          if (parsed?.kind === "customer") load.mutate(parsed.encoded)
-          else setError("That QR is not a Guild card. Try again, or search by name.")
+          if (qrTokenFrom(value) || parseCode(value)?.kind === "customer") {
+            load.mutate(value)
+          } else {
+            setError("That QR is not a Guild card. Try again, or search by name.")
+          }
         }}
       />
     </div>
