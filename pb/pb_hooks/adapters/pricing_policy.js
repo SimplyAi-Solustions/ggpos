@@ -275,11 +275,115 @@ function adjustForConditionSafe(gbpMarket, condition, multipliers) {
   return typeof adjusted === "number" && isFinite(adjusted) ? adjusted : gbpMarket;
 }
 
+/** `settingsRow`'s json field `name`, or `fallback` when the row or the field is missing. */
+function jsonSetting(settingsRow, name, fallback) {
+  if (!settingsRow) return fallback;
+  var util = require(__hooks + "/lib/vaultutil.js");
+  return util.jsonField(settingsRow, name, null) || fallback;
+}
+
+/** settings.source_priority, or packages/shared's own default. */
+function tcgPriority(settingsRow) {
+  var pricingShared = require(__hooks + "/lib/shared/pricing.js");
+  return jsonSetting(settingsRow, "source_priority", pricingShared.DEFAULT_TCG_PRIORITY);
+}
+
+/** settings.retro_source_priority, or packages/shared's own default. */
+function retroPriority(settingsRow) {
+  var pricingShared = require(__hooks + "/lib/shared/pricing.js");
+  return jsonSetting(settingsRow, "retro_source_priority", pricingShared.DEFAULT_RETRO_PRIORITY);
+}
+
+/** settings.condition_multipliers, or packages/shared's own default. */
+function conditionMultipliers(settingsRow) {
+  var pricingShared = require(__hooks + "/lib/shared/pricing.js");
+  return jsonSetting(settingsRow, "condition_multipliers", pricingShared.DEFAULT_CONDITION_MULTIPLIERS);
+}
+
+/**
+ * Every `price_snapshots` row for `ownerField` ("card" or "retro_title")
+ * `ownerId`, at exactly `finish` (completeness reuses the same column - see
+ * the file banner), as PriceCandidate[]. A blank `finish` matches rows
+ * whose finish is itself blank, never every finish at once - a route that
+ * forgot to ask for one must not have its chosen price silently mix a
+ * holo snapshot in with a normal one.
+ */
+function snapshotsFor(app, ownerField, ownerId, finish) {
+  var filter = ownerField + " = {:owner} && finish = {:finish}";
+  var rows = [];
+  try {
+    rows = app.findRecordsByFilter("price_snapshots", filter, "-fetched_at", 100, 0, {
+      owner: ownerId,
+      finish: finish || "",
+    });
+  } catch (err) {
+    rows = [];
+  }
+  return rows.map(candidateFromSnapshot);
+}
+
+/**
+ * The uk-comp routes' shared validation (cards and retro alike): a
+ * positive price under a sane ceiling, a real ebay.co.uk item link, and a
+ * sale date that is not in the future and not more than 30 whole calendar
+ * days old. Throws the house-style 400 through `e` on the first failure;
+ * returns `{ price, url, soldAt, soldDate }` once everything holds.
+ */
+function validateUkComp(e, util, body) {
+  var price = util.asInt(body.price, -1);
+  var url = util.asStr(body.url);
+  var soldAt = util.asStr(body.sold_at);
+
+  if (price <= 0) {
+    throw e.badRequestError("Enter the sold price in pence, over zero.", null);
+  }
+  if (price > 5000000) {
+    throw e.badRequestError(
+      "That price looks too high. Check it is in pence, not pounds, and try again.",
+      null
+    );
+  }
+  if (!/^https:\/\/(www\.)?ebay\.co\.uk\/itm\//i.test(url)) {
+    throw e.badRequestError(
+      "That is not an ebay.co.uk item link. Paste the listing's own URL (ebay.co.uk/itm/...).",
+      null
+    );
+  }
+  var soldDate = new Date(soldAt + "T00:00:00.000Z");
+  if (isNaN(soldDate.getTime())) {
+    throw e.badRequestError("Enter the date it sold, as YYYY-MM-DD.", null);
+  }
+
+  // Whole calendar days, not a raw millisecond division: comparing "now"
+  // (which carries the current time of day) against a sale date parsed at
+  // midnight UTC would otherwise refuse a comp sold exactly 30 days ago
+  // for anyone checking after midnight.
+  var now = new Date();
+  var nowMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (soldDate.getTime() > nowMidnight.getTime()) {
+    throw e.badRequestError("That sale date is in the future.", null);
+  }
+  var wholeDays = Math.round((nowMidnight.getTime() - soldDate.getTime()) / 86400000);
+  if (wholeDays > 30) {
+    throw e.badRequestError(
+      "That sale is more than 30 days old. A UK sold comp only counts as fresh within 30 days.",
+      null
+    );
+  }
+
+  return { price: price, url: url, soldAt: soldAt, soldDate: soldDate };
+}
+
 module.exports = {
   FRESHNESS: FRESHNESS,
   VALID_CONDITIONS: VALID_CONDITIONS,
   normalizeCondition: normalizeCondition,
   adjustForConditionSafe: adjustForConditionSafe,
+  tcgPriority: tcgPriority,
+  retroPriority: retroPriority,
+  conditionMultipliers: conditionMultipliers,
+  snapshotsFor: snapshotsFor,
+  validateUkComp: validateUkComp,
   candidateFromSnapshot: candidateFromSnapshot,
   toRow: toRow,
   choose: choose,

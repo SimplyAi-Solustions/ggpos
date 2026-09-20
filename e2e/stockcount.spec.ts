@@ -99,6 +99,26 @@ test.describe("stock counts", () => {
     await expect(row).toContainText("Closed")
   })
 
+  test("carries on with the count already open rather than starting a second", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await go(page, "Stock count")
+    await page.getByRole("button", { name: "Binder A", exact: true }).click()
+    await primary(page, "Start count").click()
+    await expect(page.getByTestId("count-scan-field")).toBeVisible()
+    const url = page.url()
+
+    await go(page, "Stock count")
+    await page.getByRole("button", { name: "Binder A", exact: true }).click()
+
+    await expect(page.getByTestId("count-resume")).toContainText(
+      "A count of Binder A is already open"
+    )
+    await primary(page, "Carry on counting").click()
+    await expect(page).toHaveURL(url)
+  })
+
   test("leaves the close to an admin", async ({ page }) => {
     await page.addInitScript(() => {
       window.sessionStorage.setItem("gg-demo", "1")
