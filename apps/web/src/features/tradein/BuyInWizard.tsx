@@ -47,6 +47,7 @@ import {
   rulesFrom,
   saveTradeInLines,
   submitIdCheck,
+  usePricingSettings,
   useVaultConfig,
   type IdCheckPayload,
   type TradeInLineInput,
@@ -85,6 +86,11 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   const { data: config, isSuccess: configLoaded } = useVaultConfig()
 
   const rules = React.useMemo(() => (config ? rulesFrom(config) : []), [config])
+  // The shop's own condition multipliers, which every figure on this screen
+  // has to be taken through: the price routes and Add stock already use
+  // them, and a buy-in that quietly used the shared defaults instead would
+  // underpay whenever an admin had changed one.
+  const { conditionMultipliers } = usePricingSettings()
   // Memoised because the line inputs are derived from it: a fresh object on
   // every render would re-save every line on every keystroke.
   const settings = React.useMemo(
@@ -94,7 +100,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
         : { ...DEFAULT_OFFER_SETTINGS, cashCap: 800_000 },
     [config]
   )
-  const sums = totals(state.lines, rules, settings)
+  const sums = totals(state.lines, rules, settings, conditionMultipliers)
   const payout = payoutFor(state.payoutType, sums, state.mixedCash)
   const cashRequired = payout.cash > 0
   const steps = visibleSteps({ cashRequired })
@@ -119,8 +125,15 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
 
   // ---- Lines, saved as they change ---------------------------------------
   const lineInputs = React.useMemo(
-    () => toLineInputs(state.lines, rules, settings, state.payoutType),
-    [state.lines, rules, settings, state.payoutType]
+    () =>
+      toLineInputs(
+        state.lines,
+        rules,
+        settings,
+        state.payoutType,
+        conditionMultipliers
+      ),
+    [state.lines, rules, settings, state.payoutType, conditionMultipliers]
   )
   // The signature leaves the ids out: adopting the ids a save hands back
   // would otherwise look like another change and save a second time.
@@ -422,6 +435,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
                 lines={state.lines}
                 rules={rules}
                 settings={settings}
+                multipliers={conditionMultipliers}
                 sums={sums}
                 rulesMissing={configLoaded && rules.length === 0}
                 onAdd={(line) => dispatch({ type: "add-line", line })}

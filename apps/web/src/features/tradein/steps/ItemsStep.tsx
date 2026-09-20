@@ -2,7 +2,11 @@ import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react"
 import { formatGBP, type PriceSource } from "@gg/shared"
-import type { OfferSettings, PricingRule } from "@gg/shared/pricing"
+import type {
+  ConditionMultipliers,
+  OfferSettings,
+  PricingRule,
+} from "@gg/shared/pricing"
 
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
@@ -110,9 +114,13 @@ function LineRow({
     if (!view) return
     const chosen = view.chosen
     if (!chosen) {
-      // Nothing to price it from: the field becomes the only way, which is
-      // what the line then says under it.
-      if (waiting) onUpdate(line.key, { marketSource: MANUAL_SOURCE })
+      // Nothing to price this finish from. A line that was priced from a
+      // source a moment ago has to let that figure go with it: leaving the
+      // old finish's market on the line while the note says there is no
+      // price would offer the customer money for the wrong card.
+      if (waiting || line.marketSource !== MANUAL_SOURCE) {
+        onUpdate(line.key, { marketPence: 0, marketSource: MANUAL_SOURCE })
+      }
       return
     }
     if (chosen.gbp_market === line.marketPence && chosen.source === line.marketSource) {
@@ -390,6 +398,8 @@ export interface ItemsStepProps {
   lines: TradeLine[]
   rules: PricingRule[]
   settings: OfferSettings
+  /** The shop's own condition multipliers, from settings. */
+  multipliers: ConditionMultipliers
   sums: Totals
   /** True when the shop has no active offer bands at all. */
   rulesMissing: boolean
@@ -413,6 +423,7 @@ export function ItemsStep({
   lines,
   rules,
   settings,
+  multipliers,
   sums,
   rulesMissing,
   onAdd,
@@ -528,7 +539,7 @@ export function ItemsStep({
 
   const overridden = lines.find((line) => line.key === overrideKey)
   const overriddenOffer = overridden
-    ? lineOffer(overridden, rules, settings)
+    ? lineOffer(overridden, rules, settings, multipliers)
     : null
 
   return (
@@ -687,7 +698,7 @@ export function ItemsStep({
           <LineRow
             key={line.key}
             line={line}
-            offer={lineOffer(line, rules, settings)}
+            offer={lineOffer(line, rules, settings, multipliers)}
             onUpdate={onUpdate}
             onRemove={onRemove}
             onOverride={() => setOverrideKey(line.key)}
