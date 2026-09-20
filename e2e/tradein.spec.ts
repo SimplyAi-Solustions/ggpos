@@ -36,12 +36,17 @@ async function signIn(page: Page) {
 /** Drags a short stroke across the pad, which is what "signed" means here. */
 async function sign(page: Page) {
   const pad = page.getByTestId("signature-pad")
+  // Scroll it in first: the mouse works in viewport coordinates, so a pad
+  // still below the fold on a phone would be drawn on somewhere else.
+  await pad.scrollIntoViewIfNeeded()
+  await page.waitForTimeout(150)
   const box = await pad.boundingBox()
   if (!box) throw new Error("The signature pad has no box to sign on")
-  await page.mouse.move(box.x + 30, box.y + box.height / 2)
+  const y = box.y + box.height / 2
+  await page.mouse.move(box.x + 20, y)
   await page.mouse.down()
-  await page.mouse.move(box.x + 90, box.y + box.height / 2 - 18, { steps: 6 })
-  await page.mouse.move(box.x + 150, box.y + box.height / 2 + 14, { steps: 6 })
+  await page.mouse.move(box.x + box.width * 0.35, y - box.height * 0.2, { steps: 6 })
+  await page.mouse.move(box.x + box.width * 0.6, y + box.height * 0.15, { steps: 6 })
   await page.mouse.up()
   await expect(page.getByText("Signature captured")).toBeVisible()
 }

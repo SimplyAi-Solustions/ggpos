@@ -91,12 +91,17 @@ function primary(page, name) {
 }
 
 async function sign(page) {
-  const box = await page.getByTestId("signature-pad").boundingBox()
+  const pad = page.getByTestId("signature-pad")
+  // The mouse works in viewport coordinates, so scroll the pad in first.
+  await pad.scrollIntoViewIfNeeded()
+  await page.waitForTimeout(150)
+  const box = await pad.boundingBox()
   if (!box) return
-  await page.mouse.move(box.x + 30, box.y + box.height / 2)
+  const y = box.y + box.height / 2
+  await page.mouse.move(box.x + 20, y)
   await page.mouse.down()
-  await page.mouse.move(box.x + 100, box.y + box.height / 2 - 20, { steps: 6 })
-  await page.mouse.move(box.x + 170, box.y + box.height / 2 + 16, { steps: 6 })
+  await page.mouse.move(box.x + box.width * 0.35, y - box.height * 0.2, { steps: 6 })
+  await page.mouse.move(box.x + box.width * 0.6, y + box.height * 0.15, { steps: 6 })
   await page.mouse.up()
 }
 

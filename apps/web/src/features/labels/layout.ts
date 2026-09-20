@@ -71,6 +71,37 @@ export interface LabelLayout {
   priceMm: number
 }
 
+/**
+ * The room left for text beside the QR, in millimetres: the label less its
+ * side padding, the QR and the gap between the two.
+ */
+export function textWidthMm(spec: LabelSpec): number {
+  const padding = 1.5 * 2
+  const gap = 1.5
+  return Math.max(4, spec.widthMm - padding - pxToMm(spec.qrPx) - gap)
+}
+
+/**
+ * Shrink a title until the whole of it fits the label's text column.
+ *
+ * A 40 x 20 mm label that clips "Mabel, Heir to Cra..." is worse at the
+ * counter than one that prints the whole name a little smaller, so the type
+ * gives way rather than the words. 0.52em is the average glyph width of Jost
+ * at medium weight; the floor keeps it readable on thermal paper.
+ */
+export function fitTitleMm(
+  text: string,
+  startMm: number,
+  widthMm: number,
+  floorMm = 1.6
+): number {
+  const perChar = 0.52
+  if (text.length === 0) return startMm
+  const fits = widthMm / (text.length * perChar)
+  const size = Math.min(startMm, Math.max(floorMm, fits))
+  return Math.round(size * 100) / 100
+}
+
 /** A customer card's QR opens the portal; every other label carries the code. */
 export function qrTextFor(job: LabelJobDetail, portalBase: string): string {
   if (job.template === "customer_card_80x50") {
@@ -120,7 +151,7 @@ export function labelLayout(
         { role: "tier", text: job.detail },
       ],
       showMark: true,
-      titleMm: 5,
+      titleMm: fitTitleMm(job.title, 5, textWidthMm(spec), 2.6),
       metaMm: 3.2,
       priceMm: 3.2,
     }
@@ -136,7 +167,7 @@ export function labelLayout(
     ...base,
     lines,
     showMark: true,
-    titleMm: big ? 3.6 : 2.6,
+    titleMm: fitTitleMm(job.title, big ? 3.6 : 2.6, textWidthMm(spec)),
     metaMm: big ? 2.6 : 2,
     priceMm: big ? 4.4 : 3.4,
   }

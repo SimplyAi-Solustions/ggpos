@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 
-import { LABEL_SPECS, labelLayout, pxToMm, qrTextFor } from "@/features/labels/layout"
+import {
+  LABEL_SPECS,
+  labelLayout,
+  pxToMm,
+  qrTextFor,
+  textWidthMm,
+} from "@/features/labels/layout"
 import { templateForItem } from "@/lib/api/item-shape"
 import type { LabelJobDetail } from "@/lib/api/types"
 
@@ -127,5 +133,25 @@ describe("what the QR encodes", () => {
       "https://vault.ggentertainment.co.uk/"
     )
     expect(layout.qrText).toBe("https://vault.ggentertainment.co.uk/c/tok_abc123")
+  })
+})
+
+describe("a title that does not fit", () => {
+  it("shrinks rather than clipping, because a cut name is no use at the counter", () => {
+    const short = labelLayout(job({ title: "Pikachu" }))
+    const long = labelLayout(job({ title: "Mabel, Heir to Cragflame" }))
+    expect(short.titleMm).toBe(2.6)
+    expect(long.titleMm).toBeLessThan(short.titleMm)
+    expect(long.titleMm).toBeGreaterThanOrEqual(1.6)
+  })
+
+  it("never shrinks past the floor, whatever the title", () => {
+    const silly = labelLayout(job({ title: "A".repeat(200) }))
+    expect(silly.titleMm).toBe(1.6)
+  })
+
+  it("leaves the text column beside the QR", () => {
+    expect(textWidthMm(LABEL_SPECS.toploader_40x20)).toBeCloseTo(21.74, 1)
+    expect(textWidthMm(LABEL_SPECS.retro_50x30)).toBeCloseTo(26.73, 1)
   })
 })
