@@ -144,7 +144,106 @@ retrying `e.next()` on a unique-constraint failure.
 | `singletons.pb.js` | Refuses a second `settings` or `loyalty_programme` record. |
 | `audit.pb.js` | Logs deletes on `staff`, `customers`, `customer_private`, `id_documents`, `items`, `trade_ins`, `sales`, `credit_ledger`, `points_ledger` (a judgement call - PLAN.md says "sensitive collections" without naming them; revisit if Richard wants a different list), and updates to `pricing_rules` and every `loyalty_*`/`settings` collection. Uses the `*Request` hook variants because only those carry `e.auth` and `e.realIP()`; logs only after `e.next()` returns without throwing. `meta` never carries a field's *value*, only identifiers: for an update, the names of the fields that changed (`e.record.fieldsData()` diffed against `e.record.original()`, taken before `e.next()`); for a delete, one label from a short list of fields already known to be safe (`items.sku`, `trade_ins.number`, `sales.number`) or nothing at all for every other audited collection - `staff`, `customers`, `customer_private` and `id_documents` above all never contribute a label, since every field on those could be a password hash, `pin_hash`, an ID photo path or other PII. This keeps a password, `pin_hash`, ID photo or API key out of this permanent, superuser-only table, so erasing the original record actually erases it. |
 | `routes.pb.js` | `GET /api/vault/health` (staff-authenticated: status, PocketBase version, a few record counts) and `GET /api/vault/me` (the caller's own `staff` fields, hand-picked so `pin_hash` can never leak). |
-| `crons.pb.js` | Registers `fx`, `prices`, `retention` and `stats` - each just logs for now. Real work is a later phase (`docs/PLAN.md`, "Phases"); day-to-day price ingestion runs in `services/pricesync`, not here, because hooks cannot stream the 15-26 MB Cardmarket files. |
+| `ledgers.pb.js` | `credit_ledger` and `points_ledger`: `onRecordCreate` stamps `balance_after` before the row is written (computed from the ledger as it stands plus this row, never from the cache); `onRecordAfterCreateSuccess` recomputes both cached balances through `lib/balances.js`. Both fire inside whatever transaction the caller is in, so a correction row added straight through the collection API gets the same treatment a custom route's write does. |
+| `stepup.pb.js` | `POST /api/vault/step-up` - see "Custom API routes" below. |
+| `tradeins.pb.js` | Buy-in completion and receipts. |
+| `idphotos.pb.js` | The ID check and the ID photo view. |
+| `sales.pb.js` | Sale completion and refunds. |
+| `cash.pb.js` | Cash sessions. |
+| `exports.pb.js` | The stock book CSV. |
+| `crons.pb.js` | Registers `fx`, `prices`, `retention` and `stats`. `retention` does real work (see below); the other three still only log, because day-to-day price ingestion runs in `services/pricesync`, not here (hooks cannot stream the 15-26 MB Cardmarket files) and `daily_stats` is a later phase. |
+
+## Custom API routes (`/api/vault/*`)
+
+`docs/api-contract.md` is the contract these implement and is the source
+of truth for the request and response shapes; this section is the
+server-side notes that go with them. Every route needs a `staff` token;
+**admin** also needs `role = "admin"`, **step-up** also needs a live
+`X-Step-Up` header.
+
+| Route | Notes |
+|---|---|
+| `POST /api/vault/step-up` | Re-checks the caller's own password, returns `{ token, expires_at }` good for 10 minutes. |
+| `POST /api/vault/trade-ins/{id}/complete` | The whole buy-in in one transaction: number from `counters.trade_in`, seller snapshot, `items` (one row per unit for single/graded/retro, one row of qty n for sealed/accessory), `credit_ledger`, `cash_movements`, `points_ledger` through the shared `evaluateTradeInPoints`, one `label_jobs` row per item, and the audit row. |
+| `GET /api/vault/trade-ins/{id}/receipt` | The receipt JSON, signature included as a `/api/files/...?token=` URL from `record.newFileToken()`. |
+| `POST /api/vault/trade-ins/{id}/receipt/email` | Sends through PocketBase's own SMTP settings. `{ sent: false, test_mode: true }` while `settings.email.test_mode` is on. |
+| `POST /api/vault/customers/{id}/id-check` | Multipart. Encrypts the photo, writes `id_documents`, verifies `customer_private`. |
+| `GET /api/vault/id-photo/{id}` | **admin**, **step-up**. Audits, then decrypts and streams. |
+| `POST /api/vault/sales/complete` | Stock checks, the payment split, `checkPointsRedemption` and `evaluateSalePoints`, both ledgers, the cash movement, the reward redemption and a `price_override` audit row per overridden line. |
+| `POST /api/vault/sales/{id}/refund` | **step-up**. Items back into stock, lines and sale restatused, the money back by the chosen method, and the points that sale earned on those lines reversed. |
+| `POST /api/vault/cash-sessions/open` | 409 when one is already open. |
+| `GET /api/vault/cash-sessions/current` | `{ session, expected, movements }`, `null` session when none is open. |
+| `POST /api/vault/cash-sessions/{id}/close` | Expected, counted, variance; audited as `cash_session_variance` when the variance is over `settings.cash_variance_alert`. |
+| `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. |
+
+Three patterns run through all of them.
+
+**Validate first, write second.** Every staff-facing refusal is raised
+before `$app.runInTransaction` opens, so the transaction holds writes plus
+only the re-checks that have to be atomic (the trade-in is still open, the
+item is still in stock, the cash session is still open). Those
+re-checks record themselves in a `halt` object, throw to roll back, and
+are turned into the right status code after the catch: an `ApiError`
+thrown through the Go transaction boundary does **not** arrive back in JS
+as itself, so throwing one from inside the callback would surface as a
+bare 400.
+
+**`cash_movements.amount` is signed.** Money out of the drawer (a payout,
+a refund, a bank drop) is stored negative and money in is positive, so a
+session's expected total is `float + sum(amount)` and the `adjustment`
+type can say which way it went. The contract writes the same sum as
+"float + cash sales + float_in - payouts - refunds - bank drops"; the
+figure is identical, the sign lives on the row rather than in the reader.
+
+**Audit meta stays to identifiers, counts and the shop's own money** -
+a trade-in number, how many items and labels, a payout total, a variance.
+Never a customer's name, address, ID number or photo path, for the same
+reason `audit.pb.js` withholds them.
+
+### Step-up
+
+`POST /api/vault/step-up` takes `{ password }`, re-checks it against the
+signed-in staff record and returns a JWT with `{ staffId, scope:
+"step_up" }` and a 10 minute expiry. `lib/stepup.js`'s `requireStepUp(e)`
+reads it from `X-Step-Up` and refuses with 403 "Confirm your password to
+continue." when it is missing, expired, tampered with, or issued to
+somebody else.
+
+The signing key is `hs256("<staff id>:<staff tokenKey>", pepper)`, where
+`pepper` is `GG_ID_PHOTO_KEY` when set and a fixed fallback string
+otherwise. PocketBase exposes no app-wide secret to JS, and an auth
+record's `tokenKey` is a 50-character random value it already keeps per
+row, so this needs no secret of its own. Two consequences, both wanted: a
+token only ever works for the staff member it was issued to (verification
+derives the key from `e.auth`, then checks the `staffId` claim matches),
+and changing that member's password or email rotates their `tokenKey`, so
+every step-up token they hold stops working at once.
+
+### ID photos
+
+The photo bytes are base64'd, encrypted with `$security.encrypt` and
+`GG_ID_PHOTO_KEY`, and written as a `.enc` file on `id_documents.photo`;
+the original MIME type goes in `id_documents.mime` so the view route can
+serve the decrypted bytes correctly. Without the key the upload route
+refuses with 500 rather than storing a photo in the clear. The view route
+writes its `id_photo_view` audit row **before** decrypting anything, so a
+view that then fails is still on the record as an attempt, and serves the
+bytes with `Cache-Control: no-store`, `Content-Disposition: inline` and
+`X-Content-Type-Options: nosniff`.
+
+goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, hence
+`lib/base64.js`. The signature on a trade-in arrives as a
+`data:image/png;base64,...` data URL and goes through the same codec.
+
+### The retention cron
+
+`cronAdd("retention", "30 3 * * *")` deletes `id_documents` whose
+`expires_at` has passed (the encrypted file goes with the record) and
+`notifications` older than twelve months. Each ID photo deletion writes an
+audit row carrying the collection and the record id and nothing else: an
+erased record whose identifying fields survive in a permanent,
+superuser-only table is not really erased. Quote photos ninety days after
+their quote closes still wait on a "closed at" field on `quotes`.
 
 ## API rules
 

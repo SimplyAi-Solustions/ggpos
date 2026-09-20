@@ -340,3 +340,18 @@ export {
 } from "@/lib/api/tradeins"
 
 export { isNotFound, refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
+
+// ---------------------------------------------------------------------------
+// Selling, cash, labels and the item page (Phase 2)
+//
+// The demo item store is exported so the Sell, Stock, Home and label screens
+// read the very array `createItem` above appends to: an item added on Add
+// stock is sellable on the next screen without a server. Nothing outside
+// `lib/api/demo/` should touch it.
+// ---------------------------------------------------------------------------
+export { demoItems as demoItemStore }
+export * from "@/lib/api/item-shape"
+export * from "@/lib/api/items"
+export * from "@/lib/api/sales"
+export * from "@/lib/api/cash"
+export * from "@/lib/api/labels"
