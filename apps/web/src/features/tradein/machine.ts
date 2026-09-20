@@ -261,7 +261,7 @@ export function ageAt(dob: string | undefined, now: Date): number | null {
  * Why this customer may not take cash, in the order the counter would find
  * out: a standing flag first, then their age, then the amount itself.
  * `{ kind: "none" }` means cash is on the table, which is not the same as
- * saying the ID is already good enough: that is `needsIdGate`.
+ * saying the ID is already good enough: that is `idGate`.
  */
 export function cashBlock(
   facts: CustomerGateFacts,
@@ -559,6 +559,10 @@ export function payoutFor(
     return { type: "credit", cash: 0, credit: sums.credit }
   }
   const cash = Math.min(Math.max(0, mixedCash), sums.cash)
+  // Nothing in the cash box is not a mixed payout at all: paying the whole
+  // thing as credit at the cash rate would quietly short the customer the
+  // difference between the two rates, so it becomes a plain credit payout.
+  if (cash === 0) return { type: "credit", cash: 0, credit: sums.credit }
   return { type: "mixed", cash, credit: sums.cash - cash }
 }
 
@@ -630,9 +634,29 @@ export function toLineInputs(
   return lines.map((line) => {
     const offer = lineOffer(line, rules, settings)
     // The stored offer is the one the customer is taking, so the receipt and
-    // the item's cost match what was actually paid.
+    // the item's cost match what was actually paid. A mixed payout is priced
+    // at the cash rate throughout, which is what `payoutFor` splits.
     const perUnit = payoutType === "credit" ? offer.credit : offer.cash
     const pct = payoutType === "credit" ? offer.creditPct : offer.cashPct
+
+    if (line.kind === "bulk") {
+      // One line, quantity one, the flat figure as the price. The card
+      // count lives in the title, because a quantity here would be
+      // multiplied by the completion route and turn £20 into £8,000.
+      const flat = line.bulkOffer ?? 0
+      return {
+        id: line.id,
+        kind: "other" as const,
+        gameId: line.gameId,
+        title: bulkTitle(line.qty),
+        qty: 1,
+        marketPrice: flat,
+        marketSource: BULK_SOURCE,
+        offerPrice: flat,
+        accepted: line.accepted,
+      }
+    }
+
     return {
       id: line.id,
       kind: itemKindFor(line.kind),
@@ -642,11 +666,17 @@ export function toLineInputs(
       finish: line.finish,
       condition: line.kind === "retro" ? undefined : line.condition,
       completeness: line.kind === "retro" ? line.condition : undefined,
+      cosmeticGrade: line.kind === "retro" ? line.cosmetic : undefined,
       qty: line.qty,
       marketPrice: line.marketPence,
       marketSource: line.marketSource,
       offerPct: pct,
       offerPrice: perUnit,
+      // Kept beside the price so the audit row says why it is not the band's
+      // figure, and so a reopened draft does not quietly reprice the line.
+      overrideCash: line.overrideCash,
+      overrideCredit: line.overrideCredit,
+      overrideReason: line.overrideReason,
       accepted: line.accepted,
     }
   })
@@ -671,19 +701,51 @@ export function hydrate(
     customer,
     tradeInId: record.id,
     payoutType: record.payout_type ?? "credit",
-    lines: lines.map((line, index) => ({
-      key: line.id || `line_${index}`,
-      id: line.id,
-      kind: (line.kind ?? "single") as LineKind,
-      title: line.free_text_title || "Item",
-      cardId: line.card || undefined,
-      gameId: line.game || undefined,
-      finish: line.finish || undefined,
-      condition: line.completeness || line.condition || undefined,
-      qty: line.qty ?? 1,
-      marketPence: line.market_price ?? 0,
-      marketSource: line.market_source || "Manual",
-      accepted: line.accepted !== false,
-    })),
+    lines: lines.map((line, index) => {
+      const key = line.id || `line_${index}`
+      const title = line.free_text_title || "Item"
+
+      // A lot has no column of its own, so it is recognised by the source
+      // the wizard wrote with it, and its count comes back out of the title.
+      if (line.market_source === BULK_SOURCE) {
+        return {
+          key,
+          id: line.id,
+          kind: "bulk" as const,
+          title,
+          gameId: line.game || undefined,
+          qty: bulkCountFrom(title),
+          marketPence: line.market_price ?? 0,
+          marketSource: BULK_SOURCE,
+          bulkOffer: line.offer_price ?? 0,
+          accepted: line.accepted !== false,
+        }
+      }
+
+      // An overridden line comes back overridden. Rebuilding it from the
+      // bands would quietly undo a figure a staff member had to give a
+      // reason for.
+      const overrideCash = line.override_cash || undefined
+      const overrideCredit = line.override_credit || undefined
+
+      return {
+        key,
+        id: line.id,
+        kind: (line.kind ?? "single") as LineKind,
+        title,
+        cardId: line.card || undefined,
+        gameId: line.game || undefined,
+        finish: line.finish || undefined,
+        condition: line.completeness || line.condition || undefined,
+        cosmetic: (line.cosmetic_grade || undefined) as TradeLine["cosmetic"],
+        qty: line.qty ?? 1,
+        marketPence: line.market_price ?? 0,
+        marketSource: line.market_source || "Manual",
+        overrideCash,
+        overrideCredit,
+        overrideReason: line.override_reason || undefined,
+        accepted: line.accepted !== false,
+      }
+    }),
   }
 }

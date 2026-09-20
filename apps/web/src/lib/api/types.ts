@@ -303,12 +303,18 @@ export interface TradeInLineRecord extends BaseRecord {
   finish?: string
   condition?: Condition | ""
   completeness?: Completeness | ""
+  /** Retro only: A, B or C. Copied onto `items.cosmetic_grade`. */
+  cosmetic_grade?: string
   qty?: number
   market_price?: number
   market_currency?: "GBP" | "EUR" | "USD"
   market_source?: string
   offer_pct?: number
   offer_price?: number
+  /** Integer GBP pence; 0 means no override was made. */
+  override_cash?: number
+  override_credit?: number
+  override_reason?: string
   accepted?: boolean
   item?: string
 }
@@ -324,13 +330,23 @@ export interface TradeInLineInput {
   finish?: string
   condition?: string
   completeness?: string
+  /** Retro only: how the box and label look, A, B or C. */
+  cosmeticGrade?: string
   qty: number
-  /** Integer GBP pence. */
+  /** Integer GBP pence, per unit. */
   marketPrice: number
   marketSource?: string
   offerPct?: number
-  /** Integer GBP pence, for the whole line. */
+  /** Integer GBP pence, per unit. */
   offerPrice: number
+  /**
+   * What a staff member put in place of the band's figure, and why. Kept
+   * beside the price so the audit row says why, and so reopening a draft
+   * does not reprice a line somebody had to justify. Integer GBP pence.
+   */
+  overrideCash?: number
+  overrideCredit?: number
+  overrideReason?: string
   accepted: boolean
 }
 

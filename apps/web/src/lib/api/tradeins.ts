@@ -279,12 +279,18 @@ function toLineBody(tradeInId: string, line: TradeInLineInput) {
     finish: line.finish || undefined,
     condition: line.condition || undefined,
     completeness: line.completeness || undefined,
+    cosmetic_grade: line.cosmeticGrade || undefined,
     qty: line.qty,
     market_price: line.marketPrice,
     market_currency: "GBP" as const,
     market_source: line.marketSource || undefined,
     offer_pct: line.offerPct,
     offer_price: line.offerPrice,
+    // Zero is how the columns say "no override was made", which is also how
+    // PocketBase round-trips an unset integer field.
+    override_cash: line.overrideCash ?? 0,
+    override_credit: line.overrideCredit ?? 0,
+    override_reason: line.overrideReason || undefined,
     accepted: line.accepted,
   }
 }

@@ -1692,5 +1692,125 @@ RETENTION_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&
 echo "$RETENTION_AUDIT" | grep -qF "$EXPIRED_DOC" || fail "the retention audit row does not name the deleted document"
 ok "the retention purge is audited by record id"
 
+# -----------------------------------------------------------------------
+# 18. Bulk lots and overridden lines.
+# -----------------------------------------------------------------------
+
+# --- 18a. A bulk lot completes as one ordinary stock line ----------------
+# The wizard sends a lot as a single "other" line of qty 1 with a flat
+# figure in both offer_price and market_price, so nothing downstream has to
+# know it is a lot.
+LOT_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Bulk Lot Check","email":"bulk-lot-check@local.test","source":"counter"}' | jval id)"
+LOT_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$LOT_SELLER_ID\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
+LOT_LINE_JSON="$(curl -s -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$LOT_TRADE_ID\",\"kind\":\"other\",\"game\":\"$GAME_ID\",\"free_text_title\":\"Bulk lot, 400 cards\",\"qty\":1,\"market_price\":5000,\"market_currency\":\"GBP\",\"market_source\":\"Bulk lot\",\"offer_price\":5000,\"accepted\":true}")"
+LOT_LINE_ID="$(echo "$LOT_LINE_JSON" | jval id)"
+[ -n "$LOT_LINE_ID" ] || fail "could not create the bulk lot line (is \"other\" in trade_in_lines.kind?): $LOT_LINE_JSON"
+
+LOT_STATUS="$(curl -s -o "$TMP_DIR/lot.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/trade-ins/$LOT_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":5000,"terms_accepted":true}')"
+[ "$LOT_STATUS" = "200" ] || fail "completing a bulk lot at its flat figure returned $LOT_STATUS: $(cat "$TMP_DIR/lot.json")"
+
+LOT_ITEM_COUNT="$(node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => process.stdout.write(String((JSON.parse(d).items || []).length)));
+' <"$TMP_DIR/lot.json")"
+[ "$LOT_ITEM_COUNT" = "1" ] || fail "a bulk lot created $LOT_ITEM_COUNT items, expected 1"
+[ "$(jval labels_queued <"$TMP_DIR/lot.json")" = "1" ] || fail "a bulk lot queued $(jval labels_queued <"$TMP_DIR/lot.json") labels, expected 1"
+[ "$(jval credit_balance <"$TMP_DIR/lot.json")" = "5000" ] || fail "a bulk lot paid '$(jval credit_balance <"$TMP_DIR/lot.json")' in credit, expected 5000"
+
+LOT_ITEM_ID="$(jval "items.0.id" <"$TMP_DIR/lot.json")"
+LOT_ITEM_JSON="$(curl -s "$BASE/api/collections/items/records/$LOT_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$LOT_ITEM_JSON" | jval kind)" = "other" ] || fail "the lot's item kind is '$(echo "$LOT_ITEM_JSON" | jval kind)', expected other"
+[ "$(echo "$LOT_ITEM_JSON" | jval qty)" = "1" ] || fail "the lot's item qty is '$(echo "$LOT_ITEM_JSON" | jval qty)', expected 1"
+[ "$(echo "$LOT_ITEM_JSON" | jval cost)" = "5000" ] || fail "the lot's item cost is '$(echo "$LOT_ITEM_JSON" | jval cost)', expected 5000"
+[ "$(echo "$LOT_ITEM_JSON" | jval title)" = "Bulk lot, 400 cards" ] || fail "the lot's item title is '$(echo "$LOT_ITEM_JSON" | jval title)'"
+echo "$(echo "$LOT_ITEM_JSON" | jval sku)" | grep -Eq '^GG[SGRPAX][0-9A-HJKMNP-TV-Z]{6}$' || fail "the lot's item has no valid SKU"
+ok "a bulk lot completes as one 'other' item of qty 1 with one label"
+
+LOT_MISMATCH="$(curl -s -o "$TMP_DIR/lot-mismatch.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/trade-ins/$LOT_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":4000,"terms_accepted":true}')"
+[ "$LOT_MISMATCH" = "409" ] || fail "re-completing the lot returned $LOT_MISMATCH, expected 409: $(cat "$TMP_DIR/lot-mismatch.json")"
+ok "a completed bulk lot cannot be completed again"
+
+LOT_RECEIPT="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/trade-ins/$LOT_TRADE_ID/receipt")"
+[ "$(echo "$LOT_RECEIPT" | jval "lines.0.title")" = "Bulk lot, 400 cards" ] || fail "the lot's receipt line reads '$(echo "$LOT_RECEIPT" | jval "lines.0.title")'"
+[ "$(echo "$LOT_RECEIPT" | jval "lines.0.line_total")" = "5000" ] || fail "the lot's receipt line total is '$(echo "$LOT_RECEIPT" | jval "lines.0.line_total")', expected 5000"
+
+curl -s -o "$TMP_DIR/stockbook3.csv" \
+  -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/exports/stock-book?from=$TODAY&to=$TODAY"
+tr -d '\r' <"$TMP_DIR/stockbook3.csv" >"$TMP_DIR/stockbook3.txt"
+LOT_SKU="$(echo "$LOT_ITEM_JSON" | jval sku)"
+grep "^$LOT_SKU," "$TMP_DIR/stockbook3.txt" | grep -q '"Bulk lot, 400 cards",50\.00,,,,$' \
+  || fail "the lot is not an ordinary unsold row in the stock book: $(grep "^$LOT_SKU," "$TMP_DIR/stockbook3.txt")"
+ok "a bulk lot reads as an ordinary line on the receipt and in the stock book"
+
+# --- 18b. An overridden line, and a retro line's cosmetic grade ----------
+OVERRIDE_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Override Check","email":"override-check@local.test","source":"counter"}' | jval id)"
+RETRO_GAME_ID="$(curl -s "$BASE/api/collections/games/records?filter=key%3D%27retro%27" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$RETRO_GAME_ID" ] || fail "seeded game 'retro' not found"
+OVERRIDE_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$OVERRIDE_SELLER_ID\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
+
+OVERRIDE_REASON="Box is water damaged but the disc is mint"
+OVERRIDE_LINE_JSON="$(curl -s -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$OVERRIDE_TRADE_ID\",\"kind\":\"retro\",\"game\":\"$RETRO_GAME_ID\",\"free_text_title\":\"Zelda Ocarina of Time\",\"completeness\":\"cib\",\"cosmetic_grade\":\"B\",\"qty\":1,\"market_price\":6000,\"market_currency\":\"GBP\",\"offer_price\":2000,\"override_reason\":\"$OVERRIDE_REASON\",\"override_cash\":2000,\"override_credit\":2600,\"accepted\":true}")"
+OVERRIDE_LINE_ID="$(echo "$OVERRIDE_LINE_JSON" | jval id)"
+[ -n "$OVERRIDE_LINE_ID" ] || fail "could not create the overridden line: $OVERRIDE_LINE_JSON"
+[ "$(echo "$OVERRIDE_LINE_JSON" | jval cosmetic_grade)" = "B" ] || fail "trade_in_lines.cosmetic_grade did not stick"
+[ "$(echo "$OVERRIDE_LINE_JSON" | jval override_credit)" = "2600" ] || fail "trade_in_lines.override_credit did not stick"
+
+# A plain line alongside it, so the audit meta has to name only the one.
+PLAIN_LINE_ID="$(curl -s -X POST "$BASE/api/collections/trade_in_lines/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"trade_in\":\"$OVERRIDE_TRADE_ID\",\"kind\":\"sealed\",\"game\":\"$GAME_ID\",\"free_text_title\":\"Sealed Booster Box\",\"qty\":1,\"market_price\":8000,\"market_currency\":\"GBP\",\"offer_price\":5000,\"accepted\":true}" | jval id)"
+[ -n "$PLAIN_LINE_ID" ] || fail "could not create the plain line beside the overridden one"
+
+OVERRIDE_STATUS="$(curl -s -o "$TMP_DIR/override.json" -w '%{http_code}' \
+  -X POST "$BASE/api/vault/trade-ins/$OVERRIDE_TRADE_ID/complete" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"payout_type":"credit","payout_cash":0,"payout_credit":7000,"terms_accepted":true}')"
+[ "$OVERRIDE_STATUS" = "200" ] || fail "the overridden buy-in returned $OVERRIDE_STATUS: $(cat "$TMP_DIR/override.json")"
+
+# offer_price is still what is paid, overridden or not: 2000 + 5000.
+[ "$(jval "trade_in.payout_credit" <"$TMP_DIR/override.json")" = "7000" ] \
+  || fail "the overridden buy-in paid '$(jval "trade_in.payout_credit" <"$TMP_DIR/override.json")', expected 7000"
+
+RETRO_ITEM_ID="$(curl -s "$BASE/api/collections/items/records?filter=trade_in_line%3D%22$OVERRIDE_LINE_ID%22" \
+  -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
+[ -n "$RETRO_ITEM_ID" ] || fail "no item was created for the overridden retro line"
+RETRO_ITEM_JSON="$(curl -s "$BASE/api/collections/items/records/$RETRO_ITEM_ID" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$RETRO_ITEM_JSON" | jval cosmetic_grade)" = "B" ] \
+  || fail "items.cosmetic_grade is '$(echo "$RETRO_ITEM_JSON" | jval cosmetic_grade)', expected B from the line"
+[ "$(echo "$RETRO_ITEM_JSON" | jval cost)" = "2000" ] || fail "the overridden item's cost is not the offer_price"
+ok "a retro line's cosmetic grade is copied onto its item"
+
+# The sealed line is not retro, so it carries no cosmetic grade.
+SEALED_ITEM_GRADE="$(curl -s "$BASE/api/collections/items/records?filter=trade_in_line%3D%22$PLAIN_LINE_ID%22" \
+  -H "Authorization: $STAFF_TOKEN" | jval "items.0.cosmetic_grade")"
+[ -z "$SEALED_ITEM_GRADE" ] || fail "a sealed item picked up a cosmetic grade ('$SEALED_ITEM_GRADE')"
+ok "a non-retro line's item carries no cosmetic grade"
+
+OVERRIDE_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22trade_in_complete%22%26%26record%3D%22$OVERRIDE_TRADE_ID%22" \
+  -H "Authorization: $SUPER_TOKEN")"
+echo "$OVERRIDE_AUDIT" | grep -qF "$OVERRIDE_LINE_ID" || fail "the audit meta does not list the overridden line id: $OVERRIDE_AUDIT"
+echo "$OVERRIDE_AUDIT" | grep -qF "$PLAIN_LINE_ID" && fail "the audit meta names a line that was not overridden"
+echo "$OVERRIDE_AUDIT" | grep -qF "water damaged" && fail "the override reason reached audit_log; it belongs on the line row only"
+ok "the audit meta lists the overridden line ids and never the reason"
+
 echo
 echo "All checks passed ($PASS_COUNT)."
