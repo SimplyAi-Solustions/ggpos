@@ -1375,21 +1375,25 @@ PART_SKU="$(curl -s "$BASE/api/collections/items/records/$PART_ITEM" -H "Authori
 
 curl -s -o "$TMP_DIR/stockbook2.csv" \
   -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/exports/stock-book?from=$TODAY&to=$TODAY"
-PART_ROWS="$(grep -c "^$PART_SKU," "$TMP_DIR/stockbook2.csv" || true)"
+# The CSV is CRLF terminated (RFC 4180), so the line-anchored greps below
+# read a copy with the carriage returns taken out.
+tr -d '\r' <"$TMP_DIR/stockbook2.csv" >"$TMP_DIR/stockbook2.txt"
+
+PART_ROWS="$(grep -c "^$PART_SKU," "$TMP_DIR/stockbook2.txt" || true)"
 [ "$PART_ROWS" = "2" ] || fail "a box of 3 with 1 sold produced $PART_ROWS stock book rows, expected 2 (one sold, one remaining)"
-grep "^$PART_SKU," "$TMP_DIR/stockbook2.csv" | grep -q ',4\.00,.*,10\.00,6\.00$' \
-  || fail "no sold row of 4.00 cost / 10.00 sale / 6.00 margin for $PART_SKU: $(grep "^$PART_SKU," "$TMP_DIR/stockbook2.csv")"
-grep "^$PART_SKU," "$TMP_DIR/stockbook2.csv" | grep -q ',8\.00,,,,$' \
-  || fail "no remaining row of 8.00 cost with blank sale columns for $PART_SKU: $(grep "^$PART_SKU," "$TMP_DIR/stockbook2.csv")"
+grep "^$PART_SKU," "$TMP_DIR/stockbook2.txt" | grep -q ',4\.00,.*,10\.00,6\.00$' \
+  || fail "no sold row of 4.00 cost / 10.00 sale / 6.00 margin for $PART_SKU: $(grep "^$PART_SKU," "$TMP_DIR/stockbook2.txt")"
+grep "^$PART_SKU," "$TMP_DIR/stockbook2.txt" | grep -q ',8\.00,,,,$' \
+  || fail "no remaining row of 8.00 cost with blank sale columns for $PART_SKU: $(grep "^$PART_SKU," "$TMP_DIR/stockbook2.txt")"
 ok "the stock book writes one row per sale line plus one for the remaining stock"
 
 # The refunded cash-sale item sold nothing in the end, so it is back to a
 # single remaining row rather than a sold one.
 CASH_SKU="$(curl -s "$BASE/api/collections/items/records/$CASH_ITEM" -H "Authorization: $STAFF_TOKEN" | jval sku)"
-CASH_ROWS="$(grep -c "^$CASH_SKU," "$TMP_DIR/stockbook2.csv" || true)"
+CASH_ROWS="$(grep -c "^$CASH_SKU," "$TMP_DIR/stockbook2.txt" || true)"
 [ "$CASH_ROWS" = "1" ] || fail "the fully refunded item produced $CASH_ROWS stock book rows, expected 1"
-grep "^$CASH_SKU," "$TMP_DIR/stockbook2.csv" | grep -q ',6\.00,,,,$' \
-  || fail "the fully refunded item's row is not a remaining row: $(grep "^$CASH_SKU," "$TMP_DIR/stockbook2.csv")"
+grep "^$CASH_SKU," "$TMP_DIR/stockbook2.txt" | grep -q ',6\.00,,,,$' \
+  || fail "the fully refunded item's row is not a remaining row: $(grep "^$CASH_SKU," "$TMP_DIR/stockbook2.txt")"
 ok "a fully refunded sale line leaves no sold row in the stock book"
 
 echo

@@ -6,16 +6,11 @@
  * Live mode uses the transactional routes in docs/api-contract.md ("Sales",
  * "Step-up"); demo mode answers the same shapes from memory.
  */
-import {
-  parseTierPerk,
-  type LoyaltyProgramme,
-  type LoyaltyRule,
-  type LoyaltyTier,
-  type TierPerk,
-} from "@gg/shared"
+import { parseTierPerk, type TierPerk } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
+import { getCounterConfig } from "@/lib/api/config"
 import * as demo from "@/lib/api/demo/sales"
 import type {
   CompleteSalePayload,
@@ -79,108 +74,28 @@ export async function getStepUp(password: string): Promise<StepUpToken> {
 // Loyalty, customers and vouchers
 // ---------------------------------------------------------------------------
 
-interface ProgrammeRecord {
-  enabled?: boolean
-  earn_per_pound_sales?: number
-  earn_on_trade_in_credit?: number
-  points_per_pound_redemption?: number
-  min_redeem_points?: number
-  max_points_share_of_sale?: number
-  expiry_months_inactive?: number
-  tier_window_months?: number
-  welcome_bonus?: number
-  referral_bonus_referrer?: number
-  referral_bonus_referee?: number
-}
-
-interface TierRecord {
-  id: string
-  name: string
-  threshold_points?: number
-  sort?: number
-  perks?: unknown
-  paid_plan?: boolean
-}
-
-function toTier(record: TierRecord): LoyaltyTier {
-  const raw = Array.isArray(record.perks) ? record.perks : []
-  return {
-    id: record.id,
-    name: record.name,
-    thresholdPoints: record.threshold_points ?? 0,
-    sort: record.sort ?? 0,
-    perks: raw
-      .map(parseTierPerk)
-      .filter((perk): perk is TierPerk => perk !== null),
-    paidPlan: record.paid_plan === true,
-  }
-}
-
 /**
  * The live programme, its rules and its tiers, so the points preview on the
- * Sell screen is the same arithmetic the server runs. `loyalty_rules` is
- * admin-only, so ordinary staff get the base rate and no rule bonuses; the
- * server still applies them, and the sale response carries the real figure.
+ * Sell screen is the same arithmetic the server runs.
+ *
+ * `loyalty_programme`, `loyalty_rules` and `loyalty_tiers` are admin-only, so
+ * this goes through `GET /api/vault/config`, which every staff member may
+ * read. Screens use `useCounterConfig` instead of calling this directly, so
+ * the whole counter shares one read.
  */
 export async function getLoyaltySetup(): Promise<LoyaltySetup> {
-  if (isDemo()) return demo.loyaltySetup()
-
-  const [programme, tiers] = await Promise.all([
-    pb.collection("loyalty_programme").getFirstListItem<ProgrammeRecord>(""),
-    pb.collection("loyalty_tiers").getFullList<TierRecord>({ sort: "sort" }),
-  ])
-  const rules = await pb
-    .collection("loyalty_rules")
-    .getFullList<{
-      id: string
-      name: string
-      type: LoyaltyRule["type"]
-      conditions?: LoyaltyRule["conditions"]
-      value?: number
-      active?: boolean
-      priority?: number
-      starts_at?: string
-      ends_at?: string
-    }>({ filter: "active = true", sort: "-priority" })
-    .catch(() => [])
-
-  return {
-    programme: {
-      enabled: programme.enabled !== false,
-      earnPerPoundSales: programme.earn_per_pound_sales ?? 0,
-      earnPerPoundTradeInCredit: programme.earn_on_trade_in_credit ?? 0,
-      pointsPerPoundRedemption: programme.points_per_pound_redemption ?? 100,
-      minRedeemPoints: programme.min_redeem_points ?? 0,
-      maxPointsShareOfSale: programme.max_points_share_of_sale ?? 0,
-      expiryMonthsInactive: programme.expiry_months_inactive ?? 0,
-      tierWindowMonths: programme.tier_window_months ?? 12,
-      welcomeBonus: programme.welcome_bonus ?? 0,
-      referralBonusReferrer: programme.referral_bonus_referrer ?? 0,
-      referralBonusReferee: programme.referral_bonus_referee ?? 0,
-    },
-    rules: rules.map((rule) => ({
-      id: rule.id,
-      name: rule.name,
-      type: rule.type,
-      conditions: rule.conditions ?? {},
-      value: rule.value ?? 0,
-      active: rule.active !== false,
-      priority: rule.priority ?? 0,
-      startsAt: rule.starts_at || null,
-      endsAt: rule.ends_at || null,
-    })),
-    tiers: tiers.map(toTier),
-  }
+  return (await getCounterConfig()).loyalty
 }
 
-/** The programme on its own, for the buy-in wizard's credit bonus preview. */
-export async function getLoyaltyProgramme(): Promise<LoyaltyProgramme> {
-  const setup = await getLoyaltySetup()
-  return setup.programme
+/** `loyalty_tiers` as an expand hands it over, perks still raw JSON. */
+interface ExpandedTier {
+  id: string
+  name?: string
+  perks?: unknown
 }
 
 type PrivateWithCustomer = CustomerPrivateRecord & {
-  expand?: { customer?: CustomerRecord; tier?: TierRecord }
+  expand?: { customer?: CustomerRecord; tier?: ExpandedTier }
 }
 
 function toSaleCustomer(row: PrivateWithCustomer): SaleCustomer {
@@ -192,7 +107,11 @@ function toSaleCustomer(row: PrivateWithCustomer): SaleCustomer {
     code: customer?.code ?? "",
     tierId: tier?.id ?? null,
     tierName: tier?.name ?? null,
-    perks: tier ? toTier(tier).perks : [],
+    // The expanded tier carries its perks as plain JSON; anything the shared
+    // evaluator does not recognise is dropped rather than half-read.
+    perks: (Array.isArray(tier?.perks) ? tier.perks : [])
+      .map(parseTierPerk)
+      .filter((perk): perk is TierPerk => perk !== null),
     creditBalance: row.credit_balance ?? 0,
     pointsBalance: row.points_balance ?? 0,
   }

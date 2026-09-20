@@ -42,7 +42,6 @@ import type {
   CustomerRecord,
   IdCheckResult,
   IdDocumentSummary,
-  MergeResult,
   OfferLimits,
   PricingRuleRow,
   ReceiptEmailResult,
@@ -525,5 +524,3 @@ export async function latestIdDocument(customerId: string): Promise<string | nul
   return result.document?.id ?? null
 }
 
-/** Used by tests and by any screen that wants the dates as well as the id. */
-export { type IdDocumentSummary, type MergeResult }
