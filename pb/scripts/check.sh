@@ -4182,7 +4182,7 @@ ok "a quote message notifies the other side, with an in-app link"
 P5_CARD_A="$(p5_make_card "Phase 5 Card A" "6")"
 P5_OFFER_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"lines\":[{\"card\":\"$P5_CARD_A\",\"title\":\"Phase 5 Card A\",\"condition\":\"NM\",\"qty\":1,\"market_price\":3000,\"market_source\":\"Cardmarket\",\"offer_price\":1800},{\"title\":\"Bulk lot\",\"qty\":2,\"market_price\":0,\"market_source\":\"Bulk lot\",\"offer_price\":500}],\"message\":\"Here is what we can offer\"}")"
+  -d "{\"lines\":[{\"card\":\"$P5_CARD_A\",\"title\":\"Phase 5 Card A\",\"condition\":\"NM\",\"qty\":1,\"market_price\":3000,\"market_source\":\"Cardmarket\",\"offer_price\":1800},{\"title\":\"Bulk lot\",\"kind\":\"other\",\"game\":\"$GAME_ID\",\"qty\":2,\"market_price\":0,\"market_source\":\"Bulk lot\",\"offer_price\":500}],\"message\":\"Here is what we can offer\"}")"
 [ "$(echo "$P5_OFFER_JSON" | tail -n1)" = "200" ] || fail "the quote offer returned $(echo "$P5_OFFER_JSON" | tail -n1): $(echo "$P5_OFFER_JSON" | head -n -1)"
 P5_OFFER_TOTAL="$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.offer_total")"
 [ "$P5_OFFER_TOTAL" = "2800" ] || fail "the offer total is '$P5_OFFER_TOTAL', expected 2800 (1800 + 2*500), recomputed server-side"
@@ -4190,6 +4190,18 @@ P5_OFFER_TOTAL="$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.offer_total")
 P5_OFFER_EXPIRES="$(echo "$P5_OFFER_JSON" | head -n -1 | jval "quote.offer_expires_at")"
 [ -n "$P5_OFFER_EXPIRES" ] || fail "the offer did not set offer_expires_at"
 ok "a staff offer recomputes offer_total server-side from the lines (2800) and sets an expiry"
+
+# a non-integer or negative offer_price/market_price/qty is refused
+# outright, never rounded into shape (money is never a float once stored)
+P5_BAD_OFFER_STATUS="$(curl -s -o "$TMP_DIR/p5-bad-offer.json" -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"lines":[{"title":"Bad line","kind":"other","qty":1,"market_price":100,"offer_price":49.5}]}')"
+[ "$P5_BAD_OFFER_STATUS" = "400" ] || fail "an offer line with a non-integer offer_price returned $P5_BAD_OFFER_STATUS, expected 400: $(cat "$TMP_DIR/p5-bad-offer.json")"
+P5_BAD_OFFER_STATUS_2="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/quotes/$P5_QUOTE_ID/offer" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"lines":[{"title":"Bad line","kind":"other","qty":0,"market_price":100,"offer_price":50}]}')"
+[ "$P5_BAD_OFFER_STATUS_2" = "400" ] || fail "an offer line with qty 0 returned $P5_BAD_OFFER_STATUS_2, expected 400"
+ok "an offer line with a non-integer or below-minimum amount is refused with 400, never rounded"
 
 P5_OFFER_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22quote_offer%22%26%26record%3D%22$P5_QUOTE_ID%22" -H "Authorization: $SUPER_TOKEN" | jval totalItems)"
 [ "${P5_OFFER_AUDIT:-0}" -ge 1 ] || fail "the offer was not audited"
