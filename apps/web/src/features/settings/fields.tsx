@@ -80,6 +80,14 @@ export function PercentField({
   )
 }
 
+/**
+ * A whole count with its unit.
+ *
+ * The unit ("Hours", "Days") is the input's own trailing hint, to the right
+ * of the underline, which is what DESIGN.md's Input contract says a hint is.
+ * Passed to `Field` instead it became a second line under the label, so the
+ * label column read HOLD and then HOURS on two rows.
+ */
 export function CountField({
   id,
   label,
@@ -91,13 +99,14 @@ export function CountField({
   className,
 }: BaseProps) {
   return (
-    <Field label={label} hint={hint} htmlFor={id} className={className}>
+    <Field label={label} htmlFor={id} className={className}>
       <Input
         id={id}
         className="tnum"
         inputMode="numeric"
         autoComplete="off"
         maxLength={6}
+        trailingHint={hint}
         aria-invalid={Boolean(error) || undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}

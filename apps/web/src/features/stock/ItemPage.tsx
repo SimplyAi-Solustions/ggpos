@@ -48,10 +48,10 @@ import { MoneyInput } from "@/features/sell/money-input"
 import { penceToField } from "@/features/sell/money"
 import { addItemToBasket } from "@/features/sell/basket-store"
 import { PriceSources } from "@/features/pricing"
-// The hold line says the time the way the want-list notification says it
-// ("Held for you until 22 Sep, 14:00"), so the counter and the customer's
-// email cannot read differently.
-import { formatDateTime as holdTime } from "@/features/quotes/format"
+// One date shape on this page, and the same one the want-list notification
+// uses ("Held for you until 22 Sep, 14:00"), so the counter and the
+// customer's email cannot read differently.
+import { formatDateTime } from "@/lib/dates"
 import { holdHasEnded } from "@/features/quotes/filters"
 import { suggestedSellPrice } from "@/features/pricing/suggest"
 import { refusalOrFallback } from "@/lib/api/refusal"
@@ -93,16 +93,6 @@ const KIND_LABELS: Record<ItemDetail["kind"], string> = {
 /** "holo" reads as "Holo" beside a label, not as a shout. */
 function sentence(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1)
-}
-
-function when(iso?: string | null): string {
-  if (!iso) return ""
-  return new Date(iso).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 function Row({
@@ -530,7 +520,7 @@ export function ItemPage({ sku }: { sku: string }) {
               ) : (
                 <span className="text-foreground">{item.reservedForName}</span>
               )}
-              {item.reservedUntil ? ` until ${holdTime(item.reservedUntil)}` : ""}
+              {item.reservedUntil ? ` until ${formatDateTime(item.reservedUntil)}` : ""}
             </>
           )}
         </p>
@@ -671,7 +661,7 @@ export function ItemPage({ sku }: { sku: string }) {
             {item.supplier_ref || (item.source === "opening_stock" ? "Opening stock" : "Supplier")}
           </Row>
         )}
-        {item.acquired_at ? <Row label="Acquired">{when(item.acquired_at)}</Row> : null}
+        {item.acquired_at ? <Row label="Acquired">{formatDateTime(item.acquired_at)}</Row> : null}
       </div>
 
       {note || error ? (
@@ -744,7 +734,7 @@ export function ItemPage({ sku }: { sku: string }) {
                 className="flex min-h-12 items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
               >
                 <span className="tnum shrink-0 font-mono text-[13px] text-muted-foreground-2">
-                  {when(event.at)}
+                  {formatDateTime(event.at)}
                 </span>
                 <span className="min-w-0 flex-1 text-[15px] text-foreground">
                   {event.detail}

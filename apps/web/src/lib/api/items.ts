@@ -8,6 +8,8 @@
 import { ClientResponseError } from "pocketbase"
 import { displayCode } from "@gg/shared"
 
+import { formatDateTime } from "@/lib/dates"
+
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
@@ -119,7 +121,7 @@ async function historyFor(item: ExpandedItem): Promise<ItemEvent[]> {
     events.push({
       kind: "reserved",
       at: item.updated ?? "",
-      detail: `Reserved until ${new Date(item.reserved_until).toLocaleString("en-GB")}`,
+      detail: `Reserved until ${formatDateTime(item.reserved_until)}`,
     })
   }
   if (item.status === "written_off") {

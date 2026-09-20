@@ -693,41 +693,46 @@ export function ItemsStep({
         </p>
       ) : null}
 
-      {/* ---- Totals ------------------------------------------------------ */}
-      <div className="sticky bottom-[var(--gg-dock-h,0px)] z-10 mt-10 border-t border-hairline bg-background py-4">
-        <dl className="flex flex-wrap items-baseline gap-x-10 gap-y-3">
-          <div className="flex items-baseline gap-3">
-            <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">
-              Market
-            </dt>
-            <dd className="tnum text-[15px] text-foreground">
-              {formatGBP(sums.market)}
-            </dd>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">
-              Cash offer
-            </dt>
-            <dd
-              data-testid="total-cash"
-              className="tnum text-[15px] text-foreground"
-            >
-              {formatGBP(sums.cash)}
-            </dd>
-          </div>
-          <div className="flex items-baseline gap-3">
-            <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">
-              Credit offer
-            </dt>
-            <dd
-              data-testid="total-credit"
-              className="tnum text-[15px] text-foreground"
-            >
-              {formatGBP(sums.credit)}
-            </dd>
-          </div>
-        </dl>
-      </div>
+      {/* ---- Totals ------------------------------------------------------
+          Only once something is on the counter: three £0.00 figures over an
+          empty step are noise, and the sticky bar has nothing to summarise
+          until there is a line. */}
+      {lines.length > 0 ? (
+  <div className="sticky bottom-[var(--gg-dock-h,0px)] z-10 mt-10 border-t border-hairline bg-background py-4">
+          <dl className="flex flex-wrap items-baseline gap-x-10 gap-y-3">
+            <div className="flex items-baseline gap-3">
+              <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">
+                Market
+              </dt>
+              <dd className="tnum text-[15px] text-foreground">
+                {formatGBP(sums.market)}
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-3">
+              <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">
+                Cash offer
+              </dt>
+              <dd
+                data-testid="total-cash"
+                className="tnum text-[15px] text-foreground"
+              >
+                {formatGBP(sums.cash)}
+              </dd>
+            </div>
+            <div className="flex items-baseline gap-3">
+              <dt className="font-mono text-[11px] leading-[1.4] font-bold tracking-[0.16em] text-muted-foreground uppercase">
+                Credit offer
+              </dt>
+              <dd
+                data-testid="total-credit"
+                className="tnum text-[15px] text-foreground"
+              >
+                {formatGBP(sums.credit)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      ) : null}
 
       <OverrideSheet
         open={overrideKey !== null}
