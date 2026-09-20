@@ -1,0 +1,51 @@
+import { ClientResponseError } from "pocketbase"
+
+/**
+ * A refusal the server wrote for staff to read.
+ *
+ * `docs/api-contract.md` is explicit that 409 (state conflict) and 422
+ * (business rule: the ID gate, the cash cap, under 18) carry a `message`
+ * written for the counter, and that 400 carries per-field messages. Those
+ * belong under the control that caused them, never in a toast, so every
+ * screen asks this module for the sentence rather than inventing one.
+ *
+ * Anything else (a dropped connection, a 500) has nothing staff-readable in
+ * it, so `refusalMessage` returns null and the screen shows its own line.
+ */
+
+/** Status codes whose `message` is written to be shown as-is. */
+const SPOKEN = new Set([400, 403, 404, 409, 422])
+
+/** The server's own sentence for this failure, or null when it has none. */
+export function refusalMessage(error: unknown): string | null {
+  if (!(error instanceof ClientResponseError)) return null
+  if (!SPOKEN.has(error.status)) return null
+
+  const message = error.message?.trim()
+  const fields = error.response?.data as
+    | Record<string, { message?: string }>
+    | undefined
+
+  // A 400 from the collection API puts the useful part in `data`; the
+  // top-level message is PocketBase's generic "Failed to create record."
+  if (fields && typeof fields === "object") {
+    const first = Object.values(fields).find((entry) => entry?.message)
+    if (first?.message) return first.message
+  }
+
+  if (!message || /^\s*$/.test(message)) return null
+  return message
+}
+
+/**
+ * The sentence to put under a control after a failed write: the server's
+ * own words when it wrote any, and a plain fallback when it did not.
+ */
+export function refusalOrFallback(error: unknown, fallback: string): string {
+  return refusalMessage(error) ?? fallback
+}
+
+/** True for the 404 a lookup makes when there is simply nothing there. */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ClientResponseError && error.status === 404
+}
