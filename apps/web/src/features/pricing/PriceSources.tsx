@@ -488,7 +488,9 @@ export function PriceSources({
           <Skeleton className="h-4 w-3/5" />
         </div>
       ) : (
-        <ul aria-label="Price sources">
+        {/* Not "Price sources": a screen-reader label that starts with the
+            word Price also answers to the Price field beside it. */}
+        <ul aria-label="Where the value comes from">
           {rows.map((row) => (
             <SourceRow
               key={row.source}
