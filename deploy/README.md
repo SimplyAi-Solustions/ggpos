@@ -60,6 +60,17 @@ Caddy.
 Reloading does not drop any connections to the marketing site - Caddy
 reloads its configuration without restarting.
 
+One thing the snippet relies on and you do not have to configure: Caddy's
+`reverse_proxy` adds the visitor's address to the `X-Forwarded-For` header
+on every request it passes to PocketBase. The Phase 5 migration tells
+PocketBase to trust that header (`trustedProxy`, rightmost address), so
+its rate limits (sign-in attempts, the customer code request, the public
+estimate) count per visitor. Without it every request would arrive from
+Caddy's own address and the whole shop plus every customer would share one
+allowance. If PocketBase is ever moved behind a different proxy, that
+proxy has to set the same header, or the limits go back to counting
+everyone together.
+
 ## 3. First deploy
 
 From `<repo>/deploy`:
