@@ -300,25 +300,27 @@ function releaseExpiredHolds(app) {
       // want-list hold, and this cron has no business touching it.
       if (!want) continue;
 
-      var itemId = item.id;
-      var wantId = want.id;
       var customerId = want.getString("customer");
       var itemTitle = item.getString("title") || "The item you had on hold";
 
+      // item and want are saved through txApp as the same objects already
+      // in hand, not re-fetched by id inside the transaction - the same
+      // reasoning matchOnStock's own comment gives: a re-fetched copy's
+      // writes reach the database fine, but this function's own `item` and
+      // `want` references would then look untouched to anything reading
+      // them afterward.
       var pending = [];
       app.runInTransaction(function (txApp) {
-        var txWant = txApp.findRecordById("want_list", wantId);
-        txWant.set("status", "closed");
-        txApp.save(txWant);
+        want.set("status", "closed");
+        txApp.save(want);
 
         // Saving the item back to in_stock re-fires the same items hook
         // that matched it in the first place, which is what lets the next
         // open want-list row for this card take it immediately.
-        var txItem = txApp.findRecordById("items", itemId);
-        txItem.set("status", "in_stock");
-        txItem.set("reserved_for", "");
-        txItem.set("reserved_until", "");
-        txApp.save(txItem);
+        item.set("status", "in_stock");
+        item.set("reserved_for", "");
+        item.set("reserved_until", "");
+        txApp.save(item);
 
         var n = notifyLib.notify(txApp, {
           customer: customerId,

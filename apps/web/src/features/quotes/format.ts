@@ -1,57 +1,16 @@
 /**
- * The words and dates the quote queue uses.
+ * The words the quote queue uses, and the one date rule it does not share.
  *
- * Kept apart from the screens so the queue, the quote page and the counter's
- * own messages all say the same thing about the same quote, and so the copy
- * rules in DESIGN.md are reviewable in one place.
- *
- * The month names are written out rather than taken from
- * `toLocaleDateString`: en-GB's short month for September is "Sept" on
- * current ICU, which is four characters where every other month is three.
- * `features/portal/format.ts` does the same for My Vault, for the same
- * reason; the counter's own words live here.
+ * The two house date shapes live in `lib/dates.ts`, so the counter, the
+ * customer's email and My Vault cannot drift on how a date reads; they are
+ * re-exported here because every screen in this area already asks this
+ * module for its words. What is local is the counter's own vocabulary: the
+ * status labels, what each status is waiting for, and how old a quote is.
  */
+import { formatDate, formatDateTime } from "@/lib/dates"
 import type { QuoteStatus } from "@/lib/api/types"
 
-const SHORT_MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const
-
-function parse(iso: string | null | undefined): Date | null {
-  if (!iso) return null
-  const date = new Date(iso)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-/** 19 Sep 2026, the house short date. */
-export function formatDate(iso: string | null | undefined): string {
-  const date = parse(iso)
-  if (!date) return ""
-  return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]} ${date.getFullYear()}`
-}
-
-/** 22 Sep, 14:00, for a hold or an offer that runs out this week. */
-export function formatDateTime(iso: string | null | undefined): string {
-  const date = parse(iso)
-  if (!date) return ""
-  const time = date.toLocaleTimeString("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-  return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]}, ${time}`
-}
+export { formatDate, formatDateTime }
 
 /**
  * How long a quote has been sitting there, as a counter would say it.
@@ -61,8 +20,8 @@ export function formatDateTime(iso: string | null | undefined): string {
  * nobody acts on differently.
  */
 export function formatAge(iso: string | null | undefined, now: Date = new Date()): string {
-  const date = parse(iso)
-  if (!date) return ""
+  const date = iso ? new Date(iso) : null
+  if (!date || Number.isNaN(date.getTime())) return ""
   const minutes = Math.floor((now.getTime() - date.getTime()) / 60_000)
   if (minutes < 60) return "Just now"
   const hours = Math.floor(minutes / 60)

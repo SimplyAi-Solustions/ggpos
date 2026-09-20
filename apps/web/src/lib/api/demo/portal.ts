@@ -3,6 +3,7 @@ import { displayCode, formatGBP } from "@gg/shared"
 import { boxArt, cardArt } from "@/kit/placeholder-art"
 import { PLATFORMS } from "@/design/platforms"
 import { DEMO_CARDS, DEMO_GAMES } from "@/lib/api/fixtures"
+import { formatDate } from "@/lib/dates"
 import {
   DEMO_CUSTOMERS,
   demoCreditLedgerFor,
@@ -534,8 +535,24 @@ function findQuote(id: string): DemoQuote {
   return quote
 }
 
+/**
+ * The signed-in customer's own quote, or nothing.
+ *
+ * `GET /api/vault/quotes/:id` 404s a quote belonging to somebody else
+ * rather than 403ing it, so a customer can never learn that another
+ * customer's record exists. The demo shop holds several customers' quotes
+ * now that the counter has a queue, so it has to say the same.
+ */
+function findOwnQuote(id: string): DemoQuote {
+  const quote = demoQuotes.find(
+    (entry) => entry.id === id && entry.customer === demoPortalCustomerId()
+  )
+  if (!quote) throw new Error("That quote is not on your record.")
+  return quote
+}
+
 export function demoGetQuote(id: string): QuoteDetail {
-  const { messages, photos, ...quote } = findQuote(id)
+  const { messages, photos, ...quote } = findOwnQuote(id)
   return {
     // Lines are spread too: the screen must never be handed the very array
     // the store keeps, or an offer edited in one place changes in another.
@@ -585,9 +602,17 @@ export function demoAnswerQuote(
   answer: "accept" | "decline",
   reply?: string
 ): QuoteRecord {
-  const quote = findQuote(id)
+  const quote = findOwnQuote(id)
   if (quote.status !== "offered") {
     throw new Error("This offer is no longer open. Ask the shop for a new one.")
+  }
+  // Only before the expiry, in the route's own words. The hourly cron is
+  // what eventually moves the record to `expired`, so an offer can be past
+  // its time while it still reads as offered.
+  if (quote.offer_expires_at && new Date(quote.offer_expires_at) <= new Date()) {
+    throw new Error(
+      `This offer expired on ${formatDate(quote.offer_expires_at)}. Ask for a new one.`
+    )
   }
   quote.status = answer === "accept" ? "accepted" : "declined"
   if (reply) {
