@@ -60,6 +60,8 @@ concern per file:
 | `..._batch_api_settings.js` | Turns on PocketBase's own Batch API (app-level `settings.batch`, not this app's `settings` collection): `enabled: true`, `maxRequests: 200`, `maxBodySize` 128 MB, `timeout` 60s, so `services/pricesync`'s nightly sync needs no manual dashboard step on a fresh install. |
 | `..._sales_client_id.js` | `sales.client_id` (the offline queue's idempotency key) with a partial unique index, same shape as `trade_ins.number` |
 | `..._stock_counts_close_rule.js` | `stock_counts.updateRule` gains `&& @request.body.status:isset = false`, so `status` can only ever be set at create time or by `stockcounts.pb.js`'s close route |
+| `..._image_limits_and_fx_date.js` | `cards.image_file` / `retro_titles.cover` gain `mimeTypes` (`image/jpeg`, `.png`, `.webp`, `.avif`) and a 2 MB `maxSize`, matching `pb_hooks/adapters/images.js`'s own `MAX_IMAGE_BYTES`; `fx_rates.date`, the ECB rate's own date (see "Card and price adapters" below) |
+| `..._stock_counts_one_open.js` | A partial unique index, `stock_counts (location) WHERE status = 'open'` - only one count may be open per location at once, same shape as `cash_sessions`' one-open-session index. The unique violation this can raise on create is mapped to a plain 409 by `stockcounts.pb.js`'s own `onRecordCreateRequest` hook |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -513,19 +515,47 @@ deleting the ID photo and leaving the buy-in register's seller snapshot
 alone).
 
 Section 19 is Phase 3's, added with the lookup, prices and FX routes: the
-server for this whole script runs under `GG_ADAPTER_TRANSPORT_MODE=offline_fail`
-(see "Environment variables" above), so any of the following that
-mistakenly called an adapter out to the real network would throw and be
-caught here immediately, rather than the check silently passing because a
-live call happened to succeed. It confirms `GET /api/vault/fx` reports
-stale with an empty `rates` object before any `fx_rates` row exists; that a
-`cards` row with a fresh `last_synced` is served by the exact lookup route,
-and by a "set number" search query, with no outbound call at all; that
-`uk-comp` refuses a non-`ebay.co.uk` URL and a sale older than 30 days
-(both 400), then writes a `price_snapshots` row that is chosen ahead of
-every other source and audited; that the prices route puts a converted GBP
-figure beside a snapshot's native amount; and that a snapshot past its
-source's freshness window is flagged stale rather than hidden.
+server for this whole script runs under `GG_ADAPTER_TRANSPORT_MODE=fixture`
+(see "Environment variables" above), so any call that reaches
+`pb_hooks/adapters/fixture_transport.js`'s own mapping gets a real (fixture)
+answer and anything else still throws and is caught here immediately,
+rather than the check silently passing because a live call happened to
+succeed. It confirms `GET /api/vault/fx` reports stale with an empty
+`rates` object before any `fx_rates` row exists; that a `cards` row with a
+fresh `last_synced` is served by the exact lookup route, and by a "set
+number" search query, with no outbound call at all; that `uk-comp` refuses
+a non-`ebay.co.uk` URL and a sale older than 30 days (both 400), then
+writes a `price_snapshots` row that is chosen ahead of every other source
+and audited; that the prices route puts a converted GBP figure beside a
+snapshot's native amount; that a snapshot past its source's freshness
+window is flagged stale rather than hidden; the Batch API settings and the
+eBay haircut's one seeded home; that retro `refresh-prices` refuses cleanly
+with no PriceCharting key; retro `uk-comp`; the offline queue's
+`client_id` idempotency; and, at the end, `stockcounts.pb.js`'s close
+route (variance, a move, roles, and refusing to close twice) plus the new
+"a second open count on the same location is refused with 409" case.
+
+Section 20, added with the adapter review that introduced fixture mode
+itself, exercises what section 19 could not while every call threw: a name
+search per game against each adapter's own search fixture (Yu-Gi-Oh!,
+Pokemon - proving `charizard ex` reads as a name search and not a bogus
+exact lookup for a set called "charizard" - and MTG); the `fx` cron
+(`POST /api/crons/fx`, PocketBase's own "run this job now" route) storing
+the rate's own `date`, distinct from `fetched_at`; the `sv151` alias
+resolving with no outbound call against a pre-seeded, fresh `cards` row,
+and that same row correctly triggering a real call-out once its
+`last_synced` is over 30 days old, refreshing it from the fixture;
+condition validation on `GET .../prices` (lowercase accepted, `EX`
+refused with 400); a full `refresh-prices` round trip against a brand new
+card with fixture-sourced snapshots, the GBP figure shown correctly beside
+the native amount, and an audit row; `retro/lookup` against a mapped IGDB
+fixture, and the 502 path for a source that is configured but whose
+particular call has no fixture (a distinct IGDB "Client-ID" the fixture
+transport refuses on purpose); and the `image_queue` cron
+(`POST /api/crons/image_queue`) caching a real fixture image locally while
+refusing one over the 2 MB cap and one that answers 200 with bytes that
+are not a recognised image format, in both refusal cases leaving the
+card's `image_large` exactly as it was.
 
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),

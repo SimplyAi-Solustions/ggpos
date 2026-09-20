@@ -429,24 +429,31 @@ export function PriceSources({
   )
   const fx = useFx()
 
+  const ownKey = isCard
+    ? priceKeys.card(subject.id, subject.finish ?? "")
+    : priceKeys.retro(subject.id, subject.finish ?? "")
+
   function settle(next: PriceView) {
     // The write routes answer with the recomputed view, so the cache takes it
     // straight away and every other copy of this card on screen refetches.
-    queryClient.setQueryData(
-      isCard
-        ? priceKeys.card(subject.id, subject.finish ?? "", subject.condition ?? "NM")
-        : priceKeys.retro(subject.id, subject.finish ?? ""),
-      next
-    )
+    queryClient.setQueryData(ownKey, next)
     void queryClient.invalidateQueries({
       queryKey: isCard ? priceKeys.cardAll(subject.id) : priceKeys.retroAll(subject.id),
+      // Every other finish of this card, but not the one the route just
+      // answered for: refetching that would drop a fresh body on the floor
+      // and flash the old figure while it went back for the same thing.
+      predicate: (entry) =>
+        !(
+          entry.queryKey.length === ownKey.length &&
+          entry.queryKey.every((part, index) => part === ownKey[index])
+        ),
     })
   }
 
   const refresh = useMutation({
     mutationFn: () =>
       isCard
-        ? refreshPrices(subject.id, subject.finish ?? "")
+        ? refreshPrices(subject.id, subject.finish ?? "", subject.condition ?? "NM")
         : refreshRetroPrices(subject.id, subject.finish ?? ""),
     onSuccess: (next) => {
       setError(null)
@@ -581,11 +588,15 @@ export function PriceSources({
         pending={comp.isPending}
         serverError={compError}
         onSave={(body) =>
-          comp.mutate({
-            ...body,
-            finish: subject.finish ?? "",
-            condition: subject.condition ?? "NM",
-          })
+          comp.mutate(
+            isCard
+              ? {
+                  ...body,
+                  finish: subject.finish ?? "",
+                  condition: subject.condition ?? "NM",
+                }
+              : { ...body, completeness: subject.finish ?? "" }
+          )
         }
       />
 
