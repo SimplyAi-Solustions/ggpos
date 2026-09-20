@@ -7,9 +7,11 @@
  * write back, and it needs the inactive rules the config route filters out.
  *
  * Nothing here ever reads or writes a secret. `settings.api_keys`, the mail
- * key and the VAPID keys stay on the server: the read below picks the fields
- * the screen shows, one by one, so a key cannot reach the browser by
- * accident, and a save only sends the fields the form owns.
+ * key and the private VAPID key stay on the server: the read below picks the
+ * fields the screen shows, one by one, so a key cannot reach the browser by
+ * accident, and a save only sends the fields the form owns. The one key that
+ * is read is `push.vapid_public_key`, which is handed to every browser that
+ * subscribes and is read-only on the screen.
  */
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -50,6 +52,15 @@ export const SETTINGS_FIELDS = [
   "default_intake_location",
   "quote_expiry_days",
   "id_photo_retention_months",
+  // Phase 5's notification settings. `email` is the addressing block and
+  // the test-mode switch, never the mail key (`email_api_key`, its own
+  // column, which is not on this list and never will be); `push` is the
+  // public half of the VAPID pair, which every subscribing browser is
+  // handed anyway; `holds` is how long a want-list hold stands.
+  "email",
+  "email_provider",
+  "push",
+  "holds",
   "vat_registered",
   "shop_name",
   "shop_address",
@@ -77,6 +88,10 @@ function pick(row: SettingsRecord): SettingsRecord {
     default_intake_location: row.default_intake_location,
     quote_expiry_days: row.quote_expiry_days,
     id_photo_retention_months: row.id_photo_retention_months,
+    email: row.email,
+    email_provider: row.email_provider,
+    push: row.push,
+    holds: row.holds,
     vat_registered: row.vat_registered,
     shop_name: row.shop_name,
     shop_address: row.shop_address,

@@ -243,11 +243,13 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `POST /api/vault/quotes/:id/accept`, `/decline` | **customer own**. Only from `offered` and before `offer_expires_at`; 409 naming the expiry date once past it. |
 | `POST /api/vault/quotes/:id/received` | **staff**. Only from `accepted`. Creates the draft `trade_ins` row and its lines; marks the quote `received`. Completing that trade-in through the unmodified Phase 2 route marks it `completed` (a `trade_ins` hook in `quotes.pb.js`). |
 | `POST /api/vault/quotes/:id/cancel` | **staff**. `{ note }` required. From any open status to `declined`; notifies the customer. |
-| `POST /api/vault/want-list` | **customer**. `{ card?, free_text?, max_price? }`. |
-| `POST /api/vault/want-list/:id/close` | **customer own**. Also doable directly through the collection API, per its own updated `updateRule`. |
+| `POST /api/vault/want-list` | **customer**. `{ card?, free_text?, max_price? }`. Response `{ row }`, `row.card` expanded to `{ id, name, set, number }`. |
+| `POST /api/vault/want-list/:id/close` | **customer own**. Also doable directly through the collection API, per its own updated `updateRule`. Same `{ row }` response shape. |
 | `GET /api/vault/estimate/search`, `GET /api/vault/estimate` | Public, no auth, rate limited, no writes, never an adapter call. See `docs/api-contract.md`'s Phase 5 section. |
 | `POST`/`DELETE /api/vault/push/subscribe` | **customer or staff**. Upserts/removes a `push_subscriptions` row by `endpoint`. Never logs the endpoint or the keys. |
-| `GET /api/vault/me/notifications`, `POST /api/vault/me/notifications/:id/read` | **customer**. Newest-first, capped at 50; marking read is idempotent. |
+| `GET /api/vault/me/notifications` | **customer**. `{ items, unread }`, newest first, capped at 50. |
+| `POST /api/vault/me/notifications/:id/read` | **customer own**. Idempotent; response `{ notification }`. |
+| `GET /api/vault/quotes` | **customer**. The caller's own quotes, newest first, capped at 50 - no photos or lines. Additive: the collection API's own `filter=customer=<id>` read still works. |
 
 Three patterns run through all of them.
 

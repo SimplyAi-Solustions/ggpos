@@ -56,6 +56,10 @@ function hoursAhead(hours: number): string {
   return new Date(Date.now() + hours * HOUR).toISOString()
 }
 
+function hoursAgo(hours: number): string {
+  return new Date(Date.now() - hours * HOUR).toISOString()
+}
+
 function randomId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
 }
@@ -134,10 +138,12 @@ export function demoMe(): VaultMe {
     id_status: entry.private.id_status ?? "none",
     counts: {
       trade_ins: demoMyTradeIns().length,
-      open_quotes: demoQuotes.filter((quote) =>
-        ["submitted", "reviewing", "offered", "accepted", "received"].includes(
-          quote.status
-        )
+      open_quotes: demoQuotes.filter(
+        (quote) =>
+          quote.customer === DEMO_PORTAL_CUSTOMER_ID &&
+          ["submitted", "reviewing", "offered", "accepted", "received"].includes(
+            quote.status
+          )
       ).length,
       want_list: demoWants.filter((row) => row.status !== "closed").length,
     },
@@ -285,6 +291,31 @@ interface DemoQuote extends QuoteRecord {
 
 export const demoQuotes: DemoQuote[] = [
   {
+    // Nobody has picked this one up yet: the counter's queue opens on it.
+    id: "quote_demo_3",
+    customer: "cust_demo_2",
+    number: "GG-Q-000016",
+    status: "submitted",
+    message:
+      "Loft box from my brother. A stack of Pokemon holos and two Game Boy carts. What are they worth?",
+    drop_off: "in_store",
+    created: hoursAgo(5),
+    messages: [
+      {
+        id: "quote_demo_3_m1",
+        author: "customer",
+        body: "Loft box from my brother. A stack of Pokemon holos and two Game Boy carts. What are they worth?",
+        created: hoursAgo(5),
+      },
+    ],
+    photos: [
+      { name: "quote-4.jpg", url: CARD_ART },
+      { name: "quote-5.jpg", url: BOX_ART },
+      { name: "quote-6.jpg", url: CARD_ART },
+      { name: "quote-7.jpg", url: BOX_ART },
+    ],
+  },
+  {
     id: "quote_demo_1",
     customer: DEMO_PORTAL_CUSTOMER_ID,
     number: "GG-Q-000014",
@@ -329,6 +360,58 @@ export const demoQuotes: DemoQuote[] = [
     photos: [
       { name: "quote-1.jpg", url: CARD_ART },
       { name: "quote-2.jpg", url: BOX_ART },
+    ],
+  },
+  {
+    // Accepted and on its way: this is the one "Mark as received" turns
+    // into a draft buy-in.
+    id: "quote_demo_4",
+    customer: "cust_demo_3",
+    number: "GG-Q-000012",
+    status: "accepted",
+    message: "Two graded slabs and a Mega Drive boxed game. Posting them if you want them.",
+    drop_off: "post",
+    created: daysAgo(9),
+    offer_total: 9000,
+    offer_expires_at: hoursAhead(72),
+    reply: "Yes please. I will post them on Monday.",
+    customer_reply: "Yes please. I will post them on Monday.",
+    lines: [
+      {
+        title: "Blastoise 2/102",
+        condition: "LP",
+        finish: "holo",
+        qty: 1,
+        market_price: 12000,
+        market_source: "cardmarket",
+        offer_price: 6000,
+      },
+      {
+        title: "Sonic the Hedgehog 2, boxed",
+        condition: "cib",
+        qty: 1,
+        market_price: 6000,
+        market_source: "pricecharting_pal",
+        offer_price: 3000,
+      },
+    ],
+    messages: [
+      {
+        id: "quote_demo_4_m1",
+        author: "customer",
+        body: "Two graded slabs and a Mega Drive boxed game. Posting them if you want them.",
+        created: daysAgo(9),
+      },
+      {
+        id: "quote_demo_4_m2",
+        author: "staff",
+        body: "Offer sent. Post them to the shop and we will check them over when they land.",
+        created: daysAgo(8),
+      },
+    ],
+    photos: [
+      { name: "quote-8.jpg", url: CARD_ART },
+      { name: "quote-9.jpg", url: BOX_ART },
     ],
   },
   {
@@ -387,7 +470,11 @@ function toQuoteRecord(quote: DemoQuote): QuoteRecord {
 }
 
 export function demoListQuotes(): QuoteRecord[] {
-  return [...demoQuotes]
+  // The signed-in customer's own quotes. The demo shop holds other
+  // customers' quotes as well, because the counter's queue needs a queue;
+  // My Vault has never shown anybody else's.
+  return demoQuotes
+    .filter((quote) => quote.customer === DEMO_PORTAL_CUSTOMER_ID)
     .sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""))
     .map(toQuoteRecord)
 }

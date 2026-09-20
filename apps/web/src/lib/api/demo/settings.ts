@@ -31,6 +31,13 @@ export const DEMO_SETTINGS_RECORD: SettingsRecord = {
   ],
   sell_rounding: "49_99",
   quote_expiry_days: 7,
+  // Phase 5's notification settings, as the migration seeds them: email in
+  // test mode with no provider, no VAPID key until the deploy sets one, and
+  // a 48-hour want-list hold.
+  email: { from_name: "", from_address: "", reply_to: "", test_mode: true },
+  email_provider: "none",
+  push: { vapid_public_key: "" },
+  holds: { hours: 48 },
   id_photo_retention_months: 12,
   vat_registered: false,
   shop_name: "GG Entertainment",
