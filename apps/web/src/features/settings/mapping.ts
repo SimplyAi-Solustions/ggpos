@@ -89,7 +89,18 @@ export const RULE_KINDS = [
   "other",
 ] as const
 
-export const RULE_CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"] as const
+/**
+ * What a rule's condition can be. `pricing_rules.condition` is free text
+ * rather than the `items.condition` select, because a retro line keys on
+ * completeness instead (pb_migrations/1789819560_ops_collections.js), so
+ * both sets are offered and the menu says which is which.
+ */
+export const RULE_CARD_CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"] as const
+export const RULE_RETRO_CONDITIONS = ["loose", "boxed", "cib"] as const
+export const RULE_CONDITIONS = [
+  ...RULE_CARD_CONDITIONS,
+  ...RULE_RETRO_CONDITIONS,
+] as const
 
 export const ROUNDING_STEPS: RoundingStep[] = [25, 50, 100]
 
@@ -445,7 +456,9 @@ const POUNDS = "Enter an amount in pounds and pence, for example 12.50."
 const PERCENT = "Enter a whole percent between 0 and 100."
 
 function requirePounds(errors: FormErrors, field: string, value: string) {
-  if (poundsToPence(value) === null) errors[field] = POUNDS
+  const pence = poundsToPence(value)
+  // Nothing on this page is ever owed the other way: a minus sign is a typo.
+  if (pence === null || pence < 0) errors[field] = POUNDS
 }
 
 function requirePercent(errors: FormErrors, field: string, value: string) {
@@ -492,10 +505,10 @@ export function validateRules(rules: RuleForm[]): FormErrors {
   const errors: FormErrors = {}
   for (const rule of rules) {
     const min = poundsToPence(rule.bandMin)
-    if (min === null) errors[`rules.${rule.key}.bandMin`] = POUNDS
+    if (min === null || min < 0) errors[`rules.${rule.key}.bandMin`] = POUNDS
     if (rule.bandMax.trim() !== "") {
       const max = poundsToPence(rule.bandMax)
-      if (max === null) errors[`rules.${rule.key}.bandMax`] = POUNDS
+      if (max === null || max < 0) errors[`rules.${rule.key}.bandMax`] = POUNDS
       else if (min !== null && max <= min) {
         errors[`rules.${rule.key}.bandMax`] =
           "The top of the band has to be above the bottom. Leave it empty for no top."

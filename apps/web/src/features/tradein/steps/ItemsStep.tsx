@@ -18,6 +18,9 @@ import {
 } from "@/components/ui/select"
 import { ProductImage } from "@/components/product-image"
 import { CardSearchField } from "@/features/stock/CardSearchField"
+import { PriceSources } from "@/features/pricing"
+import { RetroSearchField } from "@/features/pricing/RetroSearchField"
+import { marketLine } from "@/features/pricing/sources"
 import { MoneyField } from "@/features/tradein/MoneyField"
 import { OverrideSheet } from "@/features/tradein/OverrideSheet"
 import {
@@ -26,13 +29,17 @@ import {
   CARD_CONDITIONS,
   COSMETIC_GRADES,
   LINE_FINISHES,
+  MANUAL_SOURCE,
+  PENDING_SOURCE,
   RETRO_COMPLETENESS,
   lineOffer,
   type LineKind,
+  type LineOffer,
   type TradeLine,
   type Totals,
 } from "@/features/tradein/machine"
-import { listGames, type CardHit, type GameRecord } from "@/lib/api"
+import { listGames, type CardHit, type GameRecord, type RetroHit } from "@/lib/api"
+import { useCardPrices, useRetroPrices } from "@/lib/api/prices"
 
 const KINDS: { value: LineKind; label: string }[] = [
   { value: "single", label: "Card" },

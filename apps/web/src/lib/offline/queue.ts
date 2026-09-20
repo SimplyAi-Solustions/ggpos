@@ -18,7 +18,11 @@
 import { ClientResponseError } from "pocketbase"
 
 import { refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
-import { noteNetworkFailure, noteNetworkSuccess } from "@/lib/offline/net"
+import {
+  isSimulatedOffline,
+  noteNetworkFailure,
+  noteNetworkSuccess,
+} from "@/lib/offline/net"
 import { openStore, type KeyValueStore } from "@/lib/offline/store"
 import type { CompleteSalePayload, LabelTemplateKey } from "@/lib/api/types"
 
@@ -79,6 +83,8 @@ export interface QueueConflict {
 export interface QueueSnapshot {
   pending: QueuedEntry[]
   conflicts: QueueConflict[]
+  /** The server answered 401: the queue is fine, the token is not. */
+  authNeeded: boolean
 }
 
 export interface ReplayReport {
@@ -87,6 +93,8 @@ export interface ReplayReport {
   conflict: QueueConflict | null
   /** Set when replay stopped because nothing was getting through. */
   offline: boolean
+  /** Set when replay stopped because the staff token is no longer good. */
+  needsAuth: boolean
   remaining: number
 }
 
@@ -105,7 +113,8 @@ const pending = new Map<string, QueuedEntry>()
 const conflicts = new Map<string, QueueConflict>()
 const listeners = new Set<() => void>()
 
-let snapshot: QueueSnapshot = { pending: [], conflicts: [] }
+let authNeeded = false
+let snapshot: QueueSnapshot = { pending: [], conflicts: [], authNeeded: false }
 
 function byQueuedAt(a: QueuedEntry, b: QueuedEntry): number {
   return a.queuedAt.localeCompare(b.queuedAt) || a.id.localeCompare(b.id)
@@ -119,6 +128,11 @@ function byQueuedAt(a: QueuedEntry, b: QueuedEntry): number {
  * that carries a sentence written for staff is the server, or demo mode,
  * saying no, and that is a conflict rather than something to retry.
  */
+/** The token has expired or been cleared: nothing is wrong with the queue. */
+function isUnauthorised(error: unknown): boolean {
+  return error instanceof ClientResponseError && error.status === 401
+}
+
 function refusalOf(error: unknown): string | null {
   if (error instanceof ClientResponseError) {
     return error.status === 0 ? null : refusalMessage(error)
@@ -131,6 +145,7 @@ function publish() {
   snapshot = {
     pending: [...pending.values()].sort(byQueuedAt),
     conflicts: [...conflicts.values()].sort((a, b) => byQueuedAt(a.entry, b.entry)),
+    authNeeded,
   }
   for (const listener of listeners) listener()
 }
@@ -214,6 +229,12 @@ export async function enqueue(input: EnqueueInput): Promise<QueuedEntry> {
   return entry
 }
 
+function clearAuthNeeded() {
+  if (!authNeeded) return
+  authNeeded = false
+  publish()
+}
+
 async function settle(entry: QueuedEntry) {
   pending.delete(entry.id)
   publish()
@@ -260,22 +281,40 @@ async function run(send: QueueSender | null): Promise<ReplayReport> {
     sent: 0,
     conflict: null,
     offline: false,
+    needsAuth: false,
     remaining: pending.size,
   }
   if (!send) return report
+  // Demo mode's switch stands in for a dead network, so a replay pressed by
+  // hand while it is on has to behave like one into thin air.
+  if (isSimulatedOffline()) {
+    report.offline = true
+    return report
+  }
 
   for (const entry of [...pending.values()].sort(byQueuedAt)) {
     try {
       await send(entry)
       noteNetworkSuccess()
+      clearAuthNeeded()
       await settle(entry)
       report.sent += 1
     } catch (error) {
+      if (isUnauthorised(error)) {
+        // The server is there and said who are you. The sale stays exactly
+        // where it is until somebody signs in again.
+        noteNetworkSuccess()
+        authNeeded = true
+        report.needsAuth = true
+        publish()
+        break
+      }
       const message = refusalOf(error)
       if (message) {
         // The server answered and said no. Everything behind it waits: what
         // staff decide about this one may change what the rest should do.
         noteNetworkSuccess()
+        clearAuthNeeded()
         report.conflict = await refuse(entry, message)
       } else {
         noteNetworkFailure()
@@ -293,6 +332,7 @@ async function run(send: QueueSender | null): Promise<ReplayReport> {
 export async function resetQueue(next?: KeyValueStore) {
   pending.clear()
   conflicts.clear()
+  authNeeded = false
   sender = null
   replaying = null
   store = next ?? openStore()

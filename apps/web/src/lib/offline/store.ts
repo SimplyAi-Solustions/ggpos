@@ -46,6 +46,29 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
   })
 }
 
+/**
+ * Every row in one transaction, keyed by the cursor rather than by pairing
+ * two reads up by position: a write that lands between a `getAllKeys` and a
+ * `getAll` would otherwise shift the values under the keys. Exported for its
+ * own test, which drives a cursor that mutates underneath it.
+ */
+export function cursorEntries<T>(store: IDBObjectStore): Promise<[string, T][]> {
+  return new Promise((resolve, reject) => {
+    const rows: [string, T][] = []
+    const request = store.openCursor()
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) {
+        resolve(rows)
+        return
+      }
+      rows.push([String(cursor.key), cursor.value as T])
+      cursor.continue()
+    }
+    request.onerror = () => reject(request.error)
+  })
+}
+
 function openDatabase(name: string, storeName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const open = indexedDB.open(name, 1)
@@ -112,13 +135,21 @@ export function openStore(name = "gg-vault", storeName = "queue"): KeyValueStore
       if (fallback) await memory().remove(key)
     },
     async entries<T>() {
-      const keys = await withStore<IDBValidKey[]>("readonly", (store) => store.getAllKeys())
       if (fallback) return memory().entries<T>()
-      const values = await withStore<T[]>("readonly", (store) => store.getAll() as IDBRequest<T[]>)
-      if (fallback) return memory().entries<T>()
-      return (keys ?? []).map(
-        (key, index) => [String(key), (values ?? [])[index] as T] as [string, T]
-      )
+      if (typeof indexedDB === "undefined") {
+        memory()
+        return memory().entries<T>()
+      }
+      try {
+        if (!db) db = openDatabase(name, storeName)
+        const database = await db
+        const tx = database.transaction(storeName, "readonly")
+        return await cursorEntries<T>(tx.objectStore(storeName))
+      } catch {
+        db = null
+        memory()
+        return memory().entries<T>()
+      }
     },
     async clear() {
       await withStore("readwrite", (store) => store.clear())

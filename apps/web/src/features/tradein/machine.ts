@@ -62,7 +62,13 @@ export interface TradeLine {
   kind: LineKind
   title: string
   cardId?: string
+  /** The `retro_titles` id, when a retro line came from the retro lookup. */
+  retroTitleId?: string
   gameId?: string
+  /** The game's key, so One Piece's TCGplayer row can say "(OPTCG)". */
+  gameKey?: string
+  /** A `platforms` key, so a retro line draws in the right frame. */
+  platformKey?: string
   setName?: string
   number?: string
   image?: string
@@ -72,8 +78,14 @@ export interface TradeLine {
   /** Retro only: the cosmetic grade of the box and label. */
   cosmetic?: (typeof COSMETIC_GRADES)[number]
   qty: number
-  /** Integer GBP pence, per unit. Entered by hand this phase. */
+  /** Integer GBP pence, per unit. */
   marketPence: number
+  /**
+   * Where that figure came from: a `PriceSource` key when the price routes
+   * gave it, `MANUAL_SOURCE` when a staff member typed it, `BULK_SOURCE` for
+   * a lot, or `PENDING_SOURCE` while the lookup is still on its way. It is
+   * written to `trade_in_lines.market_source` as it stands.
+   */
   marketSource: string
   /** A flat offer for the whole lot, in pence. `bulk` lines only. */
   bulkOffer?: number
@@ -113,6 +125,38 @@ export function itemKindFor(kind: LineKind): ItemKind {
  * from an ordinary line: `trade_in_lines` has no column for "this is a lot".
  */
 export const BULK_SOURCE = "Bulk lot"
+
+/** A figure a staff member typed, rather than one a source gave. */
+export const MANUAL_SOURCE = "Manual"
+
+/**
+ * A line whose price routes have not answered yet. It never reaches the
+ * server: the line is either priced from a source or typed by hand before the
+ * draft is saved, and `toLineInputs` writes it out as `MANUAL_SOURCE`.
+ */
+export const PENDING_SOURCE = "Pending"
+
+/** How a source reads on a line: "Cardmarket", "Manual", "Bulk lot". */
+export function marketSourceLabel(source: string, gameKey?: string): string {
+  switch (source) {
+    case "uk_sold_manual":
+      return "UK sold comp"
+    case "ebay_uk_asking":
+      return "eBay UK asking"
+    case "cardmarket":
+      return "Cardmarket"
+    case "tcgplayer":
+      return gameKey === "onepiece" ? "TCGplayer (OPTCG)" : "TCGplayer"
+    case "pricecharting_pal":
+      return "PriceCharting PAL"
+    case "pricecharting_ntsc":
+      return "PriceCharting NTSC"
+    case PENDING_SOURCE:
+      return MANUAL_SOURCE
+    default:
+      return source || MANUAL_SOURCE
+  }
+}
 
 /** "Bulk lot, 400 cards". The count lives in the title and nowhere else. */
 export function bulkTitle(count: number): string {
@@ -671,7 +715,8 @@ export function toLineInputs(
       cosmeticGrade: line.kind === "retro" ? line.cosmetic : undefined,
       qty: line.qty,
       marketPrice: line.marketPence,
-      marketSource: line.marketSource,
+      marketSource:
+        line.marketSource === PENDING_SOURCE ? MANUAL_SOURCE : line.marketSource,
       offerPct: pct,
       offerPrice: perUnit,
       // Kept beside the price so the audit row says why it is not the band's
@@ -742,7 +787,7 @@ export function hydrate(
         cosmetic: (line.cosmetic_grade || undefined) as TradeLine["cosmetic"],
         qty: line.qty ?? 1,
         marketPence: line.market_price ?? 0,
-        marketSource: line.market_source || "Manual",
+        marketSource: line.market_source || MANUAL_SOURCE,
         overrideCash,
         overrideCredit,
         overrideReason: line.override_reason || undefined,

@@ -78,13 +78,14 @@ export function OfferPreview({ rules, settings, multipliers, games }: OfferPrevi
   const [market, setMarket] = React.useState("100.00")
 
   const marketPence = poundsToPence(market)
-  const gameKey = games.find((row) => row.id === game)?.key ?? ""
+  // `pricing_rules.game` is a relation, so `selectRule` compares record ids.
+  // The games list is here for the label, never for the comparison.
   const offer =
     marketPence === null
       ? null
       : computeOffer(
           marketPence,
-          { game: gameKey, kind, condition, finish: finish.trim() },
+          { game, kind, condition, finish: finish.trim() },
           rules,
           settings,
           multipliers

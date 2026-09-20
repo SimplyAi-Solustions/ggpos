@@ -19,7 +19,9 @@ import { MicroLabel } from "@/components/ui/micro-label"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -45,8 +47,9 @@ import {
   bandLabel,
   poundsToPence,
   ROUNDING_STEPS,
-  RULE_CONDITIONS,
+  RULE_CARD_CONDITIONS,
   RULE_KINDS,
+  RULE_RETRO_CONDITIONS,
   type FormErrors,
   type RuleForm,
 } from "@/features/settings/mapping"
@@ -65,6 +68,13 @@ const STEP_LABELS: Record<number, string> = { 25: "25p", 50: "50p", 100: "£1" }
 function kindLabel(kind: string): string {
   if (!kind) return "Any kind"
   return kind.charAt(0).toUpperCase() + kind.slice(1)
+}
+
+/** "NM" stays "NM"; "cib" reads as "Cib" would be wrong, so retro words do. */
+function conditionLabel(condition: string): string {
+  if (condition === "cib") return "CIB"
+  if (condition === condition.toUpperCase()) return condition
+  return condition.charAt(0).toUpperCase() + condition.slice(1)
 }
 
 /** "Single, NM, Pokemon" - only the parts that are not a wildcard. */
@@ -206,15 +216,28 @@ function ConditionSelect({
       onValueChange={(next: string | null) => onChange({ condition: next ?? "" })}
     >
       <SelectTrigger aria-label={label}>
-        <SelectValue placeholder="Any">{(value: string) => value || "Any"}</SelectValue>
+        <SelectValue placeholder="Any">
+          {(value: string) => (value ? conditionLabel(value) : "Any")}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={null}>Any</SelectItem>
-        {RULE_CONDITIONS.map((condition) => (
-          <SelectItem key={condition} value={condition}>
-            {condition}
-          </SelectItem>
-        ))}
+        <SelectGroup>
+          <SelectLabel>Card</SelectLabel>
+          {RULE_CARD_CONDITIONS.map((condition) => (
+            <SelectItem key={condition} value={condition}>
+              {condition}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+        <SelectGroup>
+          <SelectLabel>Retro</SelectLabel>
+          {RULE_RETRO_CONDITIONS.map((condition) => (
+            <SelectItem key={condition} value={condition}>
+              {conditionLabel(condition)}
+            </SelectItem>
+          ))}
+        </SelectGroup>
       </SelectContent>
     </Select>
   )
