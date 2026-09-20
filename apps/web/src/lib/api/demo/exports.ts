@@ -208,6 +208,14 @@ export function unsyncedCount(): number {
   ).length
 }
 
+/** The ids the eBay listing file would be built from. */
+export function inStockIds(limit: number): string[] {
+  return items()
+    .filter((item) => item.status === "in_stock")
+    .slice(0, limit)
+    .map((item) => item.id)
+}
+
 /** Sold in the shop, still listed on eBay. */
 export function endListings(): EndListingRow[] {
   ensureSeeded()

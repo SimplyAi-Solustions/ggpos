@@ -111,6 +111,24 @@ export async function countUnsyncedForSumUp(): Promise<number> {
 }
 
 /**
+ * The ids of what is in stock, newest first, for the eBay listing file.
+ *
+ * That route takes an explicit list of ids rather than a filter, and the
+ * Exports screen has no item picker of its own, so this is what it sends:
+ * the newest `limit` in-stock items. Picking a narrower set is the Stock
+ * screen's job, where bulk actions already live.
+ */
+export async function inStockItemIds(limit = 500): Promise<string[]> {
+  if (isDemo()) return demo.inStockIds(limit)
+  const page = await pb.collection("items").getList<{ id: string }>(1, limit, {
+    filter: 'status = "in_stock"',
+    fields: "id",
+    sort: "-created",
+  })
+  return page.items.map((row) => row.id)
+}
+
+/**
  * The items whose eBay listing still needs ending: sold in the shop but
  * still carrying an eBay listing id or a Card Uploader `CS-` SKU.
  *
