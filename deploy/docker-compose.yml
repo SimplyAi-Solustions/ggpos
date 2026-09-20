@@ -77,6 +77,19 @@ services:
     # not a long-running server, so it must never be auto-restarted after
     # it exits.
     restart: "no"
+    volumes:
+      # The ETag/If-Modified-Since disk cache for the Cardmarket and
+      # TCGCSV files (src/lib/http.mjs's fetchCachedStream/fetchCachedJson)
+      # - without this, /app/cache is an anonymous volume that `docker
+      # compose run --rm` (how this service is actually invoked - see
+      # "Scheduling" below) throws away with the container on every run,
+      # so nothing is ever cached and every file is downloaded in full
+      # every night. Bind-mounted (like pocketbase's pb_data) rather than
+      # left as a named volume so it survives an image rebuild the same
+      # way, and so its ownership is visible and fixable from the host if
+      # it is ever wrong (see the Dockerfile's own chown to the "node"
+      # user this container runs as).
+      - ./data/pricesync-cache:/app/cache
     env_file:
       - .env
     environment:
@@ -96,7 +109,17 @@ services:
     # NOT kept running. It is scheduled with a plain host cron entry
     # (also documented in deploy/README.md):
     #
-    #   0 4 * * * cd /path/to/ggpos/deploy && docker compose run --rm pricesync
+    #   0 4 * * * mkdir -p /path/to/ggpos/deploy/logs && cd /path/to/ggpos/deploy && docker compose run --rm pricesync >> /path/to/ggpos/deploy/logs/pricesync.log 2>&1
+    #
+    # The output redirect matters here in a way it would not for a
+    # long-running service: `docker compose run --rm` deletes the
+    # container (and, with it, `docker compose logs pricesync`'s only
+    # copy of what it printed) the moment it exits, so without this the
+    # run's own log line - counts per game, or which exit code it used -
+    # is gone the instant cron's job finishes. deploy/backup.sh avoids the
+    # same problem by writing deploy/logs/backup.log itself; pricesync has
+    # no such wrapper script, so the cron line does the redirecting
+    # instead.
     #
     # A host cron line was chosen over adding an in-compose scheduler
     # (e.g. an ofelia sidecar container): this VPS only has two scheduled

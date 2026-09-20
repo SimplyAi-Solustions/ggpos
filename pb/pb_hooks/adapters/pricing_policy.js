@@ -252,12 +252,39 @@ function latestFxRates(app) {
   };
 }
 
+var VALID_CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"];
+
+/** "nm", " lp ", "DMG" all normalise; anything else (an "EX" from a different game's scale, say) is null so the caller can 400 rather than silently mis-price. Absent/blank defaults to "NM". */
+function normalizeCondition(raw) {
+  if (!raw) return "NM";
+  var upper = String(raw).trim().toUpperCase();
+  return VALID_CONDITIONS.indexOf(upper) >= 0 ? upper : null;
+}
+
+/**
+ * adjustForCondition, guarded: packages/shared/src/pricing.ts's own
+ * function returns NaN when `multipliers` is missing a key for `condition`
+ * (a corrupted settings.condition_multipliers row, say), and a NaN in a
+ * JSON response aborts encoding after the 200 status has already gone out,
+ * leaving the client with a truncated body instead of a clean error. The
+ * unadjusted market figure is a safer answer than a broken response.
+ */
+function adjustForConditionSafe(gbpMarket, condition, multipliers) {
+  var pricingShared = require(__hooks + "/lib/shared/pricing.js");
+  var adjusted = pricingShared.adjustForCondition(gbpMarket, condition, multipliers);
+  return typeof adjusted === "number" && isFinite(adjusted) ? adjusted : gbpMarket;
+}
+
 module.exports = {
   FRESHNESS: FRESHNESS,
+  VALID_CONDITIONS: VALID_CONDITIONS,
+  normalizeCondition: normalizeCondition,
+  adjustForConditionSafe: adjustForConditionSafe,
   candidateFromSnapshot: candidateFromSnapshot,
   toRow: toRow,
   choose: choose,
   writeSnapshot: writeSnapshot,
+  writeSnapshotSafely: writeSnapshotSafely,
   fromAdapterCandidate: fromAdapterCandidate,
   snapshotToCandidate: snapshotToCandidate,
   latestFxRates: latestFxRates,
