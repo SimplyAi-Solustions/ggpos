@@ -312,6 +312,7 @@ function buildDayRow(app, dateStr, stockValuation) {
   return {
     sales_count: sales.length,
     sales_total_by_payment: salesTotalByPayment,
+    sales_refunded: salesRefunded,
     buy_in_count: tradeIns.length,
     buy_in_total_by_payout: buyInTotalByPayout,
     items_in: itemsInCount,
@@ -348,44 +349,106 @@ function findStoredRow(app, dateStr) {
   }
 }
 
+/** A stored daily_stats record's fields, the same shape buildDayRow returns. */
+function fieldsFromRecord(existing, util) {
+  return {
+    sales_count: existing.getInt("sales_count"),
+    sales_total_by_payment: util.jsonField(existing, "sales_total_by_payment", {}) || {},
+    sales_refunded: existing.getInt("sales_refunded"),
+    buy_in_count: existing.getInt("buy_in_count"),
+    buy_in_total_by_payout: util.jsonField(existing, "buy_in_total_by_payout", {}) || {},
+    items_in: existing.getInt("items_in"),
+    items_out: existing.getInt("items_out"),
+    stock_value_cost: existing.getInt("stock_value_cost"),
+    stock_value_market: existing.getInt("stock_value_market"),
+    credit_issued: existing.getInt("credit_issued"),
+    credit_redeemed: existing.getInt("credit_redeemed"),
+    points_earned: existing.getInt("points_earned"),
+    points_redeemed: existing.getInt("points_redeemed"),
+    cash_variance: existing.getInt("cash_variance"),
+    new_customers: existing.getInt("new_customers"),
+    returning_customers: existing.getInt("returning_customers"),
+  };
+}
+
 /**
  * The daily_stats fields for `dateStr`: the stored row when one exists,
  * else a fresh computation that is not persisted. Every report's period
  * series and totals read this rather than the raw builder, so a day the
  * nightly cron has not reached yet still reports correctly.
+ *
+ * Reading one day at a time: fine for a single lookup, but a caller
+ * looping a whole range should use rowsForEachDay instead - see its own
+ * note on why.
  */
 function rowForDate(app, dateStr) {
   var util = require(`${__hooks}/lib/vaultutil.js`);
   var existing = findStoredRow(app, dateStr);
-  if (existing) {
-    return {
-      sales_count: existing.getInt("sales_count"),
-      sales_total_by_payment: util.jsonField(existing, "sales_total_by_payment", {}) || {},
-      buy_in_count: existing.getInt("buy_in_count"),
-      buy_in_total_by_payout: util.jsonField(existing, "buy_in_total_by_payout", {}) || {},
-      items_in: existing.getInt("items_in"),
-      items_out: existing.getInt("items_out"),
-      stock_value_cost: existing.getInt("stock_value_cost"),
-      stock_value_market: existing.getInt("stock_value_market"),
-      credit_issued: existing.getInt("credit_issued"),
-      credit_redeemed: existing.getInt("credit_redeemed"),
-      points_earned: existing.getInt("points_earned"),
-      points_redeemed: existing.getInt("points_redeemed"),
-      cash_variance: existing.getInt("cash_variance"),
-      new_customers: existing.getInt("new_customers"),
-      returning_customers: existing.getInt("returning_customers"),
-    };
-  }
+  if (existing) return fieldsFromRecord(existing, util);
   return buildDayRow(app, dateStr);
+}
+
+/**
+ * Every stored daily_stats row from fromStr to toStr inclusive, as
+ * {[date]: fields}, loaded with one query rather than one per day. A date
+ * in range with no stored row is simply absent from the map.
+ */
+function rowsForRange(app, fromStr, toStr) {
+  var dates = require(`${__hooks}/lib/reports/dates.js`);
+  var util = require(`${__hooks}/lib/vaultutil.js`);
+  var bounds = dates.rangeParams(fromStr, toStr);
+  var rows = [];
+  try {
+    rows = app.findRecordsByFilter("daily_stats", "date >= {:start} && date <= {:end}", "", 0, 0, bounds);
+  } catch (err) {
+    rows = [];
+  }
+  var byDate = {};
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row) continue;
+    byDate[row.getString("date").slice(0, 10)] = fieldsFromRecord(row, util);
+  }
+  return byDate;
+}
+
+/**
+ * One fields object per day from fromStr to toStr inclusive, in the same
+ * order as dates.eachDay - what every report's day-by-day series should
+ * loop over instead of calling rowForDate once per day. Stored rows come
+ * from one batch query (rowsForRange); any day left over with no stored
+ * row falls back to a fresh computation, and every one of those shares a
+ * single currentStockValuation scan rather than repeating it per day - see
+ * buildDayRow's own note on why that matters for a wide, mostly-unbuilt
+ * range.
+ */
+function rowsForEachDay(app, fromStr, toStr) {
+  var dates = require(`${__hooks}/lib/reports/dates.js`);
+  var days = dates.eachDay(fromStr, toStr);
+  var stored = rowsForRange(app, fromStr, toStr);
+  var valuation = null;
+  var out = [];
+  for (var i = 0; i < days.length; i++) {
+    var day = days[i];
+    if (Object.prototype.hasOwnProperty.call(stored, day)) {
+      out.push(stored[day]);
+    } else {
+      if (!valuation) valuation = currentStockValuation(app);
+      out.push(buildDayRow(app, day, valuation));
+    }
+  }
+  return out;
 }
 
 /**
  * Upsert one daily_stats row for `dateStr` from buildDayRow, matched by date
  * so a second rebuild of the same day updates the same row rather than
- * creating a duplicate.
+ * creating a duplicate. `stockValuation`, when given, is passed straight to
+ * buildDayRow - pass it when upserting more than one day at once (see
+ * upsertDayRows) so the stock table is scanned only once for the batch.
  */
-function upsertDayRow(app, dateStr) {
-  var fields = buildDayRow(app, dateStr);
+function upsertDayRow(app, dateStr, stockValuation) {
+  var fields = buildDayRow(app, dateStr, stockValuation);
   var record = findStoredRow(app, dateStr);
   if (!record) {
     record = new Record(app.findCollectionByNameOrId("daily_stats"), { date: dateStr });
@@ -396,8 +459,38 @@ function upsertDayRow(app, dateStr) {
   return record;
 }
 
+/**
+ * Upsert every date in `dateStrs`, sharing one currentStockValuation scan
+ * across the whole batch and never letting one bad day stop the rest - the
+ * nightly "stats" cron rebuilds the last 7 UTC days on every run
+ * (crons.pb.js) and POST /api/vault/stats/rebuild can cover a much longer
+ * range, so one day's failure (a bad record, a query error) must not sink
+ * every other day's rebuild.
+ *
+ * Returns {ok: [dateStr, ...], failed: [{date, error}, ...]}.
+ */
+function upsertDayRows(app, dateStrs) {
+  var valuation = currentStockValuation(app);
+  var ok = [];
+  var failed = [];
+  for (var i = 0; i < dateStrs.length; i++) {
+    var dateStr = dateStrs[i];
+    try {
+      upsertDayRow(app, dateStr, valuation);
+      ok.push(dateStr);
+    } catch (err) {
+      failed.push({ date: dateStr, error: String(err) });
+    }
+  }
+  return { ok: ok, failed: failed };
+}
+
 module.exports = {
+  currentStockValuation: currentStockValuation,
   buildDayRow: buildDayRow,
   rowForDate: rowForDate,
+  rowsForRange: rowsForRange,
+  rowsForEachDay: rowsForEachDay,
   upsertDayRow: upsertDayRow,
+  upsertDayRows: upsertDayRows,
 };
