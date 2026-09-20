@@ -66,7 +66,6 @@ jval() {
 
 fail() {
   echo "FAIL: $1" >&2
-  cp "$TMP_DIR/server.log" /tmp/claude-0/-home-user-ggpos/2d55b959-462d-5cbc-b6f9-d2ac284ce1b7/scratchpad/server-fail.log 2>/dev/null || true
   exit 1
 }
 

@@ -44,9 +44,9 @@ const IDLE_STATE: DisplayState = {
 
 /** What the offer will be paid as, in the words the customer will hear. */
 const PAYOUT_WORD: Record<string, string> = {
-  cash: "Cash",
-  credit: "Store credit",
-  mixed: "Part cash, part store credit",
+  cash: "cash",
+  credit: "store credit",
+  mixed: "part cash and part store credit",
 }
 
 /**
@@ -190,14 +190,14 @@ function IdleScreen({ ticker, signupUrl }: { ticker: string; signupUrl: string }
     <div data-testid="display-idle" className="flex min-h-dvh flex-col">
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-14 text-center sm:px-10">
         <GGLogo className="h-20 w-auto sm:h-28" />
-        <PageTitle className="mt-10">Game, trade, play</PageTitle>
+        <PageTitle className="mt-10">Join GG Guild</PageTitle>
         <QrCode
           text={signupLink(signupUrl)}
           title="Join GG Guild"
-          className="mt-12 size-44 sm:size-56"
+          className="mt-12 size-52 sm:size-64"
         />
-        <p className="mt-6 max-w-[40ch] text-[18px] leading-[1.45] text-foreground sm:text-[20px]">
-          Join GG Guild at the counter
+        <p className="mt-7 max-w-[44ch] text-[18px] leading-[1.45] text-foreground sm:text-[20px]">
+          Scan it, or join at the counter
         </p>
         <p className="mt-3 max-w-[48ch] text-[15px] leading-[1.5] text-muted-foreground">
           Points on what you buy, a better rate on what you trade in, and your
@@ -213,7 +213,7 @@ function SaleScreen({ payload }: { payload: DisplaySalePayload }) {
   return (
     <div
       data-testid="display-sale"
-      className="mx-auto w-full max-w-[1040px] px-5 py-10 sm:px-10"
+      className="mx-auto flex min-h-dvh w-full max-w-[1040px] flex-col justify-center px-5 py-10 sm:px-10"
     >
       <Header name={payload.customer_name} />
       <PageTitle className="mt-8">Your basket</PageTitle>
@@ -276,7 +276,7 @@ function BuyInScreen({
   return (
     <div
       data-testid="display-buyin"
-      className="mx-auto w-full max-w-[1040px] px-5 py-10 sm:px-10"
+      className="mx-auto flex min-h-dvh w-full max-w-[1040px] flex-col justify-center px-5 py-10 sm:px-10"
     >
       <Header name={payload.customer_name} />
 
@@ -317,7 +317,7 @@ function BuyInScreen({
           <div className="mt-6">
             <Total label="Our offer" amount={payload.total_offer} testId="display-offer" />
             <p className="mt-4 text-[16px] text-muted-foreground sm:text-[18px]">
-              Paid as {PAYOUT_WORD[payload.payout_type] ?? "store credit"}
+              Paid in {PAYOUT_WORD[payload.payout_type] ?? "store credit"}
               {payload.credit_bonus_points
                 ? `, and it earns ${payload.credit_bonus_points.toLocaleString("en-GB")} points`
                 : ""}
@@ -328,7 +328,7 @@ function BuyInScreen({
           <div className="mt-12">
             <Button
               data-testid="display-accept"
-              className="h-[72px] w-full text-[13px] sm:w-auto sm:min-w-[22rem]"
+              className="h-[72px] w-full text-[13px]"
               loading={accepting}
               onClick={onAccept}
             >

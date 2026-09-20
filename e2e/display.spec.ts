@@ -78,8 +78,8 @@ test.describe("the customer display", () => {
 
     const tablet = await openTablet(context)
     await expect(tablet.getByTestId("display-idle")).toBeVisible()
-    await expect(tablet.getByRole("heading", { name: "Game, trade, play" })).toBeVisible()
-    await expect(tablet.getByText("Join GG Guild at the counter")).toBeVisible()
+    await expect(tablet.getByRole("heading", { name: "Join GG Guild" })).toBeVisible()
+    await expect(tablet.getByText("Scan it, or join at the counter")).toBeVisible()
     await expect(tablet.getByRole("img", { name: "Join GG Guild" })).toBeVisible()
     await expect(tablet.getByTestId("display-ticker")).toBeVisible()
 
@@ -165,7 +165,7 @@ test.describe("the customer display", () => {
     await expect(tablet.getByText("Mario Kart 64, boxed")).toBeVisible()
     // What the tablet shows is exactly what the counter offered.
     await expect(tablet.getByTestId("display-offer")).toHaveText(offered)
-    await expect(tablet.getByText("Paid as Store credit")).toBeVisible()
+    await expect(tablet.getByText("Paid in store credit")).toBeVisible()
 
     // ---- Accepted on the tablet, which the counter learns about ---------
     await tablet.getByTestId("display-accept").click()
