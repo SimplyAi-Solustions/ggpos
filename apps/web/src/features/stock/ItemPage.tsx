@@ -328,7 +328,33 @@ export function ItemPage({ sku }: { sku: string }) {
     queryFn: listLocations,
     staleTime: 5 * 60_000,
   })
+  const { data: games = [] } = useQuery({
+    queryKey: ["games"],
+    queryFn: listGames,
+    staleTime: 5 * 60_000,
+  })
   const queryClient = useQueryClient()
+
+  // ---- What it is worth now --------------------------------------------
+  // A card prices by finish and condition, a retro title by how complete it
+  // is; anything else (sealed, an accessory) has no catalogue row to price
+  // against and shows no market section at all.
+  const pricing = usePricingSettings()
+  const cardPrices = useCardPrices(item?.card, item?.finish ?? "", item?.condition || "NM")
+  const retroPrices = useRetroPrices(item?.retro_title, item?.completeness ?? "")
+  const priced = item?.card ? cardPrices.data : retroPrices.data
+  const market = priced?.chosen?.gbp_market ?? null
+  const adjustedMarket =
+    market === null
+      ? null
+      : item?.condition
+        ? adjustForCondition(
+            market,
+            item.condition as CardCondition,
+            pricing.conditionMultipliers
+          )
+        : market
+  const suggested = suggestedSellPrice(adjustedMarket, pricing)
 
   /** Anything that changes this item changes the stock list behind it. */
   function settle() {
@@ -522,6 +548,58 @@ export function ItemPage({ sku }: { sku: string }) {
           </Row>
         ) : null}
       </div>
+
+      {item.card || item.retro_title ? (
+        <section className="mt-16" aria-label="Market">
+          <MicroLabel tone="ink" className="mb-5">
+            Market
+          </MicroLabel>
+          <PriceSources
+            subject={
+              item.card
+                ? {
+                    kind: "card",
+                    id: item.card,
+                    finish: item.finish ?? "",
+                    condition: item.condition || "NM",
+                    gameKey: games.find((game) => game.id === item.game)?.key,
+                    title: item.title ?? "",
+                  }
+                : {
+                    kind: "retro",
+                    id: item.retro_title as string,
+                    finish: item.completeness ?? "",
+                    title: item.title ?? "",
+                  }
+            }
+          />
+          {suggested !== null ? (
+            <div className="mt-8 flex flex-wrap items-baseline gap-x-10 gap-y-4">
+              <span className="flex items-baseline gap-3">
+                <MicroLabel>Suggested</MicroLabel>
+                <span
+                  data-testid="item-suggested"
+                  className="tnum text-[20px] leading-none font-medium text-foreground"
+                >
+                  {formatGBP(suggested)}
+                </span>
+              </span>
+              <Button
+                variant="text"
+                type="button"
+                loading={save.isPending}
+                onClick={() => save.mutate({ price: suggested })}
+              >
+                Reprice to market
+              </Button>
+            </div>
+          ) : (
+            <p className="mt-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+              No source has a value for this one yet. Refresh, or add a UK comp.
+            </p>
+          )}
+        </section>
+      ) : null}
 
       <div className="mt-16">
         <MicroLabel tone="ink" className="mb-5">
