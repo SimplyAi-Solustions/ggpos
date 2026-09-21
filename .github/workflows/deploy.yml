@@ -1,0 +1,135 @@
+# GG Vault - build and deploy to the VPS.
+#
+# Runs on every push to main, and can also be run by hand from the
+# Actions tab (workflow_dispatch) - useful for redeploying without a new
+# commit, for example after changing something directly in deploy/.env on
+# the VPS and wanting the rest back in sync.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions
+# > New repository secret) - also documented in deploy/README.md:
+#   VPS_HOST     the VPS's hostname or IP address, e.g. 13.140.163.200
+#   VPS_USER     the SSH user to deploy as, e.g. deploy
+#   VPS_SSH_KEY  the PRIVATE half of an SSH key this user accepts, pasted
+#                in full including the "-----BEGIN ... KEY-----" and
+#                "-----END ... KEY-----" lines. The matching public key
+#                must already be in that user's ~/.ssh/authorized_keys on
+#                the VPS.
+#   VPS_PATH     absolute path to the ggpos checkout on the VPS, e.g.
+#                /home/deploy/ggpos (deploy/docker-compose.yml must exist
+#                at $VPS_PATH/deploy/docker-compose.yml)
+#
+# The VPS_USER account also needs passwordless access to the `docker`
+# command (normally: it is a member of the `docker` group) so the final
+# step can run `docker compose up -d --build` without a password prompt.
+#
+# This workflow trusts the VPS's SSH host key on first connection each
+# run (ssh-keyscan) rather than pinning it out of band. That is the
+# standard trade-off for a CI deploy to one known, stable VPS; if a
+# stricter setup is ever wanted, pin the host key by adding it as its own
+# secret and writing it to known_hosts instead of running ssh-keyscan.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  # Never cancel a deploy that's already mid-flight - a cancelled rsync
+  # or a cancelled `docker compose up --build` can leave the VPS with a
+  # half-updated set of files or a container mid-rebuild.
+  cancel-in-progress: false
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  deploy:
+    name: Build and deploy to the VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the web app
+        run: pnpm --filter web build
+
+      - name: Copy the built PWA into pb_public
+        run: |
+          set -euo pipefail
+          rm -rf pb/pb_public
+          mkdir -p pb/pb_public
+          cp -r apps/web/dist/. pb/pb_public/
+
+      - name: Set up the deploy SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync application files to the VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          SSH_CMD="ssh -i $HOME/.ssh/deploy_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          DEST="$VPS_USER@$VPS_HOST:$VPS_PATH"
+
+          # Make sure the destination directories exist - matters for a
+          # brand new VPS_PATH; a no-op on every later deploy.
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "mkdir -p '$VPS_PATH/pb/pb_hooks' '$VPS_PATH/pb/pb_migrations' '$VPS_PATH/pb/pb_public' '$VPS_PATH/services/pricesync' '$VPS_PATH/deploy/data'"
+
+          # pb/: hooks, migrations, the pb_public we just built, and the
+          # Dockerfile. Never pb_data - that's runtime state that only
+          # ever lives on the VPS.
+          rsync -az --delete -e "$SSH_CMD" pb/pb_hooks/      "$DEST/pb/pb_hooks/"
+          rsync -az --delete -e "$SSH_CMD" pb/pb_migrations/ "$DEST/pb/pb_migrations/"
+          rsync -az --delete -e "$SSH_CMD" pb/pb_public/     "$DEST/pb/pb_public/"
+          rsync -az          -e "$SSH_CMD" pb/Dockerfile     "$DEST/pb/Dockerfile"
+
+          # services/pricesync/: the whole service. node_modules is
+          # excluded - it's installed inside the image during the build.
+          rsync -az --delete -e "$SSH_CMD" --exclude node_modules \
+            services/pricesync/ "$DEST/services/pricesync/"
+
+          # deploy/: the compose file, the Caddy snippet, the backup and
+          # restore scripts, this README. Never data/ (pb_data lives only
+          # on the VPS) or .env (secrets are edited by hand on the VPS
+          # once and never overwritten by a deploy).
+          rsync -az --delete -e "$SSH_CMD" --exclude data --exclude .env \
+            deploy/ "$DEST/deploy/"
+
+      - name: Rebuild and restart on the VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            "cd '$VPS_PATH/deploy' && docker compose up -d --build"

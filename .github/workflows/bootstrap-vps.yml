@@ -1,0 +1,378 @@
+# GG Vault - first-time setup of the VPS, run from GitHub Actions.
+#
+# deploy.yml only ever rsyncs files and restarts the stack. Everything
+# a fresh server needs before that can work (Docker, the checkout
+# directory, deploy/.env, the Caddy site block, the PocketBase superuser,
+# the nightly cron lines) is done here, once, over the same SSH secrets,
+# so nobody has to type the runbook's sections 2 to 7 by hand and no
+# secret ever leaves GitHub's encrypted store except onto the VPS itself.
+#
+# Run it by hand from the Actions tab (workflow_dispatch) on the branch
+# that should be deployed. It is safe to run again: every step checks
+# what is already there and leaves it alone (an existing deploy/.env is
+# never overwritten, an existing Caddy block is never duplicated).
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   VPS_HOST           the VPS's IP address or hostname
+#   VPS_USER           the SSH user; needs passwordless sudo for the Docker
+#                      install and the Caddy reload (root works too)
+#   VPS_SSH_KEY        the PRIVATE half of an SSH key that user accepts
+#   VPS_PATH           where the checkout lives on the VPS, e.g. /opt/ggpos
+#   GG_ADMIN_PASSWORD  the temporary password for the first admin account
+#                      (the app makes them choose a new one at first sign-in)
+# Optional secrets, used only when present:
+#   RESTIC_REPOSITORY, RESTIC_PASSWORD, AWS_ACCESS_KEY_ID,
+#   AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION  the backup bucket; without
+#                      them the backup cron line is not installed and the
+#                      summary says so
+#
+# Everything else in deploy/.env (the ID photo key, the pricesync
+# superuser's password, the VAPID keys) is generated on this runner the
+# first time and written straight into the VPS's .env, where it stays.
+
+name: Bootstrap VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_host:
+        description: The public hostname the app serves
+        required: true
+        default: ggpos.ggentertainment.co.uk
+      admin_email:
+        description: The first admin account's email (staff admin and PocketBase superuser)
+        required: true
+        default: accounts@ggentertainment.co.uk
+      shop_ip:
+        description: The shop's public IP for the /_/ admin dashboard (leave blank to keep it unreachable for now)
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  bootstrap:
+    name: Set up the VPS and start the stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the web app
+        run: pnpm --filter web build
+
+      - name: Copy the built PWA into pb_public
+        run: |
+          set -euo pipefail
+          rm -rf pb/pb_public
+          mkdir -p pb/pb_public
+          cp -r apps/web/dist/. pb/pb_public/
+
+      - name: Generate the first-run secrets
+        id: gen
+        run: |
+          set -euo pipefail
+          # Plain hex and base64url only: deploy/.env is read by compose
+          # (no quoting) and by bash (quotes and $ interpreted), so a value
+          # must never contain a quote, a space, $, a backtick or < >.
+          echo "id_photo_key=$(openssl rand -hex 32)" >> "$GITHUB_OUTPUT"
+          echo "pricesync_password=$(openssl rand -hex 24)" >> "$GITHUB_OUTPUT"
+          VAPID="$(npx --yes web-push@3.6.7 generate-vapid-keys --json)"
+          echo "vapid_public=$(echo "$VAPID" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).publicKey))')" >> "$GITHUB_OUTPUT"
+          echo "vapid_private=$(echo "$VAPID" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).privateKey))')" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$(echo "$VAPID" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).privateKey))')"
+
+      - name: Set up the deploy SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Install Docker and create the checkout directory
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" != "0" ]; then SUDO="sudo -n"; fi
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "Docker is not installed; installing it with get.docker.com"
+            curl -fsSL https://get.docker.com | $SUDO sh
+          fi
+          if ! docker compose version >/dev/null 2>&1; then
+            echo "The docker compose plugin is missing; installing docker-compose-plugin"
+            $SUDO apt-get update -qq && $SUDO apt-get install -y -qq docker-compose-plugin
+          fi
+          if [ "$(id -u)" != "0" ] && ! id -nG | tr ' ' '\n' | grep -qx docker; then
+            $SUDO usermod -aG docker "$(id -un)"
+            echo "Added $(id -un) to the docker group; this session uses sudo for docker until the next login"
+          fi
+          $SUDO mkdir -p "$VPS_PATH"
+          $SUDO chown "$(id -un)":"$(id -gn)" "$VPS_PATH"
+          mkdir -p "$VPS_PATH/pb/pb_hooks" "$VPS_PATH/pb/pb_migrations" "$VPS_PATH/pb/pb_public" \
+            "$VPS_PATH/services/pricesync" "$VPS_PATH/services/notify" "$VPS_PATH/deploy/data" "$VPS_PATH/deploy/logs"
+          docker --version
+          docker compose version
+          REMOTE
+
+      - name: Rsync application files to the VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          SSH_CMD="ssh -i $HOME/.ssh/deploy_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          DEST="$VPS_USER@$VPS_HOST:$VPS_PATH"
+          rsync -az --delete -e "$SSH_CMD" pb/pb_hooks/      "$DEST/pb/pb_hooks/"
+          rsync -az --delete -e "$SSH_CMD" pb/pb_migrations/ "$DEST/pb/pb_migrations/"
+          rsync -az --delete -e "$SSH_CMD" pb/pb_public/     "$DEST/pb/pb_public/"
+          rsync -az          -e "$SSH_CMD" pb/Dockerfile     "$DEST/pb/Dockerfile"
+          rsync -az --delete -e "$SSH_CMD" --exclude node_modules services/pricesync/ "$DEST/services/pricesync/"
+          rsync -az --delete -e "$SSH_CMD" --exclude node_modules services/notify/    "$DEST/services/notify/"
+          rsync -az --delete -e "$SSH_CMD" --exclude data --exclude logs --exclude .env deploy/ "$DEST/deploy/"
+
+      - name: Write deploy/.env if it does not exist yet
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          ADMIN_EMAIL: ${{ inputs.admin_email }}
+          ADMIN_PASSWORD: ${{ secrets.GG_ADMIN_PASSWORD }}
+          ID_PHOTO_KEY: ${{ steps.gen.outputs.id_photo_key }}
+          PRICESYNC_PASSWORD: ${{ steps.gen.outputs.pricesync_password }}
+          VAPID_PUBLIC: ${{ steps.gen.outputs.vapid_public }}
+          VAPID_PRIVATE: ${{ steps.gen.outputs.vapid_private }}
+          RESTIC_REPOSITORY: ${{ secrets.RESTIC_REPOSITORY }}
+          RESTIC_PASSWORD: ${{ secrets.RESTIC_PASSWORD }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ADMIN_PASSWORD" ]; then
+            echo "The GG_ADMIN_PASSWORD secret is not set; add it under Settings > Secrets and variables > Actions and run this again." >&2
+            exit 1
+          fi
+          case "$ADMIN_PASSWORD" in
+            *[\ \$\`\"\'\<\>]*) echo "GG_ADMIN_PASSWORD must not contain a space, quote, dollar sign, backtick or angle bracket (deploy/.env is read by two parsers)." >&2; exit 1 ;;
+          esac
+          ENV_CONTENT="$(cat <<ENVEOF
+          PB_VERSION=0.40.4
+          GG_ID_PHOTO_KEY=$ID_PHOTO_KEY
+          GG_ADMIN_EMAIL=$ADMIN_EMAIL
+          GG_ADMIN_PASSWORD=$ADMIN_PASSWORD
+          PB_SUPERUSER_EMAIL=pricesync@ggentertainment.co.uk
+          PB_SUPERUSER_PASSWORD=$PRICESYNC_PASSWORD
+          GG_VAPID_PUBLIC_KEY=$VAPID_PUBLIC
+          GG_VAPID_PRIVATE_KEY=$VAPID_PRIVATE
+          GG_VAPID_SUBJECT=mailto:$ADMIN_EMAIL
+          RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-}
+          RESTIC_PASSWORD=${RESTIC_PASSWORD:-}
+          AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+          AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+          AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-auto}
+          ENVEOF
+          )"
+          # The file travels as a base64 blob so nothing in it is ever
+          # parsed by the remote shell.
+          ENV_B64="$(printf '%s\n' "$ENV_CONTENT" | sed 's/^          //' | base64 -w0)"
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' ENV_B64='$ENV_B64' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$VPS_PATH/deploy"
+          if [ -f .env ]; then
+            echo "deploy/.env already exists; leaving it exactly as it is"
+          else
+            umask 077
+            echo "$ENV_B64" | base64 -d > .env
+            echo "deploy/.env written ($(wc -l < .env) lines). Keep a copy of GG_ID_PHOTO_KEY in the password manager: without it every stored ID photo is unreadable."
+          fi
+          REMOTE
+
+      - name: Add the Caddy site block and reload Caddy
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          SITE_HOST: ${{ inputs.site_host }}
+          SHOP_IP: ${{ inputs.shop_ip }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' SITE_HOST='$SITE_HOST' SHOP_IP='$SHOP_IP' bash -s" <<'REMOTE'
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" != "0" ]; then SUDO="sudo -n"; fi
+          CADDYFILE=/etc/caddy/Caddyfile
+          if [ ! -f "$CADDYFILE" ] || ! $SUDO systemctl is-active --quiet caddy; then
+            echo "Caddy is not running as a systemd service with $CADDYFILE on this server." >&2
+            echo "Found instead:" >&2
+            ($SUDO docker ps --format '  container {{.Names}} image {{.Image}} ports {{.Ports}}' 2>/dev/null || true) >&2
+            (ls -la /etc/caddy 2>/dev/null || echo "  no /etc/caddy") >&2
+            echo "Add the block from deploy/Caddyfile.snippet to wherever the marketing site's Caddy configuration lives, then re-run deploy.yml." >&2
+            exit 1
+          fi
+          if $SUDO grep -q "^$SITE_HOST {" "$CADDYFILE"; then
+            echo "The Caddy site block for $SITE_HOST is already present; not adding it again"
+          else
+            SNIPPET="$VPS_PATH/deploy/Caddyfile.snippet"
+            TMP="$(mktemp)"
+            sed "s/ggpos\.ggentertainment\.co\.uk/$SITE_HOST/g" "$SNIPPET" > "$TMP"
+            if [ -n "$SHOP_IP" ]; then
+              sed -i "s/203\.0\.113\.10/$SHOP_IP/g" "$TMP"
+            fi
+            $SUDO cp "$CADDYFILE" "$CADDYFILE.bak.$(date +%Y%m%d%H%M%S)"
+            { echo; cat "$TMP"; } | $SUDO tee -a "$CADDYFILE" >/dev/null
+            rm -f "$TMP"
+            echo "Appended the $SITE_HOST site block to $CADDYFILE (a backup of the previous file sits beside it)"
+          fi
+          $SUDO caddy validate --config "$CADDYFILE"
+          $SUDO systemctl reload caddy
+          echo "Caddy reloaded"
+          REMOTE
+
+      - name: Build and start the stack
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          DOCKER="docker"
+          if [ "$(id -u)" != "0" ] && ! docker info >/dev/null 2>&1; then DOCKER="sudo -n docker"; fi
+          cd "$VPS_PATH/deploy"
+          $DOCKER compose up -d --build
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8091/api/health >/dev/null 2>&1; then
+              echo "PocketBase is answering on 127.0.0.1:8091"
+              break
+            fi
+            sleep 2
+            if [ "$i" = "30" ]; then
+              echo "PocketBase did not answer within 60 seconds" >&2
+              $DOCKER compose ps >&2
+              $DOCKER compose logs --tail=50 pocketbase >&2
+              exit 1
+            fi
+          done
+          $DOCKER compose ps
+          REMOTE
+
+      - name: Create the superusers and the cron lines
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          DOCKER="docker"
+          if [ "$(id -u)" != "0" ] && ! docker info >/dev/null 2>&1; then DOCKER="sudo -n docker"; fi
+          cd "$VPS_PATH/deploy"
+          set -a; . ./.env; set +a
+          # The first admin (also the PocketBase superuser for /_/) and the
+          # superuser pricesync and notify log in as. upsert updates the
+          # password when the account already exists, so a re-run is safe.
+          $DOCKER compose exec -T pocketbase /pb/pocketbase superuser upsert "$GG_ADMIN_EMAIL" "$GG_ADMIN_PASSWORD" --dir /pb/pb_data
+          $DOCKER compose exec -T pocketbase /pb/pocketbase superuser upsert "$PB_SUPERUSER_EMAIL" "$PB_SUPERUSER_PASSWORD" --dir /pb/pb_data
+          # Cron: the nightly price sync always; the backup only once the
+          # restic bucket is configured in .env.
+          CRON_FILE="$(mktemp)"
+          (crontab -l 2>/dev/null | grep -v 'GG Vault' | grep -v "$VPS_PATH/deploy/backup.sh" | grep -v 'docker compose run --rm pricesync' || true) > "$CRON_FILE"
+          {
+            echo "# GG Vault: nightly price sync, 04:00"
+            echo "0 4 * * * mkdir -p $VPS_PATH/deploy/logs && cd $VPS_PATH/deploy && docker compose run --rm pricesync >> $VPS_PATH/deploy/logs/pricesync.log 2>&1"
+          } >> "$CRON_FILE"
+          if [ -n "${RESTIC_REPOSITORY:-}" ] && [ -n "${RESTIC_PASSWORD:-}" ]; then
+            {
+              echo "# GG Vault: nightly backup, 03:00"
+              echo "0 3 * * * $VPS_PATH/deploy/backup.sh"
+            } >> "$CRON_FILE"
+            echo "Backup cron line installed"
+          else
+            echo "No restic bucket in .env yet: the backup cron line is not installed. Fill RESTIC_REPOSITORY, RESTIC_PASSWORD and the AWS_* keys in deploy/.env, run restic init once, and re-run this workflow."
+          fi
+          crontab "$CRON_FILE"
+          rm -f "$CRON_FILE"
+          echo "Cron lines now:"
+          crontab -l | grep -A1 'GG Vault' || true
+          REMOTE
+
+      - name: Set the application URL and name in PocketBase
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          SITE_HOST: ${{ inputs.site_host }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' SITE_HOST='$SITE_HOST' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$VPS_PATH/deploy"
+          set -a; . ./.env; set +a
+          # Email links, the QR landing and the Solo reader's callback all
+          # resolve against PocketBase's application URL, so it has to be
+          # the public https address. Done through the API as the admin
+          # superuser so the value lands in the settings table, never in
+          # a file. The password only ever travels on the loopback.
+          TOKEN="$(curl -fsS -X POST http://127.0.0.1:8091/api/collections/_superusers/auth-with-password \
+            -H 'Content-Type: application/json' \
+            --data-binary "$(printf '{"identity":"%s","password":"%s"}' "$GG_ADMIN_EMAIL" "$GG_ADMIN_PASSWORD")" \
+            | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+          if [ -z "$TOKEN" ]; then echo "Could not sign in as the admin superuser to set the application URL" >&2; exit 1; fi
+          curl -fsS -o /dev/null -X PATCH http://127.0.0.1:8091/api/settings \
+            -H "Authorization: $TOKEN" -H 'Content-Type: application/json' \
+            --data-binary "$(printf '{"meta":{"appName":"GG Vault","appURL":"https://%s"}}' "$SITE_HOST")"
+          echo "Application URL set to https://$SITE_HOST"
+          REMOTE
+
+      - name: Check the site from the outside
+        env:
+          SITE_HOST: ${{ inputs.site_host }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            if curl -fsS "https://$SITE_HOST/api/health"; then
+              echo
+              echo "https://$SITE_HOST is up"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "https://$SITE_HOST/api/health did not answer over HTTPS yet. If the DNS record was added only just now, Caddy needs it to resolve before it can fetch a certificate; check again in a few minutes with: curl https://$SITE_HOST/api/health" >&2
+          exit 1
