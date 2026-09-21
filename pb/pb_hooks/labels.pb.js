@@ -34,8 +34,10 @@ routerAdd(
     const staff = e.auth;
     const body = util.body(e);
 
+    // Array.isArray, not a truthy `.length`: a plain string "abc" would
+    // otherwise read as three one-character ids.
     const ids = [];
-    if (body.items && body.items.length) {
+    if (Array.isArray(body.items)) {
       for (let i = 0; i < body.items.length; i++) {
         const id = util.asStr(body.items[i]);
         if (id) ids.push(id);
@@ -93,7 +95,7 @@ routerAdd(
 
     const body = util.body(e);
     const templateKeys = [];
-    if (body.templates && body.templates.length) {
+    if (Array.isArray(body.templates)) {
       for (let i = 0; i < body.templates.length; i++) {
         const key = util.asStr(body.templates[i]);
         if (key) templateKeys.push(key);

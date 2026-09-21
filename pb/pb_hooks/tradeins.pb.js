@@ -72,16 +72,14 @@ routerAdd(
       );
     }
 
-    /** Which label template a finished item wants. */
+    /**
+     * Which label template a finished item wants. The table itself lives
+     * in lib/labels.js, which the Phase 7 reprint routes use as well, so
+     * a buy-in and a reprint of the same item can never come out on
+     * different sizes.
+     */
     function templateKeyFor(kind, completeness) {
-      if (kind === "single" || kind === "graded") return "toploader_40x20";
-      if (kind === "retro") return "retro_50x30";
-      if (kind === "sealed" || kind === "accessory") {
-        return completeness === "boxed" || completeness === "cib"
-          ? "retro_50x30"
-          : "sleeve_25x15";
-      }
-      return "toploader_40x20";
+      return require(`${__hooks}/lib/labels.js`).templateKeyFor(kind, completeness);
     }
 
     const staff = e.auth;

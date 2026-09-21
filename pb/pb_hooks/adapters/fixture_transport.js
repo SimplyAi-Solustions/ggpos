@@ -101,10 +101,37 @@ function resolveNowPlaceholders(json) {
 
 // -- The Solo reader fixtures (see the Readers API block in respond()) ---
 
-/** The outcome a checkout's own description asks for: the words a caller puts in it. */
+/**
+ * The outcome a checkout's own description asks for: the words a caller
+ * puts in it. Longest first, so one tag that contains another is still
+ * read as itself.
+ *
+ *   paid          SUCCESSFUL for the amount asked for
+ *   mismatch      SUCCESSFUL for GBP 5.00 more
+ *   eurcurrency   SUCCESSFUL for the right figure in euros
+ *   badamount     SUCCESSFUL with an amount that cannot be read at all
+ *   refunded      REFUNDED
+ *   failed        FAILED
+ *   pending       PENDING
+ *   unknown       the transactions lookup 404s, the reader says PENDING
+ *   readerstatus  the transactions lookup 404s, the reader says FAILED
+ *   wrongid       a SUCCESSFUL transaction for somebody else's payment
+ *   noref         the checkout comes back with no client_transaction_id
+ */
 function readerOutcomeFrom(text) {
   var lower = String(text || "").toLowerCase();
-  var tags = ["pending", "mismatch", "failed", "unknown"];
+  var tags = [
+    "readerstatus",
+    "eurcurrency",
+    "badamount",
+    "mismatch",
+    "refunded",
+    "wrongid",
+    "pending",
+    "unknown",
+    "failed",
+    "noref",
+  ];
   for (var i = 0; i < tags.length; i++) {
     if (lower.indexOf(tags[i]) >= 0) return tags[i];
   }
@@ -158,11 +185,15 @@ function readersRespond(call, url) {
     // own refusals can be exercised without a second fixture mode.
     if (url.indexOf("reader-unknown") >= 0) return { statusCode: 404, json: {}, headers: {}, body: null };
     if (url.indexOf("reader-offline") >= 0) return { statusCode: 422, json: {}, headers: {}, body: null };
+    if (url.indexOf("reader-busy") >= 0) return { statusCode: 409, json: {}, headers: {}, body: null };
     var amount = body.total_amount || {};
     var pence = Number(amount.value || 0);
     var outcome = readerOutcomeFrom(body.description);
     var nonce = Math.floor(Math.random() * 1000000000).toString(36);
     var suffix = outcome + "-" + pence + "-" + nonce;
+    // The contract says to treat every field of this response as
+    // optional, so one outcome answers without the reference at all.
+    if (outcome === "noref") return ok({ data: { checkout_id: "chk-" + suffix } });
     return ok({ data: { checkout_id: "chk-" + suffix, client_transaction_id: "ctid-" + suffix } });
   }
 
@@ -171,7 +202,10 @@ function readersRespond(call, url) {
     var parts = readerIdParts(checkoutId);
     var status = "PENDING";
     if (parts.outcome === "paid" || parts.outcome === "mismatch") status = "SUCCESSFUL";
-    if (parts.outcome === "failed") status = "FAILED";
+    // "readerstatus" is the one the transactions lookup knows nothing
+    // about while the reader itself reports a definite failure, which is
+    // the only thing that fallback is ever allowed to act on.
+    if (parts.outcome === "failed" || parts.outcome === "readerstatus") status = "FAILED";
     return ok({ data: { status: status, client_transaction_id: "ctid-" + checkoutId.slice(4) } });
   }
 
@@ -202,13 +236,17 @@ function readerTransactionRespond(call, url) {
   var match = /client_transaction_id=([^&]+)/.exec(url);
   var id = match ? decodeURIComponent(match[1]) : "";
   var parts = readerIdParts(id);
-  if (parts.outcome === "unknown") {
+  if (parts.outcome === "unknown" || parts.outcome === "readerstatus") {
     // SumUp has never heard of this one: the reader has not reported yet.
     return { statusCode: 404, json: {}, headers: {}, body: null };
   }
   var status = "PENDING";
   if (parts.outcome === "paid" || parts.outcome === "mismatch") status = "SUCCESSFUL";
+  if (parts.outcome === "eurcurrency" || parts.outcome === "badamount" || parts.outcome === "wrongid") {
+    status = "SUCCESSFUL";
+  }
   if (parts.outcome === "failed") status = "FAILED";
+  if (parts.outcome === "refunded") status = "REFUNDED";
   // A mismatch answers with £5.00 more than the reader was asked for, so
   // a route that compares the two figures has something to catch.
   var pence = parts.outcome === "mismatch" ? parts.pence + 500 : parts.pence;
@@ -216,12 +254,17 @@ function readerTransactionRespond(call, url) {
     id: "txn-" + parts.outcome + "-" + parts.pence + "-" + parts.nonce,
     transaction_code: "TFIX" + String(parts.pence) + parts.nonce.toUpperCase(),
     amount: penceToDecimal(pence),
-    currency: "GBP",
+    currency: parts.outcome === "eurcurrency" ? "EUR" : "GBP",
     status: status,
     payment_type: "POS",
     timestamp: new Date().toISOString(),
     client_transaction_id: id,
   };
+  // An amount no parser can read, and a transaction that belongs to
+  // somebody else's payment: both have to be refused rather than acted
+  // on (lib/readers.js, adapters/sumup.js's own matchesClientId).
+  if (parts.outcome === "badamount") transaction.amount = "not an amount";
+  if (parts.outcome === "wrongid") transaction.client_transaction_id = "ctid-someone-else-0-zz";
   if (status === "SUCCESSFUL") transaction.card = { last_4_digits: "4242", type: "VISA" };
   return ok(transaction);
 }

@@ -109,6 +109,7 @@ function releaseExpired(app, now) {
     var untilText = quotes.ukDateShort(String(until).replace(" ", "T")) || String(until);
 
     try {
+      var freed = false;
       app.runInTransaction(function (txApp) {
         var live = txApp.findRecordById("items", item.id);
         // Re-checked inside the transaction: a sale or a fresh
@@ -139,8 +140,11 @@ function releaseExpired(app, now) {
           ip: "",
         });
 
-        released += 1;
+        freed = true;
       });
+      // Counted after the transaction returns, never inside it: a commit
+      // that then fails must not read as an item back on the shelf.
+      if (freed) released += 1;
     } catch (err) {
       console.log("[reservations] could not release item " + item.id + ": " + err);
     }

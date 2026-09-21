@@ -165,6 +165,7 @@ function readerResult(statusCode, message, data) {
  */
 var READER_MESSAGES = {
   offline: "The reader is offline. Check it is on and connected, then try again.",
+  busy: "The reader is busy with another payment. Finish or cancel that one first.",
   unpaired: "That reader is no longer paired. Pair it again under Settings.",
   pairing: "That pairing code was not accepted. Read the code off the reader again; it changes each time.",
   unavailable: "SumUp did not answer. Try again in a moment.",
@@ -279,7 +280,11 @@ function createReaderCheckout(merchantCode, apiKey, readerId, opts, transport) {
     });
   }
   if (res.statusCode === 404) return readerResult(422, READER_MESSAGES.unpaired, null);
-  if (res.statusCode === 422 || res.statusCode === 409) return readerResult(422, READER_MESSAGES.offline, null);
+  // 409 is "this reader already has a checkout in progress", which is a
+  // different thing to do something about than a reader that is off: the
+  // reader is on, connected, and showing somebody else's amount.
+  if (res.statusCode === 409) return readerResult(409, READER_MESSAGES.busy, null);
+  if (res.statusCode === 422) return readerResult(422, READER_MESSAGES.offline, null);
   return readerResult(502, READER_MESSAGES.unavailable, null);
 }
 
@@ -325,6 +330,19 @@ function terminateReaderCheckout(merchantCode, apiKey, readerId, transport) {
 }
 
 /**
+ * True when a transaction body is about the `client_transaction_id` that
+ * was asked for. A body that carries no reference of its own at all is
+ * accepted (SumUp's documented shape for this call does not promise to
+ * echo it back), but one that carries a different reference never is.
+ */
+function matchesClientId(transaction, clientTransactionId) {
+  if (!transaction || typeof transaction !== "object") return false;
+  var got = transaction.client_transaction_id || transaction.internal_id || "";
+  if (!got) return true;
+  return String(got) === String(clientTransactionId);
+}
+
+/**
  * The transaction behind a reader checkout, looked up by the
  * `client_transaction_id` the checkout call returned. This is the one
  * source of truth about whether money actually moved: a callback body is
@@ -346,9 +364,29 @@ function findTransactionByClientId(merchantCode, apiKey, clientTransactionId, tr
   }
   // Documented as one transaction object; a list shape is accepted too,
   // since the same path with an `id=` parameter answers with one and
-  // this app never wants to care which SumUp sends.
+  // this app never wants to care which SumUp sends. A list is searched
+  // for the transaction that was actually asked about rather than read
+  // off the front.
   var body = res.json;
-  if (Array.isArray(body.items)) body = body.items.length ? body.items[0] : null;
+  if (Array.isArray(body.items)) {
+    var found = null;
+    for (var i = 0; i < body.items.length; i++) {
+      if (matchesClientId(body.items[i], clientTransactionId)) {
+        found = body.items[i];
+        break;
+      }
+    }
+    body = found;
+  } else if (!matchesClientId(body, clientTransactionId)) {
+    // This one call is the whole trust model of the Solo checkouts: a
+    // transaction that is not the one this app asked about is treated as
+    // no answer at all, never as an answer about the checkout in hand.
+    // A filter SumUp stops honouring (a renamed parameter, a version
+    // change) would otherwise hand back the merchant's newest
+    // transaction, and any checkout whose amount happened to match it
+    // would be marked paid on somebody else's payment.
+    body = null;
+  }
   return readerResult(200, "", body || null);
 }
 
@@ -361,6 +399,7 @@ module.exports = {
   fetchHistoryPage: fetchHistoryPage,
   fetchHistory: fetchHistory,
   fetchTransaction: fetchTransaction,
+  matchesClientId: matchesClientId,
   listReaders: listReaders,
   pairReader: pairReader,
   unpairReader: unpairReader,

@@ -879,6 +879,67 @@ test("sumup.createReaderCheckout: 422 is the reader being offline, 404 is it no 
   assert.equal(unpaired.message, "That reader is no longer paired. Pair it again under Settings.");
 });
 
+test("sumup.createReaderCheckout: a busy reader is its own 409, not the offline sentence", () => {
+  const sumup = adapter("sumup.js");
+  const busy = sumup.createReaderCheckout("M1", "k", "r9", { amountPence: 100 }, () => ({
+    statusCode: 409,
+    json: {},
+  }));
+  assert.equal(busy.ok, false);
+  assert.equal(busy.status, 409);
+  assert.equal(busy.message, "The reader is busy with another payment. Finish or cancel that one first.");
+  assert.notEqual(busy.message, sumup.READER_MESSAGES.offline);
+});
+
+test("sumup.createReaderCheckout: a response with no client_transaction_id comes back empty, for the caller to refuse", () => {
+  const sumup = adapter("sumup.js");
+  const created = sumup.createReaderCheckout("M1", "k", "r9", { amountPence: 4200 }, () => ({
+    statusCode: 201,
+    json: { data: { checkout_id: "chk-1" } },
+  }));
+  assert.equal(created.ok, true);
+  assert.equal(created.data.checkout_id, "chk-1");
+  // lib/readers.js terminates the reader and refuses on this: a checkout
+  // with no reference can never be verified, so it must never be stored.
+  assert.equal(created.data.client_transaction_id, "");
+});
+
+test("sumup.matchesClientId: only a transaction that names another payment is refused", () => {
+  const sumup = adapter("sumup.js");
+  assert.equal(sumup.matchesClientId({ client_transaction_id: "ctid-1" }, "ctid-1"), true);
+  assert.equal(sumup.matchesClientId({ internal_id: "ctid-1" }, "ctid-1"), true);
+  // SumUp's documented shape for this call does not promise to echo the
+  // reference, so a body that carries none at all is still an answer.
+  assert.equal(sumup.matchesClientId({ id: "txn-1", status: "SUCCESSFUL" }, "ctid-1"), true);
+  assert.equal(sumup.matchesClientId({ client_transaction_id: "ctid-2" }, "ctid-1"), false);
+  assert.equal(sumup.matchesClientId(null, "ctid-1"), false);
+});
+
+test("sumup.findTransactionByClientId: a transaction for another payment is no answer at all", () => {
+  const sumup = adapter("sumup.js");
+  // The whole trust model of the Solo checkouts rests on this one call:
+  // a filter SumUp stopped honouring would otherwise hand back the
+  // merchant's newest transaction and any checkout whose amount matched
+  // it would be marked paid on somebody else's payment.
+  const wrong = sumup.findTransactionByClientId("M1", "k", "ctid-1", () => ({
+    statusCode: 200,
+    json: { id: "txn-9", client_transaction_id: "ctid-9", amount: "42.00", status: "SUCCESSFUL" },
+  }));
+  assert.equal(wrong.ok, true);
+  assert.equal(wrong.data, null);
+
+  const listWithOthers = sumup.findTransactionByClientId("M1", "k", "ctid-1", () => ({
+    statusCode: 200,
+    json: {
+      items: [
+        { id: "txn-9", client_transaction_id: "ctid-9" },
+        { id: "txn-1", client_transaction_id: "ctid-1", amount: "42.00", status: "SUCCESSFUL" },
+      ],
+    },
+  }));
+  assert.equal(listWithOthers.data.id, "txn-1", "a list is searched for the payment asked about, never read off the front");
+});
+
 test("sumup.getReaderCheckout and terminateReaderCheckout: the status and the stop call", () => {
   const sumup = adapter("sumup.js");
   let seen = null;

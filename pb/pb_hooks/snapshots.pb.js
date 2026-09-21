@@ -32,7 +32,12 @@ routerAdd(
       action: "snapshots_rollup",
       collection: "price_snapshots",
       record: "",
-      meta: { scanned: result.scanned, kept: result.kept, deleted: result.deleted },
+      meta: {
+        scanned: result.scanned,
+        kept: result.kept,
+        deleted: result.deleted,
+        capped: result.capped,
+      },
       ip: e.realIP(),
     });
 

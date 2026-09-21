@@ -48,9 +48,10 @@ function parseStored(value) {
 }
 
 /**
- * Which label template a finished item wants - the same table the buy-in
- * wizard's own completion route uses (tradeins.pb.js), so a reprint comes
- * out on the size the original did.
+ * Which label template a finished item wants. The one home for this
+ * table: `tradeins.pb.js`'s completion route requires this module for it
+ * too, so a reprint always comes out on the size the original did and a
+ * change to the sizes cannot reach one path and not the other.
  */
 function templateKeyFor(kind, completeness) {
   if (kind === "single" || kind === "graded") return "toploader_40x20";
@@ -123,6 +124,16 @@ function resolveItems(app, selector) {
   var used = 0;
 
   if (sel.items && sel.items.length) {
+    // Bounded before a filter is built out of it: a request carrying
+    // twenty thousand ids would otherwise become a twenty-thousand-clause
+    // filter string.
+    if (sel.items.length > MAX_BATCH) {
+      return {
+        ok: false,
+        status: 400,
+        message: "That is " + sel.items.length + " labels. Narrow the range to " + MAX_BATCH + " or fewer.",
+      };
+    }
     var ors = [];
     for (var i = 0; i < sel.items.length; i++) {
       var key = "i" + i;
@@ -226,11 +237,15 @@ function queue(app, opts) {
   if (!resolved.ok) return resolved;
 
   var items = resolved.items;
-  if (items.length > MAX_BATCH) {
+  // Labels, not items: five hundred items at two copies each is a
+  // thousand labels off the printer, which is the figure that matters to
+  // whoever is standing at it.
+  var labels = items.length * copies;
+  if (labels > MAX_BATCH) {
     return {
       ok: false,
       status: 400,
-      message: "That is " + items.length + " labels. Narrow the range to " + MAX_BATCH + " or fewer.",
+      message: "That is " + labels + " labels. Narrow the range to " + MAX_BATCH + " or fewer.",
     };
   }
   if (items.length === 0) {
@@ -438,17 +453,27 @@ function claim(app, opts) {
 function markPrinted(app, jobId) {
   var out = null;
   var refusal = null;
+  var printer = "";
   app.runInTransaction(function (txApp) {
     var live = txApp.findRecordById("label_jobs", jobId);
     var status = live.getString("status");
-    if (status !== "printing" && status !== "queued") {
+    if (status !== "printing") {
+      // A job this device no longer holds is refused rather than quietly
+      // accepted: `queued` here means the unstick cron took the claim
+      // back and another device may already have printed it, which is a
+      // duplicate somebody has to know about (lib/labels.js's own
+      // heartbeat below is what stops it happening in the first place).
       refusal = {
         ok: false,
         status: 409,
-        message: "That label is already " + status + ". Requeue it if it needs printing again.",
+        message:
+          status === "queued"
+            ? "That label went back in the queue, so another device may have printed it. Check the label before printing it again."
+            : "That label is already " + status + ". Requeue it if it needs printing again.",
       };
       return;
     }
+    printer = live.getString("printer");
     live.set("status", "printed");
     live.set("printed_at", new Date().toISOString());
     live.set("error", "");
@@ -456,7 +481,55 @@ function markPrinted(app, jobId) {
     out = live;
   });
   if (refusal) return refusal;
+  renewClaim(app, printer);
   return { ok: true, status: 200, record: out };
+}
+
+/**
+ * The claim's heartbeat. A device prints its batch one label at a time
+ * and calls `/printed` for each, so every one of those calls is proof it
+ * is still working: the rest of that device's batch has its `claimed_at`
+ * pushed forward, and `labels_unstick` leaves it alone.
+ *
+ * Nothing new for the counter to call, and no write at all in the normal
+ * case: only a claim already older than half the stuck window is touched,
+ * so a device printing quickly writes nothing extra and a device on a
+ * long batch writes once every few minutes.
+ */
+function renewClaim(app, printer) {
+  if (!printer) return;
+  var now = new Date();
+  var stale = pbDate(new Date(now.getTime() - STUCK_AFTER_MS / 2));
+  var rows = [];
+  try {
+    rows = app.findRecordsByFilter(
+      "label_jobs",
+      'status = "printing" && printer = {:printer} && claimed_at != "" && claimed_at < {:stale}',
+      "claimed_at",
+      MAX_CLAIM_LIMIT,
+      0,
+      { printer: printer, stale: stale }
+    );
+  } catch (err) {
+    rows = [];
+  }
+  if (!rows || rows.length === 0) return;
+  var touched = now.toISOString();
+  try {
+    app.runInTransaction(function (txApp) {
+      for (var i = 0; i < rows.length; i++) {
+        var live = txApp.findRecordById("label_jobs", rows[i].id);
+        if (live.getString("status") !== "printing") continue;
+        if (live.getString("printer") !== printer) continue;
+        live.set("claimed_at", touched);
+        txApp.save(live);
+      }
+    });
+  } catch (err) {
+    // A heartbeat that does not land only means the cron may take the
+    // batch back; it must never fail the print that reported it.
+    console.log("[labels] could not renew the claim for " + printer + ": " + err);
+  }
 }
 
 /**
@@ -556,8 +629,12 @@ function unstick(app, now) {
         if (live.getString("status") !== "printing") return;
         var claimed = parseStored(live.getString("claimed_at"));
         if (!claimed || claimed.getTime() > at.getTime() - STUCK_AFTER_MS) return;
-        live.set("status", "queued");
-        live.set("attempts", live.getInt("attempts") + 1);
+        var attempts = live.getInt("attempts") + 1;
+        live.set("attempts", attempts);
+        // The same three-strike rule the failed route follows, so a job a
+        // dead device keeps claiming stops asking rather than cycling
+        // round the queue forever with a counter climbing past it.
+        live.set("status", attempts < MAX_ATTEMPTS ? "queued" : "failed");
         live.set("error", "The printer stopped answering");
         live.set("printer", "");
         live.set("claimed_at", "");
@@ -587,6 +664,7 @@ module.exports = {
   jobShape: jobShape,
   claim: claim,
   markPrinted: markPrinted,
+  renewClaim: renewClaim,
   markFailed: markFailed,
   requeue: requeue,
   unstick: unstick,

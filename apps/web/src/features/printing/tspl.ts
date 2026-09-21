@@ -49,9 +49,12 @@ function mm(value: number): string {
 const PLAIN: Record<string, string> = {
   "·": "-",
   "•": "-",
-  "–": "-",
-  "—": "-",
-  "‑": "-",
+  // The three dashes, as escapes: en dash, em dash and non-breaking hyphen.
+  // A dash that is not a hyphen has no byte on a thermal printer, and no
+  // place in this repository's own prose either.
+  "\u2013": "-",
+  "\u2014": "-",
+  "\u2011": "-",
   "’": "'",
   "‘": "'",
   "“": '"',

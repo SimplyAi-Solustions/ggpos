@@ -33,6 +33,8 @@
 
 var EXPIRE_AFTER_MS = 15 * 60 * 1000;
 var POLL_VERIFY_AFTER_MS = 5 * 1000;
+var VERIFY_THROTTLE_MS = 10 * 1000;
+var VERIFY_STAMP_KEY = "sumup_checkout_verified";
 var STATUS_PENDING = "pending";
 var STATUS_PAID = "paid";
 var STATUS_FAILED = "failed";
@@ -88,6 +90,50 @@ function saveSumupSettings(app, patch) {
   }
   row.set("sumup", sumup);
   app.save(row);
+}
+
+/**
+ * The counter polls a waiting checkout every three seconds for up to
+ * fifteen minutes, and the contract has the poll verify against SumUp
+ * whenever the row is more than five seconds old, which would be several
+ * hundred outbound calls for one unattended payment. These two keep that
+ * to one call per checkout per `VERIFY_THROTTLE_MS`.
+ *
+ * The stamp lives in `adapter_state` rather than on the checkout row on
+ * purpose: the counter subscribes to that row over realtime, so touching
+ * it every three seconds would push a stream of updates that say nothing.
+ * One `adapter_state` entry holds every checkout verified inside the
+ * window and is pruned on each write, so it never grows.
+ *
+ * Only the poll throttles. A callback, a cancel and the expiry cron all
+ * verify every time: each of those happens once, and each is the moment
+ * the answer actually matters.
+ */
+function verifiedRecently(app, checkoutId, now) {
+  var store = require(__hooks + "/adapters/statestore.js").forApp(app);
+  var at = (now || new Date()).getTime();
+  var seen = store.get(VERIFY_STAMP_KEY) || {};
+  var last = Number(seen[checkoutId] || 0);
+  return !!last && at - last < VERIFY_THROTTLE_MS;
+}
+
+function markVerified(app, checkoutId, now) {
+  var store = require(__hooks + "/adapters/statestore.js").forApp(app);
+  var at = (now || new Date()).getTime();
+  var seen = store.get(VERIFY_STAMP_KEY) || {};
+  var kept = {};
+  for (var id in seen) {
+    if (!Object.prototype.hasOwnProperty.call(seen, id)) continue;
+    if (at - Number(seen[id] || 0) < VERIFY_THROTTLE_MS) kept[id] = seen[id];
+  }
+  kept[checkoutId] = at;
+  try {
+    store.set(VERIFY_STAMP_KEY, kept, "");
+  } catch (err) {
+    // A stamp that cannot be written only costs an extra lookup next
+    // time; it must never stop a payment being verified.
+    console.log("[readers] could not record the verification stamp: " + err);
+  }
 }
 
 /** The sha256 of a callback token. Only ever this, never the token itself, is stored. */
@@ -175,10 +221,41 @@ function decide(checkoutRow, transaction, opts) {
   var options = opts || {};
   if (!transaction) return null;
 
+  // Defence in depth behind the adapter's own check: a transaction that
+  // names a different payment says nothing about this checkout, whatever
+  // it says about itself.
+  var reference = String(transaction.client_transaction_id || "");
+  var expectedReference = checkoutRow.getString("client_transaction_id");
+  if (reference && expectedReference && reference !== expectedReference) {
+    console.log("[readers] ignoring a transaction for another payment on checkout " + checkoutRow.id);
+    return null;
+  }
+
   var status = String(transaction.status || "").toUpperCase();
   var expected = checkoutRow.getInt("amount");
 
   if (status === "SUCCESSFUL") {
+    // Pence against pence, in one currency. Everything else in this build
+    // converts a foreign amount and labels it rather than comparing it
+    // with a GBP figure (CLAUDE.md, "Money"), and a reader taking euros
+    // for a sterling basket is a payment to look at in the SumUp app, not
+    // one to complete a sale against.
+    var currency = String(transaction.currency || "GBP").toUpperCase();
+    if (currency !== "GBP") {
+      return {
+        status: STATUS_FAILED,
+        fields: {
+          error:
+            "The reader took " +
+            currency +
+            ", not pounds. Check the payment in the SumUp app before taking it again.",
+          transaction_id: String(transaction.id || ""),
+          transaction_code: String(transaction.transaction_code || ""),
+        },
+        audit: "sumup_checkout_amount_mismatch",
+        auditMeta: { expected: expected, currency: currency },
+      };
+    }
     var pence = amountPenceOf(transaction);
     if (pence === null) {
       return {
@@ -234,6 +311,52 @@ function decide(checkoutRow, transaction, opts) {
   // PENDING, or a status this build has never seen: nothing has happened
   // yet, so the row stays open for the next poll, callback or the cron.
   return null;
+}
+
+/**
+ * Record, once, that SumUp reports a payment for a checkout this app had
+ * already closed. Never changes the row: `cancelled` and `expired` are
+ * final, and re-opening one would contradict whatever the counter was
+ * told at the time.
+ */
+function notePaymentAfterClose(app, checkoutRow, outcome, opts) {
+  var auditLib = require(__hooks + "/lib/audit.js");
+  var options = opts || {};
+  var meta = outcome.auditMeta || {};
+  try {
+    var seen = app.findRecordsByFilter(
+      "audit_log",
+      'action = "sumup_checkout_late_payment" && record = {:record}',
+      "",
+      1,
+      0,
+      { record: checkoutRow.id }
+    );
+    if (seen && seen.length) return;
+  } catch (err) {
+    // Fall through: one extra audit row is better than none at all.
+  }
+  console.log(
+    "[readers] checkout " + checkoutRow.id + " is " + checkoutRow.getString("status") + " and SumUp reports it paid"
+  );
+  try {
+    auditLib.writeAuditLog(app, {
+      actor: options.actor || "system",
+      action: "sumup_checkout_late_payment",
+      collection: "sumup_checkouts",
+      record: checkoutRow.id,
+      meta: {
+        checkout: checkoutRow.id,
+        status: checkoutRow.getString("status"),
+        amount: meta.amount === undefined ? checkoutRow.getInt("amount") : meta.amount,
+        transaction_code: meta.transaction_code || "",
+        sale_client_id: checkoutRow.getString("sale_client_id"),
+      },
+      ip: options.ip || "",
+    });
+  } catch (err) {
+    console.log("[readers] could not record a late payment on " + checkoutRow.id + ": " + err);
+  }
 }
 
 /**
@@ -301,7 +424,7 @@ function verify(app, checkoutRow, opts) {
   var adapter = require(__hooks + "/adapters/sumup.js");
   var options = opts || {};
   var cfg = options.config || config(app);
-  var out = { changed: false, status: checkoutRow.getString("status"), record: checkoutRow, reached: false };
+  var out = { changed: false, status: checkoutRow.getString("status"), record: checkoutRow };
   if (!isConfigured(cfg)) return out;
 
   var transaction = null;
@@ -309,7 +432,6 @@ function verify(app, checkoutRow, opts) {
   if (clientTransactionId) {
     try {
       var res = adapter.findTransactionByClientId(cfg.merchantCode, cfg.apiKey, clientTransactionId);
-      out.reached = !!res.ok;
       transaction = res.ok ? res.data : null;
     } catch (err) {
       console.log("[readers] transaction lookup failed for checkout " + checkoutRow.id + ": " + err);
@@ -325,7 +447,6 @@ function verify(app, checkoutRow, opts) {
         var reported = statusRes.ok && statusRes.data ? String(statusRes.data.status || "").toUpperCase() : "";
         if (reported === "FAILED" || reported === "CANCELLED") {
           transaction = { status: reported };
-          out.reached = true;
         }
       } catch (err) {
         console.log("[readers] reader checkout status failed for checkout " + checkoutRow.id + ": " + err);
@@ -333,8 +454,21 @@ function verify(app, checkoutRow, opts) {
     }
   }
 
+  markVerified(app, checkoutRow.id);
+
   var outcome = decide(checkoutRow, transaction, { failureReason: options.failureReason });
   if (!outcome) return out;
+
+  // A payment that lands after the row was closed: the row stays closed,
+  // because a final state is final and something else may already have
+  // been told this sale was not paid for, but the money is real and
+  // somebody has to know. One audit row per checkout says so, and the
+  // hourly pull will show the transaction on the Cash screen with no
+  // sale against it.
+  if (out.status !== STATUS_PENDING && outcome.status === STATUS_PAID) {
+    notePaymentAfterClose(app, checkoutRow, outcome, options);
+    return out;
+  }
 
   var applied = applyOutcome(app, checkoutRow.id, outcome, options);
   out.changed = applied.changed;
@@ -343,16 +477,37 @@ function verify(app, checkoutRow, opts) {
   return out;
 }
 
-/** The pending checkout already open for this sale, or null. */
-function pendingForClientId(app, saleClientId) {
+/**
+ * The checkout this sale already has, if any: one still open on the
+ * reader, or one already paid that no sale has used yet. Both mean "the
+ * money for this basket is already being taken, or has been", so neither
+ * is a reason to put a second amount on the reader.
+ */
+function openForClientId(app, saleClientId) {
   try {
     return app.findFirstRecordByFilter(
       "sumup_checkouts",
-      'sale_client_id = {:clientId} && status = "pending"',
+      'sale_client_id = {:clientId} && (status = "pending" || (status = "paid" && sale = ""))',
       { clientId: saleClientId }
     );
   } catch (err) {
     return null;
+  }
+}
+
+/**
+ * Take whatever is on a reader off it again, best effort. Used on every
+ * path where this app has put an amount on the reader and then could not
+ * record it: a reader left showing an amount nothing is tracking is the
+ * one outcome worth spending a call to avoid.
+ */
+function stopReader(cfg, readerId, why) {
+  if (!isConfigured(cfg) || !readerId) return;
+  var adapter = require(__hooks + "/adapters/sumup.js");
+  try {
+    adapter.terminateReaderCheckout(cfg.merchantCode, cfg.apiKey, readerId);
+  } catch (err) {
+    console.log("[readers] could not stop " + readerId + " after " + why + ": " + err);
   }
 }
 
@@ -415,7 +570,10 @@ function createCheckout(app, opts) {
     return { ok: false, status: 400, message: "That client_id is too long. Keep it to 64 characters or fewer." };
   }
 
-  var existing = pendingForClientId(app, saleClientId);
+  // Idempotent per sale: a checkout still open on the reader, or one
+  // already paid that no sale has used yet, is handed back rather than a
+  // second amount going on the reader for the same basket.
+  var existing = openForClientId(app, saleClientId);
   if (existing) return { ok: true, status: 200, message: "", record: existing, reused: true };
 
   var readerId = String(options.readerId || cfg.defaultReaderId || "");
@@ -440,25 +598,115 @@ function createCheckout(app, opts) {
   }
   if (!created.ok) return { ok: false, status: created.status, message: created.message };
 
+  // From here on an amount is live on the reader, so every way out of
+  // this function either records it or takes it off the screen again.
+  if (!created.data.client_transaction_id) {
+    // Without SumUp's own reference there is nothing to verify the
+    // payment by later: the callback, the poll and the expiry cron all
+    // look the transaction up by it, so a row written now could only ever
+    // expire while the customer had been charged.
+    stopReader(cfg, readerId, "a checkout with no client_transaction_id");
+    return {
+      ok: false,
+      status: 502,
+      message:
+        "SumUp did not give that payment a reference, so it could not be tracked. Check the reader, and the SumUp app, before taking it again.",
+    };
+  }
+
   var readerName = readerNameFor(app, cfg, readerId);
   var record = null;
-  app.runInTransaction(function (txApp) {
-    record = new Record(txApp.findCollectionByNameOrId("sumup_checkouts"), {
-      staff: options.staffId || "",
-      sale_client_id: saleClientId,
-      amount: amount,
-      description: description,
-      reader_id: readerId,
-      reader_name: readerName,
-      checkout_id: created.data.checkout_id,
-      client_transaction_id: created.data.client_transaction_id,
-      status: STATUS_PENDING,
-      callback_secret: hashToken(token),
+  try {
+    app.runInTransaction(function (txApp) {
+      // Re-checked inside the transaction, against the partial unique
+      // index on (sale_client_id) where status is pending: two tills
+      // asking for the same basket at the same moment cannot both write
+      // a row, and the one that loses gives its amount back below.
+      var live = openForClientId(txApp, saleClientId);
+      if (live) {
+        record = live;
+        return;
+      }
+      record = new Record(txApp.findCollectionByNameOrId("sumup_checkouts"), {
+        staff: options.staffId || "",
+        sale_client_id: saleClientId,
+        amount: amount,
+        description: description,
+        reader_id: readerId,
+        reader_name: readerName,
+        checkout_id: created.data.checkout_id,
+        client_transaction_id: created.data.client_transaction_id,
+        status: STATUS_PENDING,
+        callback_secret: hashToken(token),
+      });
+      txApp.save(record);
     });
-    txApp.save(record);
-  });
+  } catch (err) {
+    console.log("[readers] could not record the checkout on " + readerId + ": " + err);
+    // The unique index is the likely cause, so look for the row that won
+    // before giving up: either way the amount this call put on the reader
+    // comes off it, rather than a 500 leaving money live on the Solo.
+    stopReader(cfg, readerId, "a checkout that could not be recorded");
+    var winner = openForClientId(app, saleClientId);
+    if (winner) return { ok: true, status: 200, message: "", record: winner, reused: true };
+    return {
+      ok: false,
+      status: 500,
+      message: "That payment could not be recorded, so it was stopped at the reader. Try again.",
+    };
+  }
+
+  if (record && record.getString("client_transaction_id") !== created.data.client_transaction_id) {
+    // Another till's row won the race inside the transaction above; this
+    // call's own amount is taken off the reader and the winner returned.
+    stopReader(cfg, readerId, "a duplicate checkout for the same sale");
+    return { ok: true, status: 200, message: "", record: record, reused: true };
+  }
 
   return { ok: true, status: 201, message: "", record: record, reused: false };
+}
+
+/**
+ * True when this checkout is still the one the reader is showing, so
+ * stopping the reader stops this payment and nobody else's.
+ *
+ * Two things are asked, cheapest first: whether a newer `pending`
+ * checkout has been started on the same reader since (in which case that
+ * one owns the screen now), and, failing that, whether SumUp still
+ * reports this checkout as unfinished. A reader that cannot be reached at
+ * all is treated as still showing this payment, since the first check has
+ * already ruled out the case where somebody else's is on it.
+ */
+function isReadersLiveCheckout(app, cfg, checkoutRow) {
+  var readerId = checkoutRow.getString("reader_id");
+  if (!readerId) return false;
+
+  var newer = [];
+  try {
+    newer = app.findRecordsByFilter(
+      "sumup_checkouts",
+      'reader_id = {:reader} && status = "pending" && created > {:created} && id != {:id}',
+      "created",
+      1,
+      0,
+      { reader: readerId, created: checkoutRow.getString("created"), id: checkoutRow.id }
+    );
+  } catch (err) {
+    newer = [];
+  }
+  if (newer && newer.length) return false;
+
+  var checkoutId = checkoutRow.getString("checkout_id");
+  if (!checkoutId) return true;
+  var adapter = require(__hooks + "/adapters/sumup.js");
+  try {
+    var res = adapter.getReaderCheckout(cfg.merchantCode, cfg.apiKey, readerId, checkoutId);
+    if (!res.ok || !res.data) return true;
+    var status = String(res.data.status || "").toUpperCase();
+    return status !== "SUCCESSFUL" && status !== "FAILED" && status !== "CANCELLED";
+  } catch (err) {
+    return true;
+  }
 }
 
 /**
@@ -491,14 +739,12 @@ function cancel(app, checkoutRow, opts) {
     };
   }
 
-  if (isConfigured(cfg)) {
-    try {
-      adapter.terminateReaderCheckout(cfg.merchantCode, cfg.apiKey, checkoutRow.getString("reader_id"));
-    } catch (err) {
-      // A reader that cannot be reached is still cancelled here: the
-      // verification below is what decides whether money moved.
-      console.log("[readers] terminate failed for checkout " + checkoutRow.id + ": " + err);
-    }
+  // Terminate is reader-scoped at SumUp, not checkout-scoped, so it stops
+  // whatever that reader is showing right now. Stopping a payment that is
+  // no longer this one would kill somebody else's live sale, so this only
+  // reaches for the reader when this row is still the one on it.
+  if (isConfigured(cfg) && isReadersLiveCheckout(app, cfg, checkoutRow)) {
+    stopReader(cfg, checkoutRow.getString("reader_id"), "a cancel of checkout " + checkoutRow.id);
   }
 
   var checked = verify(app, checkoutRow, { config: cfg, actor: options.actor, ip: options.ip, source: "cancel" });
@@ -528,6 +774,13 @@ function cancel(app, checkoutRow, opts) {
     });
     out = live;
   });
+
+  // A callback or a poll that landed between the verification above and
+  // the transaction wins: the money is real, so the cancel is refused
+  // with the row that says so, exactly as the contract promises.
+  if (out && out.getString("status") === STATUS_PAID) {
+    return { ok: false, status: 409, message: MESSAGES.already_paid, record: out };
+  }
 
   return { ok: true, status: 200, message: "", record: out || checkoutRow };
 }
@@ -662,6 +915,12 @@ module.exports = {
   MESSAGES: MESSAGES,
   EXPIRE_AFTER_MS: EXPIRE_AFTER_MS,
   POLL_VERIFY_AFTER_MS: POLL_VERIFY_AFTER_MS,
+  VERIFY_THROTTLE_MS: VERIFY_THROTTLE_MS,
+  verifiedRecently: verifiedRecently,
+  markVerified: markVerified,
+  openForClientId: openForClientId,
+  isReadersLiveCheckout: isReadersLiveCheckout,
+  stopReader: stopReader,
   pbDate: pbDate,
   config: config,
   isConfigured: isConfigured,
@@ -674,7 +933,6 @@ module.exports = {
   decide: decide,
   applyOutcome: applyOutcome,
   verify: verify,
-  pendingForClientId: pendingForClientId,
   findByToken: findByToken,
   createCheckout: createCheckout,
   cancel: cancel,

@@ -32,6 +32,10 @@
 var KEEP_DAYS = 90;
 var DELETE_BATCH = 500;
 var READ_PAGE = 1000;
+// One run never walks more than this many old rows, so the first pass on a
+// database that has never been thinned converges over a few weekly runs
+// rather than holding the whole process for one very long one.
+var MAX_SCAN = 50000;
 
 /** PocketBase's own stored date shape ("2026-09-20 12:00:00.000Z"). */
 function pbDate(d) {
@@ -71,87 +75,125 @@ function targetKey(row) {
   );
 }
 
-/** Every row older than the cutoff, oldest first, read a page at a time. */
-function oldRows(app, cutoff) {
-  var all = [];
-  var offset = 0;
-  while (true) {
-    var page = [];
-    try {
-      page = app.findRecordsByFilter(
-        "price_snapshots",
-        "fetched_at != '' && fetched_at < {:cutoff}",
-        "fetched_at,id",
-        READ_PAGE,
-        offset,
-        { cutoff: cutoff }
-      );
-    } catch (err) {
-      page = [];
-    }
-    if (!page || page.length === 0) break;
-    for (var i = 0; i < page.length; i++) {
-      if (page[i]) all.push(page[i]);
-    }
-    if (page.length < READ_PAGE) break;
-    offset += READ_PAGE;
+/**
+ * One page of rows older than the cutoff, oldest first, continued from
+ * the last row of the previous page.
+ *
+ * Keyset paging, not an offset: an offset walk is quadratic over a table
+ * this size, and deleting as it goes would make the offsets lie. The
+ * cursor is (fetched_at, id), so a page boundary landing in the middle of
+ * a group of rows sharing one `fetched_at` still continues correctly.
+ */
+function pageAfter(app, cutoff, cursor) {
+  var filter = "fetched_at != '' && fetched_at < {:cutoff}";
+  var params = { cutoff: cutoff };
+  if (cursor) {
+    filter += " && (fetched_at > {:last} || (fetched_at = {:last} && id > {:lastId}))";
+    params.last = cursor.fetchedAt;
+    params.lastId = cursor.id;
   }
-  return all;
+  try {
+    return app.findRecordsByFilter("price_snapshots", filter, "fetched_at,id", READ_PAGE, 0, params) || [];
+  } catch (err) {
+    console.log("[snapshots] could not read a page of snapshots: " + err);
+    return [];
+  }
 }
 
 /**
  * Thin the price history.
  *
+ * Streams: a page of rows at a time, and only ids are kept between pages
+ * (one per target per week, plus one per target), so memory scales with
+ * how many distinct cards, finishes and sources the shop has priced and
+ * not with how many nights it has been running. Deletes go out in batches
+ * of `DELETE_BATCH`, each in its own transaction, as soon as a batch is
+ * full rather than at the end.
+ *
+ * A run stops after `MAX_SCAN` rows and says so (`capped`), so the first
+ * run on a database that has never been thinned converges over a few
+ * weekly runs instead of holding the process for one very long one.
+ *
  * @param {any} app - $app, or a txApp from a caller that already has one.
  * @param {Date} [now]
- * @returns {{scanned: number, kept: number, deleted: number}}
+ * @returns {{scanned: number, kept: number, deleted: number, capped: boolean}}
  */
 function rollup(app, now) {
   var at = now || new Date();
   var cutoff = pbDate(new Date(at.getTime() - KEEP_DAYS * 86400000));
-  var rows = oldRows(app, cutoff);
 
-  // Oldest first, so the last row seen for a (target, week) is that
-  // week's newest, and the last row seen for a target is that target's
-  // newest old row - the one the "never delete the last price" rule
-  // protects.
+  // Rows arrive oldest first, so the newest row of a (target, week) and
+  // the newest old row of a target are both simply the last one seen.
+  // Each is kept, and whatever it displaces is deleted, which is what
+  // makes one pass enough.
   var keepByWeek = {};
   var newestByTarget = {};
-  for (var i = 0; i < rows.length; i++) {
-    var fetched = parseStored(rows[i].getString("fetched_at"));
-    if (!fetched) continue;
-    var target = targetKey(rows[i]);
-    keepByWeek[target + "|" + isoWeekKey(fetched)] = rows[i].id;
-    newestByTarget[target] = rows[i].id;
-  }
-
-  var doomed = [];
-  for (var j = 0; j < rows.length; j++) {
-    var row = rows[j];
-    var when = parseStored(row.getString("fetched_at"));
-    if (!when) continue;
-    var key = targetKey(row);
-    if (keepByWeek[key + "|" + isoWeekKey(when)] === row.id) continue;
-    if (newestByTarget[key] === row.id) continue;
-    doomed.push(row);
-  }
-
+  var scanned = 0;
   var deleted = 0;
-  for (var start = 0; start < doomed.length; start += DELETE_BATCH) {
-    var batch = doomed.slice(start, start + DELETE_BATCH);
+  var capped = false;
+  var batch = [];
+  var cursor = null;
+
+  function flush() {
+    if (batch.length === 0) return;
+    var going = batch;
+    batch = [];
     try {
       app.runInTransaction(function (txApp) {
-        for (var b = 0; b < batch.length; b++) {
-          txApp.delete(batch[b]);
+        for (var b = 0; b < going.length; b++) {
+          txApp.delete(going[b]);
         }
       });
-      deleted += batch.length;
+      deleted += going.length;
     } catch (err) {
-      console.log("[snapshots] a batch of " + batch.length + " could not be deleted: " + err);
+      console.log("[snapshots] a batch of " + going.length + " could not be deleted: " + err);
     }
   }
 
-  var result = { scanned: rows.length, kept: rows.length - deleted, deleted: deleted };
+  while (scanned < MAX_SCAN) {
+    var page = pageAfter(app, cutoff, cursor);
+    if (page.length === 0) break;
+
+    for (var i = 0; i < page.length; i++) {
+      var row = page[i];
+      if (!row) continue;
+      cursor = { fetchedAt: row.getString("fetched_at"), id: row.id };
+      var when = parseStored(row.getString("fetched_at"));
+      if (!when) continue;
+      scanned += 1;
+
+      var target = targetKey(row);
+      var weekKey = target + "|" + isoWeekKey(when);
+      var displaced = keepByWeek[weekKey];
+      keepByWeek[weekKey] = row;
+      newestByTarget[target] = row;
+
+      // The row this one displaces as its week's newest goes. It can
+      // never be the last price this target has: the row displacing it
+      // shares the target, is at least as new, and survives at least
+      // until something newer still displaces it, so every target keeps
+      // its newest row whatever its age. That is checked here rather
+      // than assumed, because a price quietly disappearing is not
+      // something anybody would notice until they needed it.
+      if (displaced && displaced.id !== row.id) {
+        var survivorIsNewer = String(row.getString("fetched_at")) >= String(displaced.getString("fetched_at"));
+        if (survivorIsNewer && targetKey(displaced) === target) {
+          batch.push(displaced);
+          if (batch.length >= DELETE_BATCH) flush();
+        }
+      }
+      if (scanned >= MAX_SCAN) {
+        capped = true;
+        break;
+      }
+    }
+
+    if (page.length < READ_PAGE) break;
+  }
+
+  flush();
+
+  var result = { scanned: scanned, kept: scanned - deleted, deleted: deleted, capped: capped };
   console.log(
     "[snapshots] rollup scanned " +
       result.scanned +
@@ -160,7 +202,8 @@ function rollup(app, now) {
       " days, kept " +
       result.kept +
       ", deleted " +
-      result.deleted
+      result.deleted +
+      (result.capped ? " (stopped at the " + MAX_SCAN + " row cap; the next run carries on)" : "")
   );
   return result;
 }
@@ -168,6 +211,7 @@ function rollup(app, now) {
 module.exports = {
   KEEP_DAYS: KEEP_DAYS,
   DELETE_BATCH: DELETE_BATCH,
+  MAX_SCAN: MAX_SCAN,
   pbDate: pbDate,
   isoWeekKey: isoWeekKey,
   targetKey: targetKey,

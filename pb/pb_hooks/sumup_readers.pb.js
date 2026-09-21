@@ -236,7 +236,11 @@ routerAdd(
     if (checkout.getString("status") === "pending") {
       const created = new Date(checkout.getString("created").replace(" ", "T"));
       const age = isNaN(created.getTime()) ? readers.POLL_VERIFY_AFTER_MS : Date.now() - created.getTime();
-      if (age >= readers.POLL_VERIFY_AFTER_MS) {
+      // The counter polls every three seconds for as long as the customer
+      // is at the reader, so one payment would otherwise be hundreds of
+      // outbound calls: a checkout is asked about at most once every
+      // readers.VERIFY_THROTTLE_MS, whoever is polling (lib/readers.js).
+      if (age >= readers.POLL_VERIFY_AFTER_MS && !readers.verifiedRecently(e.app, checkout.id)) {
         const outcome = readers.verify(e.app, checkout, {
           actor: e.auth ? e.auth.id : "system",
           ip: e.realIP(),
@@ -346,6 +350,22 @@ onRecordUpdateRequest((e) => {
       );
     }
   }
+
+  // A json field is replaced wholesale by a PATCH, so a screen saving the
+  // merchant code without echoing the reader back would silently unpair
+  // it. Anything the stored row had and this write does not mention is
+  // put back; clearing a key is still possible by sending it empty.
+  const previous = util.jsonField(e.record.original(), "sumup", {}) || {};
+  let restored = false;
+  for (const key in previous) {
+    if (!Object.prototype.hasOwnProperty.call(previous, key)) continue;
+    if (sumup[key] === undefined) {
+      sumup[key] = previous[key];
+      restored = true;
+    }
+  }
+  if (restored) e.record.set("sumup", sumup);
+
   e.next();
 }, "settings");
 

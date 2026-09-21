@@ -21,9 +21,11 @@
  *    a callback. `client_transaction_id` is uniquely indexed: SumUp's own
  *    id for the payment attempt is what every later verification looks it
  *    up by.
- *  - `sales.sumup_checkout` (relation, unique): the checkout that paid
- *    for this sale. Unique, so one card payment can only ever pay for one
- *    sale however many times a request is replayed.
+ *  - `sales.sumup_checkout` (relation, unique where set): the checkout
+ *    that paid for this sale. Unique, so one card payment can only ever
+ *    pay for one sale however many times a request is replayed, and
+ *    `sales.updateRule` is tightened so only the completion route (or an
+ *    admin) can set it at all.
  *  - `settings.sumup.default_reader_id` / `.default_reader_name`: which
  *    paired reader the counter uses by default. Written by the pairing
  *    route, or by an admin through the settings PATCH, where
@@ -49,9 +51,13 @@
  *    in place.
  *
  * `down()` removes all of it: the two rate limit rules by label (leaving
- * Phase 5's own four exactly as they were), the index, the four label
+ * Phase 5's own four exactly as they were), the indexes, the four label
  * fields and the two statuses, the settings keys, the `sales` relation
- * and the collection itself.
+ * and its own update rule, and the collection itself. One residual worth
+ * knowing before anyone reverts a live database: a `label_jobs` row
+ * already carrying `printing` or `failed` keeps that value, which the
+ * restored select no longer allows, so the next save of such a row fails
+ * validation until it is set to one of the original three.
  */
 migrate(
   (app) => {
@@ -107,7 +113,22 @@ migrate(
       ],
     });
     checkouts.addIndex("idx_sumup_checkouts_sale_client_id", false, "sale_client_id", "");
-    checkouts.addIndex("idx_sumup_checkouts_client_txn_unique", true, "client_transaction_id", "");
+    // Partial, the way `sales.client_id` and `sales.sumup_checkout` are:
+    // SQLite counts '' as an ordinary value, so a plain unique index would
+    // have a second reference-less row collide with the first - at the
+    // save, after the amount is already on the reader. The route refuses
+    // such a checkout outright (lib/readers.js), and this makes the index
+    // agree with it rather than turning it into a 500.
+    checkouts.addIndex(
+      "idx_sumup_checkouts_client_txn_unique",
+      true,
+      "client_transaction_id",
+      "client_transaction_id != ''"
+    );
+    // One open payment per sale, enforced by the database rather than by
+    // a read-then-write: two tills asking for the same basket at the same
+    // moment cannot both put an amount on the reader.
+    checkouts.addIndex("idx_sumup_checkouts_open_sale_unique", true, "sale_client_id", "status = 'pending'");
     checkouts.addIndex("idx_sumup_checkouts_secret", false, "callback_secret", "");
     checkouts.addIndex("idx_sumup_checkouts_status", false, "status", "");
     app.save(checkouts);
@@ -119,6 +140,18 @@ migrate(
       new Field({ name: "sumup_checkout", type: "relation", collectionId: checkouts.id, maxSelect: 1 })
     );
     sales.addIndex("idx_sales_sumup_checkout_unique", true, "sumup_checkout", "sumup_checkout != ''");
+    // Which card payment paid for a sale is decided by the completion
+    // route, which checks the amount, that the payment is paid, and that
+    // nothing else has used it. A staff PATCH straight through the
+    // collection API would assert all three without checking any of them,
+    // so it may not set this field at all - the same
+    // `@request.body.<field>:isset = false` shape
+    // `1789820520_csv_imports_sumup_write_rules.js` already uses for
+    // `sumup_transactions`. An admin is unrestricted, for the rare hand
+    // fix, and the route itself runs as `$app` and bypasses rules.
+    sales.updateRule =
+      '@request.auth.collectionName = "staff" && ' +
+      '(@request.auth.role = "admin" || @request.body.sumup_checkout:isset = false)';
     app.save(sales);
 
     // ---------------------------------------------------------------------
@@ -253,6 +286,8 @@ migrate(
     const sales = app.findCollectionByNameOrId("sales");
     sales.removeIndex("idx_sales_sumup_checkout_unique");
     sales.fields.removeByName("sumup_checkout");
+    // Exactly as 1789819440_selling_cash_collections.js left it.
+    sales.updateRule = '@request.auth.collectionName = "staff"';
     app.save(sales);
 
     app.delete(app.findCollectionByNameOrId("sumup_checkouts"));
