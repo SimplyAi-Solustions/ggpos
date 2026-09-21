@@ -3,10 +3,15 @@
  * taps their card on the Solo.
  *
  * One amount, one sentence about where it has got to, and one way out of
- * each ending. The only complicated state is the last one: the customer has
- * paid and the sale would not complete, which says what happened, shows the
- * transaction code and names the two ways out rather than leaving anybody
- * guessing about money that has already moved.
+ * each ending. Two of those endings are load-bearing:
+ *
+ * - While the amount is live on the reader there is no way out but Cancel,
+ *   which stops it at the reader. No corner cross, and Esc and the backdrop
+ *   are refused by the reducer, because a sheet dismissed by accident would
+ *   leave a customer paying with nothing watching.
+ * - When the customer has paid and the sale would not complete, the sheet
+ *   says so, shows something to find the payment by and names the two ways
+ *   out, rather than leaving anybody guessing about money that has moved.
  */
 import { formatGBP } from "@gg/shared"
 
@@ -24,7 +29,9 @@ import {
 } from "@/components/ui/sheet"
 import {
   checkoutAmount,
+  isCardPaymentLocked,
   isCardPaymentOpen,
+  paymentReference,
   type CardPaymentState,
 } from "@/features/sell/checkout"
 
@@ -61,26 +68,32 @@ export function CardPaymentSheet({
   onClose,
 }: CardPaymentSheetProps) {
   const open = isCardPaymentOpen(state)
-  const working =
-    state.phase === "opening" || state.phase === "waiting" || state.phase === "completing"
+  const locked = isCardPaymentLocked(state)
   const taken = state.phase === "taken" ? state : null
   const stopped = state.phase === "stopped" ? state : null
+  const reference = taken ? paymentReference(taken.checkout) : null
 
   return (
     <Sheet
       open={open}
       onOpenChange={(next: boolean) => {
-        if (!next) onClose()
+        // A live payment has one way out, and it is the Cancel button.
+        if (!next && !locked) onClose()
       }}
     >
       <SheetContent
         side="bottom"
         data-testid="card-payment-sheet"
+        showCloseButton={!locked}
         className="pb-[env(safe-area-inset-bottom)]"
       >
         <SheetHeader>
           <SheetTitle>Card payment</SheetTitle>
-          <SheetDescription>{readerName}</SheetDescription>
+          <SheetDescription>
+            {state.phase === "waiting" && state.checkout.reader_name
+              ? state.checkout.reader_name
+              : readerName}
+          </SheetDescription>
         </SheetHeader>
 
         <SheetBody>
@@ -91,7 +104,7 @@ export function CardPaymentSheet({
             {formatGBP(checkoutAmount(state))}
           </span>
 
-          {working ? (
+          {locked ? (
             <p
               data-testid="card-payment-status"
               aria-live="polite"
@@ -122,21 +135,23 @@ export function CardPaymentSheet({
                 The customer has paid, and the sale did not go through.{" "}
                 {taken.reason}
               </p>
-              {taken.checkout.transaction_code ? (
-                <span className="flex flex-col gap-1">
-                  <Hint>SumUp transaction</Hint>
-                  <span
-                    data-testid="card-payment-code"
-                    className="tnum font-mono text-[15px] text-foreground"
-                  >
-                    {taken.checkout.transaction_code}
-                  </span>
+              <span className="flex flex-col gap-1">
+                <Hint>{reference ? reference.label : "No reference"}</Hint>
+                <span
+                  data-testid="card-payment-code"
+                  className="tnum font-mono text-[15px] text-foreground"
+                >
+                  {reference
+                    ? reference.value
+                    : `${formatGBP(taken.checkout.amount)} on ${
+                        taken.checkout.reader_name || readerName
+                      }`}
                 </span>
-              ) : null}
+              </span>
               <p className="max-w-[44ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-                Refund it in the SumUp app, or put the basket right and mark
-                the sale sold: it will use this payment rather than asking for
-                another.
+                {reference
+                  ? "Refund it in the SumUp app, or put the basket right and mark the sale sold: it will use this payment rather than asking for another."
+                  : "SumUp gave no reference for it, so find it in the SumUp app by the amount and the time. Or put the basket right and mark the sale sold, which will use this payment rather than asking for another."}
               </p>
             </div>
           ) : null}
@@ -156,10 +171,19 @@ export function CardPaymentSheet({
 
           {stopped ? (
             <>
-              <Button trailingArrow onClick={onRetry}>
-                Try again
-              </Button>
-              <Button variant="text" onClick={onClose}>
+              {/* A reader busy with somebody else's payment is not something
+                  pressing the button again can get past. */}
+              {stopped.retry ? (
+                <Button trailingArrow onClick={onRetry}>
+                  Try again
+                </Button>
+              ) : null}
+              <Button
+                variant={stopped.retry ? "text" : "block"}
+                trailingArrow={!stopped.retry}
+                data-testid="card-payment-close"
+                onClick={onClose}
+              >
                 Close
               </Button>
             </>

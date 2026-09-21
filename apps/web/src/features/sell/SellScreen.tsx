@@ -231,6 +231,8 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
   const [refundSaleId, setRefundSaleId] = React.useState<string | null>(null)
   const [refundError, setRefundError] = React.useState<string | null>(null)
   const [saleError, setSaleError] = React.useState<string | null>(null)
+  /** The two-step on putting a payment down: money is never dropped on one press. */
+  const [refundAsked, setRefundAsked] = React.useState(false)
 
   // One read of the shop's configuration for the session, shared with Cash.
   const { data: config } = useCounterConfig()
@@ -274,6 +276,10 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
   // survive walking to the Cash screen to open a drawer and walking back.
   const card = useCardPayment()
   const held = heldPayment(card)
+  /** Something to find the payment by in the SumUp app, whatever came back. */
+  const heldReference = held ? paymentReference(held.checkout) : null
+  /** Money held for a basket that has already gone: it can pay for nothing here. */
+  const stranded = isStrandedPayment(card, saleClientId())
   const waitingFor = pendingCheckoutId(card)
 
   /**
@@ -1088,19 +1094,24 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
                   variant="text"
                   data-testid="take-card-payment"
                   loading={takeCard.isPending}
+                  disabled={Boolean(cardBlocked)}
                   onClick={takeCardPayment}
                 >
                   Take card payment
                 </Button>
               ) : null}
             </div>
-            {reader ? <Hint>{readerName}</Hint> : null}
+            {reader ? (
+              <Hint>
+                {cardBlocked ? "Put the sale right before taking the card" : readerName}
+              </Hint>
+            ) : null}
           </div>
         ) : null}
 
         {/* Money the reader has already taken stays on the screen whatever
             the basket does next, until the sale carries it or somebody
-            refunds it in the SumUp app. */}
+            refunds it in the SumUp app and says so. */}
         {held ? (
           <div className="mt-10 flex flex-col gap-2">
             <MicroLabel tone="ink">Paid on the reader</MicroLabel>
@@ -1111,11 +1122,47 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
               data-testid="card-payment-held"
               className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground"
             >
-              {held.checkout.transaction_code
-                ? `${readerName}, ${held.checkout.transaction_code}. `
-                : `${readerName}. `}
-              Mark the sale sold to finish it, or refund it in the SumUp app.
+              {held.checkout.reader_name || readerName}
+              {heldReference ? `, ${heldReference.value}` : ""}.{" "}
+              {stranded
+                ? "That payment was taken for the sale before this one, so this sale cannot use it. Refund it in the SumUp app."
+                : "Mark the sale sold to finish it, or refund it in the SumUp app."}
             </p>
+            {heldReference ? (
+              <Hint>{heldReference.label}</Hint>
+            ) : (
+              <Hint>No reference came back, so match it by the amount and the time</Hint>
+            )}
+            <div className="mt-2 flex flex-wrap items-center gap-x-8 gap-y-2">
+              {refundAsked ? (
+                <>
+                  <p className="text-[13px] text-destructive">
+                    Only put it down once the refund is through in the SumUp app.
+                  </p>
+                  <Button
+                    variant="text-destructive"
+                    data-testid="card-payment-refunded-confirm"
+                    onClick={() => {
+                      setRefundAsked(false)
+                      dispatchCardPayment({ type: "refunded" })
+                    }}
+                  >
+                    Yes, it is refunded
+                  </Button>
+                  <Button variant="text" onClick={() => setRefundAsked(false)}>
+                    Keep it
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="text"
+                  data-testid="card-payment-refunded"
+                  onClick={() => setRefundAsked(true)}
+                >
+                  Refunded in the SumUp app
+                </Button>
+              )}
+            </div>
           </div>
         ) : null}
 
