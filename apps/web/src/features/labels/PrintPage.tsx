@@ -3,8 +3,9 @@
  *
  * The counter PC runs Chrome with `--kiosk-printing` and the T003's Windows
  * driver, so this page loads, prints and marks the jobs done with no dialog
- * in the way (docs/label-spec.md, "Printing path 1"). The WebUSB TSPL2 sender
- * is a later phase; nothing here assumes it.
+ * in the way (docs/label-spec.md, "Printing path 1"). Path 2, the WebUSB
+ * sender on the Labels screen, is a separate road to the same printer:
+ * nothing here knows about it, and a counter can use either.
  *
  * Every page is sized in millimetres through `@page`, so the print comes out
  * at the label's real size whatever the screen's dpi is.

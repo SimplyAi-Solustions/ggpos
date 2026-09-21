@@ -83,6 +83,8 @@ A WebUSB sender running in the counter PC's Chrome talks TSPL2 straight to the p
 ```
 SIZE 40 mm,20 mm
 GAP 2 mm,0 mm
+DIRECTION 0,0
+REFERENCE 0,0
 DENSITY 8
 CODEPAGE 850
 CLS
@@ -96,14 +98,19 @@ PRINT 1,1
 ```
 
 - Every position is in dots, converted once from the layout's millimetres at 203 dpi (`DOTS_PER_MM`).
+- `SIZE`, `GAP`, `DIRECTION`, `REFERENCE`, `DENSITY` and `CODEPAGE` are all stated rather than inherited. Every one of them is kept in the printer's own memory and survives a power cycle, so a label tool that ran before this one, the Windows driver's test print included, can otherwise leave a label rotated or its origin shifted with nothing on screen to explain it.
 - `CODEPAGE 850` is what makes the pound sign a single byte, `0x9C`. Everything else goes out as ASCII: an accent, a curly quote or a middot in a title is written in the plain letters it stands for, control characters are dropped, and `"` and `\` are escaped, so nothing in a card name can ever be read as a command.
 - Type is set in the printer's own bitmap fonts (`1` at 8 x 12 dots up to `4` at 24 x 32), choosing the font and multiplier nearest the millimetre size the layout asked for and preferring a larger cell over a blown-up small one. A line longer than its column is cut with a plain ellipsis rather than left to run off the label.
 - The QR cell is sized so the symbol lands on the size in the table above: 21 modules at 5 dots is 105 of the 110 the 40 x 20 label asks for, and a customer card's portal link is a bigger symbol at a smaller cell.
 - The G mark is a drawn shape, so a thermal label carries the two letters it stands for, in the smallest font, in the corner the browser path puts the mark in.
 
-**The sender.** `features/printing/usb.ts` asks for a device with no vendor filter (the T003's ids are not published), opens it, selects the first configuration, claims the interface whose class is 7, or else the first with a bulk OUT endpoint, and writes the bytes to it. Chrome remembers the permission, so `getDevices()` finds the printer again the next morning with nothing to press. Failures are reported in words: no WebUSB in this browser, the driver not bound on Windows, a device that is not a printer, and a cable pulled out part way through a label.
+**The sender.** `features/printing/usb.ts` asks for a device with no vendor filter (the T003's ids are not published), opens it, selects the first configuration, claims the interface whose class is 7, or else the first with a bulk OUT endpoint, and writes the bytes to it. The chosen device's vendor id, product id, serial number and product name are kept, so the next morning the printer comes back on its own and no other remembered device is opened by mistake. Leaving the Labels screen releases the interface, and "Forget this printer" also drops the browser's own permission, so a second tab can have it. Failures are reported in words: no WebUSB in this browser, the driver not bound on Windows, the printer already open in another tab or program, a device that is not a printer, and a cable pulled out part way through a label.
 
-**The queue.** The Labels screen claims jobs through `POST /api/vault/labels/claim` under the device's own name (`Counter PC` unless it is renamed), prints each one and marks it printed or failed. A realtime subscription on `label_jobs` is the quick trigger and a five-second poll runs underneath it. A job another device is holding reads "Printing on <device>"; three failed attempts leave it `failed` with the reason, and "Queue again" puts it back. A device can be told which roll is loaded, in which case it claims only labels that size and leaves the rest for whoever has that roll on.
+**The queue.** The Labels screen claims jobs through `POST /api/vault/labels/claim` under the device's own name (`Counter PC` unless it is renamed), prints each one and marks it printed or failed. A realtime subscription on `label_jobs` is the quick trigger and a five-second poll runs underneath it. A job another device is holding reads "Printing on <device>"; a job the server has put back in the queue keeps the reason it failed and says which try it is on; three failed attempts leave it `failed`, and "Queue again" puts it back.
+
+**One printer, one roll.** Every device that prints says which size is on it, and claims only labels that size: a 25 x 15 sleeve label printed onto 40 x 20 gap-sensed stock loses registration for the run after it as well as its own. The default is the 40 x 20 top-loader roll, which is what most items take. Other sizes wait for whoever has that roll on, exactly as path 1's "Change the roll and print again" does.
+
+**A label that came out is never printed twice.** The bytes go to the printer first and the job is reported afterwards, in its own step: a report that fails once the label is out is retried and then left for the next pump, never turned into a failure, because the server would put the job back in the queue and the same label would come out again. A report the server refuses (a job this device no longer holds, which the unstick cron can cause) is shown in its own words rather than counted as a print failure, because that label has come out twice and somebody has to know. A label that does fail to print stops the run, and everything else in the batch is handed straight back to the queue rather than left reading "printing" on every other screen in the shop.
 
 ### Setting the counter PC up on Windows
 
