@@ -5,6 +5,8 @@
  * The refusals are the server's own sentences, word for word, so what the
  * e2e suite reads in demo mode is what staff read at the counter.
  */
+import { ClientResponseError } from "pocketbase"
+
 import { itemDetailLine, templateForItem } from "@/lib/api/item-shape"
 import { demoId, demoLabelJobs, ensureSeeded, itemStore } from "@/lib/api/demo/store"
 import { demoTradeIns } from "@/lib/api/demo/tradeins"
@@ -157,13 +159,30 @@ export function claim(
   return taken.map((job) => ({ ...job }))
 }
 
+/** The shape a route refusal arrives in, so the screens read the demo alike. */
+function refusal(status: number, message: string): never {
+  throw new ClientResponseError({
+    status,
+    response: { code: status, message, data: {} },
+  })
+}
+
 /**
  * The route leaves `items.label_printed_at` alone, as the print page does:
  * nothing reads it, and a reprint is not news about the item.
+ *
+ * A job this device is not holding is refused rather than accepted
+ * quietly: that label has come out twice and somebody has to know.
  */
 export function markPrinted(id: string): LabelJobStatus {
   const job = demoLabelJobs.find((row) => row.id === id)
-  if (!job) return "printed"
+  if (!job) refusal(404, "That label job is no longer here.")
+  if (job.status !== "printing") {
+    refusal(
+      409,
+      "That label went back in the queue, so another device may have printed it. Check the label before printing it again."
+    )
+  }
   job.status = "printed"
   job.error = ""
   job.printer = ""
@@ -185,7 +204,10 @@ export function markFailed(id: string, error: string): LabelJobStatus {
 
 export function requeue(id: string): LabelJobStatus {
   const job = demoLabelJobs.find((row) => row.id === id)
-  if (!job) return "queued"
+  if (!job) refusal(404, "That label job is no longer here.")
+  if (job.status !== "failed" && job.status !== "cancelled") {
+    refusal(409, "That label is already in the queue.")
+  }
   job.status = "queued"
   job.attempts = 0
   job.error = ""
