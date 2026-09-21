@@ -19,6 +19,20 @@ export function setScanHandler(next: Handler): () => void {
   }
 }
 
+/**
+ * The tick in the hand that says a scan landed. Most counter scanning happens
+ * one-handed on a phone with a customer waiting, so the confirmation has to
+ * reach somebody who is not looking at the screen. A device with no vibration
+ * motor, and every desktop browser, simply has nothing to call.
+ */
+export function scanTick() {
+  try {
+    navigator.vibrate?.(30)
+  } catch {
+    // Some browsers refuse it outside a gesture. A scan is not worth an error.
+  }
+}
+
 /** Sends a scan to the screen that claimed it, or to the fallback. */
 export function dispatchScan(raw: string, fallback: Handler) {
   ;(handler ?? fallback)(raw)

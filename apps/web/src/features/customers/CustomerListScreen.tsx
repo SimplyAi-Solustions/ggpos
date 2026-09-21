@@ -19,6 +19,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowSettle,
 } from "@/components/ui/table"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
@@ -98,9 +99,9 @@ export function CustomerListScreen() {
                 <TableHead>Last visit</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody settle>
               {customers.map((customer) => (
-                <TableRow key={customer.id}>
+                <TableRowSettle key={customer.id}>
                   <TableCell>
                     <Link
                       to="/counter/customers/$code"
@@ -131,7 +132,7 @@ export function CustomerListScreen() {
                       {formatShortDate(customer.lastVisit) || "-"}
                     </span>
                   </TableCell>
-                </TableRow>
+                </TableRowSettle>
               ))}
             </TableBody>
           </Table>

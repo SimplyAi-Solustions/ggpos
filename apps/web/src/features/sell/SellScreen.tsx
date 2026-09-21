@@ -11,7 +11,10 @@ import { createPortal } from "react-dom"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { displayCode, formatGBP, parseDecimalToMinor } from "@gg/shared"
+import { motion } from "motion/react"
 
+import { underlineGrow, useMotionVariants, useScanPulse } from "@/design/motion"
+import { formatPercent } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
@@ -23,7 +26,7 @@ import { StickerRing } from "@/components/ui/sticker"
 import { ProductImage } from "@/components/product-image"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerScanField } from "@/app/focus-registry"
-import { setScanHandler } from "@/app/scan-bus"
+import { scanTick, setScanHandler } from "@/app/scan-bus"
 import { useCounterConfig } from "@/lib/api/config"
 import { routeScannedCode } from "@/lib/scanning/route-code"
 import { refusalOrFallback } from "@/lib/api/refusal"
@@ -200,7 +203,7 @@ function discountLabel(basket: BasketState, totals: BasketTotals): string {
     return basket.voucher?.rewardName ?? "Reward"
   }
   if (totals.discountSource === "tier_perk") {
-    return `${basket.customer?.tierName ?? "Tier"} ${totals.perkPercent}% off`
+    return `${basket.customer?.tierName ?? "Tier"} ${formatPercent(totals.perkPercent)} off`
   }
   return "Discount"
 }
@@ -222,6 +225,10 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
 
   const [scanError, setScanError] = React.useState<string | null>(null)
   const [scanNote, setScanNote] = React.useState<string | null>(null)
+  // The line a scan has just put in the basket: its underline flashes volt so
+  // the eye finds the row a hand's scan landed on.
+  const [pulsing, pulse] = useScanPulse()
+  const pulseLine = useMotionVariants(underlineGrow)
   const [customerOpen, setCustomerOpen] = React.useState(false)
   const [discountOpen, setDiscountOpen] = React.useState(false)
   const [priceLine, setPriceLine] = React.useState<BasketLine | null>(null)
@@ -363,6 +370,8 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           }
           dispatchBasket({ type: "add", line: lineFromItem(item) })
           setScanNote(`${item.title ?? "Item"} added`)
+          pulse(item.id)
+          scanTick()
           return
         }
 
@@ -374,6 +383,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           }
           dispatchBasket({ type: "attachCustomer", customer })
           setScanNote(`${customer.name} attached`)
+          scanTick()
           return
         }
 
@@ -415,6 +425,8 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           if (item) {
             dispatchBasket({ type: "add", line: lineFromItem(item) })
             setScanNote(`${item.title ?? "Item"} added`)
+            pulse(item.id)
+            scanTick()
           }
           return
         }
@@ -424,7 +436,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
         setScanError(refusalOrFallback(error, "That code could not be looked up. Try again."))
       }
     },
-    []
+    [pulse]
   )
 
   React.useEffect(() => setScanHandler((raw) => void commit(raw)), [commit])
@@ -838,8 +850,18 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
             {basket.lines.map((line) => (
               <li
                 key={line.itemId}
-                className="flex items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
+                className="relative flex items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
               >
+                {pulsing === line.itemId ? (
+                  <motion.span
+                    aria-hidden="true"
+                    variants={pulseLine}
+                    initial="hidden"
+                    animate="visible"
+                    exit="hidden"
+                    className="absolute inset-x-0 -bottom-px h-0.5 origin-left bg-volt"
+                  />
+                ) : null}
                 <ProductImage
                   src={line.image}
                   alt=""
@@ -977,7 +999,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
         <TotalRow label="Subtotal" value={formatGBP(totals.subtotal)} tone="muted" />
         {totals.perkDiscount > 0 ? (
           <TotalRow
-            label={`${basket.customer?.tierName ?? "Tier"} ${totals.perkPercent}% off`}
+            label={`${basket.customer?.tierName ?? "Tier"} ${formatPercent(totals.perkPercent)} off`}
             value={`-${formatGBP(totals.perkDiscount)}`}
             tone="muted"
           />

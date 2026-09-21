@@ -37,6 +37,7 @@ import { CounterDockContext } from "@/app/counter-dock"
 import { IdleLock } from "@/app/idle-lock"
 import { dispatchScan, makeScanFallback } from "@/app/scan-bus"
 import { useShortcuts } from "@/app/shortcuts"
+import { PageMain } from "@/app/page-transition"
 import { ShortcutOverlay } from "@/app/shortcut-overlay"
 import { isScanField } from "@/app/focus-registry"
 import { createWedgeListener } from "@/lib/scanning/wedge"
@@ -320,12 +321,12 @@ export function CounterShell() {
           something to say. */}
       <OfflineStrip />
 
-      <main
+      <PageMain
         id="counter-main"
         className="mx-auto w-full max-w-[1040px] flex-1 px-5 pb-[calc(var(--gg-dock-h,5rem)+2.5rem)] sm:px-10 min-[900px]:pb-16"
       >
         <Outlet />
-      </main>
+      </PageMain>
 
       <footer className="mx-auto hidden w-full max-w-[1040px] items-center justify-between gap-6 px-5 pb-8 sm:px-10 min-[900px]:flex">
         <Hint>Game &middot; Trade &middot; Play</Hint>

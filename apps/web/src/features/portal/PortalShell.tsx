@@ -16,6 +16,7 @@ import { Wordmark } from "@/components/ui/wordmark"
 import { Hint } from "@/components/ui/micro-label"
 import { isDemo } from "@/lib/api/mode"
 import { listMyNotifications } from "@/lib/api/notifications"
+import { PageMain } from "@/app/page-transition"
 import { PortalDockContext } from "@/features/portal/dock"
 import { useCustomerSession } from "@/features/portal/session"
 
@@ -129,7 +130,7 @@ export function PortalShell() {
           </nav>
         ) : null}
 
-        <main
+        <PageMain
           id="portal-main"
           className={cn(
             "mx-auto w-full max-w-[560px] flex-1 px-5 sm:px-10",
@@ -139,7 +140,7 @@ export function PortalShell() {
           )}
         >
           <Outlet />
-        </main>
+        </PageMain>
 
         <footer className="mx-auto hidden w-full max-w-[560px] items-center justify-between gap-6 px-5 pb-8 sm:px-10 min-[900px]:flex">
           <Hint>Game &middot; Trade &middot; Play</Hint>

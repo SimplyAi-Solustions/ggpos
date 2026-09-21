@@ -18,6 +18,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowSettle,
 } from "@/components/ui/table"
 import { useCounterDock } from "@/app/counter-dock"
 import { formatShortDate } from "@/features/customers/format"
@@ -99,9 +100,9 @@ export function TradeInListScreen() {
                 <TableHead>Date</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody settle>
               {visible.map((row) => (
-                <TableRow key={row.id}>
+                <TableRowSettle key={row.id}>
                   <TableCell>
                     {row.status === "completed" ? (
                       <Link
@@ -141,7 +142,7 @@ export function TradeInListScreen() {
                       {formatShortDate(row.at) || "-"}
                     </span>
                   </TableCell>
-                </TableRow>
+                </TableRowSettle>
               ))}
             </TableBody>
           </Table>

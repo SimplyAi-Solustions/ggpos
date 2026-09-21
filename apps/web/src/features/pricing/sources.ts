@@ -11,6 +11,7 @@
 import { formatGBP, type PriceSource } from "@gg/shared"
 
 import type { PriceSourceRow, PriceView } from "@/lib/api/types"
+import { formatPercent } from "@/lib/format"
 
 /** The sources as docs/api-contract.md names them. */
 const LABELS: Record<PriceSource, string> = {
@@ -137,7 +138,7 @@ export function sourceDetail(
 
   if (row.source === "ebay_uk_asking") {
     const when = shortDate(row.fetched_at)
-    const head = `eBay UK asking, after the ${haircutPct}% haircut`
+    const head = `eBay UK asking, after the ${formatPercent(haircutPct)} haircut`
     return when ? `${head}, ${when}` : head
   }
 

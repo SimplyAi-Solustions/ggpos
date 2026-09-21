@@ -11,6 +11,7 @@ import { Link } from "@tanstack/react-router"
 import { displayCode, encodeCode, formatGBP } from "@gg/shared"
 
 import { poundsCell } from "@/features/reports/csv"
+import { formatPercent } from "@/lib/format"
 import type { ReportKey, ReportRow } from "@/lib/api/types"
 import { formatDay } from "@/features/reports/range"
 import type { ChartTone } from "@/features/reports/charts"
@@ -34,7 +35,7 @@ export type Figure = "money" | "count" | "percent" | "ratio" | "points"
 /** On screen. Money always goes through `formatGBP`, never `toLocaleString`. */
 export function figureText(value: number, figure: Figure): string {
   if (figure === "money") return formatGBP(value)
-  if (figure === "percent") return `${value}%`
+  if (figure === "percent") return formatPercent(value)
   if (figure === "ratio") return String(value)
   return value.toLocaleString("en-GB")
 }
@@ -116,8 +117,9 @@ export function percentColumn(
     key,
     label,
     numeric: true,
-    // The routes round a percentage to one place already, so this prints it.
-    text: (row) => `${num(row, key)}%`,
+    // The routes round a percentage to one place already; `formatPercent`
+    // is what puts every percentage in the app into the one shape.
+    text: (row) => formatPercent(num(row, key)),
     csv: (row) => num(row, key),
     sortValue: (row) => num(row, key),
     summary,

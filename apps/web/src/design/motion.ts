@@ -85,6 +85,38 @@ export function useMotionVariants(variants: Variants): Variants {
   return reduced ? STILL : variants
 }
 
+/**
+ * A scanned row's underline flashes volt and is then taken away. The bar
+ * grows from the left with `underlineGrow` and leaves the same way, 150ms
+ * each; the hold between them is state rather than motion, so nothing here
+ * runs longer than the 200ms budget. Returns the row that is pulsing and the
+ * call that starts it.
+ */
+export function useScanPulse(
+  hold = 1000
+): [string | null, (id: string) => void] {
+  const [pulsing, setPulsing] = React.useState<string | null>(null)
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  React.useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+    },
+    []
+  )
+
+  const pulse = React.useCallback(
+    (id: string) => {
+      if (timer.current) clearTimeout(timer.current)
+      setPulsing(id)
+      timer.current = setTimeout(() => setPulsing(null), hold)
+    },
+    [hold]
+  )
+
+  return [pulsing, pulse]
+}
+
 /** `true` when every animation in the tree should be skipped. */
 export function useReducedMotionGuard(): boolean {
   return useReducedMotion() ?? false

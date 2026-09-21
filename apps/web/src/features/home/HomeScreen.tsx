@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Sparkline } from "@/components/ui/sparkline"
+import { useCountUp } from "@/design/motion"
 import { getCurrentCashSession, getTodayStats } from "@/lib/api"
 import { countQuotesWaiting } from "@/lib/api/quotes"
 import { countHoldsEndingToday } from "@/lib/api/wants"
@@ -30,7 +31,8 @@ const QUICK_ACTIONS = [
 interface Tile {
   label: string
   hint: string
-  value: (stats: TodayStats) => string
+  /** The figure in pence, so the tile can count up to it before formatting. */
+  pence: (stats: TodayStats) => number
   /** Which of the last thirty days' figures the line under it draws. */
   trend: keyof Omit<SparklineSeries, "dates">
 }
@@ -39,28 +41,46 @@ const TILES: Tile[] = [
   {
     label: "Sales",
     hint: "Taken today",
-    value: (stats) => formatGBP(stats.salesTotal),
+    pence: (stats) => stats.salesTotal,
     trend: "sales",
   },
   {
     label: "Buy-ins",
     hint: "Paid out today",
-    value: (stats) => formatGBP(stats.buyInTotal),
+    pence: (stats) => stats.buyInTotal,
     trend: "buyIns",
   },
   {
     label: "Cash out",
     hint: "From the drawer",
-    value: (stats) => formatGBP(stats.cashOut),
+    pence: (stats) => stats.cashOut,
     trend: "cashOut",
   },
   {
     label: "Credit issued",
     hint: "On to accounts",
-    value: (stats) => formatGBP(stats.creditIssued),
+    pence: (stats) => stats.creditIssued,
     trend: "creditIssued",
   },
 ]
+
+/**
+ * The day's figure, counted up once when the numbers land. Before they do the
+ * tile says so in words rather than showing a zero that could be read as a
+ * quiet day.
+ */
+function TileFigure({ pence, counted }: { pence: number; counted: boolean }) {
+  const shown = useCountUp(counted ? pence : 0)
+  if (!counted) {
+    return (
+      <>
+        <span aria-hidden="true">-</span>
+        <span className="sr-only">Not counted yet</span>
+      </>
+    )
+  }
+  return <>{formatGBP(Number(shown))}</>
+}
 
 function time(iso?: string): string {
   if (!iso) return ""
@@ -119,14 +139,10 @@ export function HomeScreen() {
             </dt>
             <dd className="m-0">
               <span className="tnum font-display text-[28px] leading-none tracking-[0.01em] text-foreground">
-                {stats ? (
-                  tile.value(stats)
-                ) : (
-                  <>
-                    <span aria-hidden="true">-</span>
-                    <span className="sr-only">Not counted yet</span>
-                  </>
-                )}
+                <TileFigure
+                  pence={stats ? tile.pence(stats) : 0}
+                  counted={Boolean(stats)}
+                />
               </span>
               <span className="mt-2 block text-[13px] text-muted-foreground-2">
                 {tile.hint}
@@ -152,7 +168,7 @@ export function HomeScreen() {
       <div className="mt-16 flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-hairline-soft pb-6">
         {session ? (
           <>
-            <span className="text-[15px] text-foreground">
+            <span className="tnum text-[15px] text-foreground">
               Session open since {time(session.opened_at)}, float{" "}
               {formatGBP(session.float ?? 0)}
             </span>

@@ -16,6 +16,7 @@ import type {
   RewardType,
   VoucherStatus,
 } from "@/lib/api/types"
+import { formatPercent } from "@/lib/format"
 
 // ---------------------------------------------------------------------------
 // Points
@@ -167,7 +168,7 @@ export function perkLine(entry: PerkWalletEntry): PerkLine {
       return { title: "Lounge hours", detail: perkCountLine(entry) }
     case "percent_off":
       return {
-        title: `${entry.value ?? 0}% off ${scopeWords(entry.scope)}`,
+        title: `${formatPercent(entry.value ?? 0)} off ${scopeWords(entry.scope)}`,
         detail: null,
       }
     case "points_multiplier":

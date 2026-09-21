@@ -177,7 +177,7 @@ already exempts this folder from `react-refresh/only-export-components`.
 | `MicroLabel`, `SectionHeading`, `Hint` | The three micro-text tones: label (`#3d3d3a`), section heading (ink, 32px above), helper (`#73736d`). |
 | `PageTitle`, `Lede` | The one Anton line and its single grey sentence, 56ch maximum. |
 | `Field`, `FieldRow`, `FieldError` | The only form layout. Owns label, hint, optional icon column, control and error. `FieldError` takes a react-hook-form message and renders one line under the control. |
-| `Table` and parts | Hairline rows at ink 12%, Space Mono column headings, no zebra, no outer border, hover to `#f3f3ef`. `numeric` on a head or cell right-aligns it with `tnum`. `TableImageCell` is the 40px product image in the first column. |
+| `Table` and parts | Hairline rows at ink 12%, Space Mono column headings, no zebra, no outer border, hover to `#f3f3ef`. `numeric` on a head or cell right-aligns it with `tnum`. `TableImageCell` is the 40px product image in the first column. `TableBody settle` with `TableRowSettle` rows adds the list entrance, for a body whose rows arrive together. |
 | `Sheet`, `Dialog` | Paper panel, 1px hairline edge, one soft shadow, 4px radius. Sheets dock to the bottom on phones whatever `side` says. A dialog is only for a task that needs protected focus; everything else is a sheet. |
 | `Badge` | `volt` for points and tier (ink on yellow), `outline` for everything else, `count` (paper on ink) only for the unread count on My Vault's bell. A count is not an achievement, so it is never volt. |
 | `Kbd`, `KbdGroup` | Keyboard shortcuts, drawn rather than described. |
@@ -258,6 +258,21 @@ Rules:
 - `panelRise`: sheets and dialogs, y 12px.
 - `sealIn`: scale .94 to 1, no overshoot.
 - `useCountUp(value, { decimals })`: a KPI figure counts up once, over 600ms.
+  Home's four tiles use it: the figure counts from nothing to the day's total
+  when the numbers land, and says "Not counted yet" until they do rather than
+  counting up to a zero that would read as a quiet day.
+- `useScanPulse()`: the line a scan has just put in the basket flashes a
+  1.5px volt bar along its underline. The bar grows from the left with
+  `underlineGrow` and is taken away the same way, 150ms each; the second it
+  holds in between is state, not motion, so nothing breaks the 200ms budget.
+- `PageMain` (in `app/page-transition.tsx`) is `<main>` with the page
+  entrance on it, keyed by the matched route's id, so a screen fades and
+  rises once on arrival and not again when its own state changes. Both shells
+  use it; no element is added between the content column and the screen.
+- `TableBody settle` plus `TableRowSettle` give a list the row settle: 6px up,
+  20ms apart. Put them on a body whose rows arrive together (Customers,
+  Trade); leave them off one that grows a page at a time, or the rows already
+  on screen settle again under the new ones.
 - `useMotionVariants(variants)` returns a still set when the reader has asked
   for less motion, so call sites never branch. `theme.css` also zeroes every
   animation and transition under `prefers-reduced-motion`.
@@ -273,6 +288,12 @@ Rules:
 - No exclamation marks. No emoji. No "Oops", "Awesome", "Uh oh".
 - Errors say what happened and what to do next: "Card not found in Scarlet &
   Violet 151. Check the number or add it manually."
+- Every percentage on screen is written one way, through
+  `formatPercent` in `apps/web/src/lib/format.ts`: the figure, no space, then
+  the sign. A whole number carries no decimal (`10%`) and anything finer
+  carries exactly one place (`32.6%`), so a column of them lines up. Give the
+  string the `tnum` class wherever it is a figure rather than a word in a
+  sentence. Never `10 %`, never `10 per cent`, never a raw `0.1`.
 - UK English and GBP throughout. No em-dashes in prose; use a comma or a
   hyphen.
 - Every string is reviewed against these rules on the pull request.

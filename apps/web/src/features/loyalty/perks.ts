@@ -9,6 +9,7 @@
  */
 import type { CountedPerkType, PerkWalletEntry } from "@/lib/api/types"
 import type { TierPerk } from "@gg/shared"
+import { formatPercent } from "@/lib/format"
 
 /** The current period, `YYYY-MM`, in the shop's own timezone. */
 export function currentPeriod(now: Date = new Date()): string {
@@ -69,7 +70,7 @@ export function perkValueLine(entry: PerkWalletEntry): string {
     case "percent_off": {
       const scope = entry.scope ?? []
       const where = scope.length > 0 ? scope.join(", ") : "everything"
-      return `${entry.value ?? 0}% off ${where}`
+      return `${formatPercent(entry.value ?? 0)} off ${where}`
     }
     case "points_multiplier":
       return `${entry.value ?? 1} times the points on a sale`

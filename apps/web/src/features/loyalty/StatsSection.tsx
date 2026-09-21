@@ -16,6 +16,7 @@ import { PERK_LABEL } from "@/features/loyalty/perks"
 import { addDays, todayIso } from "@/lib/api/dates"
 import { getReport } from "@/lib/api/reports"
 import type { TierPerk } from "@gg/shared"
+import { formatPercent } from "@/lib/format"
 
 interface TierCount {
   tier?: string
@@ -113,7 +114,7 @@ export function StatsSection({ programme }: { programme: LoyaltyProgramme }) {
         />
         <Figure
           label="Programme cost"
-          value={`${(totals.programme_cost_pct ?? 0).toFixed(1)}%`}
+          value={formatPercent(totals.programme_cost_pct ?? 0)}
           note="Points redeemed as a share of what the shop took."
         />
         <Figure

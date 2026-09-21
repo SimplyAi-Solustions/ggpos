@@ -55,6 +55,7 @@ import {
   type RuleForm,
 } from "@/features/settings/mapping"
 import type { GameRecord } from "@/lib/api/types"
+import { formatPercent } from "@/lib/format"
 
 export interface RulesMatrixProps {
   rules: RuleForm[]
@@ -613,8 +614,8 @@ export function RulesMatrix({
                 {appliesTo(rule, games)}
               </span>
               <span className="tnum text-[13px] text-muted-foreground-2">
-                {ruleBandLabel(rule)} &middot; {rule.cashPct}% cash &middot;{" "}
-                {rule.creditPct}% credit
+                {ruleBandLabel(rule)} &middot; {formatPercent(Number(rule.cashPct))}{" "}
+                cash &middot; {formatPercent(Number(rule.creditPct))} credit
                 {rule.active ? "" : " · Off"}
               </span>
             </span>
