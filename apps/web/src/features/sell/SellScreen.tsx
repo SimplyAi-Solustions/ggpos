@@ -1051,7 +1051,9 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           </div>
         ) : null}
 
-        {payment.sumupAmount > 0 ? (
+        {/* One card figure at a time: while the reader is holding a payment
+            the amount is what it took, not what is left to take. */}
+        {payment.sumupAmount > 0 && !held ? (
           <div className="mt-10 flex flex-col gap-2">
             <MicroLabel tone="ink">
               {reader ? "Card payment" : "Key this into SumUp"}
@@ -1063,7 +1065,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
               >
                 {formatGBP(payment.sumupAmount)}
               </span>
-              {reader && !held ? (
+              {reader ? (
                 <Button
                   variant="text"
                   data-testid="take-card-payment"
@@ -1074,7 +1076,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
                 </Button>
               ) : null}
             </div>
-            {reader && !held ? <Hint>{readerName}</Hint> : null}
+            {reader ? <Hint>{readerName}</Hint> : null}
           </div>
         ) : null}
 
