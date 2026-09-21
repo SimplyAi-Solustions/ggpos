@@ -82,13 +82,12 @@ export function CardReader({ settings }: { settings: SettingsRecord }) {
   })
 
   const choose = useMutation({
+    // Only the two reader fields: the server merges them, and echoing the
+    // merchant code from whatever this page loaded would write a stale one
+    // back over a change made in the dashboard since.
     mutationFn: (reader: SumUpReader) =>
       saveSettings(settings.id, {
-        sumup: {
-          ...(settings.sumup ?? {}),
-          default_reader_id: reader.id,
-          default_reader_name: reader.name,
-        },
+        sumup: { default_reader_id: reader.id, default_reader_name: reader.name },
       }),
     onSuccess: (_result, reader) => {
       setError(null)
@@ -106,6 +105,21 @@ export function CardReader({ settings }: { settings: SettingsRecord }) {
   const list = readers.data?.readers ?? []
   const defaultId =
     readers.data?.default_reader_id || settings.sumup?.default_reader_id || ""
+
+  if (readers.isError) {
+    return (
+      <p
+        role="alert"
+        data-testid="reader-error"
+        className="max-w-[56ch] text-[15px] leading-[1.5] text-destructive"
+      >
+        {refusalOrFallback(
+          readers.error,
+          "The paired readers could not be read. Check the connection and try again."
+        )}
+      </p>
+    )
+  }
 
   if (readers.data?.not_configured) {
     return (
@@ -155,7 +169,7 @@ export function CardReader({ settings }: { settings: SettingsRecord }) {
               ) : (
                 <Button
                   variant="text"
-                  loading={choose.isPending}
+                  loading={choose.isPending && choose.variables?.id === reader.id}
                   onClick={() => choose.mutate(reader)}
                 >
                   Use this reader
@@ -163,7 +177,7 @@ export function CardReader({ settings }: { settings: SettingsRecord }) {
               )}
               <Button
                 variant="text-destructive"
-                loading={forget.isPending}
+                loading={forget.isPending && forget.variables === reader.id}
                 onClick={() => forget.mutate(reader.id)}
               >
                 <span className="sr-only">Remove {reader.name}</span>

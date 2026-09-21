@@ -13,9 +13,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Kbd } from "@/components/ui/kbd"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { MicroLabel } from "@/components/ui/micro-label"
-import { ESC_LINE, SHORTCUT_GROUPS, SHORTCUTS } from "@/app/shortcuts"
+import {
+  ESC_LINE,
+  modifierKey,
+  SHORTCUT_GROUPS,
+  SHORTCUTS,
+} from "@/app/shortcuts"
 
 export interface ShortcutOverlayProps {
   open: boolean
@@ -23,14 +28,16 @@ export interface ShortcutOverlayProps {
 }
 
 export function ShortcutOverlay({ open, onOpenChange }: ShortcutOverlayProps) {
+  const modifier = modifierKey()
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="shortcut-overlay" className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            None of these fire while the caret is in a field, so a scanner can
-            never set one off.
+            None of these fire while the caret is in a field, and a scanner's
+            own keystrokes never set one off.
           </DialogDescription>
         </DialogHeader>
 
@@ -50,7 +57,16 @@ export function ShortcutOverlay({ open, onOpenChange }: ShortcutOverlayProps) {
                       <span className="text-[15px] text-foreground">
                         {shortcut.label}
                       </span>
-                      <Kbd>{shortcut.keys}</Kbd>
+                      {/* A key that needs a modifier is drawn with it, or
+                          the page would be telling staff the wrong key. */}
+                      {shortcut.modifier ? (
+                        <KbdGroup>
+                          <Kbd>{modifier}</Kbd>
+                          <Kbd>{shortcut.keys}</Kbd>
+                        </KbdGroup>
+                      ) : (
+                        <Kbd>{shortcut.keys}</Kbd>
+                      )}
                     </li>
                   ))}
                 </ul>
