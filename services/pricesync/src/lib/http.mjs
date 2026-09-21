@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { parseJsonStream } from "./json-stream.mjs";
 
-export const USER_AGENT = "GGVault-pricesync/1.0 (+https://vault.ggentertainment.co.uk)";
+export const USER_AGENT = "GGVault-pricesync/1.0 (+https://ggpos.ggentertainment.co.uk)";
 
 // Generous timeouts: the Cardmarket files run 15-26 MB and this is a
 // nightly batch job with no one waiting on it, so it is better to wait

@@ -64,7 +64,7 @@ Kind letters:
 
 Note the reward voucher letter is **V**, not R: `docs/PLAN.md` refers to reward codes loosely as "GGR" in places, but the shipped code in `sku.ts` gives retro items the letter R and reward vouchers their own letter, V, so the two never collide. A printed reward code reads `GGV-xxxxxx`.
 
-Item and reward labels encode the bare code, no hyphen, in the QR, for example `GGP7F3K2Q`, so the counter's scan listener can read it directly and route by the kind letter. The **customer card is different**: its QR encodes a full portal link, `https://vault.ggentertainment.co.uk/c/<qr_token>`, using the customer's rotatable token rather than their printed code, so a phone camera opens the portal directly. The customer's `GGC-xxxxxx` code is printed as text on the same card for manual lookup and for staff to type at the counter.
+Item and reward labels encode the bare code, no hyphen, in the QR, for example `GGP7F3K2Q`, so the counter's scan listener can read it directly and route by the kind letter. The **customer card is different**: its QR encodes a full portal link, `https://ggpos.ggentertainment.co.uk/c/<qr_token>`, using the customer's rotatable token rather than their printed code, so a phone camera opens the portal directly. The customer's `GGC-xxxxxx` code is printed as text on the same card for manual lookup and for staff to type at the counter.
 
 ## Printer
 

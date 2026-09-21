@@ -9,7 +9,7 @@
 #   sudo caddy validate --config /etc/caddy/Caddyfile
 #   sudo systemctl reload caddy
 #
-# DNS for vault.ggentertainment.co.uk must already point at this VPS
+# DNS for ggpos.ggentertainment.co.uk must already point at this VPS
 # before the reload (see deploy/README.md, "DNS") - Caddy requests and
 # renews the HTTPS certificate for this block automatically the first
 # time it is asked for, the same way it already does for the marketing
@@ -22,7 +22,7 @@
 # until it is replaced the admin UI is unreachable from anywhere,
 # including the shop - that is the safe failure mode.
 
-vault.ggentertainment.co.uk {
+ggpos.ggentertainment.co.uk {
 	# --- Compression --------------------------------------------------
 	# zstd first (better ratio, less CPU), gzip as the fallback for older
 	# clients. Caddy negotiates whichever the browser's Accept-Encoding

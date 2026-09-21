@@ -27,7 +27,7 @@
 // a live call an end-to-end test cannot see.
 "use strict";
 
-var USER_AGENT = "GGVault/1.0 (+https://vault.ggentertainment.co.uk)";
+var USER_AGENT = "GGVault/1.0 (+https://ggpos.ggentertainment.co.uk)";
 var DEFAULT_TIMEOUT_SECONDS = 20;
 
 // Every adapter requires its neighbours the same way the rest of pb_hooks

@@ -16,7 +16,9 @@ configuration.
 You will need:
 
 - SSH access to the VPS as a user that can run `docker` and edit the
-  Caddy configuration.
+  Caddy configuration (or, for the GitHub Actions bootstrap in section 3,
+  a user with passwordless sudo whose public key is in
+  `~/.ssh/authorized_keys`).
 - Access to the DNS records for `ggentertainment.co.uk`.
 - An S3-compatible bucket for backups already created (Cloudflare R2 or
   Backblaze B2 both work - see "Backups" below).
@@ -26,7 +28,7 @@ You will need:
 
 ## 1. DNS
 
-Add an `A` record for `vault.ggentertainment.co.uk` pointing at the VPS's
+Add an `A` record for `ggpos.ggentertainment.co.uk` pointing at the VPS's
 IP address (the same address `ggentertainment.co.uk` itself already
 resolves to). DNS changes can take a little while to spread; there is no
 need to wait for it before doing the next steps, but Caddy will not be
@@ -73,7 +75,24 @@ everyone together.
 
 ## 3. First deploy
 
-From `<repo>/deploy`:
+**The short way, from GitHub Actions.** `.github/workflows/bootstrap-vps.yml`
+does sections 2 to 7 for you over SSH, once, and is safe to run again.
+Set the four deploy secrets from section 9 plus `GG_ADMIN_PASSWORD` (the
+temporary password for the first admin; the app makes them choose a new
+one at first sign-in), then run "Bootstrap VPS" from the Actions tab on
+the branch to deploy, with the site hostname, the admin email and, if you
+know it, the shop's public IP. It installs Docker if it is missing,
+creates the checkout directory, copies the files, writes `deploy/.env`
+(generating the ID photo key, the pricesync superuser's password and the
+VAPID keys itself; the backup bucket's values come from the optional
+`RESTIC_*` and `AWS_*` secrets), appends the Caddy site block and reloads
+Caddy, builds and starts the stack, creates both superusers, installs the
+cron lines, and checks `https://<host>/api/health` from the outside. The
+run's log shows what it did and what is still to do; it never prints a
+secret. After it, keep a copy of `GG_ID_PHOTO_KEY` from `deploy/.env` in
+the password manager.
+
+**The long way, by hand.** From `<repo>/deploy`:
 
 ```bash
 cd <repo>/deploy
@@ -140,7 +159,7 @@ login.
 Multi-factor authentication for the PocketBase superuser account (from
 step 4) is turned on from inside `/_/` itself, not from the command line:
 
-1. Sign in at `https://vault.ggentertainment.co.uk/_/` (only reachable
+1. Sign in at `https://ggpos.ggentertainment.co.uk/_/` (only reachable
    from the shop's own connection, per the Caddy block above).
 2. Open the superuser's own account settings.
 3. Turn on two-factor authentication and follow the prompts (an
@@ -294,7 +313,7 @@ cron line to add for it.
    `POST /api/collections/_superusers/auth-with-password`):
 
    ```bash
-   curl -X PATCH https://vault.ggentertainment.co.uk/api/collections/settings/records/SETTINGS_ROW_ID \
+   curl -X PATCH https://ggpos.ggentertainment.co.uk/api/collections/settings/records/SETTINGS_ROW_ID \
      -H "Authorization: SUPERUSER_TOKEN" -H "Content-Type: application/json" \
      -d '{"push":{"vapid_public_key":"PASTE_THE_PUBLIC_KEY_HERE"}}'
    ```
@@ -392,7 +411,7 @@ redirects to, so it is the one place that log survives.
 ## 11. Health checks
 
 ```bash
-curl https://vault.ggentertainment.co.uk/api/health
+curl https://ggpos.ggentertainment.co.uk/api/health
 docker compose ps
 ```
 
@@ -462,14 +481,14 @@ and the app installed as a PWA.
    Test it by opening a plain text editor and scanning any barcode: you
    should see the prefix character, then the code, then the cursor drop
    to a new line.
-4. **Install the PWA.** Open `https://vault.ggentertainment.co.uk` in
+4. **Install the PWA.** Open `https://ggpos.ggentertainment.co.uk` in
    Chrome, then use Chrome's install icon in the address bar (or the
    three-dot menu > "Install GG Vault..."). This gives the counter its
    own app window and its own taskbar icon, separate from a browser tab
    that might get closed by accident.
 
 An optional tablet running `/display` in Chrome's kiosk mode
-(`chrome --kiosk https://vault.ggentertainment.co.uk/display`) can sit
+(`chrome --kiosk https://ggpos.ggentertainment.co.uk/display`) can sit
 on the counter facing the customer; it is not required for the shop to
 trade.
 
@@ -479,9 +498,9 @@ Staff phones and the shop's own phone/tablet for the customer portal
 need only the PWA installed from the browser, the same as any website
 that supports "install as app":
 
-- **Android (Chrome):** open `https://vault.ggentertainment.co.uk`, tap
+- **Android (Chrome):** open `https://ggpos.ggentertainment.co.uk`, tap
   the three-dot menu, then "Install app" (or "Add to Home screen").
-- **iPhone/iPad (Safari):** open `https://vault.ggentertainment.co.uk`,
+- **iPhone/iPad (Safari):** open `https://ggpos.ggentertainment.co.uk`,
   tap the Share icon, then "Add to Home Screen". Safari does not offer
   the same automatic install prompt Chrome does, so this manual step is
   the normal way to install any PWA on iOS.
@@ -512,7 +531,7 @@ code above are all it needs; there is nothing else to buy or configure.
 
 Before pairing, check **Settings > Application** in `/_/`: the
 application URL has to be the real public address
-(`https://vault.ggentertainment.co.uk`), not `localhost`. The reader
+(`https://ggpos.ggentertainment.co.uk`), not `localhost`. The reader
 reports the result of every payment back to that address, so a wrong or
 empty one means the counter never hears whether the card went through -
 the app refuses to start a payment at all until it is set.
@@ -552,7 +571,7 @@ app so stock and the ledgers agree.
       actually sitting at the counter, not just in the repository
 - [ ] `/_/` is confirmed unreachable from outside the shop - ask someone
       away from the shop (on mobile data, not the shop wifi) to run
-      `curl -i https://vault.ggentertainment.co.uk/_/` and confirm they
+      `curl -i https://ggpos.ggentertainment.co.uk/_/` and confirm they
       get a plain `404`, then confirm it loads normally from inside the
       shop
 - [ ] PocketBase's Batch API is confirmed on with Max requests at least

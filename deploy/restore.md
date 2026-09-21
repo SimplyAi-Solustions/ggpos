@@ -102,7 +102,7 @@ mv "$RESTORE_DIR/pb_data" data/pb_data
 
 ```bash
 docker compose up -d
-curl -sf https://vault.ggentertainment.co.uk/api/health
+curl -sf https://ggpos.ggentertainment.co.uk/api/health
 ```
 
 Once you've confirmed the shop is trading normally again, remove the

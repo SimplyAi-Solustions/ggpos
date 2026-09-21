@@ -76,7 +76,7 @@ test("tcgdex.getBySetNumber: parsed shape, ids, image URLs", () => {
   const tcgdex = adapter("tcgdex.js");
   const transport = (req) => {
     assert.equal(req.url, "https://api.tcgdex.net/v2/en/sets/sv03.5/199");
-    assert.equal(req.headers["User-Agent"], "GGVault/1.0 (+https://vault.ggentertainment.co.uk)");
+    assert.equal(req.headers["User-Agent"], "GGVault/1.0 (+https://ggpos.ggentertainment.co.uk)");
     return { statusCode: 200, json: fixture("tcgdex_sv151_199.json") };
   };
   const card = tcgdex.getBySetNumber("sv03.5", "199", transport);

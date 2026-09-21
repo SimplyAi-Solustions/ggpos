@@ -108,12 +108,12 @@ Impeccable (pbakaus/impeccable, 24 commands and 61 detector rules) is not instal
 - To fix during the build: the `interest` collection's List rule allows an unauthenticated list request (200 with an empty page, not 403). Lock List and View to superusers.
 - No `vault.`, `pb.`, `api.`, `hub.`, `trade.` or `pos.` subdomains exist yet.
 
-GG Vault runs as a **second, separate PocketBase process** on the same VPS (own data directory, backups and upgrade cadence) at `vault.ggentertainment.co.uk`. The existing Caddy gains one site block.
+GG Vault runs as a **second, separate PocketBase process** on the same VPS (own data directory, backups and upgrade cadence) at `ggpos.ggentertainment.co.uk`. The existing Caddy gains one site block.
 
 ## Architecture
 
 ```
-vault.ggentertainment.co.uk  (Caddy: auto-HTTPS, CSP, rate limits, /_/ restricted by IP)
+ggpos.ggentertainment.co.uk  (Caddy: auto-HTTPS, CSP, rate limits, /_/ restricted by IP)
         |
         v
 PocketBase v0.40.x (single Go binary, SQLite)  127.0.0.1:8091
@@ -261,7 +261,7 @@ Public: `/` (sign-in), `/c/:token` (QR landing: the customer's own card after lo
 
 ## Core flows and rules
 
-- **SKU**: `GG` + kind letter + 5 Crockford base32 characters (no I, L, O, U) + 1 check character computed mod 32 within the same alphabet (Crockford's own check symbols fall outside QR alphanumeric mode and confuse wedge scanners). Display `GGS-7F3K2Q`, encode `GGS7F3K2Q`. Generated in an `onRecordCreate` hook with retry on unique violation. Customer codes `GGC-…`, reward voucher codes `GGV-…`, so the scan listener routes by prefix. Customer QR encodes `https://vault.ggentertainment.co.uk/c/<qr_token>`.
+- **SKU**: `GG` + kind letter + 5 Crockford base32 characters (no I, L, O, U) + 1 check character computed mod 32 within the same alphabet (Crockford's own check symbols fall outside QR alphanumeric mode and confuse wedge scanners). Display `GGS-7F3K2Q`, encode `GGS7F3K2Q`. Generated in an `onRecordCreate` hook with retry on unique violation. Customer codes `GGC-…`, reward voucher codes `GGV-…`, so the scan listener routes by prefix. Customer QR encodes `https://ggpos.ggentertainment.co.uk/c/<qr_token>`.
 - **Quantity model**: singles, graded cards and retro are one row per unit with one label each. Sealed and accessories are stock lines (qty n, one SKU, label optional, EAN scan to sell); a sale decrements qty.
 - **Market value, UK first, always in GBP**: adapters return every candidate price with its native currency; the pricing service converts each to GBP pence at the day's ECB rate and picks the first source that has a fresh value in this order: (1) a UK sold comp entered by staff in the last 30 days, (2) eBay UK asking price (GBP, live, with the asking-to-sold haircut), (3) Cardmarket EUR converted, (4) TCGplayer USD converted, and for retro (1) UK sold comp, (2) PriceCharting PAL category USD converted, (3) eBay UK asking, (4) PriceCharting NTSC converted. Admins can reorder this in settings. Condition multipliers (LP 0.85, MP 0.70, HP 0.50, DMG 0.30, configurable) apply after conversion. Every line shows the source, the native amount, the rate and its date ("£14.20 from Cardmarket €16.50 at 0.8606, 19 Sep"), and the freshness.
 - **Offer**: `pricing_rules` by game, kind, condition, finish or rarity and price band gives cash and credit percentages, rounded to the band's step; a minimum single-card offer and a bulk rate stop pennies. Overrides need a reason and hit the audit log.
@@ -377,8 +377,8 @@ Email (Resend, Postmark or Brevo) and Web Push: OTP codes, quote received, offer
 
 ## Deployment (VPS runbook, `deploy/README.md`)
 
-1. DNS: `vault.ggentertainment.co.uk` A record to the VPS.
-2. Caddy: `vault.ggentertainment.co.uk { reverse_proxy 127.0.0.1:8091 }` plus the CSP, rate-limit and `/_/` IP snippets.
+1. DNS: `ggpos.ggentertainment.co.uk` A record to the VPS.
+2. Caddy: `ggpos.ggentertainment.co.uk { reverse_proxy 127.0.0.1:8091 }` plus the CSP, rate-limit and `/_/` IP snippets.
 3. `docker compose up -d` from `deploy/` (PocketBase image with hooks, migrations and `pb_public` baked in; `pb_data` bind-mounted; `pricesync` scheduled).
 4. First run: superuser with MFA, migrations apply, seeds for `games`, `pricing_rules`, `loyalty_programme`, default tiers and rewards, `label_templates`, `settings`, first admin.
 5. Backups: `backup.sh` (restic to R2 or B2, encrypted, key off-box) at 03:00, keep 30 daily and 12 monthly; rehearse `restore.md` before go-live.
@@ -424,11 +424,11 @@ Rules for the dispatch:
 - End-to-end (Playwright, Chromium preinstalled): staff login, open cash session, add stock, label page renders at 40 × 20 mm, scan-to-sell posts the sale, cash movement and points; new customer, cash buy-in blocked until ID and address captured, items appear with labels queued, receipt email sent; customer OTP login, redeem a reward, show the QR, staff scan it in a sale; submit a quote with photos, staff offer, customer accepts, draft buy-in exists; offline: disconnect, queue a sale, reconnect, sale appears.
 - Design gate per phase: `/impeccable audit` and `/impeccable critique` clean, both colour modes checked, 360 px viewport for every screen, camera scanning on Android Chrome and iOS Safari, copy reviewed against stop-slop.
 - Adapter smoke tests behind a flag: a known card per game returns an image URL and a price shape.
-- Deployment: `curl https://vault.ggentertainment.co.uk/api/health`, backup present and a restore rehearsed, a label prints on the T003, `/_/` unreachable from outside the shop.
+- Deployment: `curl https://ggpos.ggentertainment.co.uk/api/health`, backup present and a restore rehearsed, a label prints on the T003, `/_/` unreachable from outside the shop.
 
 ## Open questions and assumptions
 
-- Subdomain assumed `vault.ggentertainment.co.uk`.
+- Subdomain assumed `ggpos.ggentertainment.co.uk`.
 - The marketing site's Caddy and PocketBase are assumed to be on the VPS the app will use; otherwise the app gets its own Caddyfile.
 - One shared counter PC (Windows) with the T003 on USB, staff phones, and an optional tablet for the customer display.
 - Loyalty defaults (10 points per £1, 100 points = £1 credit, tiers Member / Regular / Legend at 0 / 2,500 / 10,000 points in a rolling year, welcome bonus 100, referral 250 each way) are seeds for Richard to change in the admin editor, not decisions.

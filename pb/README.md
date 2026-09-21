@@ -433,7 +433,7 @@ files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
 | `images.js` | Re-hosts a URL (or bytes an adapter already fetched) into a record's file field and rewrites its `image_*` text fields to the resulting local URL, after validating the response is under 2 MB and sniffing its real type from its own first bytes (never a `Content-Type` header or a URL's extension alone). Never throws - a failed fetch must never block whatever is happening (an item create, a lookup). `enqueueImageCache(app, cardId)` / `drainImageQueue(app, timeoutSeconds)` are the queue `items.pb.js`'s `onRecordCreate` and `crons.pb.js`'s `image_queue` cron use to keep a network call off the item-create path entirely - see "The image queue cron" below. |
 
 Every adapter's outbound call carries `User-Agent: GGVault/1.0
-(+https://vault.ggentertainment.co.uk)` and a timeout (`http.js`), and API
+(+https://ggpos.ggentertainment.co.uk)` and a timeout (`http.js`), and API
 keys are read from `settings.api_keys` only, straight off the record
 server-side - never returned by any route, logged, or written to
 `audit_log` (matching `config.pb.js`'s existing rule for the same
