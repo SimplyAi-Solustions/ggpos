@@ -6168,7 +6168,85 @@ p7_wait_field() {
   fail "$5 (${1}.${3} is '$(p7_record "$1" "$2" "$3")', expected '$4')"
 }
 
-# --- 25a. Readers: not configured, pairing, the list and the default -----
+
+# --- 25a. The two rate limits this phase added --------------------------
+# First in the section, against exactly the rules the migration installed
+# and before a reader is paired, so every burst request is refused in one
+# cheap step and nothing is left behind. A mistyped label would mean no
+# limit at all on the one route in this build that anyone on the internet
+# can reach without a token.
+#
+# Tripping a limit leaves that route refusing for the rest of the minute,
+# so the two are raised straight afterwards for the body of this section
+# (which takes far more payments a minute than a counter ever would) and
+# put back to the shipped figures at the end.
+p7_burst() {
+  # $1 how many, $2 method, $3 path, $4 auth header value ("" for none),
+  # $5 body ("" for none) -> prints every status code, one per line
+  local n=0
+  while [ "$n" -lt "$1" ]; do
+    if [ -n "$4" ]; then
+      curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 -X "$2" "$BASE$3" \
+        -H "Authorization: $4" -H "Content-Type: application/json" -d "${5:-{\}}"
+    else
+      curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 -X "$2" "$BASE$3" \
+        -H "Content-Type: application/json" -d "${5:-{\}}"
+    fi
+    n=$((n + 1))
+  done
+}
+
+P7_CHECKOUT_BURST="$(p7_burst 70 POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":100,"sale_client_id":"p7-burst"}')"
+echo "$P7_CHECKOUT_BURST" | grep -q '^429$' \
+  || fail "seventy checkout requests in a row never tripped the 30 a minute limit: $(echo "$P7_CHECKOUT_BURST" | sort | uniq -c | tr '\n' ' ')"
+ok "the checkout route is rate limited per till, as the contract says"
+
+P7_CALLBACK_BURST="$(p7_burst 140 POST /api/vault/sumup/callback/p7-burst-token "" '{}')"
+echo "$P7_CALLBACK_BURST" | grep -q '^429$' \
+  || fail "a hundred and forty callbacks in a row never tripped the 60 a minute limit: $(echo "$P7_CALLBACK_BURST" | sort | uniq -c | tr '\n' ' ')"
+echo "$P7_CALLBACK_BURST" | grep -q '^404$' \
+  || fail "the callback burst never saw the bare 404 an unknown token answers with"
+ok "the public callback is rate limited per client, and an unknown token is still a bare 404"
+
+p7_set_sumup_limits() {
+  # $1 maxRequests for both of this phase's own rules. Changing the rules
+  # resets PocketBase's own counters, which is what lets the section carry
+  # on straight after the bursts above.
+  local rules
+  rules="$(curl -s "$BASE/api/settings" -H "Authorization: $SUPER_TOKEN" | node -e '
+    let d = "";
+    process.stdin.on("data", (c) => (d += c));
+    process.stdin.on("end", () => {
+      const settings = JSON.parse(d);
+      const max = Number(process.argv[1]);
+      const rules = settings.rateLimits.rules.map((rule) =>
+        rule.label.indexOf("/api/vault/sumup/") >= 0 ? { ...rule, maxRequests: max } : rule
+      );
+      process.stdout.write(JSON.stringify({ rateLimits: { ...settings.rateLimits, rules: rules } }));
+    });
+  ' "$1")"
+  local status
+  status="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/settings" \
+    -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d "$rules")"
+  [ "$status" = "200" ] || fail "could not set this phase's rate limits to $1 ($status)"
+}
+
+p7_sumup_limit() {
+  # $1 rule label -> its maxRequests
+  curl -s "$BASE/api/settings" -H "Authorization: $SUPER_TOKEN" | node -e '
+    let d = "";
+    process.stdin.on("data", (c) => (d += c));
+    process.stdin.on("end", () => {
+      const settings = JSON.parse(d);
+      const rule = (settings.rateLimits.rules || []).find((r) => r.label === process.argv[1]);
+      process.stdout.write(rule ? String(rule.maxRequests) : "");
+    });
+  ' "$1"
+}
+
+p7_set_sumup_limits 10000
+
+# --- 25b. Readers: not configured, pairing, the list and the default -----
 curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$SETTINGS_ID" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d '{"sumup":{"merchant_code":""}}'
@@ -6229,7 +6307,7 @@ P7_BAD_SETTING="$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/col
 [ "$(p7_settings_sumup default_reader_id)" = "$P7_READER_ID" ] || fail "a refused settings write changed the default reader anyway"
 ok "the default reader can only be saved as text, and a refused write leaves the old one alone"
 
-# --- 25b. A checkout on the reader: the refusals, then the row ----------
+# --- 25c. A checkout on the reader: the refusals, then the row ----------
 p7_set_app_url "http://vault.example.test"
 p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":4200,"sale_client_id":"p7-no-url"}'
 [ "$P7_STATUS" = "422" ] || fail "a checkout with a plain http application URL returned $P7_STATUS, expected 422"
@@ -6286,7 +6364,7 @@ p7_call POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":4200,"sale_cli
   || fail "asking twice for the same sale's payment left two checkout rows"
 ok "a second checkout for the same sale_client_id returns the one already on the reader"
 
-# --- 25c. The callback: unknown tokens, pending, paid, mismatched -------
+# --- 25d. The callback: unknown tokens, pending, paid, mismatched -------
 P7_WRONG_TOKEN_BODY="$TMP_DIR/p7-wrong-token.txt"
 P7_WRONG_STATUS="$(curl -s -o "$P7_WRONG_TOKEN_BODY" -w '%{http_code}' -X POST \
   "$BASE/api/vault/sumup/callback/not-a-real-token" -H "Content-Type: application/json" -d '{}')"
@@ -6345,7 +6423,7 @@ p7_wait_field sumup_checkouts "$P7_FAILED_CHECKOUT" status failed "a failed tran
   || fail "the failed payment does not carry the reason the callback gave: '$(p7_record sumup_checkouts "$P7_FAILED_CHECKOUT" error)'"
 ok "a failed transaction closes the payment with the reason the callback carried"
 
-# --- 25d. The counter's own poll, for a callback that never arrived -----
+# --- 25e. The counter's own poll, for a callback that never arrived -----
 P7_LOST_CHECKOUT="$(p7_new_checkout 2500 p7-sale-lost "P7 paid, callback lost")"
 p7_backdate_checkout "$P7_LOST_CHECKOUT" "$(p7_ago 1)"
 p7_call GET "/api/vault/sumup/checkouts/$P7_LOST_CHECKOUT" "$STAFF_TOKEN"
@@ -6361,7 +6439,7 @@ p7_call GET "/api/vault/sumup/checkouts/doesnotexist000" "$STAFF_TOKEN"
 [ "$P7_STATUS" = "404" ] || fail "reading a checkout that does not exist returned $P7_STATUS, expected 404"
 ok "a poll leaves a genuinely pending payment alone, and an unknown one is a 404"
 
-# --- 25e. A sale paid for by the reader ---------------------------------
+# --- 25f. A sale paid for by the reader ---------------------------------
 P7_SALE_ITEM="$(make_item "P7 Reader Sale Item" 1 1000 4200)"
 [ -n "$P7_SALE_ITEM" ] || fail "could not create the reader sale's item"
 
@@ -6440,7 +6518,7 @@ done
   || fail "the pull matched txn-sku-0001 to '$P7_NEW_MATCH', expected the checkout's own sale $P7_SALE_ID"
 ok "the hourly pull matches a transaction to the sale its own reader payment paid for, before any other rule"
 
-# --- 25f. Cancelling a payment ------------------------------------------
+# --- 25g. Cancelling a payment ------------------------------------------
 P7_CANCEL_CHECKOUT="$(p7_new_checkout 750 p7-sale-cancel "P7 pending")"
 p7_call POST "/api/vault/sumup/checkouts/$P7_CANCEL_CHECKOUT/cancel" "$PLAIN_TOKEN" '{}'
 [ "$P7_STATUS" = "403" ] || fail "another staff member cancelling someone else's payment got $P7_STATUS, expected 403"
@@ -6459,7 +6537,7 @@ grep -qF "The customer already paid. Complete the sale." "$TMP_DIR/p7.json" \
 p7_wait_field sumup_checkouts "$P7_LATE_CHECKOUT" status paid "a cancel that came too late did not record the payment"
 ok "a cancel that arrives after the customer has paid records the payment and says to complete the sale (409)"
 
-# --- 25g. The expiry cron -----------------------------------------------
+# --- 25h. The expiry cron -----------------------------------------------
 P7_EXPIRE_CHECKOUT="$(p7_new_checkout 333 p7-sale-expire "P7 pending")"
 P7_EXPIRE_LOST="$(p7_new_checkout 444 p7-sale-expire-paid "P7 paid")"
 P7_EXPIRE_FRESH="$(p7_new_checkout 555 p7-sale-expire-fresh "P7 pending")"
@@ -6481,7 +6559,7 @@ sleep 1.5
 [ "$(p7_record sumup_checkouts "$P7_EXPIRE_FRESH" status)" = "pending" ] || fail "a second expiry run closed the fresh payment"
 ok "running the expiry cron again changes nothing"
 
-# --- 25h. Reservation expiry --------------------------------------------
+# --- 25i. Reservation expiry --------------------------------------------
 # The inverse set to wants.pb.js's holds_release: a hold a member of staff
 # promised across the counter, with no want-list row behind it.
 P7_RES_CUSTOMER="$(p5_make_customer "P7 Reserve Holder" "p7-reserve@local.test")"
@@ -6545,7 +6623,7 @@ sleep 1.5
   || fail "a second reservations_expire run wrote another audit row for the same item"
 ok "running the reservations cron again changes nothing"
 
-# --- 25i. The price snapshot roll-up ------------------------------------
+# --- 25j. The price snapshot roll-up ------------------------------------
 p7_week_day() {
   # $1 whole days back, $2 days either side of that week's Wednesday ->
   # an ISO timestamp guaranteed to be in the same ISO week whatever day
@@ -6611,7 +6689,7 @@ p7_call POST /api/vault/prices/rollup "$STAFF_TOKEN" '{}'
 [ "$(p7_val scanned)" = "3" ] || fail "a second roll-up scanned $(p7_val scanned) rows, expected the 3 it kept"
 ok "running the roll-up again deletes nothing, and it is audited with its counts"
 
-# --- 25j. The label queue: bulk reprint, the claim and the way back -----
+# --- 25k. The label queue: bulk reprint, the claim and the way back -----
 p7_call POST /api/vault/labels/queue "$STAFF_TOKEN" '{}'
 [ "$P7_STATUS" = "400" ] || fail "queueing labels with no selector returned $P7_STATUS, expected 400"
 grep -qF "Pick what to print" "$TMP_DIR/p7.json" || fail "wrong message for a queue with no selector: $(cat "$TMP_DIR/p7.json")"
@@ -7202,7 +7280,7 @@ P7_CLAIM_OVERLAP="$(node -e '
 [ "${P7_CLAIM_OVERLAP%%:*}" -ge 1 ] || fail "the first of two concurrent claims got nothing ($P7_CLAIM_OVERLAP)"
 ok "a claim is capped at fifty, refuses a printer name over sixty characters, and never hands two devices one label"
 
-# --- 25k. Who may reach any of this -------------------------------------
+# --- 25m. Who may reach any of this -------------------------------------
 P7_CUSTOMER_ID="$(p5_make_customer "P7 Nosy Customer" "p7-nosy@local.test")"
 P7_CUSTOMER_TOKEN="$(p5_impersonate "$P7_CUSTOMER_ID")"
 [ -n "$P7_CUSTOMER_TOKEN" ] || fail "could not impersonate the Phase 7 customer"
@@ -7273,38 +7351,11 @@ grep -qF "No card reader is paired. Pair one under Settings." "$TMP_DIR/p7.json"
   || fail "wrong message for a shop with no reader paired: $(cat "$TMP_DIR/p7.json")"
 ok "unpairing the default reader clears it, is audited, and the next payment says to pair one"
 
-# --- 25m. The two rate limits this phase added --------------------------
-# Last in the section on purpose: tripping a limit leaves that route
-# refusing for the rest of the minute, so nothing may follow. A mistyped
-# label would mean no limit at all on the one route in this build that
-# anyone on the internet can reach without a token.
-p7_burst() {
-  # $1 how many, $2 method, $3 path, $4 auth header value ("" for none),
-  # $5 body ("" for none) -> prints every status code, one per line
-  local n=0
-  while [ "$n" -lt "$1" ]; do
-    if [ -n "$4" ]; then
-      curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 -X "$2" "$BASE$3" \
-        -H "Authorization: $4" -H "Content-Type: application/json" -d "${5:-{\}}"
-    else
-      curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 -X "$2" "$BASE$3" \
-        -H "Content-Type: application/json" -d "${5:-{\}}"
-    fi
-    n=$((n + 1))
-  done
-}
-
-P7_CHECKOUT_BURST="$(p7_burst 70 POST /api/vault/sumup/checkouts "$STAFF_TOKEN" '{"amount":100,"sale_client_id":"p7-burst"}')"
-echo "$P7_CHECKOUT_BURST" | grep -q '^429$' \
-  || fail "seventy checkout requests in a row never tripped the 30 a minute limit: $(echo "$P7_CHECKOUT_BURST" | sort | uniq -c | tr '\n' ' ')"
-ok "the checkout route is rate limited per till, as the contract says"
-
-P7_CALLBACK_BURST="$(p7_burst 140 POST /api/vault/sumup/callback/p7-burst-token "" '{}')"
-echo "$P7_CALLBACK_BURST" | grep -q '^429$' \
-  || fail "a hundred and forty callbacks in a row never tripped the 60 a minute limit: $(echo "$P7_CALLBACK_BURST" | sort | uniq -c | tr '\n' ' ')"
-echo "$P7_CALLBACK_BURST" | grep -q '^404$' \
-  || fail "the callback burst never saw the bare 404 an unknown token answers with"
-ok "the public callback is rate limited per client, and an unknown token is still a bare 404"
+# The shipped limits go back, so the database this run leaves behind is
+# the one the migration built.
+p7_set_sumup_limits 30
+[ "$(p7_sumup_limit "POST /api/vault/sumup/checkouts")" = "30" ] \
+  || fail "the checkout rate limit was left at $(p7_sumup_limit "POST /api/vault/sumup/checkouts"), expected the shipped 30"
 
 kill "$P7_BACKDATE_PID" 2>/dev/null || true
 wait "$P7_BACKDATE_PID" 2>/dev/null || true
