@@ -18,13 +18,14 @@
  * `GG_ADMIN_PASSWORD`, and it runs *before* this file (migrations apply in
  * filename order), so the field does not exist yet at the moment that row
  * is written. The flag is therefore set here rather than there, on the one
- * account that is still signing in with the password from the
+ * admin account that is still signing in with the password from the
  * environment: on a fresh database that is the row the seed has just made,
  * and on a database that has been running for a while it is an admin who
  * never moved off the password sitting in `.env`, who should be asked for a
- * new one anyway. An admin who has already changed their password, and
- * every other staff row, is left alone. Nothing here reads, logs or stores
- * the password itself: `validatePassword` is a hash comparison.
+ * new one anyway. An admin who has already changed their password, a row
+ * that is no longer an admin, and every other staff row, are left alone.
+ * Nothing here reads, logs or stores the password itself:
+ * `validatePassword` is a hash comparison.
  *
  * `down()` drops the field, and with it every flag ever set on it.
  */
@@ -40,7 +41,13 @@ migrate(
 
     let admin = null;
     try {
-      admin = app.findFirstRecordByFilter("staff", "email = {:email}", { email: adminEmail });
+      // role = "admin" is part of the filter, not an afterthought: only an
+      // admin can write their own staff row (staff's updateRule), so only an
+      // admin can clear this flag from the counter. A plain staff member
+      // carrying it would be held on the password screen with no way out.
+      admin = app.findFirstRecordByFilter("staff", 'email = {:email} && role = "admin"', {
+        email: adminEmail,
+      });
     } catch (err) {
       // No such account: nothing to lock.
       return;
