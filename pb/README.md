@@ -147,6 +147,12 @@ Three things worth knowing about how that flag behaves:
   `/_/`. Loosening that rule is a separate decision; the hook already
   strips `must_change_password` from any non-admin's request body so a
   locked account could not unlock itself if it ever were loosened.
+- For the same reason, the flag belongs on an **admin** account. A plain
+  staff member carrying it would be held on the "Set a new password"
+  screen with no way to clear it themselves, so an admin who wants a
+  staff member onto a new password sets that password in `/_/` and
+  leaves the flag alone (and clears it there, on the staff row, if one
+  was set by mistake).
 - Setting somebody else's password, as opposed to your own, is a
   superuser job in `/_/`: PocketBase refuses a record update that carries
   a `password` without the matching `oldPassword` unless the caller is a
