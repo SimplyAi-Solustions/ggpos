@@ -7,6 +7,7 @@
 import {
   breakdown,
   evaluateSalePoints,
+  formatGBP,
   penceToPoints,
   pointsCum,
   refundAmount,
@@ -17,6 +18,7 @@ import {
 
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import { addMovement, openSession } from "@/lib/api/demo/cash"
+import { useCheckoutForSale } from "@/lib/api/demo/checkouts"
 import {
   DEMO_PROGRAMME,
   DEMO_RULES,
@@ -45,6 +47,7 @@ import type {
   SaleDetail,
   SaleSummary,
   StockItemRecord,
+  SumUpCheckout,
   TodayStats,
 } from "@/lib/api/types"
 
@@ -178,6 +181,24 @@ export function completeSale(payload: CompleteSalePayload): CompleteSaleResult {
   const saleId = demoId("sale")
   const now = new Date().toISOString()
 
+  /**
+   * A payment already taken on the reader (Phase 7). The three checks are
+   * the route's own: paid, unused, and for exactly the card part of this
+   * sale. They run before anything is written, so a refused sale leaves the
+   * checkout free for the next attempt.
+   */
+  let checkout: SumUpCheckout | null = null
+  if (payload.sumup_checkout) {
+    const cardPart =
+      payload.payment === "sumup_card" ? total : (split.sumup_card ?? 0)
+    checkout = useCheckoutForSale(
+      payload.sumup_checkout,
+      cardPart,
+      { id: saleId, number },
+      formatGBP
+    )
+  }
+
   // The same pro rata spread the server uses, with the last line absorbing
   // the remainder, so the evaluator sees exactly what was charged.
   const grosses = lines.map(({ line }) => line.unit_price * line.qty - line.discount)
@@ -210,7 +231,8 @@ export function completeSale(payload: CompleteSalePayload): CompleteSaleResult {
     total,
     payment: payload.payment,
     payment_split: split,
-    sumup_ref: payload.sumup_ref,
+    sumup_ref: checkout?.transaction_code || payload.sumup_ref,
+    sumup_checkout: checkout?.id,
     cash_session: session?.id,
     points_earned: earned,
     status: "complete",

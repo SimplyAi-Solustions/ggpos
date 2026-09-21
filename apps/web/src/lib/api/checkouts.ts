@@ -17,6 +17,7 @@ import { noteNetworkSuccess } from "@/lib/offline/net"
 import * as demo from "@/lib/api/demo/checkouts"
 import type {
   CreateCheckoutInput,
+  CreateCheckoutResult,
   SumUpCheckout,
   SumUpReader,
   SumUpReaderList,
@@ -31,17 +32,30 @@ function toReader(row: Partial<SumUpReader> | undefined): SumUpReader {
   }
 }
 
+/**
+ * The row as the server sends it, field by field.
+ *
+ * Every field the contract lists is kept, `sale_client_id` above all: it is
+ * what says which basket a payment belongs to, and the Sell screen refuses
+ * to complete a sale against a payment taken for a different one.
+ */
 function toCheckout(row: Partial<SumUpCheckout> | undefined): SumUpCheckout {
   return {
     id: row?.id ?? "",
     status: row?.status ?? "pending",
     amount: row?.amount ?? 0,
+    sale_client_id: row?.sale_client_id ?? "",
+    description: row?.description ?? "",
+    reader_id: row?.reader_id ?? "",
     reader_name: row?.reader_name ?? "",
+    checkout_id: row?.checkout_id ?? "",
     client_transaction_id: row?.client_transaction_id ?? "",
+    transaction_id: row?.transaction_id ?? "",
     transaction_code: row?.transaction_code ?? "",
     card_last4: row?.card_last4 ?? "",
     error: row?.error ?? "",
     paid_at: row?.paid_at ?? "",
+    sale: row?.sale ?? "",
     created: row?.created ?? "",
   }
 }
@@ -91,24 +105,40 @@ export async function removeReader(id: string): Promise<void> {
   noteNetworkSuccess()
 }
 
+/**
+ * Puts the amount on the reader.
+ *
+ * Idempotent per basket at the server, and not only while a payment is
+ * open: asking twice for a basket that has already paid hands the paid
+ * checkout back with `reused`, which is why the caller reads the status
+ * rather than assuming a fresh pending row.
+ */
 export async function createCheckout(
   input: CreateCheckoutInput
-): Promise<SumUpCheckout> {
+): Promise<CreateCheckoutResult> {
   if (isDemo()) return demo.createCheckout(input)
-  const result = await pb.send<{ checkout?: Partial<SumUpCheckout> }>(
-    "/api/vault/sumup/checkouts",
-    {
-      method: "POST",
-      body: {
-        amount: input.amount,
-        sale_client_id: input.saleClientId,
-        ...(input.description ? { description: input.description } : {}),
-        ...(input.readerId ? { reader_id: input.readerId } : {}),
-      },
-    }
-  )
+  const result = await pb.send<{
+    checkout?: Partial<SumUpCheckout>
+    reused?: boolean
+  }>("/api/vault/sumup/checkouts", {
+    method: "POST",
+    body: {
+      amount: input.amount,
+      sale_client_id: input.saleClientId,
+      ...(input.description ? { description: input.description } : {}),
+      ...(input.readerId ? { reader_id: input.readerId } : {}),
+    },
+  })
   noteNetworkSuccess()
-  return toCheckout(result.checkout)
+  return { checkout: toCheckout(result.checkout), reused: result.reused === true }
+}
+
+/**
+ * True for the one refusal that trying again cannot get past: the reader is
+ * busy with somebody else's payment until that one is finished or stopped.
+ */
+export function isReaderBusy(error: unknown): boolean {
+  return error instanceof ClientResponseError && error.status === 409
 }
 
 /**

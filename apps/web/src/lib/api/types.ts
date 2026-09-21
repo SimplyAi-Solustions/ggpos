@@ -562,6 +562,8 @@ export interface SaleRecord extends BaseRecord {
   payment?: PaymentMethod
   payment_split?: Partial<Record<SplitMethod, number>>
   sumup_ref?: string
+  /** The `sumup_checkouts` row the reader took the card part on. */
+  sumup_checkout?: string
   cash_session?: string
   points_earned?: number
   /** Pence refunded so far. A refund never rewrites the original total. */
@@ -1671,11 +1673,6 @@ export type SumUpCheckoutStatus =
   | "cancelled"
   | "expired"
 
-/**
- * A `sumup_checkouts` row: one attempt to take the card part of one sale on
- * the reader. `sale_client_id` is the sale's own idempotency key, so a
- * second press never opens a second checkout.
- */
 /** What the Sell screen sends to open one. */
 export interface CreateCheckoutInput {
   /** Integer GBP pence: the card part of the sale, never the whole total. */
@@ -1687,19 +1684,47 @@ export interface CreateCheckoutInput {
   readerId?: string
 }
 
+/**
+ * A `sumup_checkouts` row, in the shape the create route, the poll and the
+ * cancel all answer with (docs/api-contract.md, "Phase 7").
+ *
+ * `sale_client_id` is the basket's own idempotency key. It is what binds a
+ * payment to the sale it was taken for, so money taken for one customer can
+ * never be attached to the next customer's sale.
+ */
 export interface SumUpCheckout {
   id: string
   status: SumUpCheckoutStatus
   /** Integer GBP pence. */
   amount: number
+  /** The basket this payment belongs to, and no other. */
+  sale_client_id?: string
+  description?: string
+  reader_id?: string
   reader_name?: string
+  /** SumUp's own id for the checkout on the reader. */
+  checkout_id?: string
+  /** What the payment is verified by: SumUp's transactions lookup uses it. */
   client_transaction_id?: string
+  transaction_id?: string
   /** SumUp's receipt code, the one printed on the customer's slip. */
   transaction_code?: string
   card_last4?: string
   error?: string
   paid_at?: string
+  /** The sale that has used this payment, once one has. */
+  sale?: string
   created?: string
+}
+
+/**
+ * `POST /api/vault/sumup/checkouts`. `reused` is true when this is the
+ * amount already on the reader for this basket, or a payment already made
+ * for it that no sale has used, rather than a new one.
+ */
+export interface CreateCheckoutResult {
+  checkout: SumUpCheckout
+  reused: boolean
 }
 
 // ---------------------------------------------------------------------------

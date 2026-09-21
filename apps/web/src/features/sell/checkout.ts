@@ -6,12 +6,20 @@
  * what the counter believes about money that has already moved, is unit
  * tested on its own.
  *
- * The state that matters is `taken`: the customer has paid and the sale
- * would not complete. Nothing may quietly drop that. The sheet shows the
- * transaction code and the two ways out, refund it in the SumUp app or put
- * the basket right and complete the sale against the same checkout; closing
- * the sheet only moves that to `held`, which the Sell screen keeps on the
- * page until one of the two has happened.
+ * Two rules the reducer, not the screen, is responsible for:
+ *
+ * 1. While an amount is on the reader (`opening`, `waiting`, `completing`)
+ *    there is no way out but Cancel, which terminates at the reader. `close`
+ *    is a no-op in those phases, so Esc, the backdrop and a stray tap cannot
+ *    leave a live payment with nothing watching it.
+ * 2. Money that has moved is never lost. `taken` and `held` keep the paid
+ *    checkout, its transaction reference and the reason the sale refused,
+ *    and only a completed sale, or a staff member saying the payment has
+ *    been refunded, puts them down.
+ *
+ * Both states carry the checkout, and the checkout carries the
+ * `sale_client_id` of the basket it was taken for, so a payment can only
+ * ever be attached to the sale it belongs to.
  */
 import type { SumUpCheckout } from "@/lib/api/types"
 
@@ -24,27 +32,43 @@ export type CardPaymentState =
   | { phase: "waiting"; checkout: SumUpCheckout }
   /** Paid: the sale is being completed against this checkout. */
   | { phase: "completing"; checkout: SumUpCheckout }
-  /** No money moved, and why. */
-  | { phase: "stopped"; checkout: SumUpCheckout | null; reason: string }
+  /**
+   * No money moved, and why. `retry` is false where trying again cannot
+   * work until something else changes, such as a reader busy with somebody
+   * else's payment.
+   */
+  | { phase: "stopped"; checkout: SumUpCheckout | null; reason: string; retry: boolean }
   /** Money moved and the sale did not complete. The one state that cannot be lost. */
   | { phase: "taken"; checkout: SumUpCheckout; reason: string }
   /**
    * The same, with the sheet out of the way so the basket can be put right.
-   * The Sell screen keeps the paid checkout and its code on the page, and
-   * "Mark sold" completes the sale against it.
+   * The Sell screen keeps the paid checkout and its reference on the page,
+   * and "Mark sold" completes the sale against it.
    */
   | { phase: "held"; checkout: SumUpCheckout; reason: string }
 
 export type CardPaymentEvent =
   | { type: "take"; amount: number }
   | { type: "opened"; checkout: SumUpCheckout }
-  | { type: "refused"; reason: string }
+  /** `retry` false for a refusal that trying again cannot get past. */
+  | { type: "refused"; reason: string; retry?: boolean }
   | { type: "status"; checkout: SumUpCheckout }
   | { type: "completed" }
   | { type: "completionRefused"; reason: string }
   | { type: "close" }
+  /** Staff have refunded it in the SumUp app: the only way to put money down. */
+  | { type: "refunded" }
 
 export const IDLE: CardPaymentState = { phase: "idle" }
+
+/** The phases where an amount is live on the reader and cannot be walked away from. */
+export function isCardPaymentLocked(state: CardPaymentState): boolean {
+  return (
+    state.phase === "opening" ||
+    state.phase === "waiting" ||
+    state.phase === "completing"
+  )
+}
 
 /** One sentence for an ending that is not a payment. */
 export function stoppedReason(checkout: SumUpCheckout): string {
@@ -67,14 +91,15 @@ export function cardPaymentReducer(
       // Money already taken is never thrown away by pressing the button
       // again: the screen is showing what to do about it.
       if (state.phase === "taken" || state.phase === "held") return state
-      if (state.phase === "waiting" || state.phase === "completing") return state
+      if (isCardPaymentLocked(state)) return state
       return { phase: "opening", amount: event.amount }
     }
 
     case "opened": {
       if (state.phase !== "opening") return state
-      // An idempotent create can hand back a checkout the customer has
-      // already paid, which goes straight to completing the sale.
+      // The route is idempotent per basket, so it can hand back a checkout
+      // the customer has already paid: that goes straight to completing the
+      // sale rather than asking for the money twice.
       if (event.checkout.status === "paid") {
         return { phase: "completing", checkout: event.checkout }
       }
@@ -85,12 +110,18 @@ export function cardPaymentReducer(
         phase: "stopped",
         checkout: event.checkout,
         reason: stoppedReason(event.checkout),
+        retry: true,
       }
     }
 
     case "refused": {
       if (state.phase === "taken" || state.phase === "held") return state
-      return { phase: "stopped", checkout: null, reason: event.reason }
+      return {
+        phase: "stopped",
+        checkout: null,
+        reason: event.reason,
+        retry: event.retry !== false,
+      }
     }
 
     case "status": {
@@ -98,14 +129,19 @@ export function cardPaymentReducer(
       if (event.checkout.id !== state.checkout.id) return state
       if (event.checkout.status === "pending") return state
       if (event.checkout.status === "paid") {
-        // Already completing: keep the checkout fresh, so the transaction
-        // code is there if the sale then refuses.
+        // Already completing: keep the checkout fresh, so the reference is
+        // there if the sale then refuses.
         return { phase: "completing", checkout: event.checkout }
       }
+      // Nothing moves a paid checkout out of `completing`. The server never
+      // leaves a final state, so this cannot arrive from it; the reducer is
+      // where that guarantee is kept whatever arrives.
+      if (state.phase === "completing") return state
       return {
         phase: "stopped",
         checkout: event.checkout,
         reason: stoppedReason(event.checkout),
+        retry: true,
       }
     }
 
@@ -113,24 +149,31 @@ export function cardPaymentReducer(
       return IDLE
 
     case "completionRefused": {
-      // A second refusal, after the basket was meant to be put right, must
-      // not lose the payment either.
+      // Wherever a paid checkout is being held, a refusal keeps it and says
+      // why: the amount, the reference and the two ways out.
+      if (state.phase === "completing" || state.phase === "taken") {
+        return { phase: "taken", checkout: state.checkout, reason: event.reason }
+      }
       if (state.phase === "held") {
         return { phase: "held", checkout: state.checkout, reason: event.reason }
       }
-      if (state.phase !== "completing") {
-        return { phase: "stopped", checkout: null, reason: event.reason }
-      }
-      return { phase: "taken", checkout: state.checkout, reason: event.reason }
+      return { phase: "stopped", checkout: null, reason: event.reason, retry: true }
     }
 
     case "close": {
-      // Closing on money that has moved puts the sheet away and nothing
-      // else: the payment stays on the screen until the sale carries it.
+      // There is no way out of a live payment but Cancel, which stops it at
+      // the reader; Esc and the backdrop reach here and are refused.
+      if (isCardPaymentLocked(state)) return state
       if (state.phase === "taken") {
         return { phase: "held", checkout: state.checkout, reason: state.reason }
       }
       if (state.phase === "held") return state
+      return IDLE
+    }
+
+    case "refunded": {
+      // Said by a staff member who has just refunded it in the SumUp app.
+      if (state.phase !== "taken" && state.phase !== "held") return state
       return IDLE
     }
 
@@ -157,18 +200,45 @@ export function pendingCheckoutId(state: CardPaymentState): string | null {
 }
 
 /**
- * The paid checkout the sale must be completed against, whether the sale is
- * being completed now or is waiting for somebody to fix the basket.
+ * The paid checkout, whether the sale is being completed now or is waiting
+ * for somebody to fix the basket.
  */
-export function paidCheckoutId(state: CardPaymentState): string | null {
+export function paidCheckout(state: CardPaymentState): SumUpCheckout | null {
   if (
     state.phase === "completing" ||
     state.phase === "taken" ||
     state.phase === "held"
   ) {
-    return state.checkout.id
+    return state.checkout
   }
   return null
+}
+
+/**
+ * The checkout to complete this basket against, and nothing else.
+ *
+ * A payment belongs to the basket it was taken for. Where the basket has
+ * moved on, this is null and the sale completes with no card payment on it,
+ * rather than spending one customer's money on the next customer's sale.
+ */
+export function checkoutForBasket(
+  state: CardPaymentState,
+  saleClientId: string
+): string | null {
+  const checkout = paidCheckout(state)
+  if (!checkout) return null
+  if (!checkout.sale_client_id) return null
+  return checkout.sale_client_id === saleClientId ? checkout.id : null
+}
+
+/** True when money is held for a basket that is no longer on the screen. */
+export function isStrandedPayment(
+  state: CardPaymentState,
+  saleClientId: string
+): boolean {
+  const checkout = paidCheckout(state)
+  if (!checkout) return false
+  return Boolean(checkout.sale_client_id) && checkout.sale_client_id !== saleClientId
 }
 
 /** The amount the sheet shows, whatever it is showing about it. */
@@ -186,4 +256,36 @@ export function checkoutAmount(state: CardPaymentState): number {
     default:
       return 0
   }
+}
+
+export interface PaymentReference {
+  /** What the reference is called where staff will look for it. */
+  label: string
+  value: string
+}
+
+/**
+ * Something to find the payment by in the SumUp app.
+ *
+ * The receipt code is what staff read off the slip, so it leads. SumUp's
+ * own fields are all optional, though, and a payment nobody can point at is
+ * the one thing this state must never be: the transaction id, then the id
+ * the checkout was tracked by, then the card and the time, each named so
+ * nobody mistakes one for another.
+ */
+export function paymentReference(checkout: SumUpCheckout): PaymentReference | null {
+  if (checkout.transaction_code) {
+    return { label: "SumUp transaction", value: checkout.transaction_code }
+  }
+  if (checkout.transaction_id) {
+    return { label: "SumUp transaction id", value: checkout.transaction_id }
+  }
+  if (checkout.client_transaction_id) {
+    return { label: "Reader payment id", value: checkout.client_transaction_id }
+  }
+  if (checkout.card_last4) {
+    const at = checkout.paid_at ? ` at ${checkout.paid_at.slice(11, 16)}` : ""
+    return { label: "Card", value: `Ending ${checkout.card_last4}${at}` }
+  }
+  return null
 }
