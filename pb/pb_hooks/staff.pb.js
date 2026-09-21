@@ -184,8 +184,11 @@ routerUse((e) => {
     return;
   }
 
-  const method = String(e.request.method || "").toUpperCase();
-  let path = String((e.request.url && e.request.url.path) || "");
+  // Read defensively: a method or path this cannot make out matches
+  // nothing on the list below and is refused, which is the safe way round.
+  const request = e.request;
+  const method = String((request && request.method) || "").toUpperCase();
+  let path = String((request && request.url && request.url.path) || "");
   if (path.length > 1 && path.charAt(path.length - 1) === "/") {
     path = path.substring(0, path.length - 1);
   }
@@ -196,10 +199,13 @@ routerUse((e) => {
   const staffPaths = ["staff", auth.collection().id];
   let allowed = false;
 
-  // The liveness probe (deploy/docker-compose.yml's healthcheck and the
-  // app's own boot ping). It answers the same to everyone, so what it
-  // says must not depend on whose token is in the browser.
-  if (method === "GET" && path === "/api/health") allowed = true;
+  // The liveness probe. Neither caller sends a token today
+  // (deploy/docker-compose.yml's healthcheck is a bare `wget --spider`,
+  // and the app's boot ping in lib/pb.ts is a plain fetch), so this is
+  // here to keep it that way: what /api/health says must never depend on
+  // whose token happens to be in the browser. HEAD as well as GET,
+  // because that is what `wget --spider` sends.
+  if ((method === "GET" || method === "HEAD") && path === "/api/health") allowed = true;
 
   for (let i = 0; i < staffPaths.length && !allowed; i++) {
     // Keeping the session alive. The counter holds a locked account on

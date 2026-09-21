@@ -77,10 +77,13 @@ function Field({
       </div>
     ) : null
 
-  const only =
+  const single =
     React.Children.count(children) === 1 && React.isValidElement<Described>(children)
       ? children
       : null
+  // A fragment takes no props but `key` and `children`, so it is left as it
+  // is rather than cloned into a React warning.
+  const only = single && (single.type as unknown) !== React.Fragment ? single : null
   const control =
     error && only
       ? React.cloneElement(only, {

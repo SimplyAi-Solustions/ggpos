@@ -55,6 +55,19 @@ describe("Field", () => {
     expect(ids).toHaveLength(2)
   })
 
+  it("leaves a fragment child alone, which takes no props of its own", () => {
+    render(
+      <Field label="Amount" error="Too much.">
+        <>
+          <input aria-label="Pounds" />
+        </>
+      </Field>
+    )
+
+    expect(screen.getByLabelText("Pounds").getAttribute("aria-describedby")).toBeNull()
+    expect(screen.getByText("Too much.")).toBeTruthy()
+  })
+
   it("renders a field holding more than one child unchanged", () => {
     render(
       <Field label="Amount" error="Too much.">
