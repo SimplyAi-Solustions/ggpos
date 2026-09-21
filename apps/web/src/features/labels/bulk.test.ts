@@ -45,10 +45,21 @@ describe("by buy-in number", () => {
 })
 
 describe("by the dates stock came in", () => {
-  it("wants at least one of the two dates", () => {
+  it("wants a date, or something else to select on", () => {
     expect(bulkProblem(form({ mode: "dates" }))).toBe(
-      "Give the dates the stock came in between."
+      "Give a date, a location, a kind or a game to print from."
     )
+  })
+
+  it("takes a location on its own, which is how a drawer is reprinted", () => {
+    const filled = form({ mode: "dates", location: "loc_binder_a" })
+    expect(bulkProblem(filled)).toBeNull()
+    expect(bulkSelector(filled)).toEqual({ location: "loc_binder_a" })
+  })
+
+  it("takes a kind or a game on its own too", () => {
+    expect(bulkProblem(form({ mode: "dates", kind: "single" }))).toBeNull()
+    expect(bulkProblem(form({ mode: "dates", game: "game_pokemon" }))).toBeNull()
   })
 
   it("refuses a range that runs backwards", () => {
@@ -129,6 +140,32 @@ describe("printing one that is already waiting", () => {
         tradeInId: "t1",
       })
     ).toEqual({ trade_in: "t1", include_queued: true })
+  })
+})
+
+describe("copies and the label size", () => {
+  it("sends neither unless they were asked for", () => {
+    expect(bulkSelector(form({ mode: "dates", from: "2026-09-01" }))).toEqual({
+      acquired_from: "2026-09-01",
+    })
+  })
+
+  it("carries a second copy and a size override", () => {
+    expect(
+      bulkSelector(
+        form({ mode: "dates", from: "2026-09-01", copies: 2, template: "sleeve_25x15" })
+      )
+    ).toEqual({
+      acquired_from: "2026-09-01",
+      copies: 2,
+      template: "sleeve_25x15",
+    })
+  })
+
+  it("never asks for more than the five a reprint can need", () => {
+    expect(
+      bulkSelector(form({ mode: "dates", from: "2026-09-01", copies: 9 }))
+    ).toMatchObject({ copies: 5 })
   })
 })
 

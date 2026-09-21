@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
+import { LABEL_SPECS } from "@/features/labels/layout"
 import {
   bulkCodes,
   bulkProblem,
@@ -45,13 +46,21 @@ import {
 import { getItem, listGames, listLocations } from "@/lib/api"
 import { findTradeInByNumber, queueLabelBatch } from "@/lib/api/label-queue"
 import { refusalOrFallback } from "@/lib/api/refusal"
-import type { ItemKind } from "@/lib/api/types"
+import type { ItemKind, LabelTemplateKey } from "@/lib/api/types"
 
 const MODES: { value: BulkMode; label: string }[] = [
   { value: "trade_in", label: "Buy-in" },
   { value: "dates", label: "Dates" },
   { value: "codes", label: "Codes" },
 ]
+
+/** The four sizes, named as the spec names them. */
+const TEMPLATES: { value: LabelTemplateKey; label: string }[] = (
+  Object.keys(LABEL_SPECS) as LabelTemplateKey[]
+).map((key) => ({
+  value: key,
+  label: `${LABEL_SPECS[key].widthMm} x ${LABEL_SPECS[key].heightMm} mm`,
+}))
 
 const KINDS: { value: ItemKind; label: string }[] = [
   { value: "single", label: "Single" },
@@ -112,13 +121,19 @@ function Form({
       }
 
       if (form.mode === "codes") {
-        const itemIds: string[] = []
-        for (const code of bulkCodes(form)) {
-          const item = await getItem(code)
-          if (!item) throw new Error(`${displayCode(code)} is not a code we hold.`)
-          itemIds.push(item.id)
+        // A scanned run is looked up together rather than one at a time: a
+        // staff member holding twenty labels should not wait twenty times.
+        const codes = bulkCodes(form)
+        const found = await Promise.all(codes.map((code) => getItem(code)))
+        const missing = codes.find((_code, at) => !found[at])
+        if (missing) {
+          throw new Error(
+            `${displayCode(missing)} is not a code we hold. Check the label and type it again.`
+          )
         }
-        return queueLabelBatch(bulkSelector(form, { itemIds }))
+        return queueLabelBatch(
+          bulkSelector(form, { itemIds: found.map((item) => item?.id ?? "") })
+        )
       }
 
       return queueLabelBatch(bulkSelector(form))
@@ -308,6 +323,48 @@ function Form({
             </Field>
           ) : null}
 
+          <Field label="Copies" htmlFor="bulk-copies" layout="stacked" hint="1 to 5">
+            <Input
+              id="bulk-copies"
+              type="number"
+              min={1}
+              max={5}
+              inputMode="numeric"
+              value={String(form.copies)}
+              onChange={(event) =>
+                set({
+                  copies: Math.min(5, Math.max(1, Number(event.target.value) || 1)),
+                })
+              }
+            />
+          </Field>
+
+          <Field label="Label size" htmlFor="bulk-template" layout="stacked">
+            <Select
+              value={form.template || null}
+              onValueChange={(next: string | null) =>
+                set({ template: (next ?? "") as LabelTemplateKey | "" })
+              }
+            >
+              <SelectTrigger id="bulk-template">
+                <SelectValue placeholder="The size each item takes">
+                  {(value: string) =>
+                    TEMPLATES.find((row) => row.value === value)?.label ??
+                    "The size each item takes"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">The size each item takes</SelectItem>
+                {TEMPLATES.map((row) => (
+                  <SelectItem key={row.value} value={row.value}>
+                    {row.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+
           <Field label="Already waiting" layout="stacked">
             <div className="flex items-center gap-4">
               <Switch
@@ -361,8 +418,8 @@ export function BulkReprintSheet({
         <SheetHeader>
           <SheetTitle>Reprint labels</SheetTitle>
           <SheetDescription>
-            A whole buy-in, everything that came in between two dates, or the
-            labels you have in your hand.
+            A whole buy-in, everything that came in on a run of dates or sits
+            in one place, or the labels you have in your hand.
           </SheetDescription>
         </SheetHeader>
         {/* Mounted with the sheet, so the form starts empty every time. */}

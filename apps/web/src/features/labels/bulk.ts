@@ -8,7 +8,12 @@
  */
 import { isValidCode, normaliseCode } from "@gg/shared"
 
-import type { ItemKind, LabelQueueResult, LabelQueueSelector } from "@/lib/api/types"
+import type {
+  ItemKind,
+  LabelQueueResult,
+  LabelQueueSelector,
+  LabelTemplateKey,
+} from "@/lib/api/types"
 
 /** A buy-in number as it is printed on a receipt and a label. */
 export const TRADE_IN_NUMBER = /^GG-BI-\d{6}$/
@@ -29,6 +34,10 @@ export interface BulkForm {
   codes: string
   /** Print a second label for an item that already has one waiting. */
   includeQueued: boolean
+  /** How many of each, 1 to 5. The route takes the same. */
+  copies: number
+  /** Blank means the size each item takes by its kind, as the wizard gives it. */
+  template: LabelTemplateKey | ""
 }
 
 export function emptyBulkForm(): BulkForm {
@@ -42,6 +51,8 @@ export function emptyBulkForm(): BulkForm {
     game: "",
     codes: "",
     includeQueued: false,
+    copies: 1,
+    template: "",
   }
 }
 
@@ -70,7 +81,11 @@ export function bulkProblem(form: BulkForm): string | null {
   }
 
   if (form.mode === "dates") {
-    if (!form.from && !form.to) return "Give the dates the stock came in between."
+    // The route takes a location, a kind or a game on their own, which is
+    // how "everything in the singles drawer" is printed.
+    if (!form.from && !form.to && !form.location && !form.kind && !form.game) {
+      return "Give a date, a location, a kind or a game to print from."
+    }
     if (form.from && form.to && form.from > form.to) {
       return "The first date is after the second one."
     }
@@ -100,7 +115,11 @@ export function bulkSelector(
   form: BulkForm,
   resolved: { tradeInId?: string; itemIds?: string[] } = {}
 ): LabelQueueSelector {
-  const base: LabelQueueSelector = form.includeQueued ? { include_queued: true } : {}
+  const base: LabelQueueSelector = {
+    ...(form.includeQueued ? { include_queued: true } : {}),
+    ...(form.copies > 1 ? { copies: Math.min(5, Math.round(form.copies)) } : {}),
+    ...(form.template ? { template: form.template } : {}),
+  }
 
   if (form.mode === "trade_in") {
     return { ...base, trade_in: resolved.tradeInId ?? "" }
