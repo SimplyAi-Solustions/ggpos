@@ -96,6 +96,16 @@ function AvatarMenu() {
             <Hint>{theme === "dark" ? "On" : "Off"}</Hint>
           </MenuItem>
           <MenuItem onClick={() => void navigate({ to: "/account" })}>My Vault</MenuItem>
+          {/* Only an admin may write their own staff row today
+              (staff.updateRule, 1789819200_auth_collections.js), so only an
+              admin is offered the screen that does it. A staff member who
+              needs a new password asks an admin, exactly as they already do
+              for anything under Settings. */}
+          {staff?.role === "admin" ? (
+            <MenuItem onClick={() => void navigate({ to: "/counter/password" })}>
+              Change password
+            </MenuItem>
+          ) : null}
           {staff?.role === "admin" ? (
             <MenuItem onClick={() => void navigate({ to: "/counter/settings" })}>
               Settings
@@ -192,8 +202,11 @@ function MoreSheet({
               { label: "Add stock", to: "/counter/stock/new" },
               // The Guild is an admin screen and says so to anybody else,
               // so the sheet does not offer it to a staff member at all.
+              // "Change password" is admin-only for the reason on the avatar
+              // menu above: only an admin may write their own staff row.
               ...(admin ? [{ label: "Loyalty", to: "/counter/loyalty" }] : []),
               { label: "My Vault", to: "/account" },
+              ...(admin ? [{ label: "Change password", to: "/counter/password" }] : []),
             ].map((entry) => (
               <li key={entry.to} className="border-b border-hairline-soft">
                 <button

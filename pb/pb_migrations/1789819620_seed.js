@@ -276,6 +276,13 @@ migrate((app) => {
   // -----------------------------------------------------------------
   // First admin staff account - only when both env vars are set, so a
   // fresh checkout never ships a guessable default login.
+  //
+  // The password from the environment is a temporary one: the account is
+  // created locked to a password change, so the first thing that sign-in
+  // can do is set a password nobody else has seen. The flag itself
+  // (`staff.must_change_password`) is set by
+  // 1789820760_staff_must_change_password.js, which is where the field is
+  // added - this file runs first, so there is no field to set here yet.
   // -----------------------------------------------------------------
   const adminEmail = $os.getenv("GG_ADMIN_EMAIL");
   const adminPassword = $os.getenv("GG_ADMIN_PASSWORD");
@@ -290,7 +297,9 @@ migrate((app) => {
     });
     admin.set("password", adminPassword);
     app.save(admin);
-    console.log(`Seeded first admin staff account: ${adminEmail}`);
+    console.log(
+      `Seeded first admin staff account: ${adminEmail} (locked to a password change on first sign-in)`
+    );
   } else {
     console.log(
       "GG_ADMIN_EMAIL / GG_ADMIN_PASSWORD not set - skipping the first admin staff seed. " +

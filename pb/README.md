@@ -114,6 +114,44 @@ set, or add the first admin by hand from the PocketBase superuser
 dashboard (`/_/`, the **staff** collection, "New record") or with a
 one-off script that calls `app.save(new Record(...))`.
 
+**The account starts locked to a password change.** The password above
+is a temporary one: it is typed into a shell and left sitting in `.env`,
+so it is not a password anybody should be signing in with a month later.
+`1789820760_staff_must_change_password.js` adds
+`staff.must_change_password` and sets it on that account, and the counter
+then shows it nothing but its "Set a new password" screen - no nav, no
+command palette, no scanner, no idle lock - until a password of the staff
+member's own is saved. `pb_hooks/staff.pb.js` is what clears the flag,
+on a successful change of the caller's **own** password, and it refuses a
+new password under 12 characters or the one already on the account
+("Choose a password of at least 12 characters that you have not used here
+before."). The change is audited as `staff_password_changed`, with field
+names only and never a password.
+
+Three things worth knowing about how that flag behaves:
+
+- The flag is added **after** the seed runs (migrations apply in filename
+  order), so it is the field migration, not the seed, that sets it. It
+  does that only for the account whose password still matches
+  `GG_ADMIN_PASSWORD`, which on a fresh database is the row the seed has
+  just made. An admin on an existing database who has already changed
+  their password is not touched; one who is still signing in with the
+  password from `.env` is asked for a new one at their next sign-in,
+  which is the whole point of the field.
+- `staff`'s API rules are admin-only for every operation, so **only a
+  staff member with `role: "admin"` can change their own password**
+  through the collection API at all; a plain staff member's own record is
+  not theirs to write (a plain `role: "staff"` PATCH gets a 404). The
+  counter therefore offers "Change password" on the account menu to
+  admins only, and an admin sets a plain staff member's password from
+  `/_/`. Loosening that rule is a separate decision; the hook already
+  strips `must_change_password` from any non-admin's request body so a
+  locked account could not unlock itself if it ever were loosened.
+- Setting somebody else's password, as opposed to your own, is a
+  superuser job in `/_/`: PocketBase refuses a record update that carries
+  a `password` without the matching `oldPassword` unless the caller is a
+  superuser, whatever the collection rules say.
+
 ## Hooks (`pb_hooks/`)
 
 Each `.pb.js` file registers one or more hooks with the globals
@@ -171,7 +209,7 @@ retrying `e.next()` on a unique-constraint failure.
 | `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty; after the item is saved, opportunistically re-hosts its card's image through `adapters/images.js` if it is still a bare third-party URL - never blocks the create on a failure. A separate `onRecordUpdate` hook sets `listed_at` to now the moment `status` most recently became `listed_ebay`, and clears it the moment `status` leaves `listed_ebay` again - the channels report's listing-age figure reads this (falling back to `acquired_at` when blank), `docs/api-contract.md`'s Phase 4 section. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
 | `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
-| `staff.pb.js` | `onRecordAuthRequest` on `staff`: refuses to authenticate (issue a token, refresh one, ...) an account with `active: false`, with "This account is inactive. Ask an admin to reactivate it." A deactivated staff member keeps their row (for `audit_log` actor references and historic sales/trade-ins) but cannot sign in again. |
+| `staff.pb.js` | `onRecordAuthRequest` on `staff`: refuses to authenticate (issue a token, refresh one, ...) an account with `active: false`, with "This account is inactive. Ask an admin to reactivate it." A deactivated staff member keeps their row (for `audit_log` actor references and historic sales/trade-ins) but cannot sign in again. Also `onRecordUpdateRequest` on `staff`, the first-sign-in password change: it puts the stored `must_change_password` back on the record for any caller who is not an admin or a superuser, refuses a new password for the caller's **own** record that is under 12 characters or equal to the one already on the account, and on a successful own-password change clears the flag (in the same save) and writes one `staff_password_changed` audit row. `meta` is field names only; neither password is read, logged or returned. See "Creating the first admin" above. |
 | `singletons.pb.js` | Refuses a second `settings`, `loyalty_programme` or `display_state` record. |
 | `audit.pb.js` | Logs deletes on `staff`, `customers`, `customer_private`, `id_documents`, `items`, `trade_ins`, `sales`, `credit_ledger`, `points_ledger` and the four `loyalty_*` config collections (a judgement call - PLAN.md says "sensitive collections" without naming them; revisit if Richard wants a different list), creates on those same four `loyalty_*` collections (adding a tier, a rule or a reward changes the programme's terms exactly as editing one does), and updates to `pricing_rules` and every `loyalty_*`/`settings` collection. Uses the `*Request` hook variants because only those carry `e.auth` and `e.realIP()`; logs only after `e.next()` returns without throwing. `meta` never carries a field's *value*, only identifiers: for an update, the names of the fields that changed (`e.record.fieldsData()` diffed against `e.record.original()`, taken before `e.next()`); for a delete, one label from a short list of fields already known to be safe (`items.sku`, `trade_ins.number`, `sales.number`) or nothing at all for every other audited collection - `staff`, `customers`, `customer_private` and `id_documents` above all never contribute a label, since every field on those could be a password hash, `pin_hash`, an ID photo path or other PII. This keeps a password, `pin_hash`, ID photo or API key out of this permanent, superuser-only table, so erasing the original record actually erases it. |
 | `routes.pb.js` | `GET /api/vault/health` (staff-authenticated: status, PocketBase version, a few record counts) and `GET /api/vault/me` - the caller's own `staff` fields, hand-picked so `pin_hash` can never leak, or, since Phase 5, the caller's own `/me` portal summary when the token is a `customers` one (`lib/vaultutil.js`'s `meShapeFor`) - one registration branching on `e.auth.collection().name`, since PocketBase's router refuses two handlers on the same method and path. |
@@ -540,6 +578,20 @@ their bodies are drawn uniformly rather than from the old biased
 construct (see "Hooks" above); confirms an `active: false` staff record
 cannot authenticate; and confirms updating `settings.email_api_key`
 never leaves that value, only the field's name, in `audit_log`.
+
+Section 26 covers the first-sign-in password change on a **second,
+throwaway server of its own**, started with `GG_ADMIN_EMAIL` and
+`GG_ADMIN_PASSWORD` set, since those are read once when the process
+starts (the same reason section 15q runs a server of its own): it asserts
+that the seed's first admin is created with `must_change_password` set,
+that sign-in hands the flag back on the record so the counter can lock
+the screen, that a new password under 12 characters or equal to the
+current one is refused in one sentence and leaves the flag alone, that a
+staff member can clear neither their own flag nor anybody else's, that an
+own-password change clears the flag, invalidates the old token and writes
+a `staff_password_changed` row carrying neither password, and that an
+admin can clear somebody else's flag without that writing a password
+row.
 
 Section 14 then runs one full Phase 2 round trip through the custom
 routes over HTTP, exactly as the counter app will:

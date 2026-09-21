@@ -64,7 +64,23 @@ describe("readLiveSession", () => {
       name: "Manager Person",
       role: "admin",
       active: true,
+      must_change_password: false,
     })
+  })
+
+  it("carries must_change_password through from the signed-in record", () => {
+    pb.authStore.save(fakeToken({ id: "staff_3" }), {
+      id: "staff_3",
+      collectionId: "staff",
+      collectionName: "staff",
+      email: "first-admin@ggentertainment.co.uk",
+      name: "First Admin",
+      role: "admin",
+      active: true,
+      must_change_password: true,
+    })
+
+    expect(readLiveSession()?.must_change_password).toBe(true)
   })
 
   it("is null with no record in the store", () => {

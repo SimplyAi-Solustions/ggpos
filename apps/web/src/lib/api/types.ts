@@ -131,6 +131,13 @@ export interface StaffRecord extends BaseRecord {
   name: string
   role: "admin" | "staff"
   active?: boolean
+  /**
+   * Set on an account still using a password somebody else chose, which the
+   * first admin's seeded one is. The counter shows nothing but
+   * `/counter/password` until the staff member sets their own; see
+   * `features/auth/gate.ts` and `pb/pb_hooks/staff.pb.js`.
+   */
+  must_change_password?: boolean
 }
 
 /**

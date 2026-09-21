@@ -150,9 +150,28 @@ account used to actually sign in to The Counter and set everything else
 up (pricing rules, the loyalty programme, other staff logins). The
 migrations that run automatically on first start read `GG_ADMIN_EMAIL`
 and `GG_ADMIN_PASSWORD` from `.env` and create this account for you, so
-there is nothing to run by hand here: sign in to the app with
-those same credentials once it's up, and change the password on first
-login.
+there is nothing to run by hand here.
+
+Treat the password in `.env` as a temporary one, because that is what
+the app treats it as. Sign in to the app with those same credentials
+once it's up and **the counter asks for a new password before it shows
+you anything else**: no nav, no scanner, no Home, just "Set a new
+password", the temporary password, and the new one twice. It has to be
+at least 12 characters and cannot be the one from `.env`; anything
+shorter or the same comes back with "Choose a password of at least 12
+characters that you have not used here before." Saving signs you
+straight back in with the new one and lands you on Home. Nothing else
+can be done with the account until that is done, on any device.
+
+Two follow-ons:
+
+- The password in `.env` stops working at that point. Leave the
+  variables in place (they are only read when migrations run) or clear
+  them; either way the file is no longer a way in.
+- Other staff logins are made from `/_/` (the **staff** collection), and
+  only an account with `role: "admin"` can change its own password in
+  the app. Set a plain staff member's password from `/_/` when they need
+  a new one.
 
 ## 6. Enabling MFA on superusers
 

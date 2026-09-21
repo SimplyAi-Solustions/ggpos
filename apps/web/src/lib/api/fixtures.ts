@@ -29,6 +29,22 @@ export const DEMO_STAFF: StaffRecord & { password: string } = {
   active: true,
 }
 
+/**
+ * A second demo account, in the state a real first admin is in before they
+ * have set a password of their own: signing in with it shows the "Set a new
+ * password" screen and nothing else. The demo sign-in above is deliberately
+ * not in that state, so exploring the demo never starts with a form.
+ */
+export const DEMO_LOCKED_STAFF: StaffRecord & { password: string } = {
+  id: "staff_demo_new",
+  email: "new@ggentertainment.co.uk",
+  password: "ggvault-temporary",
+  name: "New Starter",
+  role: "admin",
+  active: true,
+  must_change_password: true,
+}
+
 export const DEMO_GAMES: GameRecord[] = [
   { id: "game_pokemon", key: "pokemon", name: "Pokemon", enabled: true },
   { id: "game_mtg", key: "mtg", name: "Magic: The Gathering", enabled: true },

@@ -1093,6 +1093,7 @@ export type StaffRecord = {
 	email: string
 	emailVisibility?: boolean
 	id: string
+	must_change_password?: boolean
 	name: string
 	password: string
 	pin_hash?: string

@@ -31,6 +31,7 @@ import { Route as CounterCashRouteImport } from "./routes/counter.cash"
 import { Route as CounterExportsRouteImport } from "./routes/counter.exports"
 import { Route as CounterLabelsRouteImport } from "./routes/counter.labels"
 import { Route as CounterLoyaltyRouteImport } from "./routes/counter.loyalty"
+import { Route as CounterPasswordRouteImport } from "./routes/counter.password"
 import { Route as CounterScanRouteImport } from "./routes/counter.scan"
 import { Route as CounterSellRouteImport } from "./routes/counter.sell"
 import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
@@ -168,6 +169,11 @@ const CounterLabelsRoute = CounterLabelsRouteImport.update({
 const CounterLoyaltyRoute = CounterLoyaltyRouteImport.update({
   id: "/loyalty",
   path: "/loyalty",
+  getParentRoute: () => CounterRoute,
+} as any)
+const CounterPasswordRoute = CounterPasswordRouteImport.update({
+  id: "/password",
+  path: "/password",
   getParentRoute: () => CounterRoute,
 } as any)
 const CounterScanRoute = CounterScanRouteImport.update({
@@ -334,6 +340,7 @@ export interface FileRoutesByFullPath {
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
   "/counter/loyalty": typeof CounterLoyaltyRoute
+  "/counter/password": typeof CounterPasswordRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
@@ -384,6 +391,7 @@ export interface FileRoutesByTo {
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
   "/counter/loyalty": typeof CounterLoyaltyRoute
+  "/counter/password": typeof CounterPasswordRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
@@ -437,6 +445,7 @@ export interface FileRoutesById {
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
   "/counter/loyalty": typeof CounterLoyaltyRoute
+  "/counter/password": typeof CounterPasswordRoute
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
@@ -491,6 +500,7 @@ export interface FileRouteTypes {
     | "/counter/exports"
     | "/counter/labels"
     | "/counter/loyalty"
+    | "/counter/password"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
@@ -541,6 +551,7 @@ export interface FileRouteTypes {
     | "/counter/exports"
     | "/counter/labels"
     | "/counter/loyalty"
+    | "/counter/password"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
@@ -593,6 +604,7 @@ export interface FileRouteTypes {
     | "/counter/exports"
     | "/counter/labels"
     | "/counter/loyalty"
+    | "/counter/password"
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
@@ -791,6 +803,13 @@ declare module "@tanstack/react-router" {
       path: "/loyalty"
       fullPath: "/counter/loyalty"
       preLoaderRoute: typeof CounterLoyaltyRouteImport
+      parentRoute: typeof CounterRoute
+    }
+    "/counter/password": {
+      id: "/counter/password"
+      path: "/password"
+      fullPath: "/counter/password"
+      preLoaderRoute: typeof CounterPasswordRouteImport
       parentRoute: typeof CounterRoute
     }
     "/counter/scan": {
@@ -1038,6 +1057,7 @@ interface CounterRouteChildren {
   CounterExportsRoute: typeof CounterExportsRoute
   CounterLabelsRoute: typeof CounterLabelsRoute
   CounterLoyaltyRoute: typeof CounterLoyaltyRoute
+  CounterPasswordRoute: typeof CounterPasswordRoute
   CounterScanRoute: typeof CounterScanRoute
   CounterSellRoute: typeof CounterSellRoute
   CounterSettingsRoute: typeof CounterSettingsRoute
@@ -1066,6 +1086,7 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterExportsRoute: CounterExportsRoute,
   CounterLabelsRoute: CounterLabelsRoute,
   CounterLoyaltyRoute: CounterLoyaltyRoute,
+  CounterPasswordRoute: CounterPasswordRoute,
   CounterScanRoute: CounterScanRoute,
   CounterSellRoute: CounterSellRoute,
   CounterSettingsRoute: CounterSettingsRoute,

@@ -12,6 +12,20 @@ Conventions
 
 `POST /api/vault/step-up` with `{ "password": "..." }` re-checks the signed-in staff member's password and returns `{ "token": "<jwt>", "expires_at": "..." }`, valid for 10 minutes, signed with `$security.createJWT`. Sensitive routes verify it with `$security.parseJWT` and refuse with 403 and the message "Confirm your password to continue." when it is missing or expired.
 
+## First sign-in
+
+Not a custom route: the forced password change runs on the collection API, and is recorded here because it is the first thing any staff token ever does.
+
+`staff.must_change_password` (bool, `1789820760_staff_must_change_password.js`) is true on an account still using a password somebody else chose, which is what the seeded first admin's is. It rides back on the record `POST /api/collections/staff/auth-with-password` returns, so the counter knows to lock without a second call, and while it is true every `/counter` route redirects to `/counter/password` and the shell draws no nav, palette, scan listener or idle lock.
+
+The change itself is PocketBase's own record update: `PATCH /api/collections/staff/records/:id` with `{ "oldPassword": "...", "password": "...", "passwordConfirm": "..." }` against the caller's own id. `pb_hooks/staff.pb.js` adds three rules to it:
+
+- a new password under 12 characters, or equal to the one already on the account, is refused with 400 and "Choose a password of at least 12 characters that you have not used here before." (PocketBase's own minimum is 8);
+- `must_change_password` is put back to its stored value for any caller who is not an admin or a superuser, so a locked account cannot unlock itself by sending the field;
+- on success the flag is cleared in the same save and one `staff_password_changed` `audit_log` row is written, `meta` being the changed field names only. No password is ever read into the row, the response or the log.
+
+A successful change rotates the account's token key, so every existing token dies with it: the counter signs in again with the new password itself and carries on with the record that comes back. `staff`'s API rules are admin-only throughout, so only a staff member with `role = "admin"` can make this call at all; a plain staff member's password is set by a superuser from `/_/`.
+
 ## Trade-ins
 
 Drafts and lines are created and edited through the collection API (`trade_ins` with `status = "draft"`, `trade_in_lines`, batch for multi-line edits). Completion is the custom route.

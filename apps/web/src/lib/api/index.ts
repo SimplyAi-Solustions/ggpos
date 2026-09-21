@@ -17,10 +17,15 @@ import {
   DEMO_CARDS,
   DEMO_GAMES,
   DEMO_LOCATIONS,
-  DEMO_STAFF,
 } from "@/lib/api/fixtures"
 import { demoItems } from "@/lib/api/demo/items-store"
+import {
+  demoChangePassword,
+  demoPasswordMatches,
+  demoSignIn,
+} from "@/lib/api/demo/staff"
 import { cardMatches, parseCardQuery, numberMatches } from "@/lib/api/query"
+import { refusalMessage } from "@/lib/api/refusal"
 import type {
   CardHit,
   CardRecord,
@@ -36,7 +41,7 @@ import type {
 export * from "@/lib/api/types"
 export { isDemo, isServerUnreachable, resolveDataMode, setDataMode } from "@/lib/api/mode"
 export { parseCardQuery } from "@/lib/api/query"
-export { DEMO_STAFF, DEMO_SCAN_SKU } from "@/lib/api/fixtures"
+export { DEMO_LOCKED_STAFF, DEMO_STAFF, DEMO_SCAN_SKU } from "@/lib/api/fixtures"
 
 
 type ExpandedCard = CardRecord & {
@@ -245,15 +250,16 @@ export async function queueLabel(
 
 export class SignInError extends Error {}
 
+/** A password change the server, or the screen's own rules, refused. */
+export class PasswordChangeError extends Error {}
+
 /** Signs a staff member in and leaves the token in the SDK's auth store. */
 export async function login(email: string, password: string): Promise<StaffRecord> {
   if (isDemo()) {
-    const clean = email.trim().toLowerCase()
-    if (clean !== DEMO_STAFF.email || password !== DEMO_STAFF.password) {
+    const staff = demoSignIn(email, password)
+    if (!staff) {
       throw new SignInError("That email and password do not match a staff account.")
     }
-    const { password: _password, ...staff } = DEMO_STAFF
-    void _password
     return staff
   }
 
@@ -286,7 +292,7 @@ export async function verifyPassword(
   password: string
 ): Promise<boolean> {
   if (isDemo()) {
-    return email.trim().toLowerCase() === DEMO_STAFF.email && password === DEMO_STAFF.password
+    return demoPasswordMatches(email, password)
   }
   try {
     await login(email, password)
@@ -295,6 +301,75 @@ export async function verifyPassword(
     if (error instanceof SignInError) return false
     throw error
   }
+}
+
+/**
+ * Sets a new password on the signed-in staff member's own account, then
+ * signs in again with it.
+ *
+ * PocketBase takes the change through the ordinary record update
+ * (`oldPassword`, `password`, `passwordConfirm`) and rotates the account's
+ * token key as it saves, so the token this call started with is dead the
+ * moment it succeeds. Signing straight back in is therefore part of the
+ * change, not an extra step, and the record it returns is the unlocked one
+ * the counter then runs on. `pb/pb_hooks/staff.pb.js` is what clears
+ * `must_change_password` and audits the change; nothing here sends, stores
+ * or logs either password anywhere else.
+ */
+export async function changeOwnPassword(
+  email: string,
+  current: string,
+  next: string
+): Promise<StaffRecord> {
+  if (isDemo()) {
+    const staff = demoChangePassword(email, current, next)
+    if (!staff) {
+      throw new PasswordChangeError("That password is not right. Try again.")
+    }
+    return staff
+  }
+
+  const signedIn = pb.authStore.record
+  if (!signedIn || signedIn.collectionName !== "staff") {
+    throw new PasswordChangeError("Sign in again, then set your new password.")
+  }
+
+  try {
+    await pb.collection("staff").update(signedIn.id, {
+      oldPassword: current,
+      password: next,
+      passwordConfirm: next,
+    })
+  } catch (error) {
+    throw new PasswordChangeError(passwordChangeMessage(error))
+  }
+
+  const result = await pb.collection("staff").authWithPassword<StaffRecord>(email, next)
+  return result.record
+}
+
+/** Turns PocketBase's refusal into one sentence a counter can act on. */
+function passwordChangeMessage(error: unknown): string {
+  if (!(error instanceof ClientResponseError)) {
+    return "The counter could not reach the server. Check the connection and try again."
+  }
+  const fields = (error.response?.data ?? {}) as Record<string, unknown>
+  if (fields.oldPassword) {
+    // PocketBase's own wording here is "Missing or invalid old password",
+    // which says nothing to do about it. This is the sentence the idle lock
+    // and the step-up route already use for the same mistake.
+    return "That password is not right. Try again."
+  }
+  if (error.status === 403 || error.status === 404) {
+    // staff.updateRule is admin-only, so an ordinary staff member's own
+    // record is not theirs to write. Nothing they type can change that.
+    return "This account cannot set its own password. Ask an admin to set a new one for you."
+  }
+  // Everything else the server wrote for staff to read (the 12-character
+  // rule, a reused password) is shown exactly as sent.
+  return (
+    refusalMessage(error) ?? "The password could not be changed. Check it and try again."
+  )
 }
 
 // ---------------------------------------------------------------------------

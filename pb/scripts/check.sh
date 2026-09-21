@@ -48,6 +48,12 @@ BACKDATE_PID=""
 # callback secret (section 25).
 P7_BACKDATE_PID=""
 
+# A fifth, on its own data directory, started with GG_ADMIN_EMAIL and
+# GG_ADMIN_PASSWORD set so the seed really creates the first admin
+# (section 26).
+FIRSTRUN_PID=""
+FIRSTRUN_DIR=""
+
 # --- small helpers ----------------------------------------------------
 
 # Read JSON from stdin, print the value at a dot-separated path (numbers
@@ -123,8 +129,15 @@ cleanup() {
     kill "$P7_BACKDATE_PID" 2>/dev/null || true
     wait "$P7_BACKDATE_PID" 2>/dev/null || true
   fi
+  if [ -n "$FIRSTRUN_PID" ] && kill -0 "$FIRSTRUN_PID" 2>/dev/null; then
+    kill "$FIRSTRUN_PID" 2>/dev/null || true
+    wait "$FIRSTRUN_PID" 2>/dev/null || true
+  fi
   if [ -n "$KEYLESS_DIR" ]; then
     rm -rf "$KEYLESS_DIR"
+  fi
+  if [ -n "$FIRSTRUN_DIR" ]; then
+    rm -rf "$FIRSTRUN_DIR"
   fi
   rm -rf "$TMP_DIR"
 }
@@ -7366,6 +7379,182 @@ p7_set_sumup_limits 30
 kill "$P7_BACKDATE_PID" 2>/dev/null || true
 wait "$P7_BACKDATE_PID" 2>/dev/null || true
 P7_BACKDATE_PID=""
+
+# -----------------------------------------------------------------------
+# 26. The forced password change at first sign-in
+#     (staff.must_change_password, 1789820760_staff_must_change_password.js
+#     and pb_hooks/staff.pb.js).
+#
+#     On its own throwaway server, because the one thing this section has
+#     to prove is what the *seed* does with GG_ADMIN_EMAIL and
+#     GG_ADMIN_PASSWORD set, and those are read once when the process
+#     starts - the same reason section 15q runs a server of its own.
+# -----------------------------------------------------------------------
+FIRSTRUN_DIR="$(mktemp -d)"
+FIRSTRUN_PORT="$(node -e "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});")"
+FIRSTRUN_BASE="http://127.0.0.1:$FIRSTRUN_PORT"
+FIRSTRUN_EMAIL="first-admin-check@local.test"
+FIRSTRUN_TEMP_PASSWORD="seeded-temporary-password"
+FIRSTRUN_NEW_PASSWORD="a-brand-new-counter-password"
+
+"$PB" --dir "$FIRSTRUN_DIR" superuser upsert "$SUPER_EMAIL" "$SUPER_PASSWORD" >/dev/null
+GG_ADMIN_EMAIL="$FIRSTRUN_EMAIL" GG_ADMIN_PASSWORD="$FIRSTRUN_TEMP_PASSWORD" "$PB" serve \
+  --dir "$FIRSTRUN_DIR" \
+  --hooksDir "$HOOKS_DIR" \
+  --hooksWatch=false \
+  --migrationsDir "$MIGRATIONS_DIR" \
+  --publicDir "$PUBLIC_DIR" \
+  --http "127.0.0.1:$FIRSTRUN_PORT" \
+  >"$FIRSTRUN_DIR/server.log" 2>&1 &
+FIRSTRUN_PID=$!
+firstrun_healthy=""
+for _ in $(seq 1 100); do
+  if curl -s -o /dev/null "$FIRSTRUN_BASE/api/health"; then
+    firstrun_healthy=1
+    break
+  fi
+  sleep 0.2
+done
+[ -n "$firstrun_healthy" ] || fail "the first-run server never became healthy: $(cat "$FIRSTRUN_DIR/server.log")"
+
+FIRSTRUN_SUPER_TOKEN="$(curl -s -X POST "$FIRSTRUN_BASE/api/collections/_superusers/auth-with-password" \
+  -H "Content-Type: application/json" \
+  -d "{\"identity\":\"$SUPER_EMAIL\",\"password\":\"$SUPER_PASSWORD\"}" | jval token)"
+[ -n "$FIRSTRUN_SUPER_TOKEN" ] || fail "could not obtain a superuser token on the first-run server"
+
+# Read any field off a staff row as the first-run server's superuser.
+firstrun_staff() {
+  curl -s "$FIRSTRUN_BASE/api/collections/staff/records/$1" -H "Authorization: $FIRSTRUN_SUPER_TOKEN" | jval "$2"
+}
+
+# --- 26a. The seed creates the first admin locked to a password change ---
+FIRSTRUN_ADMIN_JSON="$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
+  --data-urlencode "filter=email='$FIRSTRUN_EMAIL'" "$FIRSTRUN_BASE/api/collections/staff/records")"
+FIRSTRUN_ADMIN_ID="$(echo "$FIRSTRUN_ADMIN_JSON" | jval items.0.id)"
+[ -n "$FIRSTRUN_ADMIN_ID" ] || fail "the seed created no first admin from GG_ADMIN_EMAIL: $FIRSTRUN_ADMIN_JSON"
+[ "$(echo "$FIRSTRUN_ADMIN_JSON" | jval items.0.role)" = "admin" ] \
+  || fail "the seeded first admin is not role admin: $FIRSTRUN_ADMIN_JSON"
+[ "$(echo "$FIRSTRUN_ADMIN_JSON" | jval items.0.must_change_password)" = "true" ] \
+  || fail "the seeded first admin is not locked to a password change: $FIRSTRUN_ADMIN_JSON"
+ok "the seed creates the first admin with must_change_password set"
+
+# --- 26b. The flag reaches the counter in the record sign-in hands back --
+FIRSTRUN_AUTH="$(curl -s -X POST "$FIRSTRUN_BASE/api/collections/staff/auth-with-password" \
+  -H "Content-Type: application/json" \
+  -d "{\"identity\":\"$FIRSTRUN_EMAIL\",\"password\":\"$FIRSTRUN_TEMP_PASSWORD\"}")"
+FIRSTRUN_TOKEN="$(echo "$FIRSTRUN_AUTH" | jval token)"
+[ -n "$FIRSTRUN_TOKEN" ] || fail "the seeded first admin could not sign in with the temporary password: $FIRSTRUN_AUTH"
+[ "$(echo "$FIRSTRUN_AUTH" | jval record.must_change_password)" = "true" ] \
+  || fail "sign-in did not return must_change_password, so the counter cannot lock the screen: $FIRSTRUN_AUTH"
+ok "sign-in returns must_change_password on the staff record, so the counter knows to lock"
+
+# --- 26c. A short or reused password is refused, in one sentence ---------
+FIRSTRUN_REFUSAL="Choose a password of at least 12 characters that you have not used here before."
+FIRSTRUN_SHORT_STATUS="$(curl -s -o "$FIRSTRUN_DIR/short.json" -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
+  -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"oldPassword\":\"$FIRSTRUN_TEMP_PASSWORD\",\"password\":\"short1234\",\"passwordConfirm\":\"short1234\"}")"
+[ "$FIRSTRUN_SHORT_STATUS" = "400" ] || fail "a 9-character new password returned $FIRSTRUN_SHORT_STATUS, expected 400: $(cat "$FIRSTRUN_DIR/short.json")"
+grep -qF "$FIRSTRUN_REFUSAL" "$FIRSTRUN_DIR/short.json" \
+  || fail "the short-password refusal does not say what to do: $(cat "$FIRSTRUN_DIR/short.json")"
+
+FIRSTRUN_SAME_STATUS="$(curl -s -o "$FIRSTRUN_DIR/same.json" -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
+  -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"oldPassword\":\"$FIRSTRUN_TEMP_PASSWORD\",\"password\":\"$FIRSTRUN_TEMP_PASSWORD\",\"passwordConfirm\":\"$FIRSTRUN_TEMP_PASSWORD\"}")"
+[ "$FIRSTRUN_SAME_STATUS" = "400" ] || fail "reusing the temporary password returned $FIRSTRUN_SAME_STATUS, expected 400: $(cat "$FIRSTRUN_DIR/same.json")"
+grep -qF "$FIRSTRUN_REFUSAL" "$FIRSTRUN_DIR/same.json" \
+  || fail "the reused-password refusal does not say what to do: $(cat "$FIRSTRUN_DIR/same.json")"
+[ "$(firstrun_staff "$FIRSTRUN_ADMIN_ID" must_change_password)" = "true" ] \
+  || fail "a refused password change cleared the flag anyway"
+ok "a new password under 12 characters, or the one already on the account, is refused in a sentence"
+
+# --- 26d. The flag cannot be written by anyone but an admin -------------
+FIRSTRUN_PLAIN_EMAIL="first-plain-check@local.test"
+FIRSTRUN_PLAIN_PASSWORD="plain-counter-password"
+FIRSTRUN_PLAIN_ID="$(curl -s -X POST "$FIRSTRUN_BASE/api/collections/staff/records" \
+  -H "Authorization: $FIRSTRUN_SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"email\":\"$FIRSTRUN_PLAIN_EMAIL\",\"password\":\"$FIRSTRUN_PLAIN_PASSWORD\",\"passwordConfirm\":\"$FIRSTRUN_PLAIN_PASSWORD\",\"name\":\"First Run Plain\",\"role\":\"staff\",\"active\":true,\"must_change_password\":true}" | jval id)"
+[ -n "$FIRSTRUN_PLAIN_ID" ] || fail "could not create a plain staff member on the first-run server"
+FIRSTRUN_PLAIN_TOKEN="$(curl -s -X POST "$FIRSTRUN_BASE/api/collections/staff/auth-with-password" \
+  -H "Content-Type: application/json" \
+  -d "{\"identity\":\"$FIRSTRUN_PLAIN_EMAIL\",\"password\":\"$FIRSTRUN_PLAIN_PASSWORD\"}" | jval token)"
+[ -n "$FIRSTRUN_PLAIN_TOKEN" ] || fail "the plain staff member could not sign in on the first-run server"
+
+# staff.updateRule is admin-only, so a plain staff member is refused
+# before the hook is even reached - on their own row and on anyone
+# else's. The hook's own strip is what holds if that rule is ever
+# loosened; 26e proves an admin is the one who can.
+FIRSTRUN_SELF_CLEAR="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_PLAIN_ID" \
+  -H "Authorization: $FIRSTRUN_PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"must_change_password":false}')"
+[ "$FIRSTRUN_SELF_CLEAR" = "403" ] || [ "$FIRSTRUN_SELF_CLEAR" = "404" ] \
+  || fail "a locked staff member cleared their own flag through the collection API ($FIRSTRUN_SELF_CLEAR)"
+FIRSTRUN_OTHER_CLEAR="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
+  -H "Authorization: $FIRSTRUN_PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"must_change_password":false}')"
+[ "$FIRSTRUN_OTHER_CLEAR" = "403" ] || [ "$FIRSTRUN_OTHER_CLEAR" = "404" ] \
+  || fail "a staff member cleared another staff member's flag ($FIRSTRUN_OTHER_CLEAR)"
+[ "$(firstrun_staff "$FIRSTRUN_PLAIN_ID" must_change_password)" = "true" ] \
+  || fail "the plain staff member's flag changed under those refused writes"
+[ "$(firstrun_staff "$FIRSTRUN_ADMIN_ID" must_change_password)" = "true" ] \
+  || fail "the first admin's flag changed under those refused writes"
+ok "a staff member can clear neither their own must_change_password nor anybody else's"
+
+# --- 26e. An own-password change clears the flag and is audited ---------
+FIRSTRUN_CHANGE_STATUS="$(curl -s -o "$FIRSTRUN_DIR/change.json" -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
+  -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"oldPassword\":\"$FIRSTRUN_TEMP_PASSWORD\",\"password\":\"$FIRSTRUN_NEW_PASSWORD\",\"passwordConfirm\":\"$FIRSTRUN_NEW_PASSWORD\"}")"
+[ "$FIRSTRUN_CHANGE_STATUS" = "200" ] || fail "the first admin's own password change returned $FIRSTRUN_CHANGE_STATUS: $(cat "$FIRSTRUN_DIR/change.json")"
+[ "$(firstrun_staff "$FIRSTRUN_ADMIN_ID" must_change_password)" = "false" ] \
+  || fail "the own-password change did not clear must_change_password"
+
+# The change rotates the token key, so the counter has to sign in again -
+# and what comes back is an unlocked record.
+FIRSTRUN_STALE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "Authorization: $FIRSTRUN_TOKEN" "$FIRSTRUN_BASE/api/vault/health")"
+[ "$FIRSTRUN_STALE_STATUS" = "401" ] \
+  || fail "the token from before the password change still works ($FIRSTRUN_STALE_STATUS)"
+FIRSTRUN_REAUTH="$(curl -s -X POST "$FIRSTRUN_BASE/api/collections/staff/auth-with-password" \
+  -H "Content-Type: application/json" \
+  -d "{\"identity\":\"$FIRSTRUN_EMAIL\",\"password\":\"$FIRSTRUN_NEW_PASSWORD\"}")"
+FIRSTRUN_NEW_TOKEN="$(echo "$FIRSTRUN_REAUTH" | jval token)"
+[ -n "$FIRSTRUN_NEW_TOKEN" ] || fail "the first admin could not sign in with the new password: $FIRSTRUN_REAUTH"
+[ "$(echo "$FIRSTRUN_REAUTH" | jval record.must_change_password)" = "false" ] \
+  || fail "signing in with the new password still reports the account locked: $FIRSTRUN_REAUTH"
+
+FIRSTRUN_AUDIT="$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
+  --data-urlencode "filter=action='staff_password_changed'" "$FIRSTRUN_BASE/api/collections/audit_log/records")"
+[ "$(echo "$FIRSTRUN_AUDIT" | jval totalItems)" = "1" ] \
+  || fail "expected exactly one staff_password_changed audit row: $FIRSTRUN_AUDIT"
+[ "$(echo "$FIRSTRUN_AUDIT" | jval items.0.record)" = "$FIRSTRUN_ADMIN_ID" ] \
+  || fail "the audit row does not name the staff member whose password changed: $FIRSTRUN_AUDIT"
+[ "$(echo "$FIRSTRUN_AUDIT" | jval items.0.actor)" = "$FIRSTRUN_ADMIN_ID" ] \
+  || fail "the audit row does not name who made the change: $FIRSTRUN_AUDIT"
+echo "$FIRSTRUN_AUDIT" | grep -qF "$FIRSTRUN_NEW_PASSWORD" \
+  && fail "the new password reached audit_log"
+echo "$FIRSTRUN_AUDIT" | grep -qF "$FIRSTRUN_TEMP_PASSWORD" \
+  && fail "the temporary password reached audit_log"
+ok "an own-password change clears the flag, invalidates the old token and is audited without the password"
+
+# --- 26f. An admin can clear somebody else's flag ------------------------
+FIRSTRUN_ADMIN_CLEAR="$(curl -s -o "$FIRSTRUN_DIR/admin-clear.json" -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_PLAIN_ID" \
+  -H "Authorization: $FIRSTRUN_NEW_TOKEN" -H "Content-Type: application/json" \
+  -d '{"must_change_password":false}')"
+[ "$FIRSTRUN_ADMIN_CLEAR" = "200" ] || fail "an admin could not clear a staff member's flag ($FIRSTRUN_ADMIN_CLEAR): $(cat "$FIRSTRUN_DIR/admin-clear.json")"
+[ "$(firstrun_staff "$FIRSTRUN_PLAIN_ID" must_change_password)" = "false" ] \
+  || fail "the admin's clear did not stick"
+[ "$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" --data-urlencode "filter=action='staff_password_changed'" "$FIRSTRUN_BASE/api/collections/audit_log/records" | jval totalItems)" = "1" ] \
+  || fail "clearing the flag without a password change wrote a staff_password_changed row"
+ok "an admin can clear another staff member's must_change_password"
+
+kill "$FIRSTRUN_PID" 2>/dev/null || true
+wait "$FIRSTRUN_PID" 2>/dev/null || true
+FIRSTRUN_PID=""
 
 echo
 echo "All checks passed ($PASS_COUNT)."

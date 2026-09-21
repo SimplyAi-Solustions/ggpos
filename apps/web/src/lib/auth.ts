@@ -4,6 +4,7 @@ import { pb } from "@/lib/pb"
 import { clearStepUp } from "@/lib/auth-stepup"
 import { clearOfflineCaches } from "@/lib/offline/caches"
 import {
+  changeOwnPassword as apiChangeOwnPassword,
   isDemo,
   login as apiLogin,
   verifyPassword as apiVerifyPassword,
@@ -55,6 +56,10 @@ export function readLiveSession(): StaffRecord | null {
     name: String(record.name ?? ""),
     role: record.role === "admin" ? "admin" : "staff",
     active: true,
+    // The flag travels on the record sign-in hands back, so a reload of a
+    // still-valid session knows to lock the counter without asking the
+    // server again.
+    must_change_password: record.must_change_password === true,
   }
 }
 
@@ -62,7 +67,12 @@ function recompute() {
   const next = isDemo() ? readDemoSession() : readLiveSession()
   const changed =
     (next === null) !== (snapshot === null) ||
-    (next !== null && snapshot !== null && next.id !== snapshot.id)
+    (next !== null &&
+      snapshot !== null &&
+      (next.id !== snapshot.id ||
+        // The password gate turns on and off without the person changing,
+        // so the flag is part of what makes a session different.
+        next.must_change_password !== snapshot.must_change_password))
   if (changed) snapshot = next
   return snapshot
 }
@@ -125,6 +135,35 @@ export function logout() {
     return
   }
   pb.authStore.clear()
+}
+
+/**
+ * Sets a new password on the signed-in staff member's own account and
+ * leaves them signed in with it.
+ *
+ * The change invalidates the token it was made with, so `lib/api` signs
+ * straight back in and hands back the record as it is afterwards: in demo
+ * mode that record is written to the demo session, and live it is already
+ * in the SDK's auth store. Either way the gate in `features/auth/gate.ts`
+ * sees an unlocked staff member on the next render.
+ */
+export async function changePassword(
+  current: string,
+  next: string
+): Promise<StaffRecord> {
+  const staff = currentStaff()
+  if (!staff) throw new Error("Nobody is signed in.")
+  const updated = await apiChangeOwnPassword(staff.email, current, next)
+  if (isDemo()) {
+    try {
+      localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(updated))
+    } catch {
+      // Private browsing: the session lives for this page load only.
+    }
+  }
+  snapshot = updated
+  emit()
+  return updated
 }
 
 /** Confirms the signed-in staff member's own password, for the idle lock. */
