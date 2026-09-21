@@ -128,7 +128,7 @@ export function qrTextFor(job: LabelJobDetail, portalBase: string): string {
  */
 export function labelLayout(
   job: LabelJobDetail,
-  portalBase = "https://vault.ggentertainment.co.uk"
+  portalBase = "https://ggpos.ggentertainment.co.uk"
 ): LabelLayout {
   const template = job.template
   const spec = LABEL_SPECS[template] ?? LABEL_SPECS.toploader_40x20

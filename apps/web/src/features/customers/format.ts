@@ -80,7 +80,7 @@ export function ageFrom(dob: string | undefined, now: Date = new Date()): number
 }
 
 /** The portal link a customer card's QR code carries. */
-export const PORTAL_ORIGIN = "https://vault.ggentertainment.co.uk"
+export const PORTAL_ORIGIN = "https://ggpos.ggentertainment.co.uk"
 
 export function portalLink(token: string | undefined): string {
   return `${PORTAL_ORIGIN}/c/${token ?? ""}`

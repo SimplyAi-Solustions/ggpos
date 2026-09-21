@@ -124,16 +124,16 @@ describe("the text on a label", () => {
 
 describe("what the QR encodes", () => {
   it("carries the bare code on an item label, so the scan listener routes it", () => {
-    expect(qrTextFor(job(), "https://vault.ggentertainment.co.uk")).toBe("GGS7F3K2B")
+    expect(qrTextFor(job(), "https://ggpos.ggentertainment.co.uk")).toBe("GGS7F3K2B")
     expect(labelLayout(job()).qrText).toBe("GGS7F3K2B")
   })
 
   it("carries the portal link on a customer card, so a phone camera opens it", () => {
     const layout = labelLayout(
       job({ template: "customer_card_80x50", code: "tok_abc123" }),
-      "https://vault.ggentertainment.co.uk/"
+      "https://ggpos.ggentertainment.co.uk/"
     )
-    expect(layout.qrText).toBe("https://vault.ggentertainment.co.uk/c/tok_abc123")
+    expect(layout.qrText).toBe("https://ggpos.ggentertainment.co.uk/c/tok_abc123")
   })
 })
 

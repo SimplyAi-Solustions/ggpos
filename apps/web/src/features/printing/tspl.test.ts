@@ -124,7 +124,7 @@ describe("the customer card", () => {
       "DENSITY 8",
       "CODEPAGE 850",
       "CLS",
-      `QRCODE 12,84,L,8,A,0,"https://vault.ggentertainment.co.uk/c/${CUSTOMER.encoded}"`,
+      `QRCODE 12,84,L,8,A,0,"https://ggpos.ggentertainment.co.uk/c/${CUSTOMER.encoded}"`,
       'TEXT 256,151,"2",0,2,2,"Jasmine Okafor"',
       `TEXT 256,196,"3",0,1,1,"${CUSTOMER.display}"`,
       'TEXT 256,225,"3",0,1,1,"Regular"',
@@ -157,7 +157,7 @@ describe("a symbol nobody could scan", () => {
       ...job,
       template: "sleeve_25x15",
       code: SLEEVE.encoded,
-      qrText: "https://vault.ggentertainment.co.uk/c/a-token-far-too-long-for-a-sleeve",
+      qrText: "https://ggpos.ggentertainment.co.uk/c/a-token-far-too-long-for-a-sleeve",
     })
     expect(() => tsplCommands(long)).toThrow(LabelTooSmallError)
     expect(() => tsplCommands(long)).toThrow(/too long for a 25 x 15 mm label/)
@@ -251,6 +251,6 @@ describe("fitting", () => {
     expect(qrModules(CARD.encoded)).toBe(21)
     expect(qrCell(CARD.encoded, 110)).toBe(5)
     // A portal link is longer, so the symbol is bigger and the cell smaller.
-    expect(qrModules(`https://vault.ggentertainment.co.uk/c/${CUSTOMER.encoded}`)).toBe(29)
+    expect(qrModules(`https://ggpos.ggentertainment.co.uk/c/${CUSTOMER.encoded}`)).toBe(29)
   })
 })

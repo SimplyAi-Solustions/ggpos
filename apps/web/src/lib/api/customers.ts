@@ -245,7 +245,7 @@ async function staffName(id: string | undefined): Promise<string | null> {
  *
  * The card's QR carries the whole portal link, not the GGC code
  * (docs/label-spec.md), so a wedge scan at the counter arrives as
- * `https://vault.ggentertainment.co.uk/c/abc123`. A bare token is accepted
+ * `https://ggpos.ggentertainment.co.uk/c/abc123`. A bare token is accepted
  * too, so a hand-typed one works.
  */
 export function qrTokenFrom(raw: string): string | null {
