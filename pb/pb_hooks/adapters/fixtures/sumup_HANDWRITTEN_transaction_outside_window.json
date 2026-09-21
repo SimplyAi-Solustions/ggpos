@@ -1,0 +1,12 @@
+{
+  "id": "txn-outside-window-0004",
+  "transaction_code": "TQABCDOUT4",
+  "amount": 2.46,
+  "currency": "GBP",
+  "status": "SUCCESSFUL",
+  "payment_type": "card",
+  "timestamp": "2026-01-01T09:00:00Z",
+  "products": [
+    { "name": "Single card", "quantity": 1, "unit_price": 2.46 }
+  ]
+}

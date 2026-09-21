@@ -1,0 +1,969 @@
+# GG Vault PocketBase backend
+
+The backend for GG Vault: a single PocketBase v0.40.4 instance holding every
+collection in `docs/PLAN.md`'s data model, with server-side logic in
+`pb_hooks` and schema/seed data in `pb_migrations`. See `docs/PLAN.md` for
+the full product and architecture picture; this file is the how-to for this
+directory.
+
+## Running locally
+
+1. Get the PocketBase binary. Two ways:
+   - Run `pnpm pb` (or `bash pb/scripts/dev.sh`) once: if `pb/pocketbase`
+     is missing it downloads the pinned version (`PB_VERSION`, default
+     `0.40.4`) for your OS and architecture and starts the server.
+   - Or copy/build a `pocketbase` binary yourself to `pb/pocketbase` and
+     `chmod +x` it (git-ignored, never committed).
+2. `pnpm pb` starts the server at `http://127.0.0.1:8091` (override with
+   `PB_PORT`), serving `pb_hooks`, `pb_migrations` and `pb_public` from
+   this repo. `--automigrate` is on by default, so every migration under
+   `pb_migrations/` applies automatically on first start.
+3. Open `http://127.0.0.1:8091/_/` and follow the prompt to create your
+   PocketBase **superuser** (the platform admin account, separate from
+   the app's own `staff` collection). MFA for superusers is a Caddy/VPS
+   concern in production (`docs/PLAN.md`, "Security, GDPR and record
+   keeping"), not something this repo configures.
+4. Everything the app itself needs (games, platforms, locations, label
+   templates, default pricing rules, the loyalty programme and its
+   starter tiers, settings, the three counters) is seeded automatically
+   the first time migrations run - see "Migrations and seeds" below.
+
+Environment variables:
+| Variable | Purpose |
+|---|---|
+| `PB_VERSION` | Pins the binary `pb/scripts/dev.sh` downloads (default `0.40.4`). Also the version baked into `pb/Dockerfile`'s `PB_VERSION` build arg and the literal in `pb_hooks/routes.pb.js`'s `/api/vault/health` response - keep the three in step if it ever changes. |
+| `PB_PORT` | Local dev port for `pb/scripts/dev.sh` (default `8091`). |
+| `GG_ADMIN_EMAIL`, `GG_ADMIN_PASSWORD` | See "Creating the first admin" below. |
+| `GG_ID_PHOTO_KEY` | **Required in production.** Exactly 32 characters (`$security.encrypt` is AES-256-GCM and rejects any other length). Encrypts every ID photo before it is written, and peppers the step-up token signing key. `POST /api/vault/customers/:id/id-check` refuses with 500 rather than storing a photo in the clear without it, and `GET /api/vault/id-photo/:id` cannot decrypt without it. It lives in the environment, never in `pb_data`, so a stolen database backup has no readable ID photos in it. Add it to `deploy/.env.example` and generate one per install, for example `openssl rand -base64 24 \| cut -c1-32`. **Changing it makes every stored photo undecryptable** - rotate only alongside a purge. |
+| `GG_ADAPTER_TRANSPORT_MODE` | `offline_fail` makes every adapter in `pb_hooks/adapters/*.js` throw the instant it tries to reach the real network, instead of calling out. `fixture` instead hands the call to `pb_hooks/adapters/fixture_transport.js`, which answers a known set of calls from `pb_hooks/adapters/fixtures/` and throws for anything else - the same safety net as `offline_fail`, but able to serve a real (fixture) response for the calls it knows. `pb/scripts/check.sh` runs its whole throwaway server under `fixture`, so its route-level Phase 3 checks exercise the real routes end to end with no live network call, and still fail loudly rather than silently passing on a call this build never intended to make. Unset (the default) in dev and production - adapters call out normally. |
+
+## Migrations and seeds
+
+`pb_migrations/*.js` run in filename order (PocketBase sorts them, hence
+the timestamp prefixes) and are split the way the brief asked, one
+concern per file:
+| File | Collections |
+|---|---|
+| `..._auth_collections.js` | `staff`, `customers`, `customer_private`, `id_documents` |
+| `..._catalogue_collections.js` | `games`, `platforms`, `card_sets`, `cards`, `retro_titles`, `price_snapshots`, `fx_rates` |
+| `..._stock_collections.js` | `locations`, `items`, `want_list`, `stock_counts`, `stock_count_lines` |
+| `..._trading_collections.js` | `quotes`, `trade_ins`, `trade_in_lines`, `notes`, `credit_ledger` |
+| `..._selling_cash_collections.js` | `cash_sessions`, `cash_movements`, `sales`, `sale_lines`, `counters` |
+| `..._loyalty_collections.js` | `loyalty_programme`, `loyalty_rules`, `loyalty_tiers`, `memberships`, `loyalty_rewards`, `reward_redemptions`, `points_ledger`, `perk_usage`, `referrals` |
+| `..._ops_collections.js` | `pricing_rules`, `label_templates`, `label_jobs`, `sumup_transactions`, `csv_imports`, `daily_stats`, `saved_reports`, `notifications`, `push_subscriptions`, `audit_log`, `settings` |
+| `..._seed.js` | Row data: `games`, `platforms`, `locations`, `label_templates`, `pricing_rules`, `loyalty_programme`, `loyalty_tiers`, `settings`, `counters`, and the first admin `staff` account (see below) |
+| `..._phase2_fields.js` | Appends what the custom routes need: `id_documents.mime`; `settings.cash_variance_alert`, `.offer`, `.default_intake_location`, `.email`, `.receipt_terms` (and their defaults on the seeded row); `trade_in_lines.kind`, `.game`, `.completeness`; and it makes `trade_ins.number` optional with a partial unique index (see below) |
+| `..._phase2_refunds_and_protection.js` | `sale_lines.refunded_qty`, `sales.refunded_total` and `trade_ins.id_document`; makes `trade_ins.signature` and `quotes.photos` `protected`; and adds the partial unique index that allows only one open `cash_sessions` row (`WHERE closed_at = ''`) |
+| `..._single_bands_any_condition.js` | Data fix: the seeded single `pricing_rules` bands were NM-only, so every other condition matched no rule. Condition is applied by `adjustForCondition` before a rule is chosen, so the bands are condition wildcards |
+| `..._trade_in_line_overrides.js` | `trade_in_lines.override_reason` (which is also the override flag), `.override_cash`, `.override_credit` and `.cosmetic_grade` |
+| `..._phase3_adapter_state.js` | `adapter_state` (new, superuser-only: OAuth tokens and small caches the catalogue and price adapters need between requests); `cards.image_file` (a cached local copy of a card's artwork, re-hosted by `pb_hooks/adapters/images.js`); merges `ebayHaircutPct: 15` into the existing seeded `settings.offer` JSON |
+| `..._batch_api_settings.js` | Turns on PocketBase's own Batch API (app-level `settings.batch`, not this app's `settings` collection): `enabled: true`, `maxRequests: 200`, `maxBodySize` 128 MB, `timeout` 60s, so `services/pricesync`'s nightly sync needs no manual dashboard step on a fresh install. |
+| `..._sales_client_id.js` | `sales.client_id` (the offline queue's idempotency key) with a partial unique index, same shape as `trade_ins.number` |
+| `..._stock_counts_close_rule.js` | `stock_counts.updateRule` gains `&& @request.body.status:isset = false`, so `status` can only ever be set at create time or by `stockcounts.pb.js`'s close route |
+| `..._image_limits_and_fx_date.js` | `cards.image_file` / `retro_titles.cover` gain `mimeTypes` (`image/jpeg`, `.png`, `.webp`, `.avif`) and a 2 MB `maxSize`, matching `pb_hooks/adapters/images.js`'s own `MAX_IMAGE_BYTES`; `fx_rates.date`, the ECB rate's own date (see "Card and price adapters" below) |
+| `..._stock_counts_one_open.js` | A partial unique index, `stock_counts (location) WHERE status = 'open'` - only one count may be open per location at once, same shape as `cash_sessions`' one-open-session index. The unique violation this can raise on create is mapped to a plain 409 by `stockcounts.pb.js`'s own `onRecordCreateRequest` hook |
+| `..._phase4_exports_imports_sumup.js` | `sales.channel` (`counter` \| `ebay`) and `sales.external_ref`; `settings.import_mappings` (seeded with the Card Uploader and eBay orders mapping skeletons from `docs/csv-formats.md`) and `settings.sumup` (`{ merchant_code }`); merges an empty `api_keys.sumup` into the existing `api_keys` blob, same pattern as `..._phase3_adapter_state.js`'s `offer.ebayHaircutPct` |
+| `..._phase4_stats_reports_hardening.js` | `daily_stats.sales_refunded` (the net-of-refunds field every report's revenue reads - `docs/api-contract.md`'s Phase 4 section); `items.listed_at` (set by `items.pb.js`'s own hook, backfilled here to `updated` for every row already `listed_ebay`); tightens `saved_reports`' rules - a staff member may only touch their own rows, and setting `recipients` or `schedule` needs `role = "admin"` regardless of whose row it is |
+| `..._csv_imports_review_link.js` | `csv_imports.resolved_rows` (json) and `.rows_skipped` (number), for `POST /api/vault/imports/:id/link` (`imports.pb.js`) |
+| `..._csv_imports_sumup_write_rules.js` | `csv_imports.updateRule` becomes admin-only (every staff write now goes through the import routes); `sumup_transactions.updateRule` lets a staff member set `matched_sale` only (`@request.body.<field>:isset = false` on every other field), admin unrestricted |
+| `..._phase5_portal_quotes_wants.js` | `quote_messages` (new); `quotes.closed_at`; `quotes.createRule` tightened to staff-only (a forged customer-created row could otherwise be paid out - fix round, finding 1); `customers.notify_email`/`.notify_push` (default `true`, backfilled onto every existing row); `settings.push` (`{ vapid_public_key: "" }`) and `.holds` (`{ hours: 48 }`); `customers.otp.emailTemplate` becomes a GG-branded subject and plain body; `app.settings().rateLimits` set explicitly to four rules (`customers:requestOTP`, the two public estimate routes, a per-IP `*:auth` guard - not merely turned on, which would also activate PocketBase's own tighter bundled defaults) and `.trustedProxy` (so a limit reads the real client address behind this deploy's Caddy); removes the unused Phase 1 `settings.push_vapid_public_key`/`.push_vapid_private_key` text fields. See `docs/api-contract.md`'s Phase 5 section |
+
+`trade_ins.number` starts life empty. Drafts and their lines are created
+through the collection API and the number is only assigned from
+`counters.trade_in` at completion, so a required `number` would make a
+draft impossible to create and would burn a number on every abandoned
+one. `..._phase2_fields.js` therefore drops `required` and rebuilds the
+unique index as a partial one (`WHERE number != ''`), which keeps the
+numbers that do exist unique while any number of drafts sit at `""`.
+
+A few collections need a relation to one that is defined in a *later*
+file (`customers.referred_by` to itself, `customer_private.tier` to
+`loyalty_tiers`, `items.trade_in_line` to `trade_in_lines`,
+`trade_ins.cash_session` to `cash_sessions`). Each of those is created
+without that one field, then the later file that owns the target
+collection patches it on with `collection.fields.add(new Field({...}))`
+once `app.findCollectionByNameOrId(...)` can resolve a real id for it.
+The matching `down()` removes the patched field before deleting its own
+collections, so `migrate down` unwinds cleanly.
+
+Every collection gets `created`/`updated` `autodate` fields, and every
+money amount is an integer number field in GBP pence with `onlyInt: true`
+(`docs/PLAN.md`, "Currency: GBP everywhere"). Percentages, FX rates and
+VAT rates are plain (non-`onlyInt`) numbers, since they are not money.
+
+Re-running `pnpm pb` against an already-migrated `pb_data` is a no-op for
+schema; to start over, stop the server and delete `pb/pb_data` (it is
+git-ignored).
+
+### Creating the first admin
+
+Set `GG_ADMIN_EMAIL` and `GG_ADMIN_PASSWORD` before the seed migration
+runs (i.e. before the first `pnpm pb`, or before deleting `pb_data` and
+starting again):
+
+```sh
+GG_ADMIN_EMAIL=you@ggentertainment.co.uk GG_ADMIN_PASSWORD='a-strong-password' pnpm pb
+```
+
+The seed migration then creates a `staff` row with `role: "admin"`,
+`active: true` and that password. If neither variable is set, the
+migration logs a one-line hint and skips this step - so a fresh clone
+never ships a guessable default login. If you have already migrated
+without them, either delete `pb_data` and start again with the variables
+set, or add the first admin by hand from the PocketBase superuser
+dashboard (`/_/`, the **staff** collection, "New record") or with a
+one-off script that calls `app.save(new Record(...))`.
+
+**The account starts locked to a password change.** The password above
+is a temporary one: it is typed into a shell and left sitting in `.env`,
+so it is not a password anybody should be signing in with a month later.
+`1789820760_staff_must_change_password.js` adds
+`staff.must_change_password` and sets it on that account, and the counter
+then shows it nothing but its "Set a new password" screen - no nav, no
+command palette, no scanner, no idle lock - until a password of the staff
+member's own is saved. `pb_hooks/staff.pb.js` is what clears the flag,
+on a successful change of the caller's **own** password, and it refuses a
+new password under 12 characters or the one already on the account
+("Choose a password of at least 12 characters, and not the one you are
+using now."). The change is audited as `staff_password_changed`, with
+field names only and never a password.
+
+The same file refuses that account everything else while the flag is set,
+in a `routerUse` middleware rather than in the counter: a request carrying
+a locked staff token gets 403 and "Set a new password before doing
+anything else." unless it is `POST /api/collections/staff/auth-refresh`
+(keeping the session alive while the form is filled in),
+`PATCH /api/collections/staff/records/<its own id>` (the change itself) or
+`GET /api/health`. Superusers, customer tokens and requests with no usable
+token are untouched, so signing in still works and the person can always
+reach the screen that lets them out. A temporary password that leaks
+therefore buys nothing but the ability to set a new one.
+
+Four things worth knowing about how that flag behaves:
+
+- The flag is added **after** the seed runs (migrations apply in filename
+  order), so it is the field migration, not the seed, that sets it. It
+  does that only for the account whose password still matches
+  `GG_ADMIN_PASSWORD`, which on a fresh database is the row the seed has
+  just made. An admin on an existing database who has already changed
+  their password is not touched; one who is still signing in with the
+  password from `.env` is asked for a new one at their next sign-in,
+  which is the whole point of the field.
+- `staff`'s API rules are admin-only for every operation, so **only a
+  staff member with `role: "admin"` can change their own password**
+  through the collection API at all; a plain staff member's own record is
+  not theirs to write (a plain `role: "staff"` PATCH gets a 404). The
+  counter therefore offers "Change password" on the account menu to
+  admins only, and an admin sets a plain staff member's password from
+  `/_/`. Loosening that rule is a separate decision; the hook puts the
+  stored `must_change_password` back on any update of the caller's own
+  row, whatever their role, and on any update at all by a caller who is
+  not an admin, so nobody unlocks themselves by sending the field.
+- For the same reason, the flag belongs on an **admin** account. A plain
+  staff member carrying it would be held on the "Set a new password"
+  screen with no way to clear it themselves, so an admin who wants a
+  staff member onto a new password sets that password in `/_/` and
+  leaves the flag alone (and clears it there, on the staff row, if one
+  was set by mistake).
+- Setting somebody else's password, as opposed to your own, is a
+  superuser job in `/_/`: PocketBase refuses a record update that carries
+  a `password` without the matching `oldPassword` unless the caller is a
+  superuser, whatever the collection rules say. **The 12-character rule
+  does not apply there.** It is the hook's rule for a person changing
+  their *own* password from the counter; a password set for somebody else
+  from `/_/` is only held to PocketBase's own floor of 8 characters. Both
+  are audited: the own change as `staff_password_changed`, a password set
+  by anyone else as `staff_password_set`, and a `must_change_password`
+  that moves without a password change as `staff_lock_changed`, each with
+  the changed field names, the staff id and who did it ("superuser", or
+  the caller's own staff id for an admin), never a value.
+
+## Hooks (`pb_hooks/`)
+
+Each `.pb.js` file registers one or more hooks with the globals
+PocketBase injects (`onRecordCreate`, `routerAdd`, `cronAdd`, `$app`,
+`$security`, `$os`, ...). **Every hook handler is executed in its own
+isolated goja context** - confirmed while building this backend: a plain
+top-level `const` referenced from inside a `routerAdd` handler threw
+`ReferenceError: ... is not defined` at request time, even though the
+file loaded and registered without complaint at startup. Two rules
+follow from that, applied throughout:
+
+- `require()` a shared module *inside* the handler that uses it, never
+  once at the top of the file.
+- Likewise, define any helper function or constant a handler needs
+  *inside* that handler's own function body, not at file top level.
+
+The other empirical finding worth knowing: **a handler must call
+`e.next()` at most once.** A test registering an `onRecordCreate` handler
+that retried a failed `e.next()` by mutating the record and calling
+`e.next()` again a second time returned an HTTP 200 with a record body
+that was never actually written to the database. Every hook here that
+needs a unique random value (SKUs, customer codes, voucher codes)
+therefore checks uniqueness itself with `findFirstRecordByFilter` in a
+retry loop *before* calling `e.next()` exactly once, rather than
+retrying `e.next()` on a unique-constraint failure.
+| File | What it does |
+|---|---|
+| `lib/shared/{sku,money,pricing,loyalty,saleline}.js` | **Generated, do not edit.** A CommonJS build of `packages/shared/src/{sku,money,pricing,loyalty,saleline}.ts` via `pnpm --filter @gg/shared build:hooks`, so the hooks, the frontend and the admin loyalty-rule preview all share one implementation. `sku.js` is the one used here: `generateCode(kind, randomByte)`, `parseCode`, `buildCode`, `CROCKFORD_ALPHABET`, `CODE_KINDS`. |
+| `lib/audit.js` | `writeAuditLog(app, { actor, action, collection, record, meta, ip })` - one row in `audit_log`. |
+| `lib/counters.js` | `nextNumber(app, "trade_in" \| "sale" \| "redemption")` - atomically bumps the matching row in `counters` and returns `GG-BI-000123` / `GG-S-000456` / `GG-V-000012`. Transaction-agnostic: pass `$app`, `e.app`, or a `txApp` from `$app.runInTransaction`. |
+| `lib/balances.js` | `recompute(app, customerId)`, `creditBalance`, `pointsBalance` - the cached `customer_private.credit_balance` / `.points_balance` recomputed by **summing the ledgers**, never by adding a delta, so a cache that has drifted repairs itself on the next write. |
+| `lib/vaultutil.js` | Route plumbing: request body and query reading (`body`, `asInt`, `asStr`, `asBool`, `jsonField`), `requireAdmin`, `saleLineRows` / `asSoldLines` (a sale's lines in the one `created,id` order the shared `saleline` breakdown may be worked out in, and as the shape it reads), the `settings` / `offerSettings` / `emailSettings` / `programme` / `loyaltyRules` / `tier` loaders in the shapes `packages/shared`'s evaluators expect, `openCashSession` / `sessionMovements` / `sessionExpected`, date helpers (`addMonths`, `ageAt`, `isPast`) and CSV escaping. |
+| `lib/stepup.js` | `issue(staff)` and `requireStepUp(e)` - see "Step-up" below. |
+| `lib/base64.js` | `encode`, `decode`, `fromDataUrl`. goja has no `atob`/`btoa` and PocketBase exposes no base64 binding, so the signature data URL carries its own codec. Both directions are linear (accumulate into an array, join once). ID photos no longer come through here at all - see "ID photos" below. |
+| `lib/receipts.js` | `build(app, tradeIn, settings, fileToken)` (the receipt JSON) and `render(receipt)` (the plain-text and HTML email bodies), so the print page and the email can never drift. |
+| `lib/csv.js` | The one place every Phase 4 export or import route builds or reads a CSV through. `row()`/`cell()`/`pounds()` wrap `lib/vaultutil.js`'s own `csvRow`/`csvCell`/`poundsCell`; `parse()` is a small RFC 4180 reader (quoted fields, embedded commas and newlines, CRLF or LF); `mapRows()` resolves a parsed file's header row against a mapping config's own header-name aliases (`docs/csv-formats.md`); `queryParam()`/`dateParam()` read a GET route's own query string - kept here rather than in `lib/vaultutil.js` because a `routerAdd` handler cannot see a plain function declared at the top of its own `.pb.js` file (see above), and `exports.pb.js` now has six handlers that all need one. |
+| `lib/imports.js` | Row-level matching and writes for the two CSV importers in `imports.pb.js`: the seeded default mapping for each (a fallback for the settings row's own `import_mappings`), `readCsvUpload(e)` and `declaredType(e)` (the shared multipart plumbing, required rather than duplicated across the two routes for the same isolation reason as `lib/csv.js` above), and `processCardUploaderRows` / `processEbayOrdersRows`, the row-by-row logic `docs/api-contract.md`'s Phase 4 section documents. `applyCardMatch` is the three-path matching rule itself, factored out so `processCardUploaderRows` and `resolveReviewRow` (behind `POST /api/vault/imports/:id/link`, a staff member resolving one review row by hand) run the exact same code. |
+| `lib/customerops.js` | Phase 5: `erase(app, customerId, opts)` - the UK GDPR Article 17 anonymisation, factored out of `customerops.pb.js`'s admin `POST /api/vault/customers/:id/erase` so `portal.pb.js`'s customer-facing `POST /api/vault/me/delete` runs the identical write rather than a second copy that could drift. Returns a refusal (`{ok:false,status,message}`) rather than throwing, so each caller can word the store-credit refusal for its own audience via `opts.creditRefusal`. |
+| `lib/notify.js` | Phase 5: `notify(app, { customer \| staffAll, type, title, body, link?, email? })` - the one place a `notifications` row is written (fanning out to every active admin for `staffAll`) and, when `email` is true, sent inline through the same `settings.email.test_mode`-honouring path `lib/receipts.js`'s own email route uses. Writes no push itself: a row's `pushed_at` starts empty, which is what makes it eligible for `services/notify` to pick up. |
+| `lib/quotes.js` | Phase 5: `sniffImageMime`/`photoFileName` (the same first-bytes sniffing `idphotos.pb.js` uses for ID photos, for a quote's own JPEG/PNG/WebP uploads), `ukDateShort` ("27 Sep 2026", distinct from `lib/receipts.js`'s full-month `ukDate`), `offerExpiry` (`settings.quote_expiry_days` from now), and `normalizeOfferLines` (validates and recomputes `offer_total` server-side from `POST /api/vault/quotes/:id/offer`'s lines - never trusts a client-sent total). |
+| `lib/wants.js` | Phase 5: the want-list matching, fulfilment and hold-release logic behind `wants.pb.js`'s `items` hooks and `holds_release` cron - `findOpenWant`, `matchOnStock`, `fulfilOnSale`, `releaseExpiredHolds`, `holdHours` (`settings.holds.hours`, default 48), `ukDateTime` ("22 Sep, 14:00"). |
+| `lib/estimate.js` | Phase 5: `searchCatalogue` (catalogue-only search, never an adapter or `registry.js`'s set-sync bootstrap), `pricingRulesFor` (the same snake_case-to-camelCase `pricing_rules` mapping `pb/scripts/check-pricing-loyalty.js` already uses), and `estimateForCard` (the public `GET /api/vault/estimate` body, through `adapters/pricing_policy.js` and the shared `computeOffer`). |
+| `lib/tiers.js` | Phase 6: the one place `customer_private.tier` is decided and written. `pointsRows`/`allTiers`/`activeMembership` (the inputs, read from `points_ledger`, `loyalty_tiers` and `memberships`), `evaluate` (read-only: the window total, the pinning membership and the tier that falls out of the two, through the shared `tierWindowPoints`/`resolveTier`), `recompute` (the same plus the write and the `tier_up` notification a promotion earns, returning `pending` for the caller to flush; `{ silent: true }` writes the tier and says nothing, which is what a merge wants, and `isJoiningTier` keeps the first rung quiet because the `welcome` notification already covers it), and two formatters, `formatPoints` ("1,240") and `ukDayMonth` ("20 Sep"). Never opens a transaction of its own and never sends mail. |
+| `lib/referrals.js` | Phase 6: `normalise`/`unknownCodeMessage`/`resolve` (a `referred_by` value as a `GGC…` code or a record id), `createPending`, `onFirstCompletion` (called from the sale and trade-in completion routes inside their own transaction: flips the customer's `pending` referral to `earned` and writes both bonus rows, a no-op for anyone without one, so a second completion never pays twice) and `countsFor` for the portal. |
+| `lib/rewards.js` | Phase 6: the rewards catalogue as a customer sees it and the vouchers redeeming one produces. `voucherDays` (`settings.rewards.voucher_days`, default 90), `takenCount` (redemptions per reward, and per reward and customer), `reasonFor`/`reasonMessage` (why this customer cannot redeem this reward right now, and how to say it - including `off`, the whole programme being switched off, which beats every other reason), `listFor`, `voucherShape`, `findByCode`, `isCounterType` and `expireVouchers` (the nightly pass). Every limit is counted from `reward_redemptions`, never from a figure kept on the reward itself, and the balance is summed from `points_ledger`. |
+| `lib/perks.js` | Phase 6: the monthly perks wallet. `currentPeriod`/`nextPeriodStart` (`YYYY-MM` and "1 Oct" in Europe/London civil time, through `lib/reports/dates.js`'s own `toLondon`), `usageRow`/`usedCount`, `walletFor` (the tier's two counted perks with this month's figures, then its informational ones), `check` (a refusal or null, so a route can refuse before opening a transaction; it says how many are left when some are, and only claims the allowance is spent when it is) and `use` (the `perk_usage` upsert, re-checked inside the caller's). Allowances come from the shared `perkAllowance`, so the counter, the portal and the admin preview cannot disagree. |
+| `lib/display.js` | Phase 6: what may go on the customer-facing screen. `sanitise` rebuilds a payload field by field from the shapes the contract names and refuses one carrying an identifier, an email or a phone number at any depth (`forbiddenIn`); `stateRow`, `isStale`, `reset`, `clearIfStale` (a publish older than `TTL_MINUTES`, 15, resets itself) and `shape`. |
+| `lib/loyaltyconfig.js` | Phase 6: the shape checks behind the four admin-editable loyalty collections, registered as `*Request` hooks in `loyalty.pb.js`. `checkRule` (the `conditions` keys and types the shared evaluator actually reads, and the `value`/multiplier bounds), `checkTier` (every perk parses through the shared `parseTierPerk`; thresholds distinct among tiers that are not paid plans), `checkTierDelete` (409 while a customer is on it or an active membership carries it), `checkReward` and `checkProgramme`. Each reports `{status, message}` rather than throwing, so the calling hook raises it with its own event and the wording lives in one place. |
+| `lib/readers.js` | Phase 7: the SumUp Solo card reader at the counter. `config`/`isConfigured`/`saveSumupSettings` (the merchant key, code and default reader off `settings`), `returnUrlFor` (the callback URL, refused unless this instance has an https address, or is on 127.0.0.1/localhost for development), `hashToken`/`newToken`/`findByToken` (only the sha256 of a callback token is ever stored), `openForClientId` (the payment this basket already has, open or paid and unused), `createCheckout` (idempotent per `sale_client_id`, behind a partial unique index rather than a read-then-write, refusing a checkout SumUp gives no reference to and terminating the reader on any failure after the amount is live on it), `decide` (pure: what a fetched transaction means for a pending checkout - the reference, the currency, the amount, in that order), `applyOutcome` (the write, inside its own transaction, and only while the row is still `pending`), `notePaymentAfterClose` (a payment that lands after a cancel or an expiry: audited once, never re-opened), `verify` (the transactions lookup, then the reader's own status as a fallback that can only ever fail a payment, never pay one) with `verifiedRecently`/`markVerified` (one outbound call per checkout per ten seconds, however often the counter polls), `isReadersLiveCheckout`/`stopReader` (terminate is reader-scoped at SumUp, so a cancel only reaches for a reader still showing this payment), `cancel`, `expirePending` (the cron) and `saleRefusal` (the one wording for every way a card payment cannot pay for a sale, used by `sales.complete` before and inside its transaction). |
+| `lib/reservations.js` | Phase 7: `releaseExpired(app, now)` - the staff reservation's own expiry, the exact inverse of the set `lib/wants.js`'s `releaseExpiredHolds` takes. An `items` row that is `reserved` past its `reserved_until` with no `matched` `want_list` row behind it goes back to `in_stock` with a `notes` row and an `audit_log` row, and nobody is notified: that hold was a person's promise, not the system's. |
+| `lib/snapshots.js` | Phase 7: `rollup(app, now)` - one `price_snapshots` row per (card or retro title, finish, source, ISO week) once a row is over 90 days old, deleted in batches of 500. Streams: keyset paged on `(fetched_at, id)`, one row per target per week held in hand, and capped at `MAX_SCAN` rows a run (reported as `capped`), so a first pass over a year of nightly prices converges over a few weekly runs rather than reading a million rows into memory. Nothing inside the 90 days is touched, and the newest row of any target is never deleted whatever its age. Also `isoWeekKey` and `targetKey`, the two pure functions that decide the grouping. |
+| `lib/labels.js` | Phase 7: the bulk reprint and the cross-device print queue. `resolveItems` (the seven selectors, always bounded to stock the shop still holds), `queue` (the 500 label cap, the skip rule, the per-kind template the buy-in wizard would have used, the audit row), `claim` (up to `limit` of the oldest `queued` jobs flipped to `printing` inside one transaction that re-reads each row's status first), `jobShape` (the one job object every route here returns, `qr_text` included), `markPrinted` (a `printing` job only, refusing one the device no longer holds) with `renewClaim` (each print report is the claim's heartbeat, so a long batch is never taken back mid-print), `markFailed`/`requeue` and `unstick` (the cron, three strikes and the job stops asking). `templateKeyFor` lives here and `tradeins.pb.js` requires it, so a buy-in and a reprint of the same item can never come out on different sizes. |
+| `lib/sumup.js` | PocketBase-specific glue behind `sumup.pb.js` and `crons_sumup.pb.js`: `pull(app, actorId, ip)` upserts `sumup_transactions` from `adapters/sumup.js` and matches each to a sale (since Phase 7 by a `sumup_checkouts.transaction_id` this app's own reader payment recorded, then by a SKU-prefixed product name, then by amount and a three-minute time window), and `reconcile(app, date)` builds the Cash screen's day-by-day comparison. See `docs/api-contract.md`'s Phase 4 section for the matching rules and response shapes. |
+| `lib/reports/{dates,query,daily,csv,registry,scheduled,digest,sales,buyins,margin,stock,channels,customers,loyalty,cash,compliance}.js` | Every real handler behind `reports.pb.js`, `stats.pb.js` and `crons.pb.js`'s three reporting crons, kept out of the `.pb.js` files themselves per CLAUDE.md's "keep hooks small". `dates.js` is the pure UTC day/range/week/month math (no PocketBase calls of its own) plus `toLondon`/`isBst`/`lastSundayUtc`, a hand-rolled Europe/London civil-clock conversion for the sales heatmap only (goja has no reliable timezone database); `query.js` a memoising `findRecordById` lookup, the finish-aware "what is this stock item currently worth" figure `daily.js` and `stock.js` both read, `roundPct`/`roundRatio` (the one shared half-up rounding to 1dp/3dp every percentage/ratio in this package goes through), `queryByIds`/`findAllByFilter` (a batched-by-id query and a paged unbounded-list read, replacing what used to be one query per parent id or one single unbounded read), `saleBreakdownsByLine` (every sale referenced by a batch of `sale_lines`, fetched once and broken down with the shared `saleline` evaluator), and a small `by=<dimension>` table accumulator; `daily.js` is `daily_stats`'s pure builder (`buildDayRow`), its stock-valuation half (`currentStockValuation`, computed once and shared across a whole batch rather than once per day), its find-or-create upserts (`upsertDayRow` / `upsertDayRows`, the latter tolerating one bad day without failing the rest) and the read-through the reports use (`rowForDate` / `rowsForEachDay`, live for any day the nightly cron has not reached yet, `rowsForEachDay` batching a whole range in one query); `csv.js` renders a report's `table` through `lib/vaultutil.js`'s own `csvRow`/`csvCell`; `registry.js` is the one place all nine report keys (and which are admin-only) are named; `sales.js` through `compliance.js` are the nine reports themselves, one file each, each declaring its own `MONEY_FIELDS` (which `totals` keys are pence, for `scheduled.js`'s emailed totals) and `PERIOD_SCOPED_TOTALS` (which `totals` keys `compare=previous` may show); `scheduled.js` sends due `saved_reports` rows - re-checking at send time that an admin-only report's owner is still a current admin, and re-validating `recipients` (shape, dedup, capped at 10) rather than trusting what was saved - `digest.js` the Monday admin digest. See `docs/api-contract.md`'s Phase 4 section. |
+| `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty; after the item is saved, opportunistically re-hosts its card's image through `adapters/images.js` if it is still a bare third-party URL - never blocks the create on a failure. A separate `onRecordUpdate` hook sets `listed_at` to now the moment `status` most recently became `listed_ebay`, and clears it the moment `status` leaves `listed_ebay` again - the channels report's listing-age figure reads this (falling back to `acquired_at` when blank), `docs/api-contract.md`'s Phase 4 section. |
+| `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
+| `redemptions.pb.js` | On create: assigns `reward_redemptions.number` (`GG-V-000012`, via `lib/counters.js`) and `.code` (`GGV…`, same uniform body generation as `items.pb.js`) when empty. |
+| `staff.pb.js` | `onRecordAuthRequest` on `staff`: refuses to authenticate (issue a token, refresh one, ...) an account with `active: false`, with "This account is inactive. Ask an admin to reactivate it." A deactivated staff member keeps their row (for `audit_log` actor references and historic sales/trade-ins) but cannot sign in again. Also `onRecordUpdateRequest` on `staff`, the first-sign-in password change: it puts the stored `must_change_password` back on the record whenever the caller is writing their own row (whatever their role) or is not an admin at all, refuses a new password for the caller's **own** record that is under 12 characters or equal to the one already on the account, clears the flag on a successful own-password change (in the same save) and writes exactly one audit row - `staff_password_changed`, `staff_password_set` or `staff_lock_changed`. And a `routerUse` middleware, the lock itself: a request carrying a staff token whose record still has `must_change_password` gets 403 and "Set a new password before doing anything else." unless it is the account's own auth-refresh, its own record PATCH or `GET /api/health`. `meta` is field names, the staff id and who did it; neither password is read, logged or returned. See "Creating the first admin" above. |
+| `singletons.pb.js` | Refuses a second `settings`, `loyalty_programme` or `display_state` record. |
+| `audit.pb.js` | Logs deletes on `staff`, `customers`, `customer_private`, `id_documents`, `items`, `trade_ins`, `sales`, `credit_ledger`, `points_ledger` and the four `loyalty_*` config collections (a judgement call - PLAN.md says "sensitive collections" without naming them; revisit if Richard wants a different list), creates on those same four `loyalty_*` collections (adding a tier, a rule or a reward changes the programme's terms exactly as editing one does), and updates to `pricing_rules` and every `loyalty_*`/`settings` collection. `staff` updates are audited too, but by `staff.pb.js` itself rather than from this list, so an own password change leaves one row and not two. Uses the `*Request` hook variants because only those carry `e.auth` and `e.realIP()`; logs only after `e.next()` returns without throwing. `meta` never carries a field's *value*, only identifiers: for an update, the names of the fields that changed (`e.record.fieldsData()` diffed against `e.record.original()`, taken before `e.next()`); for a delete, one label from a short list of fields already known to be safe (`items.sku`, `trade_ins.number`, `sales.number`) or nothing at all for every other audited collection - `staff`, `customers`, `customer_private` and `id_documents` above all never contribute a label, since every field on those could be a password hash, `pin_hash`, an ID photo path or other PII. This keeps a password, `pin_hash`, ID photo or API key out of this permanent, superuser-only table, so erasing the original record actually erases it. |
+| `routes.pb.js` | `GET /api/vault/health` (staff-authenticated: status, PocketBase version, a few record counts) and `GET /api/vault/me` - the caller's own `staff` fields, hand-picked so `pin_hash` can never leak, or, since Phase 5, the caller's own `/me` portal summary when the token is a `customers` one (`lib/vaultutil.js`'s `meShapeFor`) - one registration branching on `e.auth.collection().name`, since PocketBase's router refuses two handlers on the same method and path. |
+| `ledgers.pb.js` | `credit_ledger` and `points_ledger`: `onRecordCreate` stamps `balance_after` before the row is written (computed from the ledger as it stands plus this row, never from the cache); `onRecordAfterCreateSuccess` recomputes both cached balances through `lib/balances.js`. Both fire inside whatever transaction the caller is in, so a correction row added straight through the collection API gets the same treatment a custom route's write does. |
+| `stepup.pb.js` | `POST /api/vault/step-up` - see "Custom API routes" below. |
+| `tradeins.pb.js` | Buy-in completion and receipts. |
+| `idphotos.pb.js` | The ID check and the ID photo view. |
+| `config.pb.js` | `GET /api/vault/config`: the read-only staff window onto the admin-only `settings`, `pricing_rules` and `loyalty_*` rows, with every secret-looking settings field stripped. |
+| `customerops.pb.js` | The latest ID document lookup, the duplicate-customer merge and the GDPR erasure. Since Phase 6 the merge also deletes a `referrals` row whose two ends would fold into the same customer (rather than re-pointing it into a self-referral that pays both bonuses to one person), takes the duplicate's own welcome bonus back off with an `adjust` row and a note, and re-evaluates the kept record's tier silently. |
+| `sales.pb.js` | Sale completion and refunds, and the `onRecordCreate` hook that defaults a new sale's `channel` to `"counter"` and `occurred_at` to now. |
+| `cash.pb.js` | Cash sessions. |
+| `exports.pb.js` | The stock book CSV (Phase 2), plus Phase 4's SumUp, eBay listing, inventory, sales, buy-in register and end-listings CSVs, and `POST /api/vault/items/end-listings`. |
+| `imports.pb.js` | Phase 4: `POST /api/vault/imports/card-uploader`, `POST /api/vault/imports/ebay-orders`, `GET /api/vault/imports/:id`, `POST /api/vault/imports/:id/link`. |
+| `sumup.pb.js` | Phase 4: `POST /api/vault/sumup/pull` (admin) and `GET /api/vault/sumup/reconcile` (staff), both thin wrappers over `lib/sumup.js`. |
+| `crons.pb.js` | Registers `fx`, `prices`, `retention`, `stats`, `scheduled_reports_weekly`, `scheduled_reports_monthly` and `weekly_digest`. `fx` (daily 07:00) fetches today's GBP rate from Frankfurter and writes it to `fx_rates` - `GET /api/vault/fx` only ever reads that row. `prices` (weekly, Sunday 03:00, despite its name) syncs `card_sets` from TCGdex, Scryfall, Lorcast and OPTCG's own set listings; day-to-day *price* ingestion still runs in `services/pricesync`, not here (hooks cannot stream the 15-26 MB Cardmarket files). `retention` does real work (see below). `stats` (00:30 UTC) rebuilds the last 7 UTC days' `daily_stats` rows (never today) through `lib/reports/daily.js`'s `upsertDayRows`, sharing one stock valuation across the whole batch and tolerating one bad day without failing the rest - not just yesterday, so a day's row self-heals once data that arrived late (an eBay import after 00:30, a next-morning refund) is on file. `scheduled_reports_weekly` (`0 8 * * 1`) and `scheduled_reports_monthly` (`0 8 1 * *`) send every due `saved_reports` row through `lib/reports/scheduled.js`; `weekly_digest` (`0 8 * * 1`) emails the admin digest through `lib/reports/digest.js` - see `docs/api-contract.md`'s Phase 4 section. |
+| `crons_sumup.pb.js` | Registers `sumup_pull` (`:15` past every hour, 08:00-22:00 UTC): `lib/sumup.js`'s `pull($app, "system", "")`. Kept separate from `crons.pb.js` (another package's file this round) - see `docs/api-contract.md`'s Phase 4 section. |
+| `lookup.pb.js` | `GET /api/vault/lookup`, `GET /api/vault/lookup/:game/:set/:number`, `GET /api/vault/retro/lookup` - see "Card and price adapters" below and `docs/api-contract.md`'s Phase 3 section. |
+| `prices.pb.js` | `GET`/`POST /api/vault/cards/:id/prices` and `:id/refresh-prices` and `:id/uk-comp`, `GET /api/vault/retro/:id/prices`. |
+| `fx.pb.js` | `GET /api/vault/fx` - reads the latest `fx_rates` row; never calls Frankfurter itself. |
+| `stockcounts.pb.js` | `POST /api/vault/stock-counts/:id/close` (admin) - see "Custom API routes" below. |
+| `reports.pb.js` | `GET /api/vault/reports/:key` (and its `.csv` variant, and the separate `audit.csv` export) - the nine reports of `docs/PLAN.md`'s "Reporting" table. Resolves the key (`hasOwnProperty` plus a `typeof` check, so a prototype-chain name like `constructor` 404s cleanly rather than resolving to something inherited off `Object.prototype`) and gates admin-only keys **before** validating the date range, so a caller who cannot see a report learns nothing about whether their range would have passed either; then wires the request to the matching `lib/reports/*.js` builder, every real computation lives there. `compare=previous` only recomputes and returns each builder's own declared `PERIOD_SCOPED_TOTALS`, skipping the second `build()` call entirely when that list is empty. Every CSV export (a report's own `.csv` and `audit.csv`) is audited. See `docs/api-contract.md`'s Phase 4 section. |
+| `stats.pb.js` | `POST /api/vault/stats/rebuild?from&to` (admin): rebuilds `daily_stats` for a range on demand, through `lib/reports/daily.js`'s `upsertDayRows` (one shared stock valuation for the whole range, one day's failure never sinking the rest), bounded to 400 days. Response and audit row both carry `{ days, failed }` - how many rows were written and which dates were not. |
+| `quotes.pb.js` | Phase 5: the remote quote lifecycle (`POST /api/vault/quotes` and its `:id/messages`, `:id/offer`, `:id/reviewing`, `:id/accept`, `:id/decline`, `:id/received`, `:id/cancel`), the `quotes_expire` and `quote_photos_retention` crons, the `quotes.closed_at` stamping hook, and the one small `trade_ins` hook that marks a quote `completed` once its own trade-in completes. See `docs/api-contract.md`'s Phase 5 section. |
+| `wants.pb.js` | Phase 5: `GET /api/vault/want-list`, `POST /api/vault/want-list` and `:id/close`, the `items` hooks that match a want list on stock arrival and fulfil it on sale (separate registrations from `items.pb.js`'s own), and the `holds_release` cron. Logic in `lib/wants.js`. |
+| `portal.pb.js` | Phase 5: the customer's own account - `PATCH /api/vault/me` (the `GET` branch lives in `routes.pb.js`, above), `GET /api/vault/me/export`, `POST /api/vault/me/delete`, `GET /api/vault/c/:token`, `GET /api/vault/me/notifications`, `POST /api/vault/me/notifications/:id/read`, `POST`/`DELETE /api/vault/push/subscribe`. |
+| `estimate.pb.js` | Phase 5: the two public routes, `GET /api/vault/estimate/search` and `GET /api/vault/estimate` - no auth, no writes, never an adapter call. Logic in `lib/estimate.js`. |
+
+| `loyalty.pb.js` | Phase 6: the loyalty engine's own hooks, `POST /api/vault/loyalty/adjust` (admin, step-up) and two nightly passes over the ledger. The `customers` create hook resolves a `referred_by` **code** before `e.next()` and writes the welcome bonus, its own `welcome` notification (only when the customer has an email address) and the `pending` referrals row after it (see `docs/api-contract.md`'s Phase 6 implementation notes for why that write is not an `onRecordAfterCreateSuccess` hook). A `points_ledger` after-create hook re-evaluates the tier from the rolling window and clears `customer_private.points_expiry_warned_at` whenever points come in; `memberships` create, update and delete hooks re-evaluate it too, because a paid plan grants one. The four `loyalty_*` collections get their write-time shape checks (`lib/loyaltyconfig.js`). Crons: `tiers_recompute` (03:20, ten minutes clear of the two 03:30 passes that walk whole collections of their own) re-evaluates every customer so points ageing out of the window demote without a ledger write, and `points_expire` (03:40) expires a balance after `loyalty_programme.expiry_months_inactive` months with nothing coming in, warning once thirty days before. |
+| `rewards.pb.js` | Phase 6: `GET /api/vault/rewards` and `POST /api/vault/rewards/:id/redeem` (customer), `GET /api/vault/me/vouchers` (customer), `GET /api/vault/vouchers/:code` and `POST /api/vault/vouchers/:code/use` (staff), `POST /api/vault/vouchers/:code/cancel` (admin), and the nightly `vouchers_expire` cron (03:50). Logic in `lib/rewards.js`. |
+| `perks.pb.js` | Phase 6: `GET /api/vault/customers/:id/perks` and `POST /api/vault/customers/:id/perks/use` (staff). Logic in `lib/perks.js`. |
+| `memberships.pb.js` | Phase 6: `POST /api/vault/memberships`, `:id/renew` and `:id/cancel` (staff), and the nightly `memberships_lapse` cron (04:00). Never writes a tier itself - `loyalty.pb.js`'s `memberships` hooks do, so every route and cron reaches it by the same path. |
+| `display.pb.js` | Phase 6: `POST /api/vault/display`, `/display/accept` and `/display/clear` (staff), plus an `onRecordUpdateRequest` hook that puts a `display_state` write through the collection API through the same payload strip and refuses any attempt to set `customer_accepted_at` or `token` there (staff can update that row directly, so the three routes would otherwise be optional). What may reach the screen is decided in `lib/display.js`, not here. |
+| `guild.pb.js` | Phase 6: `GET /api/vault/me/guild` and `GET /api/vault/me/points` (customer) - My Vault's Guild pages. Read-only, and about the caller alone: every query filters on `e.auth.id`, so there is no id in either path to get wrong. |
+| `sumup_readers.pb.js` | Phase 7: the Solo card reader - `GET`/`POST /api/vault/sumup/readers`, `DELETE /api/vault/sumup/readers/:id`, `POST /api/vault/sumup/checkouts`, `GET /api/vault/sumup/checkouts/:id`, `POST /api/vault/sumup/checkouts/:id/cancel`, the public `POST /api/vault/sumup/callback/:token`, the `checkouts_expire` cron and the one `settings` write hook that keeps the default reader to text. Logic in `lib/readers.js`. Kept out of `sumup.pb.js`: that file is the merchant account's own transaction history, this one is the terminal on the counter. |
+| `labels.pb.js` | Phase 7: `POST /api/vault/labels/queue`, `/claim`, `/:id/printed`, `/:id/failed`, `/:id/requeue` (staff) and the `labels_unstick` cron. Logic in `lib/labels.js`. The queue screen still lists `label_jobs` through the collection API, and the print page still marks a row printed there. |
+| `reservations.pb.js` | Phase 7: the `reservations_expire` cron alone (`5-59/15 * * * *`, offset from `holds_release`), over `lib/reservations.js`. |
+| `snapshots.pb.js` | Phase 7: `POST /api/vault/prices/rollup` (admin) and the `snapshots_rollup` cron (Sunday 02:30, half an hour clear of the weekly `prices` set sync), both thin wrappers over `lib/snapshots.js`. |
+
+## Custom API routes (`/api/vault/*`)
+
+`docs/api-contract.md` is the contract these implement and is the source
+of truth for the request and response shapes; this section is the
+server-side notes that go with them. Every route needs a `staff` token;
+**admin** also needs `role = "admin"`, **step-up** also needs a live
+`X-Step-Up` header.
+| Route | Notes |
+|---|---|
+| `POST /api/vault/step-up` | Re-checks the caller's own password, returns `{ token, expires_at }` good for 10 minutes. |
+| `POST /api/vault/trade-ins/{id}/complete` | The whole buy-in in one transaction: number from `counters.trade_in`, seller snapshot, `items` (one row per unit for single/graded/retro, one row of qty n for sealed/accessory), `credit_ledger`, `cash_movements`, `points_ledger` through the shared `evaluateTradeInPoints`, one `label_jobs` row per item, and the audit row. |
+| `GET /api/vault/trade-ins/{id}/receipt` | The receipt JSON, signature included as a `/api/files/...?token=` URL from `record.newFileToken()`. |
+| `POST /api/vault/trade-ins/{id}/receipt/email` | Sends through PocketBase's own SMTP settings. `{ sent: false, test_mode: true }` while `settings.email.test_mode` is on. |
+| `POST /api/vault/customers/{id}/id-check` | Multipart. Encrypts the photo, writes `id_documents`, verifies `customer_private`. |
+| `GET /api/vault/id-photo/{id}` | **admin**, **step-up**. Audits, then decrypts and streams. |
+| `POST /api/vault/sales/complete` | Stock checks, the payment split, `checkPointsRedemption` and `evaluateSalePoints`, both ledgers, the cash movement, the reward redemption and a `price_override` audit row per overridden line. |
+| `POST /api/vault/sales/{id}/refund` | **step-up**. Items back into stock, lines and sale restatused, the money back by the chosen method, and the points that sale earned on those lines reversed. |
+| `POST /api/vault/cash-sessions/open` | 409 when one is already open. |
+| `GET /api/vault/cash-sessions/current` | `{ session, expected, movements }`, `null` session when none is open. |
+| `POST /api/vault/cash-sessions/{id}/close` | Expected, counted, variance; audited as `cash_session_variance` when the variance is over `settings.cash_variance_alert`. |
+| `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. One row per sale line for what is still sold, plus one for what is still on the shelf. |
+| `GET /api/vault/exports/sumup.csv?since&dry_run` | SumUp's own item-import layout for `retro`/`sealed`/`accessory`/`other` stock, and sets `items.sumup_synced_at` unless `dry_run=1`. |
+| `GET /api/vault/exports/ebay-listings.csv?ids` | A listing file for the given in-stock items; marks nothing. |
+| `GET /api/vault/exports/inventory.csv?status&game&kind`, `/sales.csv?from&to` | Plain CSV listings of `items` and of `sales`/`sale_lines`. |
+| `GET /api/vault/exports/buy-in-register.csv?from&to` | **admin**. Seller snapshots included. |
+| `GET /api/vault/exports/end-listings.csv` | Sold items that still carry an `ebay_listing_id`. |
+| `POST /api/vault/items/end-listings` | `{ ids }` - clears `ebay_listing_id`/`ebay_sku` on each and audits. |
+| `POST /api/vault/imports/card-uploader`, `/imports/ebay-orders` | Multipart CSV imports; one `$app.runInTransaction` per file. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
+| `GET /api/vault/imports/:id` | The `csv_imports` row with its `errors`, for the review screen. A staff token can no longer `PATCH` a `csv_imports` row directly (admin only); every write goes through this file's routes. |
+| `POST /api/vault/imports/:id/link` | `{ row, card }` links one "needs match" row by hand through the same three-path rule the import itself uses; `{ row, skip: true }` dismisses it. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
+| `POST /api/vault/sumup/pull` | **admin**. Also runs hourly - see `crons_sumup.pb.js`. |
+| `GET`/`POST /api/vault/sumup/readers`, `DELETE /api/vault/sumup/readers/:id` | The paired Solo terminals. `GET` is staff; pairing and unpairing are **admin** and audited. With no merchant code yet, `GET` answers 200 with `not_configured: true` rather than failing. |
+| `POST /api/vault/sumup/checkouts` | Puts an amount on the reader. Idempotent per `sale_client_id`, including one already paid and unused, behind a partial unique index. Rate limited to 30 a minute per calling address. |
+| `GET /api/vault/sumup/checkouts/:id` | The row, verified against SumUp first when it is still pending and over five seconds old - the counter polls this every three seconds while it waits. |
+| `POST /api/vault/sumup/checkouts/:id/cancel` | The till that started it, or an admin. 409 with the checkout in the body when the customer had already paid. |
+| `POST /api/vault/sumup/callback/:token` | **public** (SumUp's own callback), rate limited to 60 a minute. An unknown token is a bare 404 with no body; the token is never logged, and only its sha256 is stored. |
+| `POST /api/vault/prices/rollup` | **admin**. Thins `price_snapshots` older than 90 days to one row per target per ISO week. Audited. |
+| `POST /api/vault/labels/queue`, `/claim`, `/:id/printed`, `/:id/failed`, `/:id/requeue` | The bulk reprint and the cross-device print queue. A claim is atomic: two devices claiming at once take different batches. `/printed` doubles as the claim's heartbeat and refuses a job the device no longer holds. |
+| `GET /api/vault/sumup/reconcile?date` | The day's SumUp transactions beside the day's card sales, for the Cash screen. A manual match off this list is a plain `PATCH /api/collections/sumup_transactions/:id { matched_sale }` - the only field a staff token may set there; every other field needs `role = "admin"`. |
+| `GET /api/vault/lookup`, `/lookup/:game/:set/:number`, `/retro/lookup` | Catalogue and retro-title search, writing through to `cards`/`card_sets`/`retro_titles`. See "Card and price adapters" below. |
+| `GET`/`POST /api/vault/cards/:id/prices`, `/refresh-prices`, `/uk-comp`; `GET /api/vault/retro/:id/prices` | Valuation, reading (GET) or writing (POST) `price_snapshots`. See "Card and price adapters" below. |
+| `GET /api/vault/fx` | The latest `fx_rates` row. |
+| `POST /api/vault/stock-counts/:id/close` | **admin**. Variance per line, an optional move of unexpected stock, `status = "closed"`. The only way `status` ever reaches `"closed"` - see "API rules" below. |
+| `GET /api/vault/config` | The read-only window onto `settings`, `pricing_rules` and the `loyalty_*` rows, which are admin-only collections an ordinary staff member still has to price against. Every settings field named `api_keys`, `email`, or containing "key" or "secret", is dropped. No audit row: every counter screen loads it. |
+| `GET /api/vault/customers/{id}/id-document` | The newest `id_documents` row for that customer whose photo file is still present, as ids and timestamps only. `id_documents` has every rule null, so this is the app's only way to know whether the cash ID gate will pass. |
+| `POST /api/vault/customers/{id}/merge` | **step-up**. Folds a duplicate customer into the one being kept: every relation re-pointed, `perk_usage` counts summed where the two records clash on its unique `(customer, perk_type, period)` index, `customer_private` gaps filled, balances recomputed from the moved ledgers, the duplicate deleted. |
+| `POST /api/vault/customers/{id}/erase` | **admin**, **step-up**. The Article 17 erasure. Refuses with 422 while the customer still holds store credit. Trade-ins, sales and the ledgers stay, seller snapshot included (Article 17(3)(b)). |
+| `GET /api/vault/reports/:key` (and `:key.csv`, `audit.csv`) | The nine reports (`sales`, `buyins`, `margin`, `stock`, `channels`, `customers`, `loyalty`, `cash`, `compliance`) plus the audit log CSV export - `compliance` and `audit.csv` are **admin**. `?from&to&group=day\|week\|month&by=<dimension>&compare=previous\|none`, bounded to 400 days. No audit row for the plain reads; `audit.csv` and every `.csv` variant are. See `docs/api-contract.md`'s Phase 4 section. |
+| `POST /api/vault/stats/rebuild` | **admin**. `?from&to`, bounded to 400 days. Upserts `daily_stats` for the range, one row per date, never a duplicate. |
+| `GET`/`PATCH /api/vault/me` | Staff get their own hand-picked fields (unchanged); a `customers` token gets the portal summary - balances summed live from the ledgers, tier, `id_status`, per-area counts (`lib/vaultutil.js`'s `meShapeFor`). `PATCH` refuses an email change (400); accepts name, phone, marketing consent, birthday month, notification preferences. See `docs/api-contract.md`'s Phase 5 section. |
+| `GET /api/vault/me/export` | **customer**. A JSON download of the customer's own trade-ins, linked sales, both ledgers, quotes (no photos), want list and notifications, plus consent and `id_status`, and since Phase 6 their vouchers, memberships, this year's perk counts, tier and window points, and their referrals reduced to direction, status and date - never an ID field, a photo, or the other party of a referral. Audited. |
+| `POST /api/vault/me/delete` | **customer**. The same erasure the admin route runs (`lib/customerops.js`), refused with 422 while store credit remains. Rotates the customer's sign-in, so every token issued before the call stops working. |
+| `GET /api/vault/c/:token` | Public. No match: 404, never a name. A match: `known: true` (no/other auth), the customer's own `/me` shape (that customer's own token), or `{ customer_id, code, name }` (staff). |
+| `POST /api/vault/quotes` | **customer**, multipart (`photos`, `message`, `drop_off`). Creates the quote `submitted`, notifies every active admin. |
+| `GET /api/vault/quotes/:id` | **customer own, or staff**. The quote, its message thread, and its photos as short-lived file-token URLs. |
+| `POST /api/vault/quotes/:id/messages` | **customer own, or staff**. Notifies the other side. |
+| `POST /api/vault/quotes/:id/offer` | **staff**. Recomputes `offer_total` from the submitted lines; sets the expiry from `settings.quote_expiry_days`; notifies the customer. 409 unless `submitted`/`reviewing`. |
+| `POST /api/vault/quotes/:id/reviewing` | **staff**. `submitted` → `reviewing` only. |
+| `POST /api/vault/quotes/:id/accept`, `/decline` | **customer own**. Only from `offered` and before `offer_expires_at`; 409 naming the expiry date once past it. |
+| `POST /api/vault/quotes/:id/received` | **staff**. Only from `accepted`. Creates the draft `trade_ins` row and its lines; marks the quote `received`. Completing that trade-in through the unmodified Phase 2 route marks it `completed` (a `trade_ins` hook in `quotes.pb.js`). |
+| `POST /api/vault/quotes/:id/cancel` | **staff**. `{ note }` required. From any open status to `declined`; notifies the customer. |
+| `GET /api/vault/want-list` | **customer, own rows**. `{ rows }`, newest first, capped at 50, same expanded shape as `POST` below plus `hold: { until, price, title } \| null` resolved off the matched `items` row at read time (`null` unless `status` is `matched`). Additive: the collection API's own `filter=customer=<id>` read still works, but cannot expand `matched_item` itself since `items` is staff-only. |
+| `POST /api/vault/want-list` | **customer**. `{ card?, free_text?, max_price? }`. Response `{ row }`, `row.card` expanded to `{ id, name, set, number, image }`. |
+| `POST /api/vault/want-list/:id/close` | **customer own**. Also doable directly through the collection API, per its own updated `updateRule`. Same `{ row }` response shape. |
+| `GET /api/vault/estimate/search`, `GET /api/vault/estimate` | Public, no auth, rate limited, no writes, never an adapter call. `estimate/search` hits also carry `finishes` (the card's `finishes_available`, `[]` when unset). See `docs/api-contract.md`'s Phase 5 section. |
+| `POST`/`DELETE /api/vault/push/subscribe` | **customer or staff**. Upserts/removes a `push_subscriptions` row by `endpoint` **and the caller's own identity** (fix round, finding 8 - a lookup by endpoint alone could return someone else's row for the same endpoint, once a second caller is allowed to hold one); a different caller subscribing with the same endpoint gets its own new row rather than re-pointing the first's, and unsubscribing a row the caller does not own is a 404. Never logs the endpoint or the keys. |
+| `GET /api/vault/me/notifications` | **customer**. `{ items, unread }`, newest first, capped at 50. |
+| `POST /api/vault/me/notifications/:id/read` | **customer own**. Idempotent; response `{ notification }`. |
+| `GET /api/vault/quotes` | **customer**. The caller's own quotes, newest first, capped at 50 - no photos or lines. Additive: the collection API's own `filter=customer=<id>` read still works. |
+| `POST /api/vault/loyalty/adjust` | **admin, step-up**. `{ customer, delta, reason }`. Ledger row, a `notes` row carrying the reason, an audit row of figures only. 422 rather than let a balance go below zero, re-checked inside the transaction. |
+| `GET /api/vault/rewards` | **customer**. The catalogue with `remaining`, `per_customer_remaining`, `can_redeem` and a `reason` per reward (`off` for every row while `loyalty_programme.enabled` is false). `loyalty_rewards` itself stays admin-only. |
+| `POST /api/vault/rewards/:id/redeem` | **customer**. One transaction: the voucher, the `redeem` points row, and for a `store_credit` reward the `credit_ledger` row and an immediately-`used` voucher. Everything re-checked against live rows inside it. 422 with the reason as a sentence. |
+| `GET /api/vault/me/vouchers` | **customer**. The caller's own vouchers, every status, newest first, capped at 100. Every voucher object (here, from the redeem route and from the staff lookup) carries `created` and `expires_at` as strict ISO 8601, normalised from PocketBase's stored form on the way out - see `docs/api-contract.md`'s Phase 6 section. |
+| `GET /api/vault/vouchers/:code` | **staff**. The voucher by its printed code, hyphened or bare, with the customer and reward on it. 404 for an unknown code. |
+| `POST /api/vault/vouchers/:code/use` | **staff**. `free_item`, `event_entry` and `custom` only; 409 for `money_off` ("Use this one on the sale: scan it at Sell."), for anything not `issued`, and for one past its expiry. |
+| `POST /api/vault/vouchers/:code/cancel` | **admin**. `cancelled`, the points back as an `adjust` row, and a note on the customer saying which voucher. |
+| `GET /api/vault/customers/:id/perks` | **staff**. `{ tier, window_points, next, perks }` - the tier the server holds, the live window total with the next tier above it (`{ name, points_needed }` or null at the top), then the counted perks with this month's allowance and use and the informational ones. |
+| `POST /api/vault/customers/:id/perks/use` | **staff**. `{ type, count? }`, an upsert of the one `perk_usage` row for that customer, perk and period. 422 when the allowance is spent or the tier has no such perk. |
+| `POST /api/vault/memberships` | **staff**. `{ customer, tier, months, price, payment_note? }` on a `paid_plan` tier. 409 when one is already active. |
+| `POST /api/vault/memberships/:id/renew` | **staff**. Extends `renews_at` from the later of now and the current expiry. 409 for a cancelled membership, and 409 when the customer already has another active one, since renewing makes this one active too. |
+| `POST /api/vault/memberships/:id/cancel` | **staff**. `cancelled`, tier re-evaluated, customer notified. |
+| `POST /api/vault/display` | **staff**. `{ mode, payload }`. The payload is rebuilt field by field; one carrying an identifier, an email or a phone number at any depth is refused with 400. Returns `{ token, mode, expires_at }`, fifteen minutes out. |
+| `POST /api/vault/display/accept` | **staff** (the tablet's own session). `{ token }`, and only against the live `buy_in` publish; a stale publish is cleared first, in its own transaction, then the accept refused with 409. |
+| `POST /api/vault/display/clear` | **staff**. Back to `idle`, keeping nothing of what was on screen. |
+| `GET /api/vault/me/guild` | **customer**. Tier, window points, the next tier, the membership, the perks wallet, the caller's own referral figures and their open voucher count - all computed live from `points_ledger`. |
+| `GET /api/vault/me/points` | **customer**. The caller's own ledger, newest first, capped at 100, each row with a one-sentence `note`. |
+
+Three patterns run through all of them.
+
+**Validate first, write second.** Every staff-facing refusal is raised
+before `$app.runInTransaction` opens, so the transaction holds writes plus
+only the re-checks that have to be atomic (the trade-in is still open, the
+item is still in stock, the cash session is still open). Those
+re-checks record themselves in a `halt` object, throw to roll back, and
+are turned into the right status code after the catch: an `ApiError`
+thrown through the Go transaction boundary does **not** arrive back in JS
+as itself, so throwing one from inside the callback would surface as a
+bare 400.
+
+**`cash_movements.amount` is signed.** Money out of the drawer (a payout,
+a refund, a bank drop) is stored negative and money in is positive, so a
+session's expected total is `float + sum(amount)` and the `adjustment`
+type can say which way it went. The contract writes the same sum as
+"float + cash sales + float_in - payouts - refunds - bank drops"; the
+figure is identical, the sign lives on the row rather than in the reader.
+
+**Audit meta stays to identifiers, counts and the shop's own money** -
+a trade-in number, how many items and labels, a payout total, a variance.
+Never a customer's name, address, ID number or photo path, for the same
+reason `audit.pb.js` withholds them.
+
+### Step-up
+
+`POST /api/vault/step-up` takes `{ password }`, re-checks it against the
+signed-in staff record and returns a JWT with `{ staffId, scope:
+"step_up" }` and a 10 minute expiry. `lib/stepup.js`'s `requireStepUp(e)`
+reads it from `X-Step-Up` and refuses with 403 "Confirm your password to
+continue." when it is missing, expired, tampered with, or issued to
+somebody else.
+
+The signing key is `hs256("<staff id>:<staff tokenKey>", pepper)`, where
+`pepper` is `GG_ID_PHOTO_KEY` when set and a fixed fallback string
+otherwise. PocketBase exposes no app-wide secret to JS, and an auth
+record's `tokenKey` is a 50-character random value it already keeps per
+row, so this needs no secret of its own. Two consequences, both wanted: a
+token only ever works for the staff member it was issued to (verification
+derives the key from `e.auth`, then checks the `staffId` claim matches),
+and changing that member's password or email rotates their `tokenKey`, so
+every step-up token they hold stops working at once.
+
+### ID photos
+
+The photo bytes go straight into `$security.encrypt` as an
+`Array<number>` (its `data` parameter takes one, and `$security.decrypt`'s
+result goes back to bytes through `toBytes()`, byte-exact both ways), and
+the ciphertext is written as a `.enc` file on `id_documents.photo`. The
+MIME type is **sniffed from the first bytes** (JPEG, PNG, WebP,
+HEIC/HEIF) and stored in `id_documents.mime`, so a client-supplied `mime`
+field and the file's own extension are both ignored and a page of HTML
+named `photo.jpg` cannot be stored and later served back as an image.
+Uploads are capped at 8 MB, read with `toBytes(reader, cap + 1)` so an
+upload that lies about its size is still refused. Without the key the
+upload route refuses with 500 rather than storing a photo in the clear.
+The view route writes its `id_photo_view` audit row **before** decrypting
+anything, so a view that then fails is still on the record as an attempt,
+and serves the bytes with `Cache-Control: no-store`,
+`Content-Disposition: inline` and `X-Content-Type-Options: nosniff`.
+
+Nothing on the photo path is base64'd. It was, and `lib/base64.js`'s
+`encode` built its result one character at a time, which goja turns into a
+fresh string allocation per character: 200 KB took about 15 seconds.
+Encoding and decoding are both linear now (accumulate into an array, join
+once), but the photo does not go near them either way; a 320 KB photo
+encrypts in about 20 ms. `lib/base64.js` is still needed for the
+signature on a trade-in, which arrives as a `data:image/png;base64,...`
+data URL.
+
+`trade_ins.signature` and `quotes.photos` are **protected** file fields,
+so PocketBase only serves them with a short-lived file token. That token
+has to be minted from the **calling staff auth record**
+(`e.auth.newFileToken()`): `record.newFileToken()` throws "not an auth
+collection record" on an ordinary record, which is how the receipt's
+signature URL came to be served bare. `items.photos` is left public: it is
+product imagery for the shop front.
+
+### The retention cron
+
+`cronAdd("retention", "30 3 * * *")` deletes `id_documents` whose
+`expires_at` has passed (the encrypted file goes with the record) and
+`notifications` older than twelve months. Each ID photo deletion writes an
+audit row carrying the collection and the record id and nothing else: an
+erased record whose identifying fields survive in a permanent,
+superuser-only table is not really erased. Quote photos ninety days after
+their quote closes are cleared by a separate cron, `quote_photos_retention`
+(`quotes.pb.js`, Phase 5), driven by `quotes.closed_at` - a field that
+cron's own `onRecordUpdate` hook stamps the moment `status` first reaches
+`completed`, `declined` or `expired`, so a later reply never pushes the
+90-day clock back the way `updated` would.
+
+### The image queue cron
+
+`cronAdd("image_queue", "*/5 * * * *")` drains `adapter_state`'s
+`image_queue` entry, an array of card ids `items.pb.js`'s `onRecordCreate`
+pushes onto (never fetches from) the first time an item is created against a
+card whose image is still a bare third-party URL. A buy-in creates every
+item inside one `$app.runInTransaction`, so `e.app` there can be that
+transaction's own `txApp`; a network call at that point would hold the
+whole transaction open for as long as the image host takes to answer, so
+the item-create hook only ever does the one fast, local write and the
+actual fetch happens later, off that path entirely, when this cron runs.
+Every queued card gets one attempt with a short per-image timeout and the
+queue is cleared regardless of outcome - a card whose image keeps failing
+is not worth retrying every five minutes forever; the lazy cache tries
+again on the next item created against that same card anyway.
+
+### Card and price adapters
+
+`pb_hooks/adapters/*.js` are plain CommonJS modules, not `.pb.js` hook
+files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
+`crons.pb.js` `require()` them, same as any other `lib/` module (see
+"Hooks" above on why every `require()` lives inside a handler body).
+
+| Module | What it talks to |
+|---|---|
+| `tcgdex.js` | Pokemon: TCGdex, no key. |
+| `scryfall.js` | Magic: Scryfall, no key, real User-Agent required. |
+| `ygoprodeck.js` | Yu-Gi-Oh!: YGOPRODeck, no key. Images **must be re-hosted** (hotlinking gets IPs banned) - every result comes back with `rehostImage: true` and `imageSmall`/`imageLarge` left blank until re-hosted. |
+| `optcg.js` | One Piece: OPTCG API, no key. Images are cached locally, same reasoning as YGOPRODeck. |
+| `lorcast.js` | Disney Lorcana: Lorcast, no key, under 10 req/s. |
+| `igdb.js` | Retro titles: IGDB v4 over Twitch client-credentials auth. Behind `settings.api_keys.igdb` being set. |
+| `pricecharting.js` | Retro prices: PriceCharting, a paid API ($49/month). PAL category searched first, NTSC only when PAL has no entry; prices are integer US cents, never a string. Behind `settings.api_keys.pricecharting` being set. |
+| `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then a haircut off (`haircutPctFromSettings(app)` reads `settings.offer.ebayHaircutPct`, default 15 - the one home for this figure). Behind `settings.api_keys.ebay` being set. |
+| `frankfurter.js` | FX: the ECB reference rate, base GBP. No key. Inverts Frankfurter's own "units of X per GBP" into "GBP per unit of X" once, here - see `docs/api-contract.md`'s Phase 3 section. |
+| `sumup.js` | SumUp Transactions API: `GET .../transactions/history` (paged via the response's own `links`) then `GET .../transactions?id=` per transaction for `products[]`. A plain `Authorization: Bearer <key>` - a merchant API key, not OAuth, so unlike `ebay.js`/`igdb.js` there is no token to cache. Behind `settings.api_keys.sumup` and `settings.sumup.merchant_code` both being set; used by `lib/sumup.js`, not called directly from any route. Phase 7 adds the Readers API on `/v0.1` (list, pair, unpair, put an amount on a reader, that checkout's status, terminate) and a transactions lookup by `client_transaction_id`; every one of those answers `{ ok, status, message, data }` instead of throwing, because a reader that is off or no longer paired is an ordinary thing to happen at a counter and each case needs its own sentence. |
+| `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit, a `qs(params)` query-string builder and `stripQuery(url)` (never let a key or a token reach a log line or an error message). Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). `GG_ADAPTER_TRANSPORT_MODE` (see "Environment variables" above) changes this: `offline_fail` throws immediately, naming the call; `fixture` hands the call to `fixture_transport.js` instead. |
+| `fixture_transport.js` | Answers a fixed set of known adapter calls from `pb_hooks/adapters/fixtures/` - the same files `pb/scripts/check-adapters.mjs` unit-tests each adapter against - and throws for anything it has no mapping for, same as `offline_fail`. This is what `pb/scripts/check.sh` runs its whole throwaway server under, so its route-level checks exercise a real search, an exact lookup, `refresh-prices` and the image queue end to end with no live network call. Goja-only (`$os.readFile` to load a fixture's JSON off disk) - never required under plain Node. |
+| `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens, eBay's 24-hour price cache, and `images.js`'s image queue. `forApp(app)` for PocketBase, `memory()` for tests. |
+| `registry.js` | Which adapter answers for which `games.key`; recognises the "set number" query forms (`docs/api-contract.md`'s Phase 3 section), including the small per-game alias table (`sv151` for TCGdex's own `sv03.5`) and running a game's set sync once inline the first time it is needed on an install with no `card_sets` rows for it yet. |
+| `storage.js` | Write-through: one adapter search result into `card_sets`/`cards`, and a `cards` row back out as the row shape the contract promises. `isFresh()` is the whole 30-day lookup cache. Refuses (rather than crashing on a later required-field validation error) to write through a result with no set code at all. |
+| `pricing_policy.js` | The valuation policy behind the prices routes: this build's freshness windows (stricter than `packages/shared/src/pricing.ts`'s own default - see the contract), an adapter candidate's decimal-string-or-cents figure converted to GBP pence exactly once, condition validation and adjustment, and `price_snapshots` reads and writes. Every write goes through `writeSnapshotSafely`, which logs and skips rather than failing a whole `refresh-prices` batch over one bad candidate. |
+| `images.js` | Re-hosts a URL (or bytes an adapter already fetched) into a record's file field and rewrites its `image_*` text fields to the resulting local URL, after validating the response is under 2 MB and sniffing its real type from its own first bytes (never a `Content-Type` header or a URL's extension alone). Never throws - a failed fetch must never block whatever is happening (an item create, a lookup). `enqueueImageCache(app, cardId)` / `drainImageQueue(app, timeoutSeconds)` are the queue `items.pb.js`'s `onRecordCreate` and `crons.pb.js`'s `image_queue` cron use to keep a network call off the item-create path entirely - see "The image queue cron" below. |
+
+Every adapter's outbound call carries `User-Agent: GGVault/1.0
+(+https://ggpos.ggentertainment.co.uk)` and a timeout (`http.js`), and API
+keys are read from `settings.api_keys` only, straight off the record
+server-side - never returned by any route, logged, or written to
+`audit_log` (matching `config.pb.js`'s existing rule for the same
+collection).
+
+`pb/scripts/check-adapters.mjs` (`node --test pb/scripts/check-adapters.mjs`,
+no PocketBase, no network) unit-tests every adapter against fixtures in
+`pb_hooks/adapters/fixtures/` - recorded live where a source needs no key
+(TCGdex, Scryfall, YGOPRODeck, OPTCG, Lorcast, Frankfurter), hand-written
+from each API's documented shape where one does (IGDB, PriceCharting,
+eBay - every such fixture's filename says `HANDWRITTEN`). `pb` is not a
+pnpm workspace package (`pnpm-workspace.yaml` only covers `apps/*`,
+`packages/*`, `services/*`), so this runs as a plain `node` invocation
+rather than through `pnpm --filter`; `.github/workflows/ci.yml`'s
+`pocketbase` job runs it straight after `pb/scripts/check.sh`.
+`GG_ADAPTER_SMOKE=1 node pb/scripts/check-adapters.mjs` additionally calls
+every keyless source for real, for the exact cards named above, and prints
+the image URL and the price shape each one returned - it registers no
+tests at all, so it skips cleanly, without the flag.
+
+## API rules
+
+Applied per `docs/PLAN.md`'s "API rules in short" and the brief's
+conventions:
+
+- **Staff-only**: `@request.auth.collectionName = "staff"`.
+- **Admin-only**: staff-only *and* `@request.auth.role = "admin"`. Used
+  for `staff`, `settings`, `pricing_rules` and every `loyalty_*`
+  collection (`loyalty_programme`, `loyalty_rules`, `loyalty_tiers`,
+  `loyalty_rewards`) - literally, for every rule on those collections,
+  including list/view. That also blocks a plain (non-admin) staff
+  member's or a customer's own read of, say, their tier's name today;
+  see "Known follow-ups" below.
+- **Customer-own**: `customer = @request.auth.id` (or `id =
+  @request.auth.id` on `customers` itself), OR'd with staff-only so
+  staff keep full access.
+- **Superuser-only** (`null`): `id_documents`, `audit_log`.
+- Customers can only ever **create** `want_list` and `push_subscriptions`
+  (`customer = @request.auth.id` in each `createRule`), and can never
+  delete anything. `quotes.createRule` is staff-only (fix round, finding
+  1 - a customer submits only through `POST /api/vault/quotes`, never the
+  collection API directly). `quotes` and `notifications` still let the
+  owning customer **update** their own row (accepting/declining a quote,
+  marking a notification read) - that is an update, not a create or
+  delete, so it does not conflict with the brief's "never create or
+  delete" rule for customers.
+- **Append-only** ledgers (`credit_ledger`, `points_ledger`): `create` is
+  staff-only, `update` and `delete` are `null` (nobody edits history).
+- `items` is never public, matching PLAN.md.
+
+A PocketBase-specific wrinkle worth knowing when testing rules (and the
+reason `check.sh` checks a *view* rather than a *list* against
+`customer_private`): a plain string rule like staff-only is applied as a
+query filter, so a **list** call that matches no rows under that filter
+still returns `200` with zero items, not `403`. **Viewing one specific
+record by id** is where a rule mismatch surfaces as `404` (PocketBase
+treats it as "no such record" from that auth's point of view). A `null`
+rule (superuser-only) is different again: any call at all, list or view,
+is rejected up front with `403`.
+
+## `pb/Dockerfile`
+
+Alpine base; downloads the pinned PocketBase binary for the build
+platform's architecture (`ARG PB_VERSION`, default `0.40.4`); copies
+`pb_hooks`, `pb_migrations` and `pb_public` in; exposes `8090`; runs
+`serve --http 0.0.0.0:8090 --dir /pb/pb_data --hooksDir /pb/pb_hooks
+--migrationsDir /pb/pb_migrations --publicDir /pb/pb_public`; declares
+`/pb/pb_data` as a volume. Build from the repo root so `pb_public` (the
+built PWA, not part of this phase) is whatever is currently there:
+
+```sh
+docker build -t gg-vault-pb -f pb/Dockerfile .
+docker run -p 8090:8090 -v gg_pb_data:/pb/pb_data gg-vault-pb
+```
+
+## Running `pb/scripts/check.sh`
+
+```sh
+bash pb/scripts/check.sh
+```
+
+Starts PocketBase on a fresh temp directory and a free port with this
+repo's real hooks and migrations, creates a throwaway superuser, waits
+for `/api/health`, then as that superuser: asserts every collection in
+`docs/PLAN.md`'s data model exists; creates a `staff` admin and confirms
+it can authenticate; creates an `items` row and checks the assigned SKU
+both matches `^GG[SGRPAX][0-9A-HJKMNP-TV-Z]{6}$` and parses successfully
+through `packages/shared/src/sku.ts` (run via `node
+--experimental-strip-types`, so the check is against the real TypeScript
+source, not a hand-copied regex); creates a `customers` row and checks
+its `code` the same way, and that a matching `customer_private` row
+appeared; confirms `GET /api/vault/health` returns `401` unauthenticated
+and `200` with a staff token; and, impersonating that customer,
+confirms it cannot view `customer_private` or list `audit_log`, cannot
+rewrite fields a customer must not touch on their own `customers`,
+`quotes` or `notifications` row (only accepting/declining a quote and
+marking a notification read go through), and can read the loyalty
+tiers. It also loads the seeded `pricing_rules`, `settings` and
+`loyalty_tiers` rows back through `pb_hooks/lib/shared/{pricing,loyalty}.js`
+(`pb/scripts/check-pricing-loyalty.js`) and confirms a card and a retro
+item both price to a non-zero offer, `suggestSellPrice` marks a price up,
+and the Legend tier's perks all parse; generates 40 item SKUs to confirm
+their bodies are drawn uniformly rather than from the old biased
+construct (see "Hooks" above); confirms an `active: false` staff record
+cannot authenticate; and confirms updating `settings.email_api_key`
+never leaves that value, only the field's name, in `audit_log`.
+
+Section 26 covers the first-sign-in password change on a **second,
+throwaway server of its own**, started with `GG_ADMIN_EMAIL` and
+`GG_ADMIN_PASSWORD` set, since those are read once when the process
+starts (the same reason section 15q runs a server of its own): it asserts
+that the seed's first admin is created with `must_change_password` set,
+that sign-in hands the flag back on the record so the counter can lock
+the screen, that a new password under 12 characters or equal to the
+current one is refused in one sentence and leaves the flag alone, that a
+staff member can clear neither their own flag nor anybody else's, that an
+own-password change clears the flag, invalidates the old token and writes
+a `staff_password_changed` row carrying neither password, and that an
+admin can clear somebody else's flag without that writing a password
+row.
+
+Section 14 then runs one full Phase 2 round trip through the custom
+routes over HTTP, exactly as the counter app will:
+
+- opens a cash session with a float, confirms a second one is refused
+  with 409, and that `cash-sessions/current` reports the float;
+- creates a customer, a draft trade-in (which proves `trade_ins.number`
+  is no longer required) and two accepted lines;
+- confirms completing it for cash with no ID check is refused with 422;
+- posts an ID check as real multipart with a PNG the script generates,
+  confirms `customer_private.id_status` becomes `verified`, and reads the
+  file back **off disk** to confirm it is not a readable PNG any more;
+- completes the buy-in as 4000p cash plus 2500p credit and asserts the
+  number is `GG-BI-000001`, that three items exist (two singles one row
+  per unit, one sealed line) with valid SKUs and `status = in_stock`,
+  that three label jobs are queued, that the `credit_ledger` row and the
+  cached `customer_private.credit_balance` both read 2500, that the
+  drawer moved to 6000p, and that 125 points were earned on the credit;
+- confirms a cash payout over `settings.cash_cap` is refused with 422;
+- sells one of those items for store credit and asserts the sale number,
+  the item going `sold`, the credit debited and the points earned;
+- takes a step-up token (and confirms a wrong password is refused with
+  400, and a refund without a token with 403), refunds the sale, and
+  asserts the item is back `in_stock` with both balances reversed;
+- confirms the ID photo is 403 without step-up and, as an admin with one,
+  comes back 200 with `Cache-Control: no-store`, `Content-Disposition:
+  inline` and bytes that compare byte-for-byte with the PNG that went in,
+  with an `id_photo_view` audit row behind it;
+- closes the session and checks the expected total and the variance;
+- fetches the stock book CSV and checks its header row, its
+  `Content-Disposition: attachment` filename and that the buy-in's number
+  is in it;
+- fetches the receipt JSON and confirms the receipt email route reports
+  `{ sent: false, test_mode: true }` while `settings.email.test_mode` is
+  on.
+
+Section 15 is the money and security round, added after the Phase 2
+review:
+
+- a 320 KB ID photo through the ID check and back out of the admin view
+  route, byte-for-byte and in well under three seconds (the base64 photo
+  path it replaced took about 15 seconds for 200 KB);
+- an HTML file named `photo.jpg` refused with 400, and a 9 MB photo too;
+- the receipt's signature URL served with its file token and refused
+  without one;
+- a seller called `=HYPERLINK("x")` coming out of the stock book prefixed
+  and quoted;
+- a trade-in completed twice (409), a payout that does not match its
+  lines (400), a completion with no `terms_accepted` (422), a signature
+  that is not a PNG and an over-long `id_ref_last4` (400);
+- `no_cash` and `under_18` flags, an expired stored `id_expiry`, and
+  verified ID fields with no photo behind them, each refusing a cash
+  payout with 422, then the same buy-in going through once a photo exists,
+  recording it on `trade_ins.id_document` and pushing its expiry out;
+- a two-line sale with a line discount and a sale-level discount refunded
+  one unit at a time, whose five refunds sum to exactly what was charged,
+  with `qty` and `discount` unmoved and a second refund of a finished line
+  refused with 409;
+- the refund reason landing in `notes` with only its id in `audit_log`;
+- a cash sale writing a positive `cash_movements` row and its cash refund
+  a negative one;
+- a sale part-paid with points, and points refused when they would cover
+  more than their share;
+- the reward code rules: no customer, another customer's voucher, the
+  wrong discount source, a discount that does not match, a reward that is
+  not money off, then the happy path marking the redemption `used`;
+- `settings.cash_cap` of 0 switching cash sales and cash payouts off;
+- a non-admin staff account refused the stock book and the ID photo, and
+  a step-up token minted for one staff member refused for another;
+- the ID check refusing with 500 and storing nothing on a second,
+  throwaway server started with no `GG_ID_PHOTO_KEY`;
+- the stock book writing one row per sale line plus one for the remaining
+  stock, and no sold row at all for a fully refunded line.
+
+Section 16 covers the routes the counter packages asked for: the config
+window (an ordinary staff token gets the pricing rules and no key or
+secret), the ID document lookup, a customer merge (its refusals, the
+re-pointed relations, the filled gaps and the recomputed balances) and an
+erasure (refused while credit is outstanding, then anonymising the record,
+deleting the ID photo and leaving the buy-in register's seller snapshot
+alone).
+
+Section 19 is Phase 3's, added with the lookup, prices and FX routes: the
+server for this whole script runs under `GG_ADAPTER_TRANSPORT_MODE=fixture`
+(see "Environment variables" above), so any call that reaches
+`pb_hooks/adapters/fixture_transport.js`'s own mapping gets a real (fixture)
+answer and anything else still throws and is caught here immediately,
+rather than the check silently passing because a live call happened to
+succeed. It confirms `GET /api/vault/fx` reports stale with an empty
+`rates` object before any `fx_rates` row exists; that a `cards` row with a
+fresh `last_synced` is served by the exact lookup route, and by a "set
+number" search query, with no outbound call at all; that `uk-comp` refuses
+a non-`ebay.co.uk` URL and a sale older than 30 days (both 400), then
+writes a `price_snapshots` row that is chosen ahead of every other source
+and audited; that the prices route puts a converted GBP figure beside a
+snapshot's native amount; that a snapshot past its source's freshness
+window is flagged stale rather than hidden; the Batch API settings and the
+eBay haircut's one seeded home; that retro `refresh-prices` refuses cleanly
+with no PriceCharting key; retro `uk-comp`; the offline queue's
+`client_id` idempotency; and, at the end, `stockcounts.pb.js`'s close
+route (variance, a move, roles, and refusing to close twice) plus the new
+"a second open count on the same location is refused with 409" case.
+
+Section 20, added with the adapter review that introduced fixture mode
+itself, exercises what section 19 could not while every call threw: a name
+search per game against each adapter's own search fixture (Yu-Gi-Oh!,
+Pokemon - proving `charizard ex` reads as a name search and not a bogus
+exact lookup for a set called "charizard" - and MTG); the `fx` cron
+(`POST /api/crons/fx`, PocketBase's own "run this job now" route) storing
+the rate's own `date`, distinct from `fetched_at`; the `sv151` alias
+resolving with no outbound call against a pre-seeded, fresh `cards` row,
+and that same row correctly triggering a real call-out once its
+`last_synced` is over 30 days old, refreshing it from the fixture;
+condition validation on `GET .../prices` (lowercase accepted, `EX`
+refused with 400); a full `refresh-prices` round trip against a brand new
+card with fixture-sourced snapshots, the GBP figure shown correctly beside
+the native amount, and an audit row; `retro/lookup` against a mapped IGDB
+fixture, and the 502 path for a source that is configured but whose
+particular call has no fixture (a distinct IGDB "Client-ID" the fixture
+transport refuses on purpose); and the `image_queue` cron
+(`POST /api/crons/image_queue`) caching a real fixture image locally while
+refusing one over the 2 MB cap and one that answers 200 with bytes that
+are not a recognised image format, in both refusal cases leaving the
+card's `image_large` exactly as it was.
+
+Section 21 is reserved for another package this round (`daily_stats` and
+the reports suite); its own agent adds it in place of the placeholder
+comment.
+
+Section 22 is Phase 4's: the SumUp export's header row, its SKU-prefixed
+item name, 0% tax on a margin-scheme item, and `sumup_synced_at` set on
+export but not under `dry_run=1`; the eBay listing CSV for two ids; the
+inventory, sales and buy-in register exports' header rows, the last being
+admin only; `end-listings.csv` listing a sold, still-listed item and
+`POST /api/vault/items/end-listings` clearing it with an audit row; a
+Card Uploader file with one id-matched row (creating one `listed_ebay`
+item) and one name-only row (one review entry), read back through
+`GET /api/vault/imports/:id`; a malformed file and the wrong declared
+`type` both refused with 400; an eBay orders file selling a listed item
+into a `channel: "ebay"` sale with `external_ref` set, a second run of
+the same file reporting `"already sold"` rather than selling it twice, and
+an ordinary counter sale still defaulting `channel` to `"counter"`; and
+the SumUp pull (still under `GG_ADAPTER_TRANSPORT_MODE=fixture`, against
+hand-written `sumup_HANDWRITTEN_*.json` fixtures) matching one transaction
+by a SKU-prefixed product name and another by amount and a three-minute
+time window, a second pull (run as the `sumup_pull` cron,
+`POST /api/crons/sumup_pull`) upserting in place rather than duplicating
+either, `GET /api/vault/sumup/reconcile` returning matched and unmatched
+lists with totals, and a non-admin refused the pull but not the reconcile.
+Then `POST /api/vault/imports/:id/link`: linking a review row to a card
+already in stock (no duplicate item, cost untouched), linking one to a
+card with nothing in stock (a new item, with the same zero-cost review
+note the automatic import itself would leave), skipping a row, a second
+link of an already-resolved row refused with 409, and an unknown row
+refused with 404. Last, the tightened write rules: a staff `PATCH` of
+`csv_imports.errors` refused (404), a staff `PATCH` of
+`sumup_transactions.matched_sale` accepted (the counter screen's manual
+match), and a staff `PATCH` of `sumup_transactions.amount` refused.
+
+Section 24 is the Phase 6 round: the welcome bonus landing once and
+putting the customer on the first tier; a referral resolved from a code at
+creation, refused for a code nobody holds and for the customer's own
+record, earned on the referee's first completed sale with both ledger rows
+and both notifications, and never paid twice; a promotion announced and a
+demotion made silently by the nightly `tiers_recompute` once the rolling
+window has moved past the rows; a paid membership pinning a higher tier,
+being renewed from the later of now and its own expiry, lapsing on the
+nightly cron and being cancelled; the points-expiry warning sent once per
+run-up and cleared by the next points in, then the whole balance expiring
+in one row; every refusal reason the rewards list can give, a redemption
+writing both rows, a store-credit reward crediting at once, a voucher used
+by staff, a money-off voucher refused at the counter, a cancel returning
+the points with a note, and the nightly `vouchers_expire`; the perks
+wallet and its monthly allowance; the points adjustment needing an admin,
+a step-up token and a reason, and refusing to go below zero; the four
+loyalty config validations; and the display publishing, stripping, being
+accepted only against its own live token, clearing itself after fifteen
+minutes, and staying entirely out of a customer token's reach.
+
+A fix round added seventeen more: a merge deleting a referral that would
+fold into a self-referral (and the completion routes refusing to pay one
+however it got written), a `display_state` write through the collection
+API being stripped and unable to accept an offer or mint a token, the
+customer's own export carrying the Guild without naming the other party
+of a referral, a create and a delete of loyalty config both audited, a
+renewal that would leave two active memberships refused, a printed
+voucher code working at Sell, the welcome notification in place of a
+first-tier announcement, a perk refusal counting what is left, the
+rewards list while the programme is switched off, a first completed
+buy-in earning a referral, the three nightly passes changing nothing on
+a second run the same night, and the `buy_in` payload strip.
+
+Two of those need `points_ledger` rows that are genuinely months old (the
+rolling window's demotion, and the expiry cron), and PocketBase rewrites
+an autodate field on every write, so `created` cannot be set through the
+API at all, superuser included. Section 24 therefore starts a second,
+short-lived PocketBase on the same data directory whose entire hooks
+directory is one throwaway file doing the `UPDATE` through `$app.db()`,
+and stops it again at the end of the section. Nothing in `pb_hooks/` gains
+a test-only route, and the server under test keeps serving this repo's own
+hooks throughout.
+
+Section 25 is Phase 7's: the Solo card reader, reservation expiry, the
+price snapshot roll-up and the label queue. It opens on the two rate
+limits this phase added, bursting each against exactly the rules the
+migration installed before a reader is paired (so every refused request is
+cheap), then raises them for the body of the section, which takes far more
+payments a minute than a counter ever would, and puts the shipped figures
+back at the end. It pairs a reader (and refuses
+a code SumUp will not take), makes the first one the default and unpairs a
+second without moving it; puts an amount on it and gets the same row back
+for a second request carrying the same `sale_client_id`; posts the
+callback SumUp would - an unknown token answering a bare 404 with no body,
+a still-`PENDING` transaction leaving the payment open, a `SUCCESSFUL` one
+marking it paid with its code and last four, a transaction for a different
+amount failing it with the sentence that says to refund it in the SumUp
+app; completes a sale against a paid payment (the card part matching, a
+second sale on the same payment refused, the replayed `client_id` still
+returning the first sale), cancels a pending one and finds a cancel that
+came too late has been paid instead (409); runs the expiry cron over a
+backdated row and again to prove it changes nothing; releases an expired
+staff reservation while leaving a want-list hold and a live one alone;
+rolls up backdated `price_snapshots` and checks the newest of each week,
+and the last price a card has, both survive; and walks the label queue
+end to end - each selector, the 500 cap, the skip rule, a claim two
+devices cannot both take, printed, three failures, a requeue and the
+unstick cron. A fix-round block then covers what a review of this package
+asked for: a checkout SumUp gives no reference to being refused and taken
+off the reader, a transaction that names another payment being ignored, a
+busy reader and a payment in euros each refused in their own words, the
+reader-status fallback, a refunded and an unreadable amount, two tills
+asking for one basket at once, two tills completing one sale at once, two
+devices claiming labels at once, a payment that lands after a cancel or an
+expiry, a reservation with no end date, the roll-up splitting a group by
+finish, by source and on a retro title, a device keeping its claim while
+it prints, and three abandoned claims stopping a job. It finishes on the
+API rules: a customer token reaches none of the new routes, a staff PATCH
+cannot point a sale at a card payment, and a staff token can read a
+`sumup_checkouts` row but never write one.
+
+That section needs three things the API cannot set:
+`sumup_checkouts.created` (an autodate, which the expiry cron measures
+from), `callback_secret`, which holds the sha256 of a token the server
+generates and never hands out - so posting a callback the way SumUp does
+means putting a known token's own hash there first - and
+`client_transaction_id`, which the fixture reads the outcome out of, so a
+payment can be made to land after the row was closed. It starts its own short-lived PocketBase for
+both, exactly as section 24 does, and stops it again at the end. The
+Readers API itself is answered by `pb_hooks/adapters/fixture_transport.js`
+from the request in front of it: the outcome a check wants (paid, pending,
+failed, a mismatched amount) travels in the checkout's own `description`
+and comes back inside the `client_transaction_id`, which is the id the
+transactions lookup is then asked about, so a poll, a callback and the
+cron all get the same answer with nothing remembered between calls.
+
+Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
+always tears the server and temp directory down again (a `trap ... EXIT`),
+even if a check fails.
+
+Requires `pb/pocketbase` (see "Running locally"), `curl`, and `node`
+(for the JSON glue, the `sku.ts` check and the test PNG). It starts its
+own server with a throwaway `GG_ID_PHOTO_KEY`, so nothing needs to be set
+in your shell.
+
+## Regenerating `packages/shared/src/pb-types.ts`
+
+```sh
+pnpm pb           # once, so pb_data/data.db has every migration applied
+pnpm typegen      # bash pb/scripts/typegen.sh
+```
+
+`typegen.sh` reads `pb/pb_data/data.db` directly (PocketBase does not
+need to be running) via `pocketbase-typegen`, with two flags worth
+knowing about if this ever needs debugging:
+
+- `--allow-build=better-sqlite3`: `pocketbase-typegen` reads SQLite
+  through `better-sqlite3`'s native addon, and pnpm 10 blocks install
+  scripts by default - without this the addon is never built and the CLI
+  fails with "Could not locate the bindings file".
+- `--no-sdk`: emits only the plain per-collection data interfaces, not a
+  typed-PocketBase-SDK wrapper. That wrapper's generated code imports the
+  `pocketbase` npm package, which `@gg/shared` does not depend on (and,
+  per its brief, must not gain a new dependency for this); a package that
+  already depends on `pocketbase`, such as `apps/web`, can combine that
+  package's own types with these interfaces itself.
+
+The output is committed (it is generated, but read directly by the rest
+of the workspace, the same way `pnpm-lock.yaml` is committed).
+
+## Known follow-ups
+
+- **`loyalty_tiers` and `loyalty_rewards` are admin-only end to end.**
+  That is the literal reading of PLAN.md's "admin role for ... loyalty_*"
+  applied to every collection whose name starts with `loyalty_`. Phase 6
+  took the follow-up this entry proposed rather than loosening the rule:
+  the portal reads the catalogue through `GET /api/vault/rewards` and its
+  own tier, perks and referral figures through `GET /api/vault/me/guild`,
+  both server-side routes that bypass the collection rule and return only
+  the caller's own data. Nothing about the rules themselves changed.
+- **`perk_usage` and `referrals`** are staff-only, since PLAN.md's
+  customer-readable list does not name them and a customer's own
+  referral code is really just their `customers.code`. Revisit if the
+  portal's Guild page ends up needing perk-usage counts directly.
+- **`settings.min_single_offer` and `.bulk_rate_pct`** seed to `0`
+  (no floor, no bulk discount): PLAN.md and the seed brief describe these
+  fields but neither gives a concrete figure, and this is a real pricing
+  decision for Richard rather than one to invent.
+- **Staff MFA is off, not "optional".** PocketBase's MFA is "pass two of
+  your enabled auth methods in sequence", so it refuses `enabled: true`
+  while only one method (password) is on. Turn it on once `staff` gains
+  a genuine second method (OTP or OAuth2).
+- **`pb_public` is currently empty.** It is served as-is and copied
+  as-is into the Docker image; the PWA lands there once `apps/web` has a
+  production build step wired to it.
+- **Email goes through PocketBase's own SMTP settings, not a provider
+  API.** v0.40.4's `$mails` binding only exposes the built-in auth emails
+  (`sendRecordVerification`, `sendRecordOTP`, ...); a generic send is
+  `$app.newMailClient().send(new MailerMessage({...}))`, which uses the
+  SMTP host configured in the dashboard. `settings.email_provider` and
+  `settings.email_api_key` are therefore unused for now: wiring Resend,
+  Postmark or Brevo means an HTTP call from the hook rather than
+  `$mails`. `settings.email` (`from_name`, `from_address`, `reply_to`,
+  `test_mode`) holds the addressing either way, and seeds with
+  `test_mode: true` so a fresh install cannot email a customer by
+  accident.
+- **A refund pays out by the method the staff member picks**, not by
+  unwinding the original payment split. That matches the contract, but it
+  means a sale paid half on card and half on credit can be refunded
+  wholly to credit. Revisit if Richard wants the split honoured.
+- **`trade_in_lines.item` is a single relation**, so a line for two
+  singles (which becomes two `items` rows) points at the first of them.
+  Every unit points back at its line through `items.trade_in_line`, so
+  nothing is lost, but a query from the line's side only sees one.
+- **The trade-in route trusts the line's `offer_price`.** It checks the
+  payout matches the accepted lines, not that each `offer_price` is what
+  `computeOffer` would produce, because staff may override an offer with
+  a reason. `offer_price` stays the figure actually paid for the payout
+  type chosen, overridden or not, so the payout arithmetic reads it alone;
+  `override_cash` and `override_credit` are the record of what the staff
+  member typed for each type. A line is overridden when
+  `override_reason` is non-empty, and the completion route lists those
+  line ids in its audit meta as `overridden_lines`. The reason itself
+  stays on the line: `audit_log` is permanent and superuser-only.
+- **A bulk lot is an ordinary line.** The buy-in wizard sends a lot as one
+  `kind: "other"` line of `qty: 1` with the flat figure in both
+  `offer_price` and `market_price`, `market_source` "Bulk lot" and a title
+  like "Bulk lot, 400 cards". "other" is not one of the per-unit kinds, so
+  it becomes a single `items` row of `qty` 1 with one label job, and the
+  receipt and the stock book need no special case for it.

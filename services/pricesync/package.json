@@ -1,0 +1,15 @@
+{
+  "name": "@gg/pricesync",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Nightly price file sync: streams Cardmarket and TCGCSV price files into PocketBase price_snapshots",
+  "main": "./src/index.mjs",
+  "scripts": {
+    "start": "node ./src/index.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "stream-json": "^1.9.1"
+  }
+}

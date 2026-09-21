@@ -29,6 +29,14 @@
 # Everything else in deploy/.env (the ID photo key, the pricesync
 # superuser's password, the VAPID keys) is generated on this runner the
 # first time and written straight into the VPS's .env, where it stays.
+#
+# No-secrets mode: when the secrets are not set, the same values can be
+# given as run inputs (vps_host, vps_user, vps_path, admin_password) plus
+# one_time_key_b64, a base64 private key whose public half is already in
+# the SSH user's authorized_keys. That key opens the door once and is
+# replaced on the server by a key generated on the runner, which is
+# removed again when the run ends. Later deploys come from the server's
+# own self-updater (deploy/self-update.sh), so no key needs to stay.
 
 name: Bootstrap VPS
 
@@ -47,6 +55,26 @@ on:
         description: The shop's public IP for the /_/ admin dashboard (leave blank to keep it unreachable for now)
         required: false
         default: ""
+      vps_host:
+        description: The VPS address, used only when the VPS_HOST secret is not set
+        required: false
+        default: ""
+      vps_user:
+        description: The SSH user, used only when the VPS_USER secret is not set
+        required: false
+        default: root
+      vps_path:
+        description: The checkout path on the VPS, used only when the VPS_PATH secret is not set
+        required: false
+        default: /opt/ggpos
+      one_time_key_b64:
+        description: No-secrets mode. A base64 private key whose public half is in the SSH user's authorized_keys. It opens the door once, is swapped on the server for a key generated on this runner, and that key is removed again when the run ends
+        required: false
+        default: ""
+      admin_password:
+        description: The first admin's temporary password, used only when the GG_ADMIN_PASSWORD secret is not set (the app makes them choose a new one at first sign-in)
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -60,6 +88,34 @@ jobs:
     name: Set up the VPS and start the stack
     runs-on: ubuntu-latest
     steps:
+      - name: Check the required secrets are set
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
+          GG_ADMIN_PASSWORD: ${{ secrets.GG_ADMIN_PASSWORD || inputs.admin_password }}
+          ONE_TIME_KEY_B64: ${{ inputs.one_time_key_b64 }}
+        run: |
+          set -euo pipefail
+          # Neither value must ever show in a log line.
+          if [ -n "$GG_ADMIN_PASSWORD" ]; then echo "::add-mask::$GG_ADMIN_PASSWORD"; fi
+          if [ -n "$ONE_TIME_KEY_B64" ]; then echo "::add-mask::$ONE_TIME_KEY_B64"; fi
+          missing=""
+          for name in VPS_HOST VPS_USER VPS_PATH GG_ADMIN_PASSWORD; do
+            if [ -z "${!name:-}" ]; then missing="$missing $name"; fi
+          done
+          if [ -z "$VPS_SSH_KEY" ] && [ -z "$ONE_TIME_KEY_B64" ]; then missing="$missing VPS_SSH_KEY"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::These are not set:$missing. Add them under Settings > Secrets and variables > Actions > Repository secrets (the comment at the top of this workflow says what each one holds), or run this workflow with the no-secrets inputs filled in, then run it again."
+            exit 1
+          fi
+          if [ -n "$VPS_SSH_KEY" ]; then
+            echo "All required secrets are set"
+          else
+            echo "No-secrets mode: the run input key opens the door once and is replaced on the server by a key generated on this runner, which is removed again in the last step"
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -99,23 +155,68 @@ jobs:
           echo "vapid_private=$(echo "$VAPID" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).privateKey))')" >> "$GITHUB_OUTPUT"
           echo "::add-mask::$(echo "$VAPID" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).privateKey))')"
 
-      - name: Set up the deploy SSH key
+      - name: Set up the deploy SSH key and check the login
+        id: sshkey
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          ONE_TIME_KEY_B64: ${{ inputs.one_time_key_b64 }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ! [ -s ~/.ssh/known_hosts ]; then
+            echo "::error::Port 22 on $VPS_HOST did not answer an SSH handshake from GitHub's runner. Check the VPS_HOST secret, the server's firewall, and that SSH listens on port 22."
+            exit 1
+          fi
+          SSH_OPTS="-o UserKnownHostsFile=$HOME/.ssh/known_hosts -o BatchMode=yes -o ConnectTimeout=20"
+          if [ -n "$VPS_SSH_KEY" ]; then
+            printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            echo "mode=secret" >> "$GITHUB_OUTPUT"
+          else
+            # No-secrets mode. The key from the run input is used for exactly
+            # one connection: it appends a key generated here (which never
+            # leaves this runner) to authorized_keys and removes itself from
+            # that file in the same breath. Every later step uses the
+            # generated key, and the last step removes that one too, so
+            # nothing that passed through this run can reach the server
+            # afterwards.
+            echo "$ONE_TIME_KEY_B64" | base64 -d > ~/.ssh/one_time_key
+            chmod 600 ~/.ssh/one_time_key
+            ssh-keygen -q -t ed25519 -N '' -C "ggvault-run-$GITHUB_RUN_ID" -f ~/.ssh/deploy_key
+            ONE_TIME_MATERIAL="$(ssh-keygen -y -f ~/.ssh/one_time_key | awk '{print $2}')"
+            EPHEMERAL_PUB="$(cat ~/.ssh/deploy_key.pub)"
+            echo "mode=one_time" >> "$GITHUB_OUTPUT"
+            if ! ssh -i "$HOME/.ssh/one_time_key" $SSH_OPTS "$VPS_USER@$VPS_HOST" \
+                "EPHEMERAL_PUB='$EPHEMERAL_PUB' ONE_TIME_MATERIAL='$ONE_TIME_MATERIAL' bash -s" <<'REMOTE'
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          printf '%s\n' "$EPHEMERAL_PUB" >> ~/.ssh/authorized_keys
+          grep -v -F "$ONE_TIME_MATERIAL" ~/.ssh/authorized_keys > ~/.ssh/authorized_keys.new || true
+          cat ~/.ssh/authorized_keys.new > ~/.ssh/authorized_keys
+          rm -f ~/.ssh/authorized_keys.new
+          echo "The one-time key has been replaced in authorized_keys by this run's own key on $(hostname)"
+          REMOTE
+            then
+              echo "::error::$VPS_HOST refused the one-time key for $VPS_USER. Check that the key's public half is in that user's ~/.ssh/authorized_keys on the server."
+              exit 1
+            fi
+            shred -u ~/.ssh/one_time_key 2>/dev/null || rm -f ~/.ssh/one_time_key
+          fi
+          if ! ssh -i "$HOME/.ssh/deploy_key" $SSH_OPTS "$VPS_USER@$VPS_HOST" 'echo "Connected as $(id -un) on $(hostname)"'; then
+            echo "::error::$VPS_HOST refused the deploy key for $VPS_USER. Check that the key's public half is in that user's ~/.ssh/authorized_keys and that the VPS_SSH_KEY secret holds the whole private key, BEGIN and END lines included."
+            exit 1
+          fi
 
       - name: Install Docker and create the checkout directory
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -145,9 +246,9 @@ jobs:
 
       - name: Rsync application files to the VPS
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
         run: |
           set -euo pipefail
           SSH_CMD="ssh -i $HOME/.ssh/deploy_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
@@ -162,11 +263,11 @@ jobs:
 
       - name: Write deploy/.env if it does not exist yet
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
           ADMIN_EMAIL: ${{ inputs.admin_email }}
-          ADMIN_PASSWORD: ${{ secrets.GG_ADMIN_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.GG_ADMIN_PASSWORD || inputs.admin_password }}
           ID_PHOTO_KEY: ${{ steps.gen.outputs.id_photo_key }}
           PRICESYNC_PASSWORD: ${{ steps.gen.outputs.pricesync_password }}
           VAPID_PUBLIC: ${{ steps.gen.outputs.vapid_public }}
@@ -220,9 +321,9 @@ jobs:
 
       - name: Add the Caddy site block and reload Caddy
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
           SITE_HOST: ${{ inputs.site_host }}
           SHOP_IP: ${{ inputs.shop_ip }}
         run: |
@@ -262,9 +363,9 @@ jobs:
 
       - name: Build and start the stack
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -292,9 +393,9 @@ jobs:
 
       - name: Create the superusers and the cron lines
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -334,9 +435,9 @@ jobs:
 
       - name: Set the application URL and name in PocketBase
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PATH: ${{ secrets.VPS_PATH }}
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+          VPS_PATH: ${{ secrets.VPS_PATH || inputs.vps_path }}
           SITE_HOST: ${{ inputs.site_host }}
         run: |
           set -euo pipefail
@@ -376,3 +477,22 @@ jobs:
           done
           echo "https://$SITE_HOST/api/health did not answer over HTTPS yet. If the DNS record was added only just now, Caddy needs it to resolve before it can fetch a certificate; check again in a few minutes with: curl https://$SITE_HOST/api/health" >&2
           exit 1
+
+      - name: Remove the run's own key from the server
+        if: always() && steps.sshkey.outputs.mode == 'one_time'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST || inputs.vps_host }}
+          VPS_USER: ${{ secrets.VPS_USER || inputs.vps_user }}
+        run: |
+          set -euo pipefail
+          if [ ! -f ~/.ssh/deploy_key.pub ]; then echo "No run key was installed"; exit 0; fi
+          PUB_MATERIAL="$(awk '{print $2}' ~/.ssh/deploy_key.pub)"
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o BatchMode=yes -o ConnectTimeout=20 \
+            "$VPS_USER@$VPS_HOST" "PUB_MATERIAL='$PUB_MATERIAL' bash -s" <<'REMOTE'
+          set -euo pipefail
+          grep -v -F "$PUB_MATERIAL" ~/.ssh/authorized_keys > ~/.ssh/authorized_keys.new || true
+          cat ~/.ssh/authorized_keys.new > ~/.ssh/authorized_keys
+          rm -f ~/.ssh/authorized_keys.new
+          echo "This run's key is gone from authorized_keys; nothing that passed through the run can reach the server now"
+          REMOTE
+          rm -f ~/.ssh/deploy_key ~/.ssh/deploy_key.pub

@@ -1,0 +1,605 @@
+/// <reference path="../pb_data/types.d.ts" />
+
+/**
+ * loyalty.pb.js - the loyalty engine's own hooks, the one admin route that
+ * moves points by hand, and the two nightly passes over the ledger.
+ *
+ *   POST /api/vault/loyalty/adjust        (admin, step-up)
+ *   cron tiers_recompute                  (03:20)
+ *   cron points_expire                    (03:40)
+ *
+ * Hooks registered here:
+ *  - `customers` on create: resolve a `referred_by` **code** into the
+ *    customer it names, refusing one nobody holds or the customer's own,
+ *    then write the welcome bonus, its own notification and the `pending`
+ *    referrals row.
+ *  - `points_ledger` after create: re-evaluate the tier from the rolling
+ *    window, and clear the points-expiry warning whenever points come in.
+ *  - `memberships` after create, update and delete: re-evaluate the tier,
+ *    because a paid plan pins it.
+ *  - `loyalty_programme`, `loyalty_rules`, `loyalty_tiers` and
+ *    `loyalty_rewards` on write: the shape checks that keep a rule or a
+ *    perk the evaluators cannot read out of the database in the first
+ *    place, plus the "a tier in use cannot be deleted" guard.
+ *
+ * Everything that decides anything reads the ledger itself, never
+ * `customer_private.points_balance` (CLAUDE.md's "Money"; lib/balances.js
+ * and lib/tiers.js both say the same). Every multi-row write runs inside a
+ * transaction, and every email a write produces is flushed with
+ * lib/notify.js's `sendPending` once that transaction has returned.
+ *
+ * Each registered handler runs in its own isolated goja context, so every
+ * require() and helper lives inside the handler body - see pb/README.md.
+ */
+
+// ---------------------------------------------------------------------
+// customers, on create: the referral code, then the welcome bonus
+//
+// One *Request hook doing both halves, either side of a single e.next():
+//
+//  - Before it, `referred_by` is resolved. A GGC… code is what staff and
+//    the portal actually send, and the relation field itself only ever
+//    holds a record id, so it has to be turned into one before the record
+//    is validated and saved. It is a *Request hook and not the plain
+//    onRecordCreate because a refusal thrown from the model-level hook
+//    reaches the caller as PocketBase's own generic "Failed to create
+//    record." (confirmed against v0.40.4), and the whole point of this one
+//    is to tell whoever typed the code that nobody holds it.
+//  - After it, with the customer safely created, the welcome bonus and the
+//    pending referrals row go in. This is the same shape audit.pb.js uses
+//    for its own writes, and it is deliberately not an
+//    onRecordAfterCreateSuccess hook: a points_ledger row written from one
+//    of those does not reliably reach ledgers.pb.js's cached-balance hook
+//    or the tier re-evaluation below, and a customer would be left holding
+//    a welcome bonus their record showed no sign of (confirmed against
+//    v0.40.4, intermittently, which is worse than never). Written here the
+//    row is an ordinary ledger write and every hook that hangs off one
+//    fires exactly as it does for a correction typed in at the counter.
+//
+// The two writes are outside the customer's own transaction, so a
+// loyalty programme having a bad day can never stop a customer being
+// created: the failure is logged and the record stands. The nightly
+// tiers_recompute cron picks up anything that did not land.
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  const util = require(`${__hooks}/lib/vaultutil.js`);
+  const referrals = require(`${__hooks}/lib/referrals.js`);
+
+  const body = util.body(e);
+  const raw = util.asStr(body.referred_by) || util.asStr(e.record.get("referred_by"));
+
+  if (raw) {
+    // Both handles a caller has on a record that is not saved yet: the id
+    // they chose for it, and a code they supplied with it. Neither can be
+    // looked up in the database at this point, so both are compared
+    // against the record in hand.
+    const ownCode = referrals.normalise(e.record.getString("code"));
+    const given = referrals.normalise(raw);
+    if (raw === e.record.id || (ownCode && given && ownCode === given)) {
+      throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
+    }
+
+    const referrer = referrals.resolve(e.app, raw);
+    if (!referrer) {
+      throw e.badRequestError(referrals.unknownCodeMessage(raw), null);
+    }
+    if (referrer.id === e.record.id) {
+      throw e.badRequestError("A customer cannot refer themselves. Use the other person's code.", null);
+    }
+    e.record.set("referred_by", referrer.id);
+  }
+
+  e.next();
+
+  const customerId = e.record.id;
+  const referrerId = e.record.getString("referred_by");
+  const programme = util.programme(e.app);
+
+  // Never twice for the same customer: a merge keeps the record it is
+  // folding into, welcome row and all, and never asks for a second one.
+  let alreadyWelcomed = false;
+  try {
+    alreadyWelcomed =
+      e.app.findRecordsByFilter(
+        "points_ledger",
+        'customer = {:customer} && reason = "welcome"',
+        "",
+        1,
+        0,
+        { customer: customerId }
+      ).length > 0;
+  } catch (err) {
+    alreadyWelcomed = false;
+  }
+
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+  let pending = [];
+  try {
+    if (programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed) {
+      e.app.save(
+        new Record(e.app.findCollectionByNameOrId("points_ledger"), {
+          customer: customerId,
+          delta: programme.welcomeBonus,
+          reason: "welcome",
+          ref: customerId,
+        })
+      );
+
+      // One notification for joining, naming the bonus, in place of the
+      // "you are now a Member" a first tier would otherwise produce
+      // (lib/tiers.js's isJoiningTier). Only when there is an address to
+      // send it to: a customer created at the counter without one has
+      // nowhere to read it, and the row would just be noise in the list
+      // they find when they do claim the account.
+      if (e.record.getString("email")) {
+        const tiers = require(`${__hooks}/lib/tiers.js`);
+        const n = notifyLib.notify(e.app, {
+          customer: customerId,
+          type: "welcome",
+          title: "Welcome to GG Guild",
+          body: `${tiers.formatPoints(programme.welcomeBonus)} points are on your card. Sign in to My Vault with this email address to see them.`,
+          link: "/account",
+          email: true,
+        });
+        pending = n.pending || [];
+      }
+    }
+    if (referrerId) referrals.createPending(e.app, referrerId, customerId);
+  } catch (err) {
+    console.log(`[loyalty] welcome bonus or referral failed for ${customerId}: ${err}`);
+  }
+  // After the writes, never between them (lib/notify.js).
+  notifyLib.sendPending(e.app, pending);
+}, "customers");
+
+// ---------------------------------------------------------------------
+// points_ledger after create: the tier, and the expiry clock
+//
+// A separate registration from ledgers.pb.js's own after-create hook
+// (which recomputes both cached balances): this one re-evaluates the tier
+// from the rolling window and, whenever points actually come in, clears
+// the "your points expire soon" stamp, because a positive row is exactly
+// what resets the clock the warning was about.
+// ---------------------------------------------------------------------
+onRecordAfterCreateSuccess((e) => {
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const customerId = e.record.getString("customer");
+  if (!customerId) {
+    e.next();
+    return;
+  }
+
+  let pending = [];
+  try {
+    e.app.runInTransaction((txApp) => {
+      if (e.record.getInt("delta") > 0) {
+        let priv = null;
+        try {
+          priv = txApp.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
+            customer: customerId,
+          });
+        } catch (err) {
+          priv = null;
+        }
+        if (priv && priv.getString("points_expiry_warned_at")) {
+          priv.set("points_expiry_warned_at", "");
+          txApp.save(priv);
+        }
+      }
+      const result = tiers.recompute(txApp, customerId);
+      pending = result.pending || [];
+    });
+  } catch (err) {
+    console.log(`[loyalty] tier re-evaluation failed for ${customerId}: ${err}`);
+  }
+  notifyLib.sendPending(e.app, pending);
+
+  e.next();
+}, "points_ledger");
+
+// ---------------------------------------------------------------------
+// memberships: a paid plan pins a tier, so any change re-evaluates it
+// ---------------------------------------------------------------------
+onRecordAfterCreateSuccess((e) => {
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const customerId = e.record.getString("customer");
+  let pending = [];
+  if (customerId) {
+    try {
+      pending = tiers.recompute(e.app, customerId).pending || [];
+    } catch (err) {
+      console.log(`[loyalty] tier re-evaluation failed after a membership create: ${err}`);
+    }
+    notifyLib.sendPending(e.app, pending);
+  }
+
+  e.next();
+}, "memberships");
+
+onRecordAfterUpdateSuccess((e) => {
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const customerId = e.record.getString("customer");
+  let pending = [];
+  if (customerId) {
+    try {
+      pending = tiers.recompute(e.app, customerId).pending || [];
+    } catch (err) {
+      console.log(`[loyalty] tier re-evaluation failed after a membership update: ${err}`);
+    }
+    notifyLib.sendPending(e.app, pending);
+  }
+
+  e.next();
+}, "memberships");
+
+// A membership deleted outright (an admin undoing a mistake through the
+// collection API rather than cancelling it) would otherwise leave a pinned
+// tier behind with nothing pinning it. Same re-evaluation, same path.
+onRecordAfterDeleteSuccess((e) => {
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const customerId = e.record.getString("customer");
+  let pending = [];
+  if (customerId) {
+    try {
+      pending = tiers.recompute(e.app, customerId).pending || [];
+    } catch (err) {
+      console.log(`[loyalty] tier re-evaluation failed after a membership delete: ${err}`);
+    }
+    notifyLib.sendPending(e.app, pending);
+  }
+
+  e.next();
+}, "memberships");
+
+// ---------------------------------------------------------------------
+// loyalty_rules: the conditions shape and the value the evaluator reads
+//
+// The evaluator in packages/shared reads `conditions` as plain JSON, so an
+// unknown key there is silently ignored rather than applied - a rule saved
+// with "kind" instead of "kinds", or "min_spend" instead of "minSpend",
+// would look right in the editor and quietly earn the wrong points. It is
+// refused here instead, naming the key.
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkRule(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_rules");
+
+onRecordUpdateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkRule(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_rules");
+
+// ---------------------------------------------------------------------
+// loyalty_tiers: every perk has to parse, thresholds stay distinct, and a
+// tier somebody is actually on cannot be deleted out from under them.
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkTier(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_tiers");
+
+onRecordUpdateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkTier(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_tiers");
+
+onRecordDeleteRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkTierDelete(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_tiers");
+
+// ---------------------------------------------------------------------
+// loyalty_rewards and loyalty_programme
+// ---------------------------------------------------------------------
+onRecordCreateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkReward(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_rewards");
+
+onRecordUpdateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkReward(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_rewards");
+
+onRecordUpdateRequest((e) => {
+  const validate = require(`${__hooks}/lib/loyaltyconfig.js`);
+  const refusal = validate.checkProgramme(e.app, e.record);
+  if (refusal) throw e.error(refusal.status, refusal.message, null);
+  e.next();
+}, "loyalty_programme");
+
+// ---------------------------------------------------------------------
+// POST /api/vault/loyalty/adjust   (admin, step-up)
+// ---------------------------------------------------------------------
+routerAdd(
+  "POST",
+  "/api/vault/loyalty/adjust",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const stepup = require(`${__hooks}/lib/stepup.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const balances = require(`${__hooks}/lib/balances.js`);
+    const tiers = require(`${__hooks}/lib/tiers.js`);
+
+    const staff = util.requireAdmin(e);
+    stepup.requireStepUp(e);
+
+    const body = util.body(e);
+    const customerId = util.asStr(body.customer);
+    const delta = util.asInt(body.delta, 0);
+    const reason = util.asStr(body.reason);
+
+    if (!customerId) {
+      throw e.badRequestError("Pick the customer to adjust.", null);
+    }
+    let customer = null;
+    try {
+      customer = e.app.findRecordById("customers", customerId);
+    } catch (err) {
+      throw e.notFoundError("That customer was not found. Search again.", null);
+    }
+    if (delta === 0) {
+      throw e.badRequestError("An adjustment of 0 points changes nothing. Enter the points to add or remove.", null);
+    }
+    if (reason.length < 5 || reason.length > 500) {
+      throw e.badRequestError("Say why, in 5 to 500 characters. It goes on the customer's record.", null);
+    }
+
+    const balanceBefore = balances.pointsBalance(e.app, customerId);
+    if (balanceBefore + delta < 0) {
+      throw e.error(
+        422,
+        `That would take them to ${tiers.formatPoints(balanceBefore + delta)} points. The most you can remove is ${tiers.formatPoints(balanceBefore)}.`,
+        null
+      );
+    }
+
+    let halt = null;
+    let result = null;
+
+    try {
+      e.app.runInTransaction((txApp) => {
+        // Re-read inside the transaction: two admins adjusting the same
+        // customer at once must not both pass the check above.
+        const live = balances.pointsBalance(txApp, customerId);
+        if (live + delta < 0) {
+          halt = {
+            status: 422,
+            message: `That would take them to ${tiers.formatPoints(live + delta)} points. The most you can remove is ${tiers.formatPoints(live)}.`,
+          };
+          throw new Error(halt.message);
+        }
+
+        const row = new Record(txApp.findCollectionByNameOrId("points_ledger"), {
+          customer: customerId,
+          delta: delta,
+          reason: "adjust",
+          ref: "",
+          staff: staff.id,
+        });
+        txApp.save(row);
+
+        txApp.save(
+          new Record(txApp.findCollectionByNameOrId("notes"), {
+            target_collection: "customers",
+            target_record: customerId,
+            body: reason,
+            author: staff.id,
+          })
+        );
+
+        // The reason itself stays on the note: audit_log is permanent and
+        // superuser-only, so it carries identifiers and figures only.
+        auditLib.writeAuditLog(txApp, {
+          actor: staff.id,
+          action: "points_adjust",
+          collection: "points_ledger",
+          record: row.id,
+          meta: { customer: customerId, delta: delta, balance: live + delta },
+          ip: e.realIP(),
+        });
+
+        result = { balance: balances.pointsBalance(txApp, customerId) };
+      });
+    } catch (err) {
+      if (halt) throw e.error(halt.status, halt.message, null);
+      throw err;
+    }
+
+    return e.json(200, result);
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// Cron: tiers_recompute, nightly at 03:20.
+//
+// Ten minutes ahead of points_expire, and ten behind the two 03:30 passes
+// (retention, quote_photos_retention): every one of them walks a whole
+// collection, and one SQLite file would rather take them one at a time.
+//
+// The ledger hook above re-evaluates a tier the moment points move, which
+// covers every promotion. A demotion needs this: points roll out of the
+// rolling window with the passage of time alone, and nothing writes a row
+// to notice it.
+// ---------------------------------------------------------------------
+cronAdd("tiers_recompute", "20 3 * * *", () => {
+  const query = require(`${__hooks}/lib/reports/query.js`);
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const customers = query.findAllByFilter($app, "customers", "id != ''", "created", {});
+  let changed = 0;
+  for (let i = 0; i < customers.length; i++) {
+    const customer = customers[i];
+    if (!customer) continue;
+    let pending = [];
+    try {
+      $app.runInTransaction((txApp) => {
+        const result = tiers.recompute(txApp, customer.id);
+        if (result.changed) changed += 1;
+        pending = result.pending || [];
+      });
+    } catch (err) {
+      console.log(`[cron:tiers_recompute] ${customer.id} failed: ${err}`);
+      continue;
+    }
+    notifyLib.sendPending($app, pending);
+  }
+  if (changed > 0) {
+    console.log(`[cron:tiers_recompute] re-evaluated ${customers.length} customer(s), ${changed} tier change(s)`);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Cron: points_expire, nightly at 03:40.
+//
+// Points expire after `loyalty_programme.expiry_months_inactive` months
+// with no points coming in (0 turns expiry off entirely), with one warning
+// thirty days before. Both the balance and the date it is measured from
+// come from `points_ledger` itself.
+// ---------------------------------------------------------------------
+cronAdd("points_expire", "40 3 * * *", () => {
+  const query = require(`${__hooks}/lib/reports/query.js`);
+  const util = require(`${__hooks}/lib/vaultutil.js`);
+  const tiers = require(`${__hooks}/lib/tiers.js`);
+  const quotes = require(`${__hooks}/lib/quotes.js`);
+  const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+  const programme = util.programme($app);
+  if (!programme.enabled || programme.expiryMonthsInactive <= 0) return;
+
+  const WARN_DAYS = 30;
+  const now = new Date();
+  const customers = query.findAllByFilter($app, "customers", "id != ''", "created", {});
+
+  let expired = 0;
+  let warned = 0;
+
+  for (let i = 0; i < customers.length; i++) {
+    const customer = customers[i];
+    if (!customer) continue;
+
+    const rows = tiers.pointsRows($app, customer.id); // newest first
+    let balance = 0;
+    let lastPositive = "";
+    for (let r = 0; r < rows.length; r++) {
+      balance += rows[r].delta;
+      if (!lastPositive && rows[r].delta > 0) lastPositive = rows[r].created;
+    }
+    if (balance <= 0 || !lastPositive) continue;
+
+    const from = new Date(String(lastPositive).replace(" ", "T"));
+    if (isNaN(from.getTime())) continue;
+    const expiresAt = util.addMonths(from, programme.expiryMonthsInactive);
+    const warnFrom = new Date(expiresAt.getTime() - WARN_DAYS * 86400000);
+
+    if (expiresAt.getTime() <= now.getTime()) {
+      let pending = [];
+      try {
+        $app.runInTransaction((txApp) => {
+          txApp.save(
+            new Record(txApp.findCollectionByNameOrId("points_ledger"), {
+              customer: customer.id,
+              delta: -balance,
+              reason: "expire",
+              ref: "",
+            })
+          );
+          let priv = null;
+          try {
+            priv = txApp.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
+              customer: customer.id,
+            });
+          } catch (err) {
+            priv = null;
+          }
+          if (priv && priv.getString("points_expiry_warned_at")) {
+            priv.set("points_expiry_warned_at", "");
+            txApp.save(priv);
+          }
+          const n = notifyLib.notify(txApp, {
+            customer: customer.id,
+            type: "points_expired",
+            title: "Your points have expired",
+            body: `${tiers.formatPoints(balance)} points expired after ${programme.expiryMonthsInactive} months without a purchase. Buying or trading anything starts them again.`,
+            link: "/account/guild",
+            email: true,
+          });
+          pending = n.pending || [];
+        });
+      } catch (err) {
+        console.log(`[cron:points_expire] ${customer.id} failed: ${err}`);
+        continue;
+      }
+      notifyLib.sendPending($app, pending);
+      expired += 1;
+      continue;
+    }
+
+    if (warnFrom.getTime() > now.getTime()) continue;
+
+    let priv = null;
+    try {
+      priv = $app.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
+        customer: customer.id,
+      });
+    } catch (err) {
+      priv = null;
+    }
+    // Once per run-up, not once a night for thirty nights. The stamp is
+    // cleared the moment points come in again (the ledger hook above), so
+    // the next run-up warns again.
+    if (!priv || priv.getString("points_expiry_warned_at")) continue;
+
+    let warnPending = [];
+    try {
+      $app.runInTransaction((txApp) => {
+        const livePriv = txApp.findRecordById("customer_private", priv.id);
+        livePriv.set("points_expiry_warned_at", now.toISOString());
+        txApp.save(livePriv);
+        const n = notifyLib.notify(txApp, {
+          customer: customer.id,
+          type: "points_expiring",
+          title: `Your ${tiers.formatPoints(balance)} points expire soon`,
+          body: `Your ${tiers.formatPoints(balance)} points expire on ${quotes.ukDateShort(expiresAt.toISOString())}. Any purchase keeps them.`,
+          link: "/account/guild",
+          email: true,
+        });
+        warnPending = n.pending || [];
+      });
+    } catch (err) {
+      console.log(`[cron:points_expire] warning for ${customer.id} failed: ${err}`);
+      continue;
+    }
+    notifyLib.sendPending($app, warnPending);
+    warned += 1;
+  }
+
+  if (expired > 0 || warned > 0) {
+    console.log(`[cron:points_expire] expired=${expired} warned=${warned}`);
+  }
+});

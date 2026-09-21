@@ -1,0 +1,50 @@
+{
+  "items": [
+    {
+      "id": "txn-sku-0001",
+      "transaction_code": "TQABCDSKU1",
+      "amount": 42.5,
+      "currency": "GBP",
+      "status": "SUCCESSFUL",
+      "payment_type": "card",
+      "timestamp": "2026-01-01T09:00:00Z"
+    },
+    {
+      "id": "txn-amount-0002",
+      "transaction_code": "TQABCDAMT2",
+      "amount": 194.83,
+      "currency": "GBP",
+      "status": "SUCCESSFUL",
+      "payment_type": "card",
+      "timestamp": "__NOW__"
+    },
+    {
+      "id": "txn-failed-0003",
+      "transaction_code": "TQABCDFAI3",
+      "amount": 99.0,
+      "currency": "GBP",
+      "status": "FAILED",
+      "payment_type": "card",
+      "timestamp": "2026-01-01T09:00:00Z"
+    },
+    {
+      "id": "txn-outside-window-0004",
+      "transaction_code": "TQABCDOUT4",
+      "amount": 2.46,
+      "currency": "GBP",
+      "status": "SUCCESSFUL",
+      "payment_type": "card",
+      "timestamp": "2026-01-01T09:00:00Z"
+    },
+    {
+      "id": "txn-mixed-0005",
+      "transaction_code": "TQABCDMIX5",
+      "amount": 12.88,
+      "currency": "GBP",
+      "status": "SUCCESSFUL",
+      "payment_type": "card",
+      "timestamp": "__NOW__"
+    }
+  ],
+  "links": []
+}

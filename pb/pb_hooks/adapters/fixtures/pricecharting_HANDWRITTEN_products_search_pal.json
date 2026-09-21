@@ -1,0 +1,16 @@
+{
+  "_fixture_note": "Hand-written from PriceCharting's documented /api/products response shape (https://www.pricecharting.com/api-documentation). console-name is the real human display form their site and API use ('PAL Super Nintendo Entertainment System'), not the pal-super-nintendo URL slug - see adapters/pricecharting.js's searchInCategory(). Nobody on this build has a PriceCharting key ($49/month) to record a real search, and an NTSC row is included deliberately so the PAL match has to pick the right one out of several rather than the only one.",
+  "status": "success",
+  "products": [
+    {
+      "id": "ntsc-snes-super-mario-kart-1",
+      "product-name": "Super Mario Kart",
+      "console-name": "Super Nintendo Entertainment System"
+    },
+    {
+      "id": "pal-snes-super-mario-kart-1",
+      "product-name": "Super Mario Kart",
+      "console-name": "PAL Super Nintendo Entertainment System"
+    }
+  ]
+}

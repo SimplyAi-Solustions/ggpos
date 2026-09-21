@@ -1,0 +1,106 @@
+# GG Vault - Caddy site block.
+#
+# This VPS already runs Caddy for ggentertainment.co.uk and a separate
+# PocketBase for the marketing site, so GG Vault does not get its own
+# Caddy: paste this whole block into the EXISTING Caddyfile (as a new,
+# separate site block, alongside the one for ggentertainment.co.uk) and
+# reload Caddy:
+#
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# DNS for ggpos.ggentertainment.co.uk must already point at this VPS
+# before the reload (see deploy/README.md, "DNS") - Caddy requests and
+# renews the HTTPS certificate for this block automatically the first
+# time it is asked for, the same way it already does for the marketing
+# site.
+#
+# Before this goes live, replace SHOP_IP_PLACEHOLDER below with the
+# shop's real public IP address (ask "what is my IP" from a browser on
+# the shop's own connection). 203.0.113.10 is a documentation-only
+# placeholder address (RFC 5737) that will never match a real visitor, so
+# until it is replaced the admin UI is unreachable from anywhere,
+# including the shop - that is the safe failure mode.
+
+ggpos.ggentertainment.co.uk {
+	# --- Compression --------------------------------------------------
+	# zstd first (better ratio, less CPU), gzip as the fallback for older
+	# clients. Caddy negotiates whichever the browser's Accept-Encoding
+	# supports.
+	encode zstd gzip
+
+	# --- Security headers ----------------------------------------------
+	# Header runs early and applies to every response from this site,
+	# including the 404 the admin-UI block below returns - there is no
+	# need to repeat any of this per route.
+	header {
+		# Always use HTTPS for this host, and remember to for a year.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Stop browsers guessing content types - relevant for anything
+		# under an uploaded-photo response.
+		X-Content-Type-Options "nosniff"
+		# Send only the origin to other sites; the full URL stays between
+		# pages on this site.
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# The counter and the customer portal scan barcodes with the
+		# device camera; every other sensitive browser feature (this
+		# site does not ask for microphone, location, etc.) is left at
+		# the browser's own default rather than explicitly granted.
+		Permissions-Policy "camera=(self)"
+		# Content-Security-Policy from docs/PLAN.md, "Security, GDPR and
+		# record keeping", extended with style-src/font-src/worker-src/
+		# manifest-src so the Vite-built PWA's inline styles, self-hosted
+		# fonts, service worker and web-app manifest are all allowed
+		# while everything else stays locked to our own origin.
+		Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' assets.tcgdex.net cards.scryfall.io cards.lorcast.com blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'"
+	}
+
+	# --- Upload size ----------------------------------------------------
+	# ID photos and quote photos post through here; 25MB comfortably
+	# covers several full-resolution phone photos in one request.
+	request_body {
+		max_size 25MB
+	}
+
+	# --- Rate limiting ---------------------------------------------------
+	# Caddy ships with no rate limiting of its own. The real protection
+	# for *:auth, *:authRefresh, customers:requestOTP and /api/vault/* is
+	# configured inside PocketBase itself (Settings > Application > rate
+	# limiters, per docs/PLAN.md). Do NOT add a `rate_limit` directive
+	# here unless the github.com/mholt/caddy-ratelimit plugin is
+	# confirmed to be compiled into this server's Caddy binary first - an
+	# unrecognised directive stops Caddy loading its entire config, which
+	# would take the marketing site down along with this one. Check with
+	# `caddy list-modules | grep ratelimit` before ever adding one.
+
+	# --- Admin UI, shop only --------------------------------------------
+	# /_/ is the PocketBase superuser dashboard. Only a connection from
+	# the shop's own IP may reach it; everyone else gets a plain 404, so
+	# the path does not even reveal that an admin UI exists.
+	handle /_/* {
+		@notShop not remote_ip 203.0.113.10 # SHOP_IP_PLACEHOLDER - replace before go-live
+		respond @notShop 404
+
+		reverse_proxy 127.0.0.1:8091
+	}
+
+	# --- Everything else: the app, the API and its realtime endpoint ---
+	handle {
+		reverse_proxy 127.0.0.1:8091 {
+			# PocketBase's realtime subscriptions (/api/realtime) are a
+			# long-lived Server-Sent-Events stream: a sale rung up on a
+			# phone has to reach the counter PC immediately, not after a
+			# buffering delay. flush_interval -1 turns off response
+			# buffering so each event reaches the browser the instant
+			# PocketBase writes it, and the long read/write timeouts stop
+			# Caddy's own HTTP client to PocketBase giving up on a
+			# connection that is deliberately kept open for hours at a
+			# time.
+			flush_interval -1
+			transport http {
+				read_timeout 1h
+				write_timeout 1h
+			}
+		}
+	}
+}

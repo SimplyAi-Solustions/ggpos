@@ -1,0 +1,12 @@
+{
+  "id": "txn-failed-0003",
+  "transaction_code": "TQABCDFAI3",
+  "amount": 99.0,
+  "currency": "GBP",
+  "status": "FAILED",
+  "payment_type": "card",
+  "timestamp": "2026-01-01T09:00:00Z",
+  "products": [
+    { "name": "Declined card", "quantity": 1, "unit_price": 99.0 }
+  ]
+}

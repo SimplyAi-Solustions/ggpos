@@ -1,0 +1,128 @@
+/**
+ * The cash drawer. Opening, the running expected total, movements and the
+ * close with its variance, over the three routes in docs/api-contract.md
+ * ("Cash sessions" and its implementation notes). Demo mode answers the same
+ * shapes from memory.
+ *
+ * `cash_movements.amount` is signed: cash sales and float in are positive,
+ * payouts, refunds and bank drops negative, so the expected drawer total is
+ * the float plus every movement and nothing has to know the sign rules twice.
+ *
+ * The variance alert is not here: `settings` is admin-only, so the threshold
+ * comes from `GET /api/vault/config` through `useCounterConfig`.
+ */
+import { pb } from "@/lib/pb"
+import { isDemo } from "@/lib/api/mode"
+import * as demo from "@/lib/api/demo/cash"
+import type {
+  CashCloseResult,
+  CashMovementRecord,
+  CashMovementType,
+  CashSessionRecord,
+  CashSessionState,
+} from "@/lib/api/types"
+
+interface SessionEnvelope {
+  session: CashSessionRecord | null
+  expected?: number
+  movements?: CashMovementRecord[]
+  variance?: number
+  variance_alert?: boolean
+}
+
+/** Opens the drawer with a counted float. 409 when one is already open. */
+export async function openCashSession(float: number): Promise<CashSessionRecord> {
+  if (isDemo()) return demo.open(float)
+  const result = await pb.send<SessionEnvelope>("/api/vault/cash-sessions/open", {
+    method: "POST",
+    body: { float },
+  })
+  if (!result.session) throw new Error("The drawer did not open. Try again.")
+  return result.session
+}
+
+/** The open session, what the drawer should hold, and every movement on it. */
+export async function getCurrentCashSession(): Promise<CashSessionState> {
+  if (isDemo()) return demo.getCurrent()
+  const result = await pb.send<SessionEnvelope>(
+    "/api/vault/cash-sessions/current",
+    { method: "GET" }
+  )
+  return {
+    session: result.session,
+    expected: result.expected ?? 0,
+    movements: result.movements ?? [],
+  }
+}
+
+/** Counts the drawer down and records the variance. */
+export async function closeCashSession(
+  id: string,
+  counted: number,
+  notes: string
+): Promise<CashCloseResult> {
+  if (isDemo()) return demo.close(id, counted, notes)
+  const result = await pb.send<SessionEnvelope>(
+    `/api/vault/cash-sessions/${id}/close`,
+    { method: "POST", body: { counted, notes } }
+  )
+  if (!result.session) throw new Error("The drawer did not close. Count it again.")
+  return {
+    session: result.session,
+    expected: result.expected ?? result.session.expected ?? 0,
+    variance: result.variance ?? result.session.variance ?? 0,
+    overAlert: result.variance_alert === true,
+  }
+}
+
+/** Every movement on one session, newest first. */
+export async function listCashMovements(
+  sessionId: string
+): Promise<CashMovementRecord[]> {
+  if (isDemo()) return demo.movementsFor(sessionId)
+  return pb.collection("cash_movements").getFullList<CashMovementRecord>({
+    filter: `session = "${sessionId.replace(/["\\]/g, "\\$&")}"`,
+    expand: "staff",
+    sort: "-created",
+  })
+}
+
+/**
+ * A bank drop or a correction, written straight to `cash_movements` (a staff
+ * create rule, not a route). `amount` carries its own sign: a drop leaves the
+ * drawer, so the caller sends it negative.
+ */
+export async function addCashMovement(
+  sessionId: string,
+  type: CashMovementType,
+  amount: number,
+  ref: string
+): Promise<CashMovementRecord> {
+  if (isDemo()) return demo.addMovement(sessionId, type, amount, ref)
+  return pb.collection("cash_movements").create<CashMovementRecord>({
+    session: sessionId,
+    type,
+    amount,
+    ref,
+    staff: pb.authStore.record?.id,
+  })
+}
+
+/**
+ * The open session's id, or null. The buy-in wizard needs it for a cash
+ * payout, which the completion route refuses without one.
+ */
+export async function currentCashSessionId(): Promise<string | null> {
+  const state = await getCurrentCashSession()
+  return state.session?.id ?? null
+}
+
+/** Today's session and the ones before it, for the history table. */
+export async function listCashSessions(limit = 10): Promise<CashSessionRecord[]> {
+  if (isDemo()) return demo.listSessions().slice(0, limit)
+  const page = await pb.collection("cash_sessions").getList<CashSessionRecord>(1, limit, {
+    sort: "-opened_at",
+    expand: "opened_by,closed_by",
+  })
+  return page.items
+}
