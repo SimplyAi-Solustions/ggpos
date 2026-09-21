@@ -50,6 +50,24 @@ jobs:
     name: Build and deploy to the VPS
     runs-on: ubuntu-latest
     steps:
+      - name: Check the required secrets are set
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in VPS_HOST VPS_USER VPS_SSH_KEY VPS_PATH; do
+            if [ -z "${!name:-}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::These repository secrets are not set:$missing. Add them under Settings > Secrets and variables > Actions > Repository secrets (the comment at the top of this workflow says what each one holds), then run it again."
+            exit 1
+          fi
+          echo "All required secrets are set"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -75,17 +93,27 @@ jobs:
           mkdir -p pb/pb_public
           cp -r apps/web/dist/. pb/pb_public/
 
-      - name: Set up the deploy SSH key
+      - name: Set up the deploy SSH key and check the login
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if ! [ -s ~/.ssh/known_hosts ]; then
+            echo "::error::Port 22 on $VPS_HOST did not answer an SSH handshake from GitHub's runner. Check the VPS_HOST secret, the server's firewall, and that SSH listens on port 22."
+            exit 1
+          fi
+          if ! ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o BatchMode=yes -o ConnectTimeout=20 \
+              "$VPS_USER@$VPS_HOST" 'echo "Connected as $(id -un) on $(hostname)"'; then
+            echo "::error::$VPS_HOST refused the deploy key for $VPS_USER. Check that the key's public half is in that user's ~/.ssh/authorized_keys and that the VPS_SSH_KEY secret holds the whole private key, BEGIN and END lines included."
+            exit 1
+          fi
 
       - name: Rsync application files to the VPS
         env:
