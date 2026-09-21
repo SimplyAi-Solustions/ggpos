@@ -25,7 +25,7 @@ export const MIN_PASSWORD_LENGTH = 12
 
 /** Said the same way by the server and by the screen, so neither surprises. */
 export const PASSWORD_REFUSAL =
-  "Choose a password of at least 12 characters that you have not used here before."
+  "Choose a password of at least 12 characters, and not the one you are using now."
 
 export function isLocked(staff: StaffRecord | null | undefined): boolean {
   return staff?.must_change_password === true

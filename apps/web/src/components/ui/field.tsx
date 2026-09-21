@@ -23,9 +23,19 @@ type FieldProps = Omit<React.ComponentProps<"div">, "children"> & {
   children: React.ReactNode
 }
 
+/** Props a cloned control is given: nothing else about it is touched. */
+type Described = { "aria-describedby"?: string }
+
 /**
  * The only form layout in GG Vault. Sections are divided by whitespace, so a
  * Field owns its own spacing and never draws a rule, a box or a card.
+ *
+ * When there is an error to show, the message gets an id and the control is
+ * pointed at it with `aria-describedby`, so a screen reader reads the two
+ * together instead of leaving them related only by position. Nothing else
+ * changes: with no error the control is rendered exactly as it was passed,
+ * and a Field holding more than one child, or something that is not an
+ * element, is left alone too.
  */
 function Field({
   className,
@@ -38,6 +48,7 @@ function Field({
   children,
   ...props
 }: FieldProps) {
+  const errorId = React.useId()
   const labelBlock =
     label || hint ? (
       <div
@@ -66,10 +77,23 @@ function Field({
       </div>
     ) : null
 
+  const only =
+    React.Children.count(children) === 1 && React.isValidElement<Described>(children)
+      ? children
+      : null
+  const control =
+    error && only
+      ? React.cloneElement(only, {
+          "aria-describedby": [only.props["aria-describedby"], errorId]
+            .filter(Boolean)
+            .join(" "),
+        })
+      : children
+
   const body = (
     <div data-slot="field-body" className="min-w-0">
-      {children}
-      {error ? <FieldError>{error}</FieldError> : null}
+      {control}
+      {error ? <FieldError id={errorId}>{error}</FieldError> : null}
     </div>
   )
 

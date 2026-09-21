@@ -55,6 +55,14 @@ const AUDITED_DELETE_COLLECTIONS = [
   "loyalty_rewards",
 ];
 
+// `staff` is deliberately NOT here, although its updates are audited.
+// staff.pb.js writes them itself, with an action that says which of the
+// three things happened (`staff_password_changed` for the owner's own
+// change, `staff_password_set` when somebody else set the password,
+// `staff_lock_changed` for a `must_change_password` that moved on its
+// own) and nothing at all for an update that touched neither. Adding the
+// collection here would put a second, blanker row beside every one of
+// those.
 const AUDITED_UPDATE_COLLECTIONS = [
   "pricing_rules",
   "loyalty_programme",

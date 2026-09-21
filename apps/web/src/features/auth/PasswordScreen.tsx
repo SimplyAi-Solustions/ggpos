@@ -40,8 +40,28 @@ export function PasswordScreen() {
   } | null>(null)
   const [busy, setBusy] = React.useState(false)
 
+  const currentRef = React.useRef<HTMLInputElement>(null)
+  const nextRef = React.useRef<HTMLInputElement>(null)
+  const confirmRef = React.useRef<HTMLInputElement>(null)
+
   const errorFor = (field: PasswordField) =>
     problem && problem.field === field ? problem.message : null
+
+  // A refusal belongs to one of the three fields, so put the cursor in it
+  // rather than leaving a keyboard user to shift-tab back up the form.
+  // Keyed on the whole `problem` object, so the same refusal twice running
+  // moves the focus both times.
+  React.useEffect(() => {
+    const field = problem?.field
+    if (!field) return
+    const target =
+      field === "current"
+        ? currentRef.current
+        : field === "next"
+          ? nextRef.current
+          : confirmRef.current
+    target?.focus()
+  }, [problem])
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -102,6 +122,7 @@ export function PasswordScreen() {
           >
             <Input
               id="password-current"
+              ref={currentRef}
               type="password"
               autoComplete="current-password"
               autoFocus
@@ -115,11 +136,13 @@ export function PasswordScreen() {
           <Field
             layout="stacked"
             label="New password"
+            hint="At least 12 characters"
             htmlFor="password-new"
             error={errorFor("next")}
           >
             <Input
               id="password-new"
+              ref={nextRef}
               type="password"
               autoComplete="new-password"
               required
@@ -137,6 +160,7 @@ export function PasswordScreen() {
           >
             <Input
               id="password-confirm"
+              ref={confirmRef}
               type="password"
               autoComplete="new-password"
               required

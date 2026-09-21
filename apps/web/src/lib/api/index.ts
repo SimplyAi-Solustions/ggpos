@@ -315,6 +315,16 @@ export async function verifyPassword(
  * the counter then runs on. `pb/pb_hooks/staff.pb.js` is what clears
  * `must_change_password` and audits the change; nothing here sends, stores
  * or logs either password anywhere else.
+ *
+ * The update goes through `pb.send` rather than `RecordService.update`
+ * deliberately. `update` re-saves the auth store with the record from the
+ * response and the token the call was made with, which by then is dead:
+ * the gate in `features/auth/gate.ts` would see an unlocked staff member,
+ * swap `LockedShell` for the whole counter around a half-finished form and
+ * unmount the screen mid-change. `pb.send` attaches the current token and
+ * leaves the store alone, so the store changes exactly once, at the
+ * re-authentication below, and the counter appears when the counter is
+ * really there.
  */
 export async function changeOwnPassword(
   email: string,
@@ -335,10 +345,13 @@ export async function changeOwnPassword(
   }
 
   try {
-    await pb.collection("staff").update(signedIn.id, {
-      oldPassword: current,
-      password: next,
-      passwordConfirm: next,
+    await pb.send(`/api/collections/staff/records/${encodeURIComponent(signedIn.id)}`, {
+      method: "PATCH",
+      body: {
+        oldPassword: current,
+        password: next,
+        passwordConfirm: next,
+      },
     })
   } catch (error) {
     throw new PasswordChangeError(passwordChangeMessage(error))

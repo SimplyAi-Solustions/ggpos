@@ -16,15 +16,23 @@ Conventions
 
 Not a custom route: the forced password change runs on the collection API, and is recorded here because it is the first thing any staff token ever does.
 
-`staff.must_change_password` (bool, `1789820760_staff_must_change_password.js`) is true on an account still using a password somebody else chose, which is what the seeded first admin's is. It rides back on the record `POST /api/collections/staff/auth-with-password` returns, so the counter knows to lock without a second call, and while it is true every `/counter` route redirects to `/counter/password` and the shell draws no nav, palette, scan listener or idle lock.
+`staff.must_change_password` (bool, `1789820760_staff_must_change_password.js`) is true on an account still using a password somebody else chose, which is what the seeded first admin's is. It rides back on the record `POST /api/collections/staff/auth-with-password` returns, so the counter knows to lock without a second call, and while it is true every route in the app redirects to `/counter/password` and the shell draws no nav, palette, scan listener or idle lock.
+
+**The lock is the server's, not the screen's.** A `routerUse` middleware in `pb_hooks/staff.pb.js` refuses every request made with a staff token whose record still carries the flag, with 403 and "Set a new password before doing anything else.", on any device and through any client. Exactly three calls are allowed:
+
+- `POST /api/collections/staff/auth-refresh`, so the session does not die while the form is being filled in;
+- `PATCH /api/collections/staff/records/:id` against the caller's **own** id, which is the change itself;
+- `GET /api/health`, which answers the same to everyone and must not depend on who is signed in.
+
+Superusers, `customers` tokens and requests with no usable token are untouched, so signing in still works: a locked account can always reach the one screen that lets it out, and nothing else.
 
 The change itself is PocketBase's own record update: `PATCH /api/collections/staff/records/:id` with `{ "oldPassword": "...", "password": "...", "passwordConfirm": "..." }` against the caller's own id. `pb_hooks/staff.pb.js` adds three rules to it:
 
-- a new password under 12 characters, or equal to the one already on the account, is refused with 400 and "Choose a password of at least 12 characters that you have not used here before." (PocketBase's own minimum is 8);
-- `must_change_password` is put back to its stored value for any caller who is not an admin or a superuser, so a locked account cannot unlock itself by sending the field;
-- on success the flag is cleared in the same save and one `staff_password_changed` `audit_log` row is written, `meta` being the changed field names only. No password is ever read into the row, the response or the log.
+- a new password under 12 characters, or equal to the one already on the account, is refused with 400 and "Choose a password of at least 12 characters, and not the one you are using now." (PocketBase's own minimum is 8);
+- `must_change_password` is put back to its stored value whenever the caller is writing their own row, whatever their role, and whenever the caller is not an admin at all, so no account unlocks itself by sending the field. A superuser, and an admin acting on somebody else's row, may still set and clear it;
+- on success the flag is cleared in the same save and one `audit_log` row is written: `staff_password_changed` when the owner changed their own password, `staff_password_set` when anybody else set it, `staff_lock_changed` when the flag moved without a password change. `meta` is `{ fields, record, by }` - the changed field names, the staff id and who did it ("superuser", or the caller's own staff id for an admin). No password is ever read into the row, the response or the log, and `staff` is not in `audit.pb.js`'s update list, so one change is one row.
 
-A successful change rotates the account's token key, so every existing token dies with it: the counter signs in again with the new password itself and carries on with the record that comes back. `staff`'s API rules are admin-only throughout, so only a staff member with `role = "admin"` can make this call at all; a plain staff member's password is set by a superuser from `/_/`.
+A successful change rotates the account's token key, so every existing token dies with it: the counter signs in again with the new password itself and carries on with the record that comes back. `staff`'s API rules are admin-only throughout, so only a staff member with `role = "admin"` can make this call at all; a plain staff member's password is set by a superuser from `/_/`, where PocketBase's own 8-character floor applies rather than this 12-character rule.
 
 ## Trade-ins
 

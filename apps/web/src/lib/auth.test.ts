@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest"
 
+import { PasswordChangeError } from "@/lib/api"
+import { setDataMode } from "@/lib/api/mode"
 import { pb } from "@/lib/pb"
-import { readLiveSession } from "@/lib/auth"
+import { changePassword, readLiveSession } from "@/lib/auth"
 
 /**
  * A token the SDK will call valid: `isValid` only checks that the payload
@@ -85,5 +87,21 @@ describe("readLiveSession", () => {
 
   it("is null with no record in the store", () => {
     expect(readLiveSession()).toBeNull()
+  })
+})
+
+describe("changePassword", () => {
+  it("asks for a fresh sign-in, in words the screen will show, when the session has gone", async () => {
+    setDataMode(false)
+    pb.authStore.clear()
+
+    const attempt = changePassword("the-temporary-one", "a-brand-new-password")
+    await expect(attempt).rejects.toBeInstanceOf(PasswordChangeError)
+    // Not a bare Error: `PasswordScreen` only shows the message of a
+    // PasswordChangeError, and turns anything else into "the counter could
+    // not reach the server", which is the wrong thing to be told here.
+    await expect(
+      changePassword("the-temporary-one", "a-brand-new-password")
+    ).rejects.toThrow("Sign in again, then set your new password.")
   })
 })

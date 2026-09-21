@@ -7,6 +7,7 @@ import {
   changeOwnPassword as apiChangeOwnPassword,
   isDemo,
   login as apiLogin,
+  PasswordChangeError,
   verifyPassword as apiVerifyPassword,
   type StaffRecord,
 } from "@/lib/api"
@@ -152,7 +153,13 @@ export async function changePassword(
   next: string
 ): Promise<StaffRecord> {
   const staff = currentStaff()
-  if (!staff) throw new Error("Nobody is signed in.")
+  // A `PasswordChangeError` and not a bare one: the screen shows those in
+  // words under the field and turns anything else into "the counter could
+  // not reach the server", which would send somebody to check the network
+  // over a session that had simply ended.
+  if (!staff) {
+    throw new PasswordChangeError("Sign in again, then set your new password.")
+  }
   const updated = await apiChangeOwnPassword(staff.email, current, next)
   if (isDemo()) {
     try {

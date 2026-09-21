@@ -18,7 +18,7 @@ const LOCKED_PASSWORD = "ggvault-temporary"
 const NEW_PASSWORD = "a-brand-new-counter-password"
 
 const REFUSAL =
-  "Choose a password of at least 12 characters that you have not used here before."
+  "Choose a password of at least 12 characters, and not the one you are using now."
 
 async function signIn(page: Page, email: string, password: string) {
   await page.goto("/login?demo=1")

@@ -9,6 +9,7 @@ import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Wordmark } from "@/components/ui/wordmark"
 import { DEMO_STAFF, isDemo, isServerUnreachable, SignInError } from "@/lib/api"
+import { lockedRedirect } from "@/features/auth/gate"
 import { currentStaff, login } from "@/lib/auth"
 import { ServerUnreachable } from "@/app/server-unreachable"
 
@@ -38,8 +39,14 @@ function SignIn() {
     setBusy(true)
     setError(null)
     try {
-      await login(email, password)
-      await navigate({ to: back ?? "/counter" })
+      const staff = await login(email, password)
+      const target = back ?? "/counter"
+      // Where they were going may be a screen a locked account may not
+      // have: `?redirect=/display` would otherwise land one on the
+      // customer-facing tablet. The path without its query string is what
+      // the gate reads.
+      const path = target.split("?")[0]!.split("#")[0]!
+      await navigate({ to: lockedRedirect(staff, path) ?? target })
     } catch (cause) {
       setError(
         cause instanceof SignInError

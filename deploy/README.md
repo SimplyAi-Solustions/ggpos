@@ -159,9 +159,20 @@ you anything else**: no nav, no scanner, no Home, just "Set a new
 password", the temporary password, and the new one twice. It has to be
 at least 12 characters and cannot be the one from `.env`; anything
 shorter or the same comes back with "Choose a password of at least 12
-characters that you have not used here before." Saving signs you
-straight back in with the new one and lands you on Home. Nothing else
-can be done with the account until that is done, on any device.
+characters, and not the one you are using now." Saving signs you
+straight back in with the new one and lands you on Home.
+
+Nothing else can be done with that account until it is done, on any
+device and through any client: the server itself refuses every request
+made with its token, with 403 and "Set a new password before doing
+anything else.", except the two calls the password screen needs -
+`POST /api/collections/staff/auth-refresh`, which keeps the session
+alive while the form is being filled in, and
+`PATCH /api/collections/staff/records/<its own id>`, which is the change
+itself. Signing in is unaffected, so the person can always get as far as
+that screen. Somebody who takes the temporary password out of `.env`
+therefore gets a token that can do nothing but set a password they would
+then have to tell you about.
 
 Two follow-ons:
 

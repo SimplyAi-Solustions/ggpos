@@ -7449,7 +7449,7 @@ FIRSTRUN_TOKEN="$(echo "$FIRSTRUN_AUTH" | jval token)"
 ok "sign-in returns must_change_password on the staff record, so the counter knows to lock"
 
 # --- 26c. A short or reused password is refused, in one sentence ---------
-FIRSTRUN_REFUSAL="Choose a password of at least 12 characters that you have not used here before."
+FIRSTRUN_REFUSAL="Choose a password of at least 12 characters, and not the one you are using now."
 FIRSTRUN_SHORT_STATUS="$(curl -s -o "$FIRSTRUN_DIR/short.json" -w '%{http_code}' \
   -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
   -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \
@@ -7481,10 +7481,14 @@ FIRSTRUN_PLAIN_TOKEN="$(curl -s -X POST "$FIRSTRUN_BASE/api/collections/staff/au
   -d "{\"identity\":\"$FIRSTRUN_PLAIN_EMAIL\",\"password\":\"$FIRSTRUN_PLAIN_PASSWORD\"}" | jval token)"
 [ -n "$FIRSTRUN_PLAIN_TOKEN" ] || fail "the plain staff member could not sign in on the first-run server"
 
-# staff.updateRule is admin-only, so a plain staff member is refused
-# before the hook is even reached - on their own row and on anyone
-# else's. The hook's own strip is what holds if that rule is ever
-# loosened; 26e proves an admin is the one who can.
+# What this proves is staff.updateRule, not the hook: the rule is
+# admin-only, so a plain staff member's PATCH is refused (403/404)
+# before the handler is reached at all, on their own row and on anyone
+# else's. The hook's strip for a non-admin caller is therefore
+# unreachable through the collection API as the rules stand today and
+# is untested on purpose: it is there for the day that rule is loosened.
+# The half of the strip that IS reachable - a caller writing their own
+# row, admin or not - is what 26e exercises, on the admin's own row.
 FIRSTRUN_SELF_CLEAR="$(curl -s -o /dev/null -w '%{http_code}' \
   -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_PLAIN_ID" \
   -H "Authorization: $FIRSTRUN_PLAIN_TOKEN" -H "Content-Type: application/json" \
@@ -7503,7 +7507,71 @@ FIRSTRUN_OTHER_CLEAR="$(curl -s -o /dev/null -w '%{http_code}' \
   || fail "the first admin's flag changed under those refused writes"
 ok "a staff member can clear neither their own must_change_password nor anybody else's"
 
-# --- 26e. An own-password change clears the flag and is audited ---------
+# --- 26e. The lock is the server's, not the counter's -------------------
+# Finding 1 of the fix round: the flag is put back for any caller writing
+# their OWN row, whatever their role, so the locked admin cannot end the
+# forced change with one PATCH and no password. Whether that comes back
+# as a refusal or as an accepted no-op is PocketBase's business; what
+# matters is that the flag and the password are both where they were.
+FIRSTRUN_OWN_CLEAR="$(curl -s -o "$FIRSTRUN_DIR/own-clear.json" -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
+  -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"must_change_password":false}')"
+case "$FIRSTRUN_OWN_CLEAR" in
+  200|400|403) ;;
+  *) fail "the locked admin's own-flag clear returned $FIRSTRUN_OWN_CLEAR: $(cat "$FIRSTRUN_DIR/own-clear.json")" ;;
+esac
+[ "$(firstrun_staff "$FIRSTRUN_ADMIN_ID" must_change_password)" = "true" ] \
+  || fail "the locked admin cleared their own must_change_password with no password change"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$FIRSTRUN_BASE/api/collections/staff/auth-with-password" \
+  -H "Content-Type: application/json" \
+  -d "{\"identity\":\"$FIRSTRUN_EMAIL\",\"password\":\"$FIRSTRUN_TEMP_PASSWORD\"}")" = "200" ] \
+  || fail "the temporary password stopped working without a password change"
+
+# Finding 2: the token itself is restricted, not just the counter's
+# routing. Everything is refused with 403 except the two calls the "Set a
+# new password" screen makes and the liveness probe.
+for firstrun_locked_path in \
+  /api/collections/customers/records \
+  /api/collections/settings/records \
+  /api/collections/items/records \
+  /api/vault/me \
+  /api/vault/health; do
+  FIRSTRUN_LOCKED_GET="$(curl -s -o "$FIRSTRUN_DIR/locked.json" -w '%{http_code}' \
+    -H "Authorization: $FIRSTRUN_TOKEN" "$FIRSTRUN_BASE$firstrun_locked_path")"
+  [ "$FIRSTRUN_LOCKED_GET" = "403" ] \
+    || fail "a locked staff token reached GET $firstrun_locked_path ($FIRSTRUN_LOCKED_GET)"
+  grep -qF "Set a new password before doing anything else." "$FIRSTRUN_DIR/locked.json" \
+    || fail "the refusal on $firstrun_locked_path does not say what to do: $(cat "$FIRSTRUN_DIR/locked.json")"
+done
+FIRSTRUN_LOCKED_CREATE="$(curl -s -o /dev/null -w '%{http_code}' \
+  -X POST "$FIRSTRUN_BASE/api/collections/staff/records" \
+  -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"email":"second-admin-check@local.test","password":"a-second-password","passwordConfirm":"a-second-password","name":"Second Admin","role":"admin","active":true}')"
+[ "$FIRSTRUN_LOCKED_CREATE" = "403" ] \
+  || fail "a locked staff token created a second admin account ($FIRSTRUN_LOCKED_CREATE)"
+[ "$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
+  --data-urlencode "filter=email='second-admin-check@local.test'" \
+  "$FIRSTRUN_BASE/api/collections/staff/records" | jval totalItems)" = "0" ] \
+  || fail "the locked token's second admin account was created anyway"
+
+# The two calls it may still make, or it could never get out of the lock.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  "$FIRSTRUN_BASE/api/collections/staff/auth-refresh" -H "Authorization: $FIRSTRUN_TOKEN")" = "200" ] \
+  || fail "a locked staff token cannot refresh its own session, so the screen would drop it at sign-in"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $FIRSTRUN_TOKEN" "$FIRSTRUN_BASE/api/health")" = "200" ] \
+  || fail "a locked staff token cannot reach /api/health"
+
+# Nobody else is caught by it: the superuser and an unauthenticated
+# caller see exactly what they saw before.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
+  "$FIRSTRUN_BASE/api/collections/customers/records")" = "200" ] \
+  || fail "the lock middleware caught a superuser"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$FIRSTRUN_BASE/api/health")" = "200" ] \
+  || fail "the lock middleware caught an unauthenticated request"
+ok "a locked staff token is refused everything but its own auth-refresh, its own record and /api/health"
+
+# --- 26f. An own-password change clears the flag and is audited ---------
 FIRSTRUN_CHANGE_STATUS="$(curl -s -o "$FIRSTRUN_DIR/change.json" -w '%{http_code}' \
   -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_ADMIN_ID" \
   -H "Authorization: $FIRSTRUN_TOKEN" -H "Content-Type: application/json" \

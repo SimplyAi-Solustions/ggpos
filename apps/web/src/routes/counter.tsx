@@ -13,8 +13,10 @@ import { currentStaff, useStaff } from "@/lib/auth"
  * `must_change_password` is bounced again, to `/counter/password`, and gets
  * the bare `LockedShell` around it: no nav, no palette, no shortcuts, no
  * scan listener and no idle lock until they have set a password of their
- * own. The guard runs on this parent route, so it covers every screen under
- * it without each one asking.
+ * own. The root route runs the same `lockedRedirect` for every screen in
+ * the app, `/display` and `/labels/print` included; it is repeated here
+ * because this is the subtree the lock exists for, and because the shell
+ * swap below has to ask the same question anyway.
  */
 function CounterRoute() {
   const staff = useStaff()
