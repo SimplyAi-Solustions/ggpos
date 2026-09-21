@@ -7,8 +7,9 @@
  * ending has to be reachable: `localStorage` key `gg-demo-reader` decides
  * which. "fail" declines the card, "busy" is a reader already taking
  * somebody else's payment, "noref" is SumUp answering without a reference,
- * "unpaired" takes the reader away and "off" is a shop that has not set
- * SumUp up at all.
+ * "prepaid" is a basket that has already been paid for and not yet sold,
+ * "unpaired" takes the reader away, "down" is SumUp itself not answering
+ * and "off" is a shop that has not set SumUp up at all.
  *
  * The idempotency rule is the server's, word for word: one checkout per
  * `sale_client_id`, and asking again for a basket that has already paid
@@ -81,6 +82,9 @@ function setDefaultReader(reader: SumUpReader | null) {
 }
 
 export function listReaders(): SumUpReaderList {
+  if (mode() === "down") {
+    refusal(502, "SumUp did not answer. Try again in a moment.")
+  }
   if (mode() === "off") {
     return { readers: [], default_reader_id: "", not_configured: true }
   }
@@ -178,6 +182,32 @@ export function createCheckout(input: CreateCheckoutInput): CreateCheckoutResult
   }
 
   sequence += 1
+  if (mode() === "prepaid") {
+    // A payment already made for this basket that no sale has used: the
+    // route hands it straight back rather than asking for the money twice.
+    payments += 1
+    const already: SumUpCheckout = {
+      id: `checkout_demo_${sequence}`,
+      status: "paid",
+      amount: input.amount,
+      sale_client_id: input.saleClientId,
+      description: input.description ?? "",
+      reader_id: input.readerId || defaultReaderId(),
+      reader_name: readerName(input.readerId),
+      checkout_id: `sumup_checkout_${sequence}`,
+      client_transaction_id: `demo-ctx-${sequence}`,
+      transaction_id: `demo-txn-${payments}`,
+      transaction_code: `TEHY${9000 + payments}`,
+      card_last4: "4242",
+      error: "",
+      paid_at: new Date().toISOString(),
+      sale: "",
+      created: new Date().toISOString(),
+    }
+    checkouts.set(already.id, already)
+    return { checkout: { ...already }, reused: true }
+  }
+
   const checkout: SumUpCheckout = {
     id: `checkout_demo_${sequence}`,
     status: "pending",

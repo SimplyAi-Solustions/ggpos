@@ -115,8 +115,28 @@ function itemFor(id: string): StockItemRecord | undefined {
   return itemStore().find((row) => row.id === id)
 }
 
+/**
+ * The demo's stand-in for a race the till cannot see coming: an item sold on
+ * the other counter between the card being taken and the sale going
+ * through. It fires once and takes itself off, so the sale that follows the
+ * staff member putting the basket right goes through as it would in the
+ * shop. Set `gg-demo-sale` to "race" to arm it.
+ */
+function armedRaceRefusal(): string | null {
+  try {
+    if (localStorage.getItem("gg-demo-sale") !== "race") return null
+    localStorage.removeItem("gg-demo-sale")
+    return "That item was sold on the other till a moment ago. Take it out of the basket."
+  } catch {
+    return null
+  }
+}
+
 export function completeSale(payload: CompleteSalePayload): CompleteSaleResult {
   ensureSeeded()
+
+  const raced = armedRaceRefusal()
+  if (raced) throw new Error(raced)
 
   if (payload.reward_code) {
     const voucher = DEMO_VOUCHERS.find((row) => row.code === payload.reward_code)

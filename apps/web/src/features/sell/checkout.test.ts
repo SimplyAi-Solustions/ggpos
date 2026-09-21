@@ -75,9 +75,12 @@ describe("taking the payment", () => {
     expect(state).toEqual({
       phase: "stopped",
       checkout: null,
+      amount: 32499,
       reason: "The reader is offline. Check it is on and connected, then try again.",
       retry: true,
     })
+    // The sheet still says what was being taken, not nothing.
+    expect(checkoutAmount(state)).toBe(32499)
   })
 
   it("does not open a second checkout while one is on the reader", () => {
@@ -92,7 +95,28 @@ describe("what the reader says next", () => {
     const state = afterPaying()
     expect(state).toMatchObject({ phase: "completing" })
     expect(paidCheckout(state)?.id).toBe("checkout_1")
-    expect(cardPaymentReducer(state, { type: "completed" })).toEqual(IDLE)
+    expect(
+      cardPaymentReducer(state, { type: "completed", checkoutId: "checkout_1" })
+    ).toEqual(IDLE)
+  })
+
+  it("does not put a payment down for a sale that did not carry it", () => {
+    const held = cardPaymentReducer(
+      cardPaymentReducer(afterPaying(), {
+        type: "completionRefused",
+        reason: "That item was sold on the other till a moment ago.",
+      }),
+      { type: "close" }
+    )
+    // The next customer's sale goes through with cash: the money still on
+    // the first customer's card is not cleared off the screen by it.
+    expect(cardPaymentReducer(held, { type: "completed" })).toBe(held)
+    expect(
+      cardPaymentReducer(held, { type: "completed", checkoutId: "checkout_other" })
+    ).toBe(held)
+    expect(
+      cardPaymentReducer(held, { type: "completed", checkoutId: "checkout_1" })
+    ).toEqual(IDLE)
   })
 
   it("stays put while the row is still pending", () => {
@@ -238,9 +262,13 @@ describe("money taken on a sale that will not complete", () => {
       type: "completionRefused",
       reason: "Open a cash session before taking cash.",
     })
-    expect(cardPaymentReducer(taken, { type: "completed" })).toEqual(IDLE)
+    expect(
+      cardPaymentReducer(taken, { type: "completed", checkoutId: "checkout_1" })
+    ).toEqual(IDLE)
     const held = cardPaymentReducer(taken, { type: "close" })
-    expect(cardPaymentReducer(held, { type: "completed" })).toEqual(IDLE)
+    expect(
+      cardPaymentReducer(held, { type: "completed", checkoutId: "checkout_1" })
+    ).toEqual(IDLE)
     expect(heldPayment(IDLE)).toBeNull()
   })
 
@@ -302,7 +330,7 @@ describe("a live payment has one way out", () => {
         retry: false,
       }
     )
-    expect(busy).toMatchObject({ phase: "stopped", retry: false })
+    expect(busy).toMatchObject({ phase: "stopped", retry: false, amount: 32499 })
   })
 })
 
@@ -315,14 +343,16 @@ describe("a payment belongs to one basket", () => {
       }),
       { type: "close" }
     )
-    expect(checkoutForBasket(held, BASKET)).toBe("checkout_1")
-    expect(checkoutForBasket(held, "basket-2")).toBeNull()
+    expect(checkoutForBasket(held, BASKET, 32499)).toBe("checkout_1")
+    expect(checkoutForBasket(held, "basket-2", 32499)).toBeNull()
+    // And a sale with no card part carries no card payment at all.
+    expect(checkoutForBasket(held, BASKET, 0)).toBeNull()
     expect(isStrandedPayment(held, "basket-2")).toBe(true)
     expect(isStrandedPayment(held, BASKET)).toBe(false)
   })
 
   it("carries nothing when there is no payment at all", () => {
-    expect(checkoutForBasket(IDLE, BASKET)).toBeNull()
+    expect(checkoutForBasket(IDLE, BASKET, 32499)).toBeNull()
     expect(isStrandedPayment(IDLE, BASKET)).toBe(false)
   })
 

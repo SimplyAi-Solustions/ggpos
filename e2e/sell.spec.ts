@@ -38,6 +38,17 @@ async function go(page: Page, action: string) {
   await expect(palette).toBeHidden()
 }
 
+/**
+ * Arms the demo's one-shot race: the next sale refuses the way one does
+ * when an item has been sold on the other till, which is the refusal a card
+ * payment can only meet after the money has moved.
+ */
+async function armRace(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("gg-demo-sale", "race")
+  })
+}
+
 async function scan(page: Page, code: string) {
   const field = page.getByTestId("sell-scan-field")
   await field.fill(code)
@@ -234,18 +245,15 @@ test.describe("selling at the counter", () => {
   test("never loses a payment the reader took on a sale that would not complete", async ({
     page,
   }) => {
+    // The one refusal the till cannot see coming: the item is sold on the
+    // other counter between the card being taken and the sale going through.
+    await armRace(page)
     await signIn(page)
     await go(page, "Sell")
 
-    // A split with cash in it, and no drawer open: the sale cannot complete.
     await scan(page, DEMO_SKU.display)
-    await page.getByRole("button", { name: "Mixed", exact: true }).click()
-    await page.getByLabel("Cash").fill("10.00")
-    await page.getByLabel("SumUp card").fill("314.99")
-    await expect(page.getByTestId("sumup-amount")).toHaveText("£314.99")
-    await expect(
-      page.getByText("Open a cash session before taking cash.")
-    ).toBeVisible()
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await expect(page.getByTestId("sumup-amount")).toHaveText("£324.99")
 
     await page.getByTestId("take-card-payment").click()
 
@@ -255,7 +263,7 @@ test.describe("selling at the counter", () => {
       { timeout: 15_000 }
     )
     await expect(sheet.getByTestId("card-payment-status")).toContainText(
-      "Open a cash session before taking cash."
+      "That item was sold on the other till a moment ago."
     )
     // The SumUp transaction code, so it can be refunded in the app.
     await expect(sheet.getByTestId("card-payment-code")).toHaveText(/TEHY\d+/)
@@ -266,21 +274,177 @@ test.describe("selling at the counter", () => {
     await expect(sheet).toBeHidden()
     const held = page.getByTestId("card-payment-held")
     await expect(held).toContainText("Counter Solo")
-    await expect(held).toContainText(/TEHY\d+/)
+    await expect(page.getByTestId("card-payment-held-reference")).toHaveText(
+      /TEHY\d+/
+    )
 
-    // Put the drawer right, and it is still there on the way back.
+    // Walk off to the drawer and back: the payment is still on the screen.
     await go(page, "Cash session")
-    await page.getByLabel("Float").fill("100.00")
-    await primary(page, "Open session").click()
-    await expect(page.getByTestId("cash-expected")).toHaveText("£100.00")
-
+    await expect(page.getByLabel("Float")).toBeVisible()
     await go(page, "Sell")
     await expect(page.getByTestId("basket")).toContainText("Charizard ex")
-    await expect(page.getByTestId("card-payment-held")).toContainText(/TEHY\d+/)
+    await expect(page.getByTestId("card-payment-held-reference")).toHaveText(
+      /TEHY\d+/
+    )
 
     // And the sale completes against that same payment.
     await primary(page, "Mark sold").click()
     await expect(page.getByTestId("sale-done")).toContainText(/GG-S-\d{6}/)
+    await expect(page.getByTestId("card-payment-held")).toBeHidden()
+  })
+
+  test("has no way out but Cancel while the reader has the amount", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await page.getByTestId("take-card-payment").click()
+
+    const sheet = page.getByTestId("card-payment-sheet")
+    await expect(sheet.getByTestId("card-payment-status")).toContainText(
+      "Waiting for the reader."
+    )
+
+    // The three ways a sheet is usually dismissed, none of which may leave
+    // a customer paying with nothing watching.
+    await expect(sheet.getByRole("button", { name: "Close" })).toHaveCount(0)
+    await page.keyboard.press("Escape")
+    await expect(sheet).toBeVisible()
+    await page.mouse.click(5, 5)
+    await expect(sheet).toBeVisible()
+
+    // And the payment still lands on the sale it was taken for.
+    await expect(sheet).toBeHidden({ timeout: 15_000 })
+    await expect(page.getByTestId("sale-done")).toContainText(/GG-S-\d{6}/)
+  })
+
+  test("will not offer another go at a reader busy with somebody else", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("gg-demo-reader", "busy")
+    })
+    await signIn(page)
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await page.getByTestId("take-card-payment").click()
+
+    const sheet = page.getByTestId("card-payment-sheet")
+    await expect(sheet.getByTestId("card-payment-status")).toContainText(
+      "The reader is busy with another payment. Finish or cancel that one first."
+    )
+    // Pressing it again would get the same answer, so it is not offered.
+    await expect(sheet.getByRole("button", { name: "Try again" })).toHaveCount(0)
+    await sheet.getByTestId("card-payment-close").click()
+    await expect(sheet).toBeHidden()
+  })
+
+  test("uses a payment already made for the basket instead of asking twice", async ({
+    page,
+  }) => {
+    // The reader answers with a payment this basket already made and no
+    // sale has used, which is what the route does after a retry.
+    await page.addInitScript(() => {
+      window.localStorage.setItem("gg-demo-reader", "prepaid")
+    })
+    await signIn(page)
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await page.getByTestId("take-card-payment").click()
+
+    // Straight to finishing the sale: no second amount on the reader.
+    const done = page.getByTestId("sale-done")
+    await expect(done).toContainText(/GG-S-\d{6}/, { timeout: 15_000 })
+    await expect(done).toContainText("£324.99")
+  })
+
+  test("refuses to spend a payment on a basket it was not taken for", async ({
+    page,
+  }) => {
+    await armRace(page)
+    await signIn(page)
+    await go(page, "Sell")
+
+    // Open a drawer first, so nothing about cash is in the way.
+    await go(page, "Cash session")
+    await page.getByLabel("Float").fill("100.00")
+    await primary(page, "Open session").click()
+    await expect(page.getByTestId("cash-expected")).toHaveText("£100.00")
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await page.getByTestId("take-card-payment").click()
+    await expect(page.getByTestId("card-payment-code")).toHaveText(/TEHY\d+/, {
+      timeout: 15_000,
+    })
+    await page.getByRole("button", { name: "Back to the sale" }).click()
+
+    // Now the card part changes underneath the payment that was taken.
+    await page.getByRole("button", { name: "Mixed", exact: true }).click()
+    await page.getByLabel("Cash").fill("24.99")
+    await page.getByLabel("SumUp card").fill("300.00")
+    await primary(page, "Mark sold").click()
+
+    // The route's own sentence, with both figures in it, beside the payment
+    // it is about.
+    await expect(page.getByTestId("card-payment-held-reason")).toHaveText(
+      "The reader took £324.99 but the card part of this sale is £300.00. Adjust the split or refund the difference from the SumUp app."
+    )
+    await expect(page.getByTestId("sale-done")).toBeHidden()
+    // The payment is still on the screen, with its reference.
+    await expect(page.getByTestId("card-payment-held-reference")).toHaveText(
+      /TEHY\d+/
+    )
+  })
+
+  test("puts a payment down only when a staff member says it was refunded", async ({
+    page,
+  }) => {
+    await armRace(page)
+    await signIn(page)
+    await go(page, "Sell")
+
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "SumUp card", exact: true }).click()
+    await page.getByTestId("take-card-payment").click()
+    await expect(page.getByTestId("card-payment-code")).toHaveText(/TEHY\d+/, {
+      timeout: 15_000,
+    })
+    await page.getByRole("button", { name: "Back to the sale" }).click()
+    await expect(page.getByTestId("card-payment-held")).toBeVisible()
+
+    // Removing the line clears the basket; the payment stays, because the
+    // money is still on the customer's card.
+    await page.getByTestId("basket").getByRole("button", { name: "Remove" }).click()
+    await expect(page.getByTestId("card-payment-held")).toBeVisible()
+
+    // The next customer's sale does not put it down either: it is still on
+    // the first customer's card.
+    await scan(page, DEMO_SKU.display)
+    await page.getByRole("button", { name: "Cash", exact: true }).click()
+    await go(page, "Cash session")
+    await page.getByLabel("Float").fill("100.00")
+    await primary(page, "Open session").click()
+    await expect(page.getByTestId("cash-expected")).toHaveText("£100.00")
+    await go(page, "Sell")
+    await primary(page, "Mark sold").click()
+    await expect(page.getByTestId("sale-done")).toBeVisible()
+    await expect(page.getByTestId("card-payment-held")).toBeVisible()
+
+    // Two presses to put it down, and the second one says what it means.
+    await page.getByTestId("card-payment-refunded").click()
+    await expect(
+      page.getByText("Only put it down once the refund is through in the SumUp app.")
+    ).toBeVisible()
+    await page.getByTestId("card-payment-refunded-confirm").click()
     await expect(page.getByTestId("card-payment-held")).toBeHidden()
   })
 

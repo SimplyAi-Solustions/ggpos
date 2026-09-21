@@ -518,8 +518,10 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
         sumup_ref: "",
         ...(checkoutId ? { sumup_checkout: checkoutId } : {}),
       }),
-    onSuccess: (result) => {
-      dispatchCardPayment({ type: "completed" })
+    onSuccess: (result, checkoutId) => {
+      // Only the payment this sale carried is put down: a payment held for
+      // some earlier basket is still on the customer's card.
+      dispatchCardPayment({ type: "completed", checkoutId })
       setDone({
         id: result.sale.id,
         number: result.sale.number,
@@ -746,7 +748,11 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
       trailingArrow
       loading={sell.isPending}
       disabled={!payment.ok}
-      onClick={() => sell.mutate(checkoutForBasket(card, saleClientId()) ?? undefined)}
+      onClick={() =>
+        sell.mutate(
+          checkoutForBasket(card, saleClientId(), payment.sumupAmount) ?? undefined
+        )
+      }
     >
       Mark sold
     </Button>
@@ -1118,21 +1124,37 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
             <span className="tnum font-display text-[28px] leading-none tracking-[0.01em] text-foreground">
               {formatGBP(held.checkout.amount)}
             </span>
+            {/* Why the sale would not carry it, including a second refusal
+                after the basket was meant to have been put right. */}
+            <p
+              role="alert"
+              data-testid="card-payment-held-reason"
+              className="max-w-[56ch] text-[13px] leading-[1.45] text-destructive"
+            >
+              {held.reason}
+            </p>
             <p
               data-testid="card-payment-held"
               className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground"
             >
-              {held.checkout.reader_name || readerName}
-              {heldReference ? `, ${heldReference.value}` : ""}.{" "}
+              {held.checkout.reader_name || readerName}.{" "}
               {stranded
                 ? "That payment was taken for the sale before this one, so this sale cannot use it. Refund it in the SumUp app."
                 : "Mark the sale sold to finish it, or refund it in the SumUp app."}
             </p>
-            {heldReference ? (
-              <Hint>{heldReference.label}</Hint>
-            ) : (
-              <Hint>No reference came back, so match it by the amount and the time</Hint>
-            )}
+            {/* Something to find it by in the SumUp app, labelled so nobody
+                mistakes one reference for another. */}
+            <span className="mt-1 flex flex-col gap-1">
+              <Hint>{heldReference ? heldReference.label : "No reference"}</Hint>
+              <span
+                data-testid="card-payment-held-reference"
+                className="tnum font-mono text-[15px] text-foreground"
+              >
+                {heldReference
+                  ? heldReference.value
+                  : `${formatGBP(held.checkout.amount)}, by the time in the app`}
+              </span>
+            </span>
             <div className="mt-2 flex flex-wrap items-center gap-x-8 gap-y-2">
               {refundAsked ? (
                 <>
@@ -1159,7 +1181,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
                   data-testid="card-payment-refunded"
                   onClick={() => setRefundAsked(true)}
                 >
-                  Refunded in the SumUp app
+                  Refunded already
                 </Button>
               )}
             </div>

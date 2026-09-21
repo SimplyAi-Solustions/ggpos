@@ -36,8 +36,44 @@ test.describe("the shortcut overlay", () => {
     await expect(overlay).toContainText("closes any sheet, dialog or menu.")
     await expect(overlay.getByText("Esc", { exact: true })).toBeVisible()
 
+    // A key that needs a modifier is drawn with it: the palette is not
+    // plain K, and the page must not say it is.
+    await expect(overlay.getByText("Ctrl", { exact: true })).toBeVisible()
+
     await page.keyboard.press("Escape")
     await expect(overlay).toBeHidden()
+  })
+
+  test("keeps the shortcuts to itself while it is open", async ({ page }) => {
+    await signIn(page)
+
+    await page.keyboard.press("?")
+    const overlay = page.getByTestId("shortcut-overlay")
+    await expect(overlay).toBeVisible()
+
+    // Reading the list is not the same as pressing the keys on it.
+    await page.keyboard.press("b")
+    await expect(overlay).toBeVisible()
+    await expect(page).toHaveURL(/\/counter$/)
+
+    await page.keyboard.press("Escape")
+    await expect(overlay).toBeHidden()
+    await page.keyboard.press("b")
+    await expect(page).toHaveURL(/\/counter\/trade/)
+  })
+
+  test("never fires on a scanner's own keystrokes", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/counter/labels")
+    await expect(page.getByRole("heading", { name: "Labels" })).toBeVisible()
+
+    // A wedge scanner types a GG code with nothing focused. The S in GGS
+    // would otherwise walk off to the Scan screen mid-code.
+    for (const key of "GGS7F3K2B") {
+      await page.keyboard.press(key, { delay: 5 })
+    }
+    await page.keyboard.press("Enter")
+    await expect(page).not.toHaveURL(/\/counter\/scan/)
   })
 
   test("is in the command palette for anybody who reached for the mouse", async ({

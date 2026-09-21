@@ -20,11 +20,10 @@
 import * as React from "react"
 
 import { LABEL_SPECS, labelLayout } from "@/features/labels/layout"
-import { LabelTooSmallError, tsplBytes } from "@/features/printing/tspl"
+import { tsplBytes } from "@/features/printing/tspl"
 import {
   chooseUsbPrinter,
   findUsbPrinter,
-  isRememberedPrinter,
   PrinterError,
   rememberPrinter,
   releasePrinter,
@@ -48,7 +47,7 @@ const ROLL_KEY = "gg-printer-roll"
 const DEVICE_KEY = "gg-printer-device"
 
 /** What a counter PC is called in the queue when nobody has named it. */
-export const DEFAULT_PRINTER_NAME = "Counter PC"
+const DEFAULT_PRINTER_NAME = "Counter PC"
 
 /**
  * The roll on the printer. There is no "whatever is queued": one printer
@@ -58,7 +57,7 @@ export const DEFAULT_PRINTER_NAME = "Counter PC"
 export type RollChoice = LabelTemplateKey
 
 /** The size the shop buys most of, and what the wizard gives most items. */
-export const DEFAULT_ROLL: RollChoice = "toploader_40x20"
+const DEFAULT_ROLL: RollChoice = "toploader_40x20"
 
 /** How many jobs one device takes at a time. A roll change is never far off. */
 const CLAIM_LIMIT = 5
@@ -105,10 +104,6 @@ function readRemembered(): RememberedPrinter | null {
 
 function isRoll(value: string): value is RollChoice {
   return value in LABEL_SPECS
-}
-
-export function labelTooLong(error: unknown): boolean {
-  return error instanceof LabelTooSmallError
 }
 
 /** The server caps the reason it keeps, and a refused write loses it entirely. */
@@ -490,6 +485,3 @@ export function usePrintQueue(onChange: () => void): PrintQueueRunner {
     clearError: () => setError(null),
   }
 }
-
-/** Re-exported so the queue screen can list the rolls without a second table. */
-export { isRememberedPrinter }

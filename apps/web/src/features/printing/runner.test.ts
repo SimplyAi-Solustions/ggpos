@@ -66,7 +66,9 @@ describe("a run that goes through", () => {
   it("prints before it reports, never the other way round", async () => {
     const order: string[] = []
     const run = calls({
-      send: async (one) => order.push(`send ${one.id}`),
+      send: async (one) => {
+        order.push(`send ${one.id}`)
+      },
       markPrinted: async (id) => {
         order.push(`printed ${id}`)
       },

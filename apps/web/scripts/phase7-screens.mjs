@@ -59,6 +59,9 @@ function fakePrinter({ hold = false, fail = false } = {}) {
   return ([holdIt, failIt]) => {
     const device = {
       productName: "ORGSTA T003",
+      vendorId: 0x0483,
+      productId: 0x5743,
+      serialNumber: "T003-0001",
       opened: false,
       configuration: null,
       configurations: [
@@ -120,7 +123,11 @@ async function open(mode, viewport, path, { usb = null, reader = "" } = {}) {
       window.localStorage.setItem("theme", theme)
       window.localStorage.setItem("gg-demo-staff", JSON.stringify(staff))
       window.localStorage.removeItem("gg-printer-auto")
-      if (readerMode) window.localStorage.setItem("gg-demo-reader", readerMode)
+      window.localStorage.removeItem("gg-printer-device")
+      window.localStorage.removeItem("gg-printer-roll")
+      window.localStorage.removeItem("gg-demo-sale")
+      if (readerMode === "race") window.localStorage.setItem("gg-demo-sale", "race")
+      else if (readerMode) window.localStorage.setItem("gg-demo-reader", readerMode)
       else window.localStorage.removeItem("gg-demo-reader")
     },
     [mode, DEMO_STAFF, reader]
@@ -247,14 +254,14 @@ for (const mode of MODES) {
       await context.close()
     }
 
-    // Money taken on a sale that will not complete: a split with cash in it
-    // and no drawer open.
+    // Money taken on a sale that will not complete: an item sold on the
+    // other till between the card and the sale.
     {
-      const { context, page } = await open(mode, viewport, "/counter/sell")
+      const { context, page } = await open(mode, viewport, "/counter/sell", {
+        reader: "race",
+      })
       await basket(page)
-      await page.getByRole("button", { name: "Mixed", exact: true }).click()
-      await page.getByLabel("Cash").fill("10.00")
-      await page.getByLabel("SumUp card").fill("314.99")
+      await page.getByRole("button", { name: "SumUp card", exact: true }).click()
       await page.getByTestId("take-card-payment").click()
       await page.getByTestId("card-payment-code").waitFor()
       await shoot(page, `sell-card-taken-${tag}`, { fullPage: false })
@@ -262,6 +269,19 @@ for (const mode of MODES) {
       await page.getByRole("button", { name: "Back to the sale" }).click()
       await page.getByTestId("card-payment-held").waitFor()
       await shoot(page, `sell-card-held-${tag}`)
+      await context.close()
+    }
+
+    // A reader already taking somebody else's payment: one way out, and no
+    // offer to try again at something that cannot work yet.
+    {
+      const { context, page } = await open(mode, viewport, "/counter/sell", {
+        reader: "busy",
+      })
+      await basket(page)
+      await page.getByTestId("take-card-payment").click()
+      await page.getByTestId("card-payment-close").waitFor()
+      await shoot(page, `sell-card-busy-${tag}`, { fullPage: false })
       await context.close()
     }
 
@@ -288,6 +308,20 @@ for (const mode of MODES) {
         .scrollIntoViewIfNeeded()
       await page.waitForTimeout(200)
       await shoot(page, `settings-card-reader-unpaired-${tag}`, { fullPage: false })
+      await context.close()
+    }
+
+    // SumUp itself not answering, which is not the same as nothing paired.
+    {
+      const { context, page } = await open(mode, viewport, "/counter/settings", {
+        reader: "down",
+      })
+      await page.getByTestId("reader-error").waitFor()
+      await page
+        .getByRole("heading", { level: 2, name: "Card reader" })
+        .scrollIntoViewIfNeeded()
+      await page.waitForTimeout(200)
+      await shoot(page, `settings-card-reader-down-${tag}`, { fullPage: false })
       await context.close()
     }
 

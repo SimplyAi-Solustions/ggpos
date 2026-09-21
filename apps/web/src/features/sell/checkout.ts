@@ -33,11 +33,18 @@ export type CardPaymentState =
   /** Paid: the sale is being completed against this checkout. */
   | { phase: "completing"; checkout: SumUpCheckout }
   /**
-   * No money moved, and why. `retry` is false where trying again cannot
-   * work until something else changes, such as a reader busy with somebody
-   * else's payment.
+   * No money moved, and why. The amount is kept even where no checkout was
+   * ever opened, so the sheet says what was being taken rather than nothing.
+   * `retry` is false where trying again cannot work until something else
+   * changes, such as a reader busy with somebody else's payment.
    */
-  | { phase: "stopped"; checkout: SumUpCheckout | null; reason: string; retry: boolean }
+  | {
+      phase: "stopped"
+      checkout: SumUpCheckout | null
+      amount: number
+      reason: string
+      retry: boolean
+    }
   /** Money moved and the sale did not complete. The one state that cannot be lost. */
   | { phase: "taken"; checkout: SumUpCheckout; reason: string }
   /**
@@ -53,7 +60,8 @@ export type CardPaymentEvent =
   /** `retry` false for a refusal that trying again cannot get past. */
   | { type: "refused"; reason: string; retry?: boolean }
   | { type: "status"; checkout: SumUpCheckout }
-  | { type: "completed" }
+  /** A sale went through. `checkoutId` is the payment it carried, if any. */
+  | { type: "completed"; checkoutId?: string }
   | { type: "completionRefused"; reason: string }
   | { type: "close" }
   /** Staff have refunded it in the SumUp app: the only way to put money down. */
@@ -109,6 +117,7 @@ export function cardPaymentReducer(
       return {
         phase: "stopped",
         checkout: event.checkout,
+        amount: event.checkout.amount,
         reason: stoppedReason(event.checkout),
         retry: true,
       }
@@ -119,6 +128,7 @@ export function cardPaymentReducer(
       return {
         phase: "stopped",
         checkout: null,
+        amount: checkoutAmount(state),
         reason: event.reason,
         retry: event.retry !== false,
       }
@@ -140,13 +150,20 @@ export function cardPaymentReducer(
       return {
         phase: "stopped",
         checkout: event.checkout,
+        amount: event.checkout.amount,
         reason: stoppedReason(event.checkout),
         retry: true,
       }
     }
 
-    case "completed":
+    case "completed": {
+      const held = paidCheckout(state)
+      // A sale that carried no card payment does not put one down: money
+      // taken for an earlier basket stays on the screen until it is
+      // carried or refunded, whatever else is rung up in the meantime.
+      if (held && held.id !== event.checkoutId) return state
       return IDLE
+    }
 
     case "completionRefused": {
       // Wherever a paid checkout is being held, a refusal keeps it and says
@@ -157,7 +174,13 @@ export function cardPaymentReducer(
       if (state.phase === "held") {
         return { phase: "held", checkout: state.checkout, reason: event.reason }
       }
-      return { phase: "stopped", checkout: null, reason: event.reason, retry: true }
+      return {
+        phase: "stopped",
+        checkout: null,
+        amount: checkoutAmount(state),
+        reason: event.reason,
+        retry: true,
+      }
     }
 
     case "close": {
@@ -220,13 +243,19 @@ export function paidCheckout(state: CardPaymentState): SumUpCheckout | null {
  * A payment belongs to the basket it was taken for. Where the basket has
  * moved on, this is null and the sale completes with no card payment on it,
  * rather than spending one customer's money on the next customer's sale.
+ *
+ * A sale with no card part carries no card payment either: a cash sale rung
+ * up while a payment is still held goes through as cash, and the payment
+ * stays on the screen until it is carried or refunded.
  */
 export function checkoutForBasket(
   state: CardPaymentState,
-  saleClientId: string
+  saleClientId: string,
+  cardPart: number
 ): string | null {
   const checkout = paidCheckout(state)
   if (!checkout) return null
+  if (cardPart <= 0) return null
   if (!checkout.sale_client_id) return null
   return checkout.sale_client_id === saleClientId ? checkout.id : null
 }
@@ -252,7 +281,7 @@ export function checkoutAmount(state: CardPaymentState): number {
     case "held":
       return state.checkout.amount
     case "stopped":
-      return state.checkout?.amount ?? 0
+      return state.amount
     default:
       return 0
   }

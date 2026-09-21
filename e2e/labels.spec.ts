@@ -124,6 +124,13 @@ test.describe("the print queue", () => {
 
     await page.getByRole("switch", { name: "Auto-print" }).click()
     await expect(page.getByTestId("auto-print")).toHaveText("Auto-print on")
+    // One printer, one roll: this device takes the 40 x 20 labels and
+    // leaves any other size for whoever has that roll on.
+    await expect(
+      page.getByText("Labels print here as Counter PC on the 40 x 20 mm roll", {
+        exact: false,
+      })
+    ).toBeVisible()
 
     // Claimed by this device, and the queue says so while it prints.
     await expect(page.getByTestId("label-row").first()).toContainText(
@@ -218,6 +225,24 @@ test.describe("bulk reprint", () => {
     await expect(
       sheet.getByText("GGS-7F3K2Q is not a buy-in number. They look like GG-BI-000123.")
     ).toBeVisible()
+  })
+
+  test("queues a drawer with no dates at all", async ({ page }) => {
+    await signIn(page)
+    await go(page, "Label queue")
+
+    await page.getByTestId("bulk-reprint").click()
+    const sheet = page.getByTestId("bulk-reprint-sheet")
+    await sheet.getByRole("button", { name: "Dates", exact: true }).click()
+
+    // The route takes a location on its own, which is how a whole drawer
+    // is reprinted after a spill.
+    await sheet.getByLabel("Location").click()
+    await page.getByRole("option", { name: "Binder A" }).click()
+    await sheet.getByRole("switch").click()
+    await sheet.getByRole("button", { name: "Queue labels" }).click()
+
+    await expect(page.getByTestId("bulk-outcome")).toHaveText("1 label queued.")
   })
 
   test("queues by the dates stock came in", async ({ page }) => {

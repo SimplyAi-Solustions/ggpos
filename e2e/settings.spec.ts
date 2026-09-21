@@ -242,6 +242,23 @@ test.describe("settings", () => {
   })
 
   // --- The card reader (Phase 7) ---
+  test("says SumUp did not answer rather than that nothing is paired", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("gg-demo-reader", "down")
+    })
+    await signIn(page)
+    await go(page, "Settings")
+
+    // The wrong sentence here sends an admin off to pair a reader that was
+    // paired all along.
+    await expect(page.getByTestId("reader-error")).toHaveText(
+      "SumUp did not answer. Try again in a moment."
+    )
+    await expect(page.getByText("No reader is paired yet.")).toHaveCount(0)
+  })
+
   test("pairs a card reader and chooses which one takes the money", async ({
     page,
   }) => {
