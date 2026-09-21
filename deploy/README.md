@@ -506,9 +506,13 @@ To pair:
 
 Day to day: Sell puts the amount on the reader, the customer taps, and
 the sale completes against that payment with the reader's own transaction
-code on it. If the reader is off or offline the app says so and the sale
-can still be taken another way. A payment nobody completes is closed
-automatically after fifteen minutes.
+code on it. If the reader is off, offline or already taking somebody
+else's payment the app says which, and the sale can still be taken another
+way. Asking for the same sale's payment twice hands back the one already
+on the reader rather than charging twice. A payment nobody completes is
+closed automatically after fifteen minutes; if the money did arrive after
+that, the app records it and the transaction shows on the Cash screen with
+no sale against it, which is the one to refund or match by hand.
 
 **Refunds stay in the SumUp app.** Nothing in GG Vault sends money back
 to a card: refund the transaction in SumUp, then record the refund in the
