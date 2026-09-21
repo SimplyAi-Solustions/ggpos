@@ -1766,13 +1766,21 @@ ok "the six-year buy-in register keeps its seller snapshot through an erasure"
 #     timestamp (space is 0x20, "T" is 0x54) and would purge a photo that
 #     expires later today. The cutoffs are written in the stored form, and
 #     the two rows below are exactly that boundary case.
+#
+#     The live row expires one hour from now, never at a fixed "23:59
+#     today": a run that reaches this section in the last minute of the
+#     UTC day (CI did, at 23:59:17) would otherwise find that document
+#     genuinely expired and report the cron as wrong. For 23 hours of the
+#     day the two rows still share a calendar date, which is the case the
+#     "T" trap bites.
 # -----------------------------------------------------------------------
+RETENTION_LIVE_UNTIL="$(node -e 'console.log(new Date(Date.now() + 3600000).toISOString().replace("T"," "))')"
 EXPIRED_DOC="$(curl -s -X POST "$BASE/api/collections/id_documents/records" \
   -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$SELLER_ID\",\"taken_at\":\"2020-01-01 00:00:00.000Z\",\"expires_at\":\"2020-01-01 00:00:00.000Z\"}" | jval id)"
 LIVE_DOC="$(curl -s -X POST "$BASE/api/collections/id_documents/records" \
   -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"customer\":\"$SELLER_ID\",\"taken_at\":\"$TODAY 00:00:00.000Z\",\"expires_at\":\"$TODAY 23:59:00.000Z\"}" | jval id)"
+  -d "{\"customer\":\"$SELLER_ID\",\"taken_at\":\"$TODAY 00:00:00.000Z\",\"expires_at\":\"$RETENTION_LIVE_UNTIL\"}" | jval id)"
 [ -n "$EXPIRED_DOC" ] && [ -n "$LIVE_DOC" ] || fail "could not create the retention check id_documents rows"
 
 CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
@@ -1794,7 +1802,7 @@ done
 ok "the retention cron deletes an ID document whose expiry has passed"
 
 LIVE_STILL="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/id_documents/records/$LIVE_DOC" -H "Authorization: $SUPER_TOKEN")"
-[ "$LIVE_STILL" = "200" ] || fail "the retention cron deleted an ID document that expires later today (got $LIVE_STILL) - is the cutoff being formatted with a T?"
+[ "$LIVE_STILL" = "200" ] || fail "the retention cron deleted an ID document that expires an hour from now (got $LIVE_STILL) - is the cutoff being formatted with a T?"
 ok "the retention cron keeps an ID document that expires later the same day"
 
 RETENTION_AUDIT="$(curl -s "$BASE/api/collections/audit_log/records?perPage=200&filter=action%3D%22retention_delete%22" \
