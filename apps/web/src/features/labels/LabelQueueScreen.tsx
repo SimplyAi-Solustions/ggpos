@@ -62,17 +62,25 @@ const VIEWS: { value: QueueView; label: string; statuses: LabelJobStatus[] }[] =
   { value: "failed", label: "Failed", statuses: ["failed"] },
 ]
 
-const ROLLS: { value: RollChoice; label: string }[] = [
-  { value: "any", label: "Whatever is queued" },
-  ...(Object.keys(LABEL_SPECS) as LabelTemplateKey[]).map((key) => ({
-    value: key as RollChoice,
-    label: templateName(key),
-  })),
-]
+/**
+ * One printer, one roll. There is no "whatever is queued": a sleeve label
+ * printed onto 40 x 20 gap-sensed stock loses registration for the run
+ * after it too, which is why path 1 batches by size as well.
+ */
+const ROLLS: { value: RollChoice; label: string }[] = (
+  Object.keys(LABEL_SPECS) as LabelTemplateKey[]
+).map((key) => ({ value: key, label: templateName(key) }))
 
 function templateName(key: LabelTemplateKey): string {
   const spec = LABEL_SPECS[key]
   return `${spec.widthMm} x ${spec.heightMm} mm`
+}
+
+/** How many goes a job has had, in words rather than a number on its own. */
+function attemptWord(attempts: number): string {
+  if (attempts <= 1) return "Waiting to try again."
+  if (attempts === 2) return "Waiting for a third try."
+  return "Waiting."
 }
 
 function emptyLine(view: QueueView): string {
@@ -235,10 +243,19 @@ export function LabelQueueScreen() {
       ),
   })
 
-  /** The grey line under a job's title: who has it, or why it stopped. */
+  /**
+   * The grey line under a job's title: who has it, or why it stopped.
+   *
+   * A job the server put back in the queue keeps the reason it failed, so a
+   * label on its second or third try does not look like one nobody has
+   * tried yet.
+   */
   function jobNote(job: LabelJobDetail): string {
     if (job.status === "printing") {
       return job.printer ? `Printing on ${job.printer}` : "Printing"
+    }
+    if (job.status === "queued" && job.error) {
+      return `${job.error} ${attemptWord(job.attempts ?? 0)}`
     }
     if (job.error) return job.error
     return ""
@@ -287,11 +304,9 @@ export function LabelQueueScreen() {
                 roll and a count are longer than an uppercase run should
                 ever be. */}
             <p className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-              Labels print here as {printQueue.deviceName}
-              {printQueue.roll === "any"
-                ? ""
-                : ` on the ${templateName(printQueue.roll as LabelTemplateKey)} roll`}
-              .
+              Labels print here as {printQueue.deviceName} on the{" "}
+              {templateName(printQueue.roll)} roll, and other sizes wait for
+              whoever has that roll on.
               {printQueue.printed > 0
                 ? ` ${printQueue.printed} printed so far.`
                 : ""}
@@ -378,6 +393,11 @@ export function LabelQueueScreen() {
                             {jobNote(job)}
                           </span>
                         ) : null}
+                        {job.status === "queued" && job.error ? (
+                          <span className="mt-1 block max-w-[52ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                            {jobNote(job)}
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell className="tnum font-mono text-[13px] whitespace-nowrap">
                         {job.code ? displayCode(job.code) : ""}
@@ -401,7 +421,7 @@ export function LabelQueueScreen() {
                             </span>
                             <Button
                               variant="text"
-                              loading={again.isPending}
+                              loading={again.isPending && again.variables === job.id}
                               onClick={() => again.mutate(job.id)}
                             >
                               Queue again
