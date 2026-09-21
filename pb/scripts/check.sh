@@ -3185,9 +3185,10 @@ ok "reports/margin.csv is served as an attachment, no-store, with money columns 
 FIVE_DAYS_AGO="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-5); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
 TEN_DAYS_AGO="$(node -e 'const d=new Date(process.argv[1]+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()-10); process.stdout.write(d.toISOString().slice(0,10));' "$TODAY")"
 
-curl -s -o /dev/null -X POST "$BASE/api/collections/sales/records" \
+CRON7_SALE_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/sales/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"number\":\"GG-S-CRON7DAY1\",\"subtotal\":6543,\"discount\":0,\"total\":6543,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$FIVE_DAYS_AGO 12:00:00.000Z\"}"
+  -d "{\"number\":\"GG-S-CRON7DAY1\",\"subtotal\":6543,\"discount\":0,\"total\":6543,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$FIVE_DAYS_AGO 12:00:00.000Z\"}")"
+[ "$CRON7_SALE_STATUS" = "200" ] || fail "creating the 5-days-ago sale for the stats cron check returned $CRON7_SALE_STATUS"
 curl -s -o /dev/null -X POST "$BASE/api/collections/sales/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"number\":\"GG-S-CRON10DAY1\",\"subtotal\":8765,\"discount\":0,\"total\":8765,\"payment\":\"cash\",\"status\":\"complete\",\"occurred_at\":\"$TEN_DAYS_AGO 12:00:00.000Z\"}"
@@ -3199,7 +3200,11 @@ CRON7_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/
 [ "$CRON7_STATUS" = "204" ] || fail "POST /api/crons/stats returned $CRON7_STATUS, expected 204"
 
 wait_for_daily_row() {
-  # $1 date -> the daily_stats row JSON once it exists, or the last (empty) response after ~10 seconds.
+  # $1 date -> the daily_stats row JSON once it exists with its cash total
+  # filled in, or the last response after ~10 seconds. The cron saves a
+  # day's row and then its totals, so a read that lands between the two
+  # sees the row with an empty cash figure; waiting for the figure as well
+  # as the row is what keeps this check honest about timing.
   local date="$1"
   local tries=0
   local json=""
@@ -3207,7 +3212,8 @@ wait_for_daily_row() {
     json="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
       --data-urlencode "filter=date>='${date} 00:00:00.000Z' && date<='${date} 23:59:59.999Z'" \
       "$BASE/api/collections/daily_stats/records")"
-    if [ "$(echo "$json" | jval totalItems)" -ge 1 ] 2>/dev/null; then
+    if [ "$(echo "$json" | jval totalItems)" -ge 1 ] 2>/dev/null \
+      && [ -n "$(echo "$json" | jval "items.0.sales_total_by_payment.cash")" ]; then
       echo "$json"
       return 0
     fi
