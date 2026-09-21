@@ -19,7 +19,6 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableRowSettle,
 } from "@/components/ui/table"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
@@ -93,15 +92,17 @@ export function CustomerListScreen() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Card</TableHead>
-                <TableHead>Phone</TableHead>
+                <TableHead className="max-sm:hidden">Phone</TableHead>
                 <TableHead>ID</TableHead>
-                <TableHead numeric>Credit</TableHead>
-                <TableHead>Last visit</TableHead>
+                <TableHead className="max-sm:hidden" numeric>
+                  Credit
+                </TableHead>
+                <TableHead className="max-sm:hidden">Last visit</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody settle>
+            <TableBody>
               {customers.map((customer) => (
-                <TableRowSettle key={customer.id}>
+                <TableRow key={customer.id}>
                   <TableCell>
                     <Link
                       to="/counter/customers/$code"
@@ -112,12 +113,12 @@ export function CustomerListScreen() {
                     </Link>
                   </TableCell>
                   <TableCell>
-                    <span className="tnum font-mono text-[13px] text-muted-foreground">
+                    <span className="tnum font-mono text-[13px] whitespace-nowrap text-muted-foreground">
                       {displayCode(customer.code)}
                     </span>
                   </TableCell>
-                  <TableCell>
-                    <span className="tnum text-[15px] text-muted-foreground">
+                  <TableCell className="max-sm:hidden">
+                    <span className="tnum text-[15px] whitespace-nowrap text-muted-foreground">
                       {customer.phone || "-"}
                     </span>
                   </TableCell>
@@ -126,13 +127,15 @@ export function CustomerListScreen() {
                       {ID_STATUS_LABEL[customer.idStatus]}
                     </Badge>
                   </TableCell>
-                  <TableCell numeric>{formatGBP(customer.creditBalance)}</TableCell>
-                  <TableCell>
-                    <span className="tnum text-[15px] text-muted-foreground">
+                  <TableCell className="max-sm:hidden" numeric>
+                    {formatGBP(customer.creditBalance)}
+                  </TableCell>
+                  <TableCell className="max-sm:hidden">
+                    <span className="tnum text-[15px] whitespace-nowrap text-muted-foreground">
                       {formatShortDate(customer.lastVisit) || "-"}
                     </span>
                   </TableCell>
-                </TableRowSettle>
+                </TableRow>
               ))}
             </TableBody>
           </Table>

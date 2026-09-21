@@ -16,6 +16,7 @@ import {
   recordToForm,
   ruleChanged,
   RULE_CONDITIONS,
+  rulePayoutLine,
   ruleRowToForm,
   validateRules,
   validateSettings,
@@ -123,6 +124,26 @@ describe("the pricing rules matrix", () => {
     expect(bandLabel(5000, null)).toBe("£50.00 and up")
     expect(bandLabel(5000, 0)).toBe("£50.00 and up")
     expect(bandLabel(0, 500)).toBe("£0.00 to £5.00")
+  })
+
+  it("writes the row a phone shows as the band and its two shares", () => {
+    const rule = ruleRowToForm(DEMO_RULE_ROWS[0]!)
+    expect(rulePayoutLine(rule)).toBe("£0.00 to £5.00 · 40% cash · 55% credit")
+  })
+
+  it("leaves out a share somebody is halfway through retyping", () => {
+    // An admin clears the Cash field to type a new figure and closes the
+    // sheet. The row behind it must not claim the shop pays nothing.
+    const rule = ruleRowToForm(DEMO_RULE_ROWS[0]!)
+    expect(rulePayoutLine({ ...rule, cashPct: "" })).toBe(
+      "£0.00 to £5.00 · 55% credit"
+    )
+    expect(rulePayoutLine({ ...rule, cashPct: "5o" })).toBe(
+      "£0.00 to £5.00 · 55% credit"
+    )
+    expect(rulePayoutLine({ ...rule, cashPct: "", creditPct: "" })).toBe(
+      "£0.00 to £5.00"
+    )
   })
 
   it("reads an open-ended band off a row that stores it as zero", () => {

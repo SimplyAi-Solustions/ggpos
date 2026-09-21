@@ -189,7 +189,7 @@ const SCREENS = [
   { name: "report-cash", path: "/counter/reports/cash" },
   { name: "report-compliance", path: "/counter/reports/compliance" },
   { name: "counter-exports", path: "/counter/exports" },
-  { name: "kit", path: "/", as: "nobody" },
+  { name: "kit", path: "/kit", as: "nobody" },
 
   // ---- The screens Phase 7 shipped -------------------------------------
   { name: "counter-sell", path: "/counter/sell" },
@@ -219,8 +219,10 @@ const SCREENS = [
 
 mkdirSync(outDir, { recursive: true })
 
+// The remote build environment ships one Chromium at this path; a machine
+// with Playwright's own download falls through to it.
 const browser = await chromium
-  .launch({ executablePath: "/opt/pw-browsers/chromium" })
+  .launch({ executablePath: process.env.PW_CHROMIUM ?? "/opt/pw-browsers/chromium" })
   .catch(() => chromium.launch())
 
 const chosen = SCREENS.filter((screen) => !only || screen.name.includes(only))
@@ -257,17 +259,22 @@ for (const mode of MODES) {
       const q = screen.path.includes("?") ? "&" : "?"
       await page.goto(`${baseUrl}${screen.path}${q}demo=1`, { waitUntil: "networkidle" })
       await page.evaluate(() => document.fonts.ready)
+      let failed = ""
       if (screen.prepare) {
         try {
           await screen.prepare(page)
         } catch (error) {
+          // A step that did not run leaves the screen in a state nobody asked
+          // for, and a shot of it would look plausible in the folder. Name the
+          // file for what happened so a broken step cannot pass for an after.
+          failed = "-PREPARE-FAILED"
           console.error(`  ${screen.name}: ${String(error).split("\n")[0]}`)
         }
       }
       // Long enough for the page rise and the row stagger to have settled.
       await page.waitForTimeout(500)
       await page.screenshot({
-        path: join(outDir, `${screen.name}-${mode}-${viewport.name}.png`),
+        path: join(outDir, `${screen.name}${failed}-${mode}-${viewport.name}.png`),
         fullPage: screen.fullPage !== false,
       })
       shot += 1

@@ -57,6 +57,7 @@ import {
   TableHeader,
   TableImageCell,
   TableRow,
+  TableRowSettle,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -583,7 +584,7 @@ export function DataSection() {
     <KitSection
       id="data"
       title="Data"
-      note="Hairline rows, tracked column headings, no zebra, no outer border. Numbers sit right in tabular figures and the first column is a 40px product image."
+      note="Hairline rows, tracked column headings, no zebra, no outer border. Numbers sit right in tabular figures and the first column is a 40px product image. This body carries `settle`, so the rows come in 6px low and 20ms apart."
     >
       <Table>
         <TableHeader>
@@ -596,9 +597,9 @@ export function DataSection() {
             <TableHead numeric>Price</TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
+        <TableBody settle>
           {ROWS.map((row, index) => (
-            <TableRow key={row.sku}>
+            <TableRowSettle key={row.sku}>
               <TableImageCell>
                 <ProductImage
                   height={40}
@@ -620,7 +621,7 @@ export function DataSection() {
               </TableCell>
               <TableCell numeric>{row.qty}</TableCell>
               <TableCell numeric>&pound;{row.price.toFixed(2)}</TableCell>
-            </TableRow>
+            </TableRowSettle>
           ))}
         </TableBody>
       </Table>

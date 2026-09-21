@@ -4,8 +4,10 @@ The staff and customer web app for GG Entertainment, Bolsover. This file records
 the system as built in `apps/web`, not as planned: every token, component and
 rule below exists in code and is shown on the kit page.
 
-- Kit page: run `pnpm --filter web dev` and open `/`. Each rebuilt reference
-  screen also renders on its own at `/?screen=atlas` and `/?screen=nova`.
+- Kit page: run `pnpm --filter web dev` and open `/kit`; `/` is the app's
+  front door and sends you to the counter or to sign-in. Both rebuilt
+  reference screens are sections on that page, next to the PNGs they were
+  built from.
 - Visual targets: `docs/design-references/atlas-scan-item.png`,
   `docs/design-references/nova-add-item.png`,
   `docs/design-references/atlas-details.png`. Every critique pass compares
@@ -65,10 +67,14 @@ Two deliberate departures from the brief, both recorded here so nobody
 
 ### Where volt is allowed
 
-Five places, and nowhere else: the G mark, the focused field's underline and
-the active nav underline, points and tier badges, the done seal, and the focus
-ring. Volt is never a background for text unless the text is ink. White on
-yellow never appears.
+Six places, and nowhere else: the G mark, the focused field's underline and
+the active nav underline, points and tier badges, the done seal, the focus
+ring, and the bar a scan flashes along the row it landed on (`useScanPulse`,
+section 6). The sixth is on the list because it does the focus ring's job, in
+the one place the app has to say "this, here, now" to somebody who is looking
+at a customer rather than the screen; the plan asks for it in those words
+("a successful scan pulses the target row's underline in volt"). Volt is never
+a background for text unless the text is ink. White on yellow never appears.
 
 ### Radius, shadow, grain, easing
 
@@ -177,7 +183,7 @@ already exempts this folder from `react-refresh/only-export-components`.
 | `MicroLabel`, `SectionHeading`, `Hint` | The three micro-text tones: label (`#3d3d3a`), section heading (ink, 32px above), helper (`#73736d`). |
 | `PageTitle`, `Lede` | The one Anton line and its single grey sentence, 56ch maximum. |
 | `Field`, `FieldRow`, `FieldError` | The only form layout. Owns label, hint, optional icon column, control and error. `FieldError` takes a react-hook-form message and renders one line under the control. |
-| `Table` and parts | Hairline rows at ink 12%, Space Mono column headings, no zebra, no outer border, hover to `#f3f3ef`. `numeric` on a head or cell right-aligns it with `tnum`. `TableImageCell` is the 40px product image in the first column. `TableBody settle` with `TableRowSettle` rows adds the list entrance, for a body whose rows arrive together. |
+| `Table` and parts | Hairline rows at ink 12%, Space Mono column headings, no zebra, no outer border, hover to `#f3f3ef`. `numeric` on a head or cell right-aligns it with `tnum`. `TableImageCell` is the 40px product image in the first column. `TableBody settle` with `TableRowSettle` rows adds the list entrance, for a body whose rows arrive together under a static query key. |
 | `Sheet`, `Dialog` | Paper panel, 1px hairline edge, one soft shadow, 4px radius. Sheets dock to the bottom on phones whatever `side` says. A dialog is only for a task that needs protected focus; everything else is a sheet. |
 | `Badge` | `volt` for points and tier (ink on yellow), `outline` for everything else, `count` (paper on ink) only for the unread count on My Vault's bell. A count is not an achievement, so it is never volt. |
 | `Kbd`, `KbdGroup` | Keyboard shortcuts, drawn rather than described. |
@@ -257,22 +263,40 @@ Rules:
 - `underlineGrow`: scaleX 0 to 1 from the left. Inputs do this in CSS already.
 - `panelRise`: sheets and dialogs, y 12px.
 - `sealIn`: scale .94 to 1, no overshoot.
-- `useCountUp(value, { decimals })`: a KPI figure counts up once, over 600ms.
-  Home's four tiles use it: the figure counts from nothing to the day's total
-  when the numbers land, and says "Not counted yet" until they do rather than
-  counting up to a zero that would read as a quiet day.
+- `useCountUp(value, { decimals })`: a KPI figure counts up over 600ms
+  whenever the figure arrives or changes, from what is on screen rather than
+  from the last target. Home's four tiles use it: the figure counts from
+  nothing to the day's total when the numbers land, and says "Not counted
+  yet" until they do rather than counting up to a zero that would read as a
+  quiet day. Under reduced motion it returns the figure itself, worked out
+  during the render, so no tile ever paints a frame of £0.00.
 - `useScanPulse()`: the line a scan has just put in the basket flashes a
-  1.5px volt bar along its underline. The bar grows from the left with
-  `underlineGrow` and is taken away the same way, 150ms each; the second it
-  holds in between is state, not motion, so nothing breaks the 200ms budget.
+  1.5px volt bar along its underline, the sixth use of volt in section 1. The
+  bar grows from the left with `underlineGrow` and, inside an
+  `AnimatePresence`, leaves the same way, 150ms each; the second it holds in
+  between is state, not motion, so nothing breaks the 200ms budget. It is
+  keyed on the scan and not on the row, so the same sealed line scanned three
+  times flashes three times.
 - `PageMain` (in `app/page-transition.tsx`) is `<main>` with the page
   entrance on it, keyed by the matched route's id, so a screen fades and
   rises once on arrival and not again when its own state changes. Both shells
-  use it; no element is added between the content column and the screen.
+  use it; no element is added between the content column and the screen. Two
+  deliberate consequences are written on the component: a param-only move
+  gets no entrance, and nothing inside a screen may be `position: fixed` and
+  expect the viewport.
+- `scanTick()` (in `app/scan-bus.ts`) vibrates the device for 30ms as a scan
+  comes in, on `dispatchScan`, so every screen that takes a scan ticks: Sell,
+  Scan, the stock count and the buy-in wizard's customer step. A desktop
+  browser and a device with no motor have nothing to call, and a browser that
+  refuses it outside a gesture cannot throw.
 - `TableBody settle` plus `TableRowSettle` give a list the row settle: 6px up,
-  20ms apart. Put them on a body whose rows arrive together (Customers,
-  Trade); leave them off one that grows a page at a time, or the rows already
-  on screen settle again under the new ones.
+  20ms apart. The pairing is required: a settle row outside a settle body
+  inherits its labels from `PageMain` and animates with the page instead.
+  Put them on a body whose rows arrive together under a **static query key**
+  (Trade, the kit's own table). Leave them off a list that grows a page at a
+  time, and off one whose key carries a search box: the Customers table's key
+  changes on every keystroke, so a settle there would replay the whole
+  entrance under the caret, once per letter.
 - `useMotionVariants(variants)` returns a still set when the reader has asked
   for less motion, so call sites never branch. `theme.css` also zeroes every
   animation and transition under `prefers-reduced-motion`.
@@ -290,10 +314,15 @@ Rules:
   Violet 151. Check the number or add it manually."
 - Every percentage on screen is written one way, through
   `formatPercent` in `apps/web/src/lib/format.ts`: the figure, no space, then
-  the sign. A whole number carries no decimal (`10%`) and anything finer
-  carries exactly one place (`32.6%`), so a column of them lines up. Give the
-  string the `tnum` class wherever it is a figure rather than a word in a
-  sentence. Never `10 %`, never `10 per cent`, never a raw `0.1`.
+  the sign. A whole number carries no decimal (`10%`), because a dead
+  trailing zero is a digit that means nothing, and anything finer carries
+  exactly one place (`32.6%`). Give the string the `tnum` class wherever it is
+  a figure rather than a word in a sentence, so the digits keep one width.
+  Rounding goes through `roundHalfUp` from `@gg/shared`, never `Math.round`,
+  which takes a negative half the other way. A figure that is missing or not a
+  number returns an empty string, and the caller says what is there instead:
+  nobody reads a confident "0%" off a field somebody is halfway through
+  retyping. Never `10 %`, never `10 per cent`, never a raw `0.1`.
 - UK English and GBP throughout. No em-dashes in prose; use a comma or a
   hyphen.
 - Every string is reviewed against these rules on the pull request.

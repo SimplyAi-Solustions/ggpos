@@ -45,8 +45,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  bandLabel,
-  poundsToPence,
+  rulePayoutLine,
+  ruleBandLabel,
   ROUNDING_STEPS,
   RULE_CARD_CONDITIONS,
   RULE_KINDS,
@@ -55,7 +55,6 @@ import {
   type RuleForm,
 } from "@/features/settings/mapping"
 import type { GameRecord } from "@/lib/api/types"
-import { formatPercent } from "@/lib/format"
 
 export interface RulesMatrixProps {
   rules: RuleForm[]
@@ -92,12 +91,6 @@ function appliesTo(rule: RuleForm, games: GameRecord[]): string {
     rule.rarity,
   ].filter((part): part is string => Boolean(part))
   return parts.join(", ")
-}
-
-function ruleBandLabel(rule: RuleForm): string {
-  const min = poundsToPence(rule.bandMin) ?? 0
-  const max = poundsToPence(rule.bandMax)
-  return bandLabel(min, max)
 }
 
 /**
@@ -614,8 +607,7 @@ export function RulesMatrix({
                 {appliesTo(rule, games)}
               </span>
               <span className="tnum text-[13px] text-muted-foreground-2">
-                {ruleBandLabel(rule)} &middot; {formatPercent(Number(rule.cashPct))}{" "}
-                cash &middot; {formatPercent(Number(rule.creditPct))} credit
+                {rulePayoutLine(rule)}
                 {rule.active ? "" : " · Off"}
               </span>
             </span>

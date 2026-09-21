@@ -22,6 +22,7 @@ import {
 } from "@gg/shared"
 
 import type { PricingRuleRow, PricingRuleWrite, SettingsRecord } from "@/lib/api/types"
+import { formatPercent } from "@/lib/format"
 
 // ---------------------------------------------------------------------------
 // Money and percentages
@@ -135,6 +136,29 @@ export function wildcardLabel(value: string | null | undefined): string {
 export function bandLabel(minPence: number, maxPence: number | null): string {
   if (maxPence === null || maxPence === 0) return `${formatGBP(minPence)} and up`
   return `${formatGBP(minPence)} to ${formatGBP(maxPence)}`
+}
+
+/** A rule's band, in the words the row shows: "£0.00 to £30.00". */
+export function ruleBandLabel(rule: RuleForm): string {
+  const min = poundsToPence(rule.bandMin) ?? 0
+  const max = poundsToPence(rule.bandMax)
+  return bandLabel(min, max)
+}
+
+/**
+ * The band and its two payout shares, for the row a phone shows instead of
+ * the table. `cashPct` and `creditPct` are live form fields, so a rule being
+ * retyped can hold "" or "5o": `parsePercent` gives null for those and the
+ * share is left out rather than coerced into a confident "0% cash", which
+ * would tell an admin the shop pays nothing for that band.
+ */
+export function rulePayoutLine(rule: RuleForm): string {
+  const cash = formatPercent(parsePercent(rule.cashPct))
+  const credit = formatPercent(parsePercent(rule.creditPct))
+  const shares = [cash ? `${cash} cash` : "", credit ? `${credit} credit` : ""].filter(
+    Boolean
+  )
+  return [ruleBandLabel(rule), ...shares].join(" · ")
 }
 
 function step(value: number | undefined): RoundingStep {

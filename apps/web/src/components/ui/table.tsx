@@ -72,7 +72,14 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   return <tr data-slot="table-row" className={cn(ROW_CLASS, className)} {...props} />
 }
 
-/** A row inside a `TableBody settle`: it takes its turn from the body. */
+/**
+ * A row inside a `TableBody settle`: it takes its turn from the body, which is
+ * why it sets `variants` but no `initial` or `animate`. The pairing is
+ * required. On its own it inherits those labels from whatever motion ancestor
+ * it finds, which is now `PageMain`, whose labels happen to be the same two
+ * strings, so the rows would quietly animate on the page entrance instead of
+ * as a list.
+ */
 function TableRowSettle({
   className,
   ...props

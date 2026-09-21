@@ -85,18 +85,28 @@ export function useMotionVariants(variants: Variants): Variants {
   return reduced ? STILL : variants
 }
 
+/** Which row is flashing, and the scan that started it. */
+export interface ScanPulse {
+  id: string
+  /**
+   * A counter, raised on every call. The same item scanned twice is the same
+   * id, so the id alone cannot tell React anything changed; keying the bar on
+   * the nonce is what makes the second scan of a sealed line flash again.
+   */
+  nonce: number
+}
+
 /**
- * A scanned row's underline flashes volt and is then taken away. The bar
- * grows from the left with `underlineGrow` and leaves the same way, 150ms
- * each; the hold between them is state rather than motion, so nothing here
- * runs longer than the 200ms budget. Returns the row that is pulsing and the
- * call that starts it.
+ * A scanned row's underline flashes volt: the bar grows from the left with
+ * `underlineGrow` and, inside an `AnimatePresence`, leaves the same way, 150ms
+ * each. The second it holds in between is state rather than motion, so
+ * nothing here runs longer than the 200ms budget. Returns the row that is
+ * flashing and the call that starts it.
  */
-export function useScanPulse(
-  hold = 1000
-): [string | null, (id: string) => void] {
-  const [pulsing, setPulsing] = React.useState<string | null>(null)
+export function useScanPulse(hold = 1000): [ScanPulse | null, (id: string) => void] {
+  const [pulsing, setPulsing] = React.useState<ScanPulse | null>(null)
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const nonce = React.useRef(0)
 
   React.useEffect(
     () => () => {
@@ -108,7 +118,8 @@ export function useScanPulse(
   const pulse = React.useCallback(
     (id: string) => {
       if (timer.current) clearTimeout(timer.current)
-      setPulsing(id)
+      nonce.current += 1
+      setPulsing({ id, nonce: nonce.current })
       timer.current = setTimeout(() => setPulsing(null), hold)
     },
     [hold]
@@ -130,20 +141,31 @@ export type CountUpOptions = {
 }
 
 /**
- * Counts a KPI figure up once when it changes. Reduced motion jumps straight
- * to the value. Returns a formatted string so `tnum` keeps the width steady.
+ * Counts a KPI figure up when it arrives or changes, over 600ms. Returns a
+ * formatted string so `tnum` keeps the width steady.
+ *
+ * Reduced motion returns the figure itself, worked out during the render
+ * rather than corrected afterwards in an effect: a tile whose value arrives
+ * with the first render would otherwise paint one frame of the seeded zero,
+ * and a reader who has asked for no motion has no count-up to make that zero
+ * read as a starting point. They would see the day's takings as nothing.
+ *
+ * The count starts from the figure on screen, not from the last target, so a
+ * value that changes mid-count carries on from where the eye is.
  */
 export function useCountUp(value: number, options: CountUpOptions = {}): string {
   const { duration = 0.6, decimals = 0 } = options
   const reduced = useReducedMotion()
   const [display, setDisplay] = React.useState(value)
-  const previous = React.useRef(value)
+  // What is on screen right now, so an interrupted count carries on from
+  // where the eye is rather than snapping back to the last target.
+  const shown = React.useRef(value)
 
   React.useEffect(() => {
-    const from = previous.current
-    previous.current = value
+    const from = shown.current
 
     if (reduced || from === value) {
+      shown.current = value
       setDisplay(value)
       return
     }
@@ -151,11 +173,14 @@ export function useCountUp(value: number, options: CountUpOptions = {}): string 
     const controls = animate(from, value, {
       duration,
       ease: EASE_GG,
-      onUpdate: (latest) => setDisplay(latest),
+      onUpdate: (latest) => {
+        shown.current = latest
+        setDisplay(latest)
+      },
     })
 
     return () => controls.stop()
   }, [value, duration, reduced])
 
-  return display.toFixed(decimals)
+  return (reduced ? value : display).toFixed(decimals)
 }

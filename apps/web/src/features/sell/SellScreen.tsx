@@ -11,7 +11,7 @@ import { createPortal } from "react-dom"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { displayCode, formatGBP, parseDecimalToMinor } from "@gg/shared"
-import { motion } from "motion/react"
+import { AnimatePresence, motion } from "motion/react"
 
 import { underlineGrow, useMotionVariants, useScanPulse } from "@/design/motion"
 import { formatPercent } from "@/lib/format"
@@ -26,7 +26,7 @@ import { StickerRing } from "@/components/ui/sticker"
 import { ProductImage } from "@/components/product-image"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerScanField } from "@/app/focus-registry"
-import { scanTick, setScanHandler } from "@/app/scan-bus"
+import { setScanHandler } from "@/app/scan-bus"
 import { useCounterConfig } from "@/lib/api/config"
 import { routeScannedCode } from "@/lib/scanning/route-code"
 import { refusalOrFallback } from "@/lib/api/refusal"
@@ -371,7 +371,6 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           dispatchBasket({ type: "add", line: lineFromItem(item) })
           setScanNote(`${item.title ?? "Item"} added`)
           pulse(item.id)
-          scanTick()
           return
         }
 
@@ -383,7 +382,6 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           }
           dispatchBasket({ type: "attachCustomer", customer })
           setScanNote(`${customer.name} attached`)
-          scanTick()
           return
         }
 
@@ -426,7 +424,6 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
             dispatchBasket({ type: "add", line: lineFromItem(item) })
             setScanNote(`${item.title ?? "Item"} added`)
             pulse(item.id)
-            scanTick()
           }
           return
         }
@@ -852,16 +849,22 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
                 key={line.itemId}
                 className="relative flex items-center gap-4 border-b border-hairline-soft py-3 first:border-t"
               >
-                {pulsing === line.itemId ? (
-                  <motion.span
-                    aria-hidden="true"
-                    variants={pulseLine}
-                    initial="hidden"
-                    animate="visible"
-                    exit="hidden"
-                    className="absolute inset-x-0 -bottom-px h-0.5 origin-left bg-volt"
-                  />
-                ) : null}
+                {/* The bar a scan flashes along the row it landed on. Keyed
+                    on the scan rather than the row, so scanning the same
+                    sealed line three times flashes three times. */}
+                <AnimatePresence>
+                  {pulsing?.id === line.itemId ? (
+                    <motion.span
+                      key={pulsing.nonce}
+                      aria-hidden="true"
+                      variants={pulseLine}
+                      initial="hidden"
+                      animate="visible"
+                      exit="hidden"
+                      className="absolute inset-x-0 -bottom-px h-[1.5px] origin-left bg-volt"
+                    />
+                  ) : null}
+                </AnimatePresence>
                 <ProductImage
                   src={line.image}
                   alt=""
