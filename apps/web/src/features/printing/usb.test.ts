@@ -4,9 +4,12 @@ import {
   chooseUsbPrinter,
   describePrinterError,
   findUsbPrinter,
+  isRememberedPrinter,
   openPrinter,
   PRINTER_MESSAGES,
   PrinterError,
+  releasePrinter,
+  rememberPrinter,
   sendToPrinter,
   usbPrintingSupported,
   type UsbDeviceLike,
@@ -18,6 +21,9 @@ function fakePrinter(overrides: Partial<UsbDeviceLike> = {}) {
   const written: number[][] = []
   const device: UsbDeviceLike = {
     productName: "ORGSTA T003",
+    vendorId: 0x0483,
+    productId: 0x5743,
+    serialNumber: "T003-0001",
     opened: false,
     configuration: null,
     configurations: [
@@ -158,14 +164,19 @@ describe("opening the printer", () => {
     await expect(openPrinter(device)).rejects.toMatchObject({ fault: "not_bound" })
   })
 
-  it("says the same when another program is holding the interface", async () => {
+  it("says which it is when another tab is holding the interface", async () => {
     const { device } = fakePrinter()
     device.claimInterface = async () => {
       const error = new Error("Unable to claim interface.")
       error.name = "NetworkError"
       throw error
     }
-    await expect(openPrinter(device)).rejects.toThrow(PRINTER_MESSAGES.not_bound)
+    // Not the Zadig sentence: WinUSB is plainly bound, or the device would
+    // not have opened at all.
+    await expect(openPrinter(device)).rejects.toThrow(PRINTER_MESSAGES.busy_elsewhere)
+    await expect(openPrinter(device)).rejects.toMatchObject({
+      fault: "busy_elsewhere",
+    })
   })
 })
 
@@ -192,14 +203,50 @@ describe("the picker", () => {
     await expect(chooseUsbPrinter()).rejects.toThrow(PRINTER_MESSAGES.cancelled)
   })
 
-  it("finds a printer the browser already remembers, with nothing to press", async () => {
+  it("finds the printer that was chosen, with nothing to press", async () => {
     const { device } = fakePrinter()
     withUsb({ getDevices: async () => [device] })
-    const printer = await findUsbPrinter()
+    const printer = await findUsbPrinter({
+      vendorId: 0x0483,
+      productId: 0x5743,
+      serialNumber: "T003-0001",
+      name: "ORGSTA T003",
+    })
     expect(printer?.name).toBe("ORGSTA T003")
   })
 
-  it("passes over a remembered device that is not a printer", async () => {
+  it("opens nothing at all where no printer was ever chosen", async () => {
+    const { device } = fakePrinter()
+    const getDevices = vi.fn(async () => [device])
+    withUsb({ getDevices })
+    expect(await findUsbPrinter(null)).toBeNull()
+    expect(device.opened).toBe(false)
+  })
+
+  it("passes over a remembered device that is not the printer", async () => {
+    const { device: scale } = fakePrinter()
+    scale.productName = "Kitchen scale"
+    scale.vendorId = 0x1111
+    scale.productId = 0x2222
+    scale.serialNumber = ""
+    const opened = vi.fn(async () => {
+      scale.opened = true
+    })
+    scale.open = opened
+    withUsb({ getDevices: async () => [scale] })
+
+    const printer = await findUsbPrinter({
+      vendorId: 0x0483,
+      productId: 0x5743,
+      serialNumber: "T003-0001",
+      name: "ORGSTA T003",
+    })
+    expect(printer).toBeNull()
+    // And nothing was opened, let alone claimed.
+    expect(opened).not.toHaveBeenCalled()
+  })
+
+  it("closes a device it opened and then found was not a printer", async () => {
     const { device: scanner } = fakePrinter()
     scanner.configurations = [
       {
@@ -216,12 +263,15 @@ describe("the picker", () => {
         ],
       },
     ]
-    withUsb({ getDevices: async () => [scanner] })
-    expect(await findUsbPrinter()).toBeNull()
+    const closed = vi.fn(async () => {})
+    scanner.close = closed
+
+    await expect(openPrinter(scanner)).rejects.toThrow(PRINTER_MESSAGES.no_endpoint)
+    expect(closed).toHaveBeenCalled()
   })
 
   it("is null, not an error, where there is no WebUSB at all", async () => {
-    expect(await findUsbPrinter()).toBeNull()
+    expect(await findUsbPrinter(null)).toBeNull()
   })
 })
 
@@ -253,6 +303,80 @@ describe("sending a label", () => {
     await expect(sendToPrinter(printer, new Uint8Array([1]))).rejects.toThrow(
       PRINTER_MESSAGES.failed
     )
+  })
+})
+
+describe("remembering the printer", () => {
+  it("records what it takes to know the same device again", async () => {
+    const { device } = fakePrinter()
+    const printer = await openPrinter(device)
+    expect(rememberPrinter(printer)).toEqual({
+      vendorId: 0x0483,
+      productId: 0x5743,
+      serialNumber: "T003-0001",
+      name: "ORGSTA T003",
+    })
+  })
+
+  it("matches on the serial number where there is one", () => {
+    const { device } = fakePrinter()
+    const remembered = {
+      vendorId: 0x0483,
+      productId: 0x5743,
+      serialNumber: "T003-0001",
+      name: "ORGSTA T003",
+    }
+    expect(isRememberedPrinter(device, remembered)).toBe(true)
+    expect(
+      isRememberedPrinter({ ...device, serialNumber: "T003-0002" }, remembered)
+    ).toBe(false)
+    expect(isRememberedPrinter(device, null)).toBe(false)
+  })
+
+  it("falls back to the product name where the device has no serial", () => {
+    const { device } = fakePrinter()
+    device.serialNumber = ""
+    const remembered = {
+      vendorId: 0x0483,
+      productId: 0x5743,
+      serialNumber: "",
+      name: "ORGSTA T003",
+    }
+    expect(isRememberedPrinter(device, remembered)).toBe(true)
+    expect(
+      isRememberedPrinter({ ...device, productName: "Something else" }, remembered)
+    ).toBe(false)
+  })
+})
+
+describe("handing the printer back", () => {
+  it("releases the interface and closes the device", async () => {
+    const { device } = fakePrinter()
+    const released = vi.fn(async () => {})
+    const closed = vi.fn(async () => {})
+    const forgotten = vi.fn(async () => {})
+    device.releaseInterface = released
+    device.close = closed
+    device.forget = forgotten
+
+    const printer = await openPrinter(device)
+    await releasePrinter(printer)
+    expect(released).toHaveBeenCalledWith(1)
+    expect(closed).toHaveBeenCalled()
+    // Leaving the screen hands the device back; it does not forget the grant.
+    expect(forgotten).not.toHaveBeenCalled()
+
+    await releasePrinter(printer, { forget: true })
+    expect(forgotten).toHaveBeenCalled()
+  })
+
+  it("says nothing about a printer that has already gone", async () => {
+    const { device } = fakePrinter()
+    const printer = await openPrinter(device)
+    device.releaseInterface = async () => {
+      throw new Error("The device was disconnected.")
+    }
+    await expect(releasePrinter(printer)).resolves.toBeUndefined()
   })
 })
 

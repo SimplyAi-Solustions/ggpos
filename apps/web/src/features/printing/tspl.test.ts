@@ -6,6 +6,8 @@ import {
   encodeTspl,
   escapeTspl,
   fitFont,
+  LabelTooSmallError,
+  MIN_QR_CELL,
   POUND_BYTE,
   qrCell,
   qrModules,
@@ -40,6 +42,8 @@ describe("the top loader label", () => {
     expect(tsplCommands(labelLayout(job))).toEqual([
       "SIZE 40 mm,20 mm",
       "GAP 2 mm,0 mm",
+      "DIRECTION 0,0",
+      "REFERENCE 0,0",
       "DENSITY 8",
       "CODEPAGE 850",
       "CLS",
@@ -57,7 +61,7 @@ describe("the top loader label", () => {
     const text = tsplLabel(labelLayout(job))
     expect(text.startsWith("SIZE 40 mm,20 mm\r\n")).toBe(true)
     expect(text.endsWith("PRINT 1,1\r\n")).toBe(true)
-    expect(text.split("\r\n").filter(Boolean)).toHaveLength(12)
+    expect(text.split("\r\n").filter(Boolean)).toHaveLength(14)
   })
 
   it("prints the copies the job asks for", () => {
@@ -91,6 +95,8 @@ describe("the sleeve label", () => {
     expect(tsplCommands(sleeve)).toEqual([
       "SIZE 25 mm,15 mm",
       "GAP 2 mm,0 mm",
+      "DIRECTION 0,0",
+      "REFERENCE 0,0",
       "DENSITY 8",
       "CODEPAGE 850",
       "CLS",
@@ -113,6 +119,8 @@ describe("the customer card", () => {
     expect(tsplCommands(card, { copies: 2 })).toEqual([
       "SIZE 80 mm,50 mm",
       "GAP 2 mm,0 mm",
+      "DIRECTION 0,0",
+      "REFERENCE 0,0",
       "DENSITY 8",
       "CODEPAGE 850",
       "CLS",
@@ -123,6 +131,46 @@ describe("the customer card", () => {
       'TEXT 612,376,"1",0,1,1,"GG"',
       "PRINT 1,2",
     ])
+  })
+})
+
+describe("the preamble", () => {
+  it("states the settings the printer keeps between jobs", () => {
+    // All of these survive a power cycle, so a label tool that ran before
+    // this one can otherwise leave the page rotated or its origin shifted.
+    const commands = tsplCommands(labelLayout(job))
+    expect(commands.slice(0, 7)).toEqual([
+      "SIZE 40 mm,20 mm",
+      "GAP 2 mm,0 mm",
+      "DIRECTION 0,0",
+      "REFERENCE 0,0",
+      "DENSITY 8",
+      "CODEPAGE 850",
+      "CLS",
+    ])
+  })
+})
+
+describe("a symbol nobody could scan", () => {
+  it("is refused rather than printed as a blob", () => {
+    const long = labelLayout({
+      ...job,
+      template: "sleeve_25x15",
+      code: SLEEVE.encoded,
+      qrText: "https://vault.ggentertainment.co.uk/c/a-token-far-too-long-for-a-sleeve",
+    })
+    expect(() => tsplCommands(long)).toThrow(LabelTooSmallError)
+    expect(() => tsplCommands(long)).toThrow(/too long for a 25 x 15 mm label/)
+  })
+
+  it("prints the sleeve's own code, which sits at the floor", () => {
+    const sleeve = labelLayout({
+      ...job,
+      template: "sleeve_25x15",
+      code: SLEEVE.encoded,
+    })
+    expect(qrCell(sleeve.qrText, sleeve.spec.qrPx)).toBe(MIN_QR_CELL)
+    expect(() => tsplCommands(sleeve)).not.toThrow()
   })
 })
 
