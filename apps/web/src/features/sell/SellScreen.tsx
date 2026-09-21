@@ -59,6 +59,7 @@ import {
   checkoutFromRefusal,
   createCheckout,
   getCheckout,
+  isReaderBusy,
   listReaders,
   subscribeCheckout,
 } from "@/lib/api/checkouts"
@@ -70,8 +71,10 @@ import {
   useBasket,
 } from "@/features/sell/basket-store"
 import {
+  checkoutForBasket,
   heldPayment,
-  paidCheckoutId,
+  isStrandedPayment,
+  paymentReference,
   pendingCheckoutId,
 } from "@/features/sell/checkout"
 import {
@@ -549,7 +552,11 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
         description: `${basket.lines.length} ${basket.lines.length === 1 ? "item" : "items"}`,
         readerId: readers?.default_reader_id || undefined,
       }),
-    onSuccess: (checkout) => dispatchCardPayment({ type: "opened", checkout }),
+    // `reused` means this is the amount already on the reader for this
+    // basket, or a payment already made for it: either way the status is
+    // what decides what happens next, never an assumption that it is new.
+    onSuccess: (result) =>
+      dispatchCardPayment({ type: "opened", checkout: result.checkout }),
     onError: (error) =>
       dispatchCardPayment({
         type: "refused",
@@ -557,6 +564,9 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
           error,
           "The card reader could not be reached. Try again, or take the payment in the SumUp app."
         ),
+        // A reader busy with somebody else's payment cannot be got past by
+        // pressing the button again, so the sheet does not offer to.
+        retry: !isReaderBusy(error),
       }),
   })
 
@@ -587,9 +597,17 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
     },
   })
 
+  /**
+   * Nothing the screen already knows is wrong is worth taking money for.
+   * The server is still the judge of what it alone can see, and the `taken`
+   * state handles that, but a drawer that is not open is on the screen in
+   * red before anybody presses the button.
+   */
+  const cardBlocked = payment.problems[0] ?? null
+
   function takeCardPayment() {
     const amount = payment.sumupAmount
-    if (amount <= 0) return
+    if (amount <= 0 || cardBlocked) return
     // Nothing is sent twice: a checkout already on the reader, or a payment
     // already taken, is what the sheet is showing.
     if (card.phase !== "idle" && card.phase !== "stopped") return
@@ -722,7 +740,7 @@ export function SellScreen({ voucher: incomingVoucher }: SellScreenProps = {}) {
       trailingArrow
       loading={sell.isPending}
       disabled={!payment.ok}
-      onClick={() => sell.mutate(paidCheckoutId(card) ?? undefined)}
+      onClick={() => sell.mutate(checkoutForBasket(card, saleClientId()) ?? undefined)}
     >
       Mark sold
     </Button>

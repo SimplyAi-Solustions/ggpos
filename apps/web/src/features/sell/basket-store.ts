@@ -15,6 +15,7 @@ import {
   type BasketLine,
   type BasketState,
 } from "@/features/sell/basket"
+import { clearCardPayment } from "@/features/sell/checkout-store"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
 import { newClientId } from "@/lib/offline/queue"
 import type { ItemDetail, ItemSummary } from "@/lib/api/types"
@@ -57,8 +58,13 @@ export function dispatchBasket(action: BasketAction) {
   const next = basketReducer(state, action)
   // Clearing ends the sale, so the next basket is a new sale with an id of
   // its own: keeping the old one would make the server treat it as a replay
-  // of the sale just rung up.
-  if (action.type === "clear") clientId = null
+  // of the sale just rung up. The card state goes with it, except for a
+  // payment the reader has actually taken, which stays on the screen until
+  // it is carried by a sale or refunded in the SumUp app.
+  if (action.type === "clear") {
+    clientId = null
+    clearCardPayment()
+  }
   if (next === state) return
   state = next
   emit()
