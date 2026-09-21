@@ -423,6 +423,30 @@ and the app installed as a PWA.
    window. `--kiosk-printing` makes every print from this Chrome window
    go straight to the default printer with no confirmation dialog, so set
    the T003 as the default printer in Windows too.
+
+   **Printing path 2, the app's own USB printing (optional, one PC at a
+   time).** The Labels screen can also talk to the T003 directly over USB
+   from Chrome, which is what lets a phone queue a label that the counter
+   PC then prints without anyone touching it. The label printer then talks
+   to GG Vault through the browser, not through a Windows printer driver.
+   The first time you use a PC this way, plug the ORGSTA in, open Labels,
+   press Connect printer and pick "ORGSTA T003" from the list Chrome
+   shows. If the list is empty, Windows has claimed the printer for its
+   own driver: install Zadig (zadig.akeo.ie), run it as an administrator,
+   tick Options then List All Devices, pick the ORGSTA interface (check
+   the USB id is the printer and not another device), choose WinUSB and
+   press Replace Driver, then unplug the printer, plug it back in and
+   press Connect printer again. GG Vault remembers that printer on that
+   PC, so this happens once. Choose the roll that is loaded, switch
+   Auto-print on, and the switch is remembered across restarts. If the
+   printer is busy in another tab or another program you are told so and
+   nothing is sent; to hand the printer to a different PC, press Forget
+   printer first. Binding WinUSB replaces the Windows driver for that
+   device, so path 1 (the browser print dialog) stops working on that PC
+   until the driver is put back through Device Manager: decide which
+   path the counter PC is on rather than switching between them. macOS,
+   Linux and ChromeOS need none of the Zadig step. `docs/label-spec.md`
+   has the same list under "Setting the counter PC up on Windows".
 3. **USB barcode scanner.** Any USB 2D scanner works (for example a
    Zebra DS2208, or a cheaper Eyoyo/NETUM 2D model) as long as it can be
    configured as a "keyboard wedge" (it types the scanned code followed
