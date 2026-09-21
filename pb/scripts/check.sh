@@ -7383,7 +7383,8 @@ P7_BACKDATE_PID=""
 # -----------------------------------------------------------------------
 # 26. The forced password change at first sign-in
 #     (staff.must_change_password, 1789820760_staff_must_change_password.js
-#     and pb_hooks/staff.pb.js).
+#     and pb_hooks/staff.pb.js: the update handler and the routerUse
+#     middleware that is the lock itself).
 #
 #     On its own throwaway server, because the one thing this section has
 #     to prove is what the *seed* does with GG_ADMIN_EMAIL and
@@ -7594,21 +7595,44 @@ FIRSTRUN_NEW_TOKEN="$(echo "$FIRSTRUN_REAUTH" | jval token)"
 [ "$(echo "$FIRSTRUN_REAUTH" | jval record.must_change_password)" = "false" ] \
   || fail "signing in with the new password still reports the account locked: $FIRSTRUN_REAUTH"
 
-FIRSTRUN_AUDIT="$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
-  --data-urlencode "filter=action='staff_password_changed'" "$FIRSTRUN_BASE/api/collections/audit_log/records")"
+# One change, one row. `staff` is not in audit.pb.js's update list, so
+# the handler's own row is the only one written.
+firstrun_audit() {
+  curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
+    --data-urlencode "filter=action='$1'" "$FIRSTRUN_BASE/api/collections/audit_log/records"
+}
+FIRSTRUN_AUDIT="$(firstrun_audit staff_password_changed)"
 [ "$(echo "$FIRSTRUN_AUDIT" | jval totalItems)" = "1" ] \
   || fail "expected exactly one staff_password_changed audit row: $FIRSTRUN_AUDIT"
+[ "$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" \
+  --data-urlencode "filter=collection='staff'" "$FIRSTRUN_BASE/api/collections/audit_log/records" | jval totalItems)" = "1" ] \
+  || fail "one own-password change wrote more than one staff audit row"
 [ "$(echo "$FIRSTRUN_AUDIT" | jval items.0.record)" = "$FIRSTRUN_ADMIN_ID" ] \
   || fail "the audit row does not name the staff member whose password changed: $FIRSTRUN_AUDIT"
 [ "$(echo "$FIRSTRUN_AUDIT" | jval items.0.actor)" = "$FIRSTRUN_ADMIN_ID" ] \
   || fail "the audit row does not name who made the change: $FIRSTRUN_AUDIT"
+[ "$(echo "$FIRSTRUN_AUDIT" | jval items.0.meta.by)" = "$FIRSTRUN_ADMIN_ID" ] \
+  || fail "the audit row's meta does not say who made the change: $FIRSTRUN_AUDIT"
+[ "$(echo "$FIRSTRUN_AUDIT" | jval items.0.meta.record)" = "$FIRSTRUN_ADMIN_ID" ] \
+  || fail "the audit row's meta does not name the staff record: $FIRSTRUN_AUDIT"
+echo "$FIRSTRUN_AUDIT" | grep -qF '"password"' \
+  || fail "the audit row does not name the password field as changed: $FIRSTRUN_AUDIT"
 echo "$FIRSTRUN_AUDIT" | grep -qF "$FIRSTRUN_NEW_PASSWORD" \
   && fail "the new password reached audit_log"
 echo "$FIRSTRUN_AUDIT" | grep -qF "$FIRSTRUN_TEMP_PASSWORD" \
   && fail "the temporary password reached audit_log"
-ok "an own-password change clears the flag, invalidates the old token and is audited without the password"
 
-# --- 26f. An admin can clear somebody else's flag ------------------------
+# And the account it belongs to is an ordinary one again: the new token
+# reaches what the locked one was refused.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $FIRSTRUN_NEW_TOKEN" \
+  "$FIRSTRUN_BASE/api/vault/health")" = "200" ] \
+  || fail "the token from the new password cannot reach /api/vault/health"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: $FIRSTRUN_NEW_TOKEN" \
+  "$FIRSTRUN_BASE/api/collections/customers/records")" = "200" ] \
+  || fail "the token from the new password cannot reach customers"
+ok "an own-password change clears the flag, invalidates the old token, lifts the lock and is audited without the password"
+
+# --- 26g. An admin can clear somebody else's flag, and it is audited -----
 FIRSTRUN_ADMIN_CLEAR="$(curl -s -o "$FIRSTRUN_DIR/admin-clear.json" -w '%{http_code}' \
   -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_PLAIN_ID" \
   -H "Authorization: $FIRSTRUN_NEW_TOKEN" -H "Content-Type: application/json" \
@@ -7616,9 +7640,46 @@ FIRSTRUN_ADMIN_CLEAR="$(curl -s -o "$FIRSTRUN_DIR/admin-clear.json" -w '%{http_c
 [ "$FIRSTRUN_ADMIN_CLEAR" = "200" ] || fail "an admin could not clear a staff member's flag ($FIRSTRUN_ADMIN_CLEAR): $(cat "$FIRSTRUN_DIR/admin-clear.json")"
 [ "$(firstrun_staff "$FIRSTRUN_PLAIN_ID" must_change_password)" = "false" ] \
   || fail "the admin's clear did not stick"
-[ "$(curl -s -G -H "Authorization: $FIRSTRUN_SUPER_TOKEN" --data-urlencode "filter=action='staff_password_changed'" "$FIRSTRUN_BASE/api/collections/audit_log/records" | jval totalItems)" = "1" ] \
+[ "$(firstrun_audit staff_password_changed | jval totalItems)" = "1" ] \
   || fail "clearing the flag without a password change wrote a staff_password_changed row"
-ok "an admin can clear another staff member's must_change_password"
+FIRSTRUN_LOCK_AUDIT="$(firstrun_audit staff_lock_changed)"
+[ "$(echo "$FIRSTRUN_LOCK_AUDIT" | jval totalItems)" = "1" ] \
+  || fail "clearing somebody's lock left no staff_lock_changed row: $FIRSTRUN_LOCK_AUDIT"
+[ "$(echo "$FIRSTRUN_LOCK_AUDIT" | jval items.0.record)" = "$FIRSTRUN_PLAIN_ID" ] \
+  || fail "the lock row does not name the staff member it was cleared on: $FIRSTRUN_LOCK_AUDIT"
+[ "$(echo "$FIRSTRUN_LOCK_AUDIT" | jval items.0.meta.by)" = "$FIRSTRUN_ADMIN_ID" ] \
+  || fail "the lock row does not name the admin who cleared it: $FIRSTRUN_LOCK_AUDIT"
+[ "$(echo "$FIRSTRUN_LOCK_AUDIT" | jval items.0.meta.fields.0)" = "must_change_password" ] \
+  || fail "the lock row does not name the field that changed: $FIRSTRUN_LOCK_AUDIT"
+echo "$FIRSTRUN_LOCK_AUDIT" | grep -qF '"password"' \
+  && fail "a lock change claimed the password changed with it: $FIRSTRUN_LOCK_AUDIT"
+ok "an admin can clear another staff member's must_change_password, and it leaves a staff_lock_changed row"
+
+# --- 26h. A password set from /_/ is audited as somebody else's ----------
+# The only way a plain staff member ever gets a password (staff's rules
+# are admin-only, and PocketBase refuses a password without oldPassword
+# unless the caller is a superuser). The 12-character rule is the hook's
+# rule for an OWN change and does not reach here: PocketBase's own floor
+# of 8 is what applies, which is why this one is 24 characters and the
+# short one below is refused by PocketBase rather than by the sentence.
+FIRSTRUN_SUPER_SET="$(curl -s -o "$FIRSTRUN_DIR/super-set.json" -w '%{http_code}' \
+  -X PATCH "$FIRSTRUN_BASE/api/collections/staff/records/$FIRSTRUN_PLAIN_ID" \
+  -H "Authorization: $FIRSTRUN_SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"password":"a-superuser-set-password","passwordConfirm":"a-superuser-set-password"}')"
+[ "$FIRSTRUN_SUPER_SET" = "200" ] \
+  || fail "a superuser could not set a staff member's password ($FIRSTRUN_SUPER_SET): $(cat "$FIRSTRUN_DIR/super-set.json")"
+FIRSTRUN_SET_AUDIT="$(firstrun_audit staff_password_set)"
+[ "$(echo "$FIRSTRUN_SET_AUDIT" | jval totalItems)" = "1" ] \
+  || fail "a password set from /_/ left no staff_password_set row: $FIRSTRUN_SET_AUDIT"
+[ "$(echo "$FIRSTRUN_SET_AUDIT" | jval items.0.record)" = "$FIRSTRUN_PLAIN_ID" ] \
+  || fail "the staff_password_set row does not name whose password was set: $FIRSTRUN_SET_AUDIT"
+[ "$(echo "$FIRSTRUN_SET_AUDIT" | jval items.0.meta.by)" = "superuser" ] \
+  || fail "the staff_password_set row does not say a superuser did it: $FIRSTRUN_SET_AUDIT"
+echo "$FIRSTRUN_SET_AUDIT" | grep -qF "a-superuser-set-password" \
+  && fail "a password set from /_/ reached audit_log"
+[ "$(firstrun_audit staff_password_changed | jval totalItems)" = "1" ] \
+  || fail "a password set for somebody else was logged as their own change"
+ok "a password set from /_/ is audited as staff_password_set, with no password in the row"
 
 kill "$FIRSTRUN_PID" 2>/dev/null || true
 wait "$FIRSTRUN_PID" 2>/dev/null || true

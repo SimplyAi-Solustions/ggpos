@@ -51,6 +51,10 @@ test.describe("the first-sign-in password change", () => {
       page.getByText("This is your first sign-in. Choose a password only you know.")
     ).toBeVisible()
 
+    // The rule is on screen before anything is typed, not only after a
+    // refusal. The micro-label treatment uppercases it in CSS.
+    await expect(page.getByText("At least 12 characters")).toBeVisible()
+
     // No nav on either width: the desktop text links and the phone thumb
     // bar both carry these, and neither is drawn while the account is
     // locked. Nor is the account menu, which is where Sign out lives.
@@ -68,6 +72,32 @@ test.describe("the first-sign-in password change", () => {
       await expect(page).toHaveURL(/\/counter\/password$/)
       await expect(page.getByRole("heading", { name: "Set a new password" })).toBeVisible()
     }
+  })
+
+  test("sends the display and the label printer back to it as well", async ({ page }) => {
+    await signInLocked(page)
+
+    // Not under /counter, so these two used to fall outside the guard.
+    // The display is the customer-facing tablet, which during a sale
+    // carries basket lines and the customer's name.
+    for (const path of ["/display", "/labels/print?jobs=&print=0"]) {
+      await page.goto(path)
+      await expect(page).toHaveURL(/\/counter\/password$/)
+      await expect(page.getByRole("heading", { name: "Set a new password" })).toBeVisible()
+    }
+  })
+
+  test("does not follow a deep link the account may not have", async ({ page }) => {
+    // `/login?redirect=/display` is what the guard itself writes when it
+    // bounces an unsigned visit, so signing in has to re-ask the question
+    // rather than trusting where it was going.
+    await page.goto("/login?demo=1&redirect=%2Fdisplay")
+    await page.getByLabel("Email").fill(LOCKED_EMAIL)
+    await page.getByLabel("Password", { exact: true }).fill(LOCKED_PASSWORD)
+    await page.getByRole("button", { name: "Sign in" }).click()
+
+    await expect(page).toHaveURL(/\/counter\/password$/)
+    await expect(page.getByRole("heading", { name: "Set a new password" })).toBeVisible()
   })
 
   test("leaves the palette and the keyboard shortcuts inert", async ({ page }) => {
@@ -90,6 +120,14 @@ test.describe("the first-sign-in password change", () => {
     await fillChange(page, LOCKED_PASSWORD, "short-one", "short-one")
     await expect(page.getByText(REFUSAL)).toBeVisible()
     await expect(page).toHaveURL(/\/counter\/password$/)
+    // The cursor goes to the field the refusal is about, and the message
+    // is tied to it rather than sitting under it by position alone.
+    await expect(page.getByLabel("New password", { exact: true })).toBeFocused()
+    const describedBy = await page
+      .getByLabel("New password", { exact: true })
+      .getAttribute("aria-describedby")
+    expect(describedBy).toBeTruthy()
+    await expect(page.locator(`[id="${describedBy}"]`)).toHaveText(REFUSAL)
 
     await fillChange(page, LOCKED_PASSWORD, LOCKED_PASSWORD, LOCKED_PASSWORD)
     await expect(page.getByText(REFUSAL)).toBeVisible()
