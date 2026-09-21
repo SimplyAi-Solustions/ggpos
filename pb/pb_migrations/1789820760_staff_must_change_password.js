@@ -20,12 +20,11 @@
  * is written. The flag is therefore set here rather than there, on the one
  * account that is still signing in with the password from the
  * environment: on a fresh database that is the row the seed has just made,
- * which is exactly what the brief asks for, and on a database that has
- * been running for a while it is an admin who never moved off the password
- * sitting in `.env`, who should be asked for a new one anyway. An admin who
- * has already changed their password, and every other staff row, is left
- * alone. Nothing here reads, logs or stores the password itself:
- * `validatePassword` is a hash comparison.
+ * and on a database that has been running for a while it is an admin who
+ * never moved off the password sitting in `.env`, who should be asked for a
+ * new one anyway. An admin who has already changed their password, and
+ * every other staff row, is left alone. Nothing here reads, logs or stores
+ * the password itself: `validatePassword` is a hash comparison.
  *
  * `down()` drops the field, and with it every flag ever set on it.
  */

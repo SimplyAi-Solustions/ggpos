@@ -344,8 +344,18 @@ export async function changeOwnPassword(
     throw new PasswordChangeError(passwordChangeMessage(error))
   }
 
-  const result = await pb.collection("staff").authWithPassword<StaffRecord>(email, next)
-  return result.record
+  try {
+    const result = await pb.collection("staff").authWithPassword<StaffRecord>(email, next)
+    return result.record
+  } catch {
+    // The password really did change, so the token this ran under is dead
+    // whatever happened next. Dropping it is the honest state to be in: the
+    // screen sends them to sign-in, where the new password works.
+    pb.authStore.clear()
+    throw new PasswordChangeError(
+      "Your password was changed. Sign in again with the new one."
+    )
+  }
 }
 
 /** Turns PocketBase's refusal into one sentence a counter can act on. */

@@ -6,7 +6,7 @@ import { Field, FieldRow } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { checkNewPassword, isLocked, type PasswordField } from "@/features/auth/gate"
-import { changePassword, useStaff } from "@/lib/auth"
+import { changePassword, currentStaff, useStaff } from "@/lib/auth"
 import { PasswordChangeError } from "@/lib/api"
 
 /**
@@ -70,6 +70,10 @@ export function PasswordScreen() {
             ? cause.message
             : "The counter could not reach the server. Check the connection and try again.",
       })
+      // The change went through but the sign-in after it did not, so there
+      // is no session left to stay on this screen with. Sign-in is where
+      // the new password works.
+      if (!currentStaff()) await navigate({ to: "/login" })
     } finally {
       setBusy(false)
     }
