@@ -944,3 +944,5 @@ A high-effort review of this package found two blocking items, seven to fix, twe
 - **Only the completion route can point a sale at a payment** (`sales.updateRule`).
 - **A payment that lands after a cancel or an expiry is recorded** (`sumup_checkout_late_payment`) instead of passing unnoticed.
 - **The poll asks SumUp at most once every ten seconds per checkout**, and **a settings save that does not mention the reader no longer unpairs it**.
+
+`pb/scripts/check.sh` section 25 grew by twenty-two assertions for these and for the eleven gaps the review listed, including both rate limits bursted against the rules the migration itself installed, two tills asking for one basket at once, two tills completing one sale at once, two devices claiming labels at once, the reader-status fallback, a refunded and an unreadable amount, a reservation with no end date, the roll-up splitting a group by finish, by source and on a retro title, and a late payment on a cancelled and on an expired row.
