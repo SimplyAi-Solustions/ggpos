@@ -18,7 +18,7 @@ import {
 
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import { addMovement, openSession } from "@/lib/api/demo/cash"
-import { useCheckoutForSale } from "@/lib/api/demo/checkouts"
+import { spendCheckoutOnSale } from "@/lib/api/demo/checkouts"
 import {
   DEMO_PROGRAMME,
   DEMO_RULES,
@@ -191,7 +191,7 @@ export function completeSale(payload: CompleteSalePayload): CompleteSaleResult {
   if (payload.sumup_checkout) {
     const cardPart =
       payload.payment === "sumup_card" ? total : (split.sumup_card ?? 0)
-    checkout = useCheckoutForSale(
+    checkout = spendCheckoutOnSale(
       payload.sumup_checkout,
       cardPart,
       { id: saleId, number },

@@ -263,7 +263,7 @@ export function cancelCheckout(id: string): SumUpCheckout {
  * exactly the card part of the sale. The refusals are the route's own
  * sentences, so the Sell screen shows in demo what it shows at the counter.
  */
-export function useCheckoutForSale(
+export function spendCheckoutOnSale(
   id: string,
   cardPart: number,
   sale: { id: string; number: string },

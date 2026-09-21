@@ -88,7 +88,10 @@ export function queueBatch(selector: LabelQueueSelector): LabelQueueResult {
     Boolean(selector.items?.length) ||
     Boolean(selector.trade_in) ||
     Boolean(selector.acquired_from) ||
-    Boolean(selector.acquired_to)
+    Boolean(selector.acquired_to) ||
+    Boolean(selector.location) ||
+    Boolean(selector.kind) ||
+    Boolean(selector.game)
   if (!anySelector) {
     throw new Error(
       "Pick what to print: the items, a buy-in, a date range, a location, a kind or a game."

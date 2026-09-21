@@ -304,7 +304,9 @@ export function usePrintQueue(onChange: () => void): PrintQueueRunner {
   // The open device, for the one cleanup that has to happen whatever else
   // is going on: leaving the screen hands the printer back.
   const held = React.useRef<UsbPrinter | null>(null)
-  held.current = printer
+  React.useEffect(() => {
+    held.current = printer
+  }, [printer])
   React.useEffect(() => {
     return () => {
       const open = held.current

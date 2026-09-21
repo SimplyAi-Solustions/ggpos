@@ -166,8 +166,9 @@ function PrinterSheet({
                 </SelectContent>
               </Select>
               <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-                With a size chosen, this printer takes only labels that size and
-                leaves the rest for whoever has that roll on.
+                This printer takes only labels this size. The rest wait for
+                whoever has that roll on, which is what the Print button is
+                for when it is this counter.
               </p>
             </Field>
           </div>
