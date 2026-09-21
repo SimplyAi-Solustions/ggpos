@@ -60,8 +60,8 @@ for (const mode of MODES) {
   for (const viewport of VIEWPORTS) {
     const tag = `${mode}-${viewport.name}`
 
-    // --- the kit page ---
-    const kit = await open(mode, viewport, "/")
+    // --- the kit page (at /kit; / is the sign-in screen) ---
+    const kit = await open(mode, viewport, "/kit")
     await kit.page.screenshot({ path: join(outDir, `kit-${tag}-top.png`) })
     await kit.page.screenshot({ path: join(outDir, `kit-${tag}-full.png`), fullPage: true })
 
@@ -76,17 +76,19 @@ for (const mode of MODES) {
       await kit.page.waitForTimeout(120)
       await el.screenshot({ path: join(outDir, `${id}-${tag}.png`) })
     }
-    await kit.context.close()
 
-    // --- the two rebuilds on their own, at real size ---
-    for (const screen of ["atlas", "nova"]) {
-      const one = await open(mode, viewport, `/?screen=${screen}`)
-      await one.page.screenshot({
-        path: join(outDir, `screen-${screen}-${tag}.png`),
-        fullPage: true,
-      })
-      await one.context.close()
+    // --- the two rebuilds beside their references ---
+    // Both live inside the kit's "Reference match" section now (the old
+    // /?screen= pages are gone), one comparison block each, in order.
+    const blocks = kit.page.locator("#reference-match div.flex.flex-col > div")
+    for (const [index, screen] of ["atlas", "nova"].entries()) {
+      const block = blocks.nth(index)
+      if ((await block.count()) === 0) continue
+      await block.scrollIntoViewIfNeeded()
+      await kit.page.waitForTimeout(120)
+      await block.screenshot({ path: join(outDir, `screen-${screen}-${tag}.png`) })
     }
+    await kit.context.close()
 
     console.log(`captured ${tag}`)
   }
