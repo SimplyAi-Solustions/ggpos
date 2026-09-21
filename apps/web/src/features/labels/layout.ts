@@ -102,8 +102,16 @@ export function fitTitleMm(
   return Math.round(size * 100) / 100
 }
 
-/** A customer card's QR opens the portal; every other label carries the code. */
+/**
+ * A customer card's QR opens the portal; every other label carries the code.
+ *
+ * A job claimed from the print queue arrives with the server's own
+ * `qr_text`, which wins: the server is the authority on what a label
+ * carries, and a queue built by one version of the app can be printed by
+ * another.
+ */
 export function qrTextFor(job: LabelJobDetail, portalBase: string): string {
+  if (job.qrText) return job.qrText
   if (job.template === "customer_card_80x50") {
     return `${portalBase.replace(/\/$/, "")}/c/${job.code}`
   }

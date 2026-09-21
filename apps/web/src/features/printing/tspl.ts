@@ -6,6 +6,12 @@
  * returns the exact text the printer reads, and the bytes that text becomes,
  * so both are unit tested character by character.
  *
+ * Both printing paths draw from that one layout, so the words, the sizes and
+ * the positions cannot drift apart. The symbols themselves are drawn by
+ * different engines: the print page renders the QR with bwip-js at its own
+ * default correction level, and the printer draws this one at L. Both scan,
+ * and the sizes come from the same table.
+ *
  * Two things the printer is strict about:
  *
  * 1. Everything is in dots. The layout is in millimetres, because a browser
@@ -215,10 +221,29 @@ export function qrModules(text: string): number {
   return 17 + 4 * (version === -1 ? capacity.length : version + 1)
 }
 
+/**
+ * The smallest cell a counter scanner and a phone camera will read on
+ * thermal paper: four dots at 203 dpi is half a millimetre a module, which
+ * is the practical floor for the 25 x 15 mm sleeve label.
+ */
+export const MIN_QR_CELL = 4
+
 /** The cell size in dots that brings the symbol nearest the spec's size. */
 export function qrCell(text: string, targetDots: number): number {
   const cell = Math.floor(targetDots / qrModules(text))
   return Math.min(10, Math.max(1, cell))
+}
+
+/**
+ * Raised where the text is too long for the label to carry a readable
+ * symbol. Printing it anyway would put a blob on the shelf that no scanner
+ * reads and nobody notices until they try.
+ */
+export class LabelTooSmallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "LabelTooSmallError"
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,15 +276,26 @@ export function tsplCommands(layout: LabelLayout, options: TsplOptions = {}): st
   const gap = dots(GAP_MM)
   const lineGap = dots(LINE_GAP_MM)
 
+  // Every one of these is stored in the printer's own memory and survives a
+  // power cycle, so a label tool that ran before this one can leave the page
+  // rotated or its origin shifted. The preamble states all of them rather
+  // than inheriting whatever was left behind.
   const out: string[] = [
     `SIZE ${mm(spec.widthMm)} mm,${mm(spec.heightMm)} mm`,
     "GAP 2 mm,0 mm",
+    "DIRECTION 0,0",
+    "REFERENCE 0,0",
     `DENSITY ${density}`,
     "CODEPAGE 850",
     "CLS",
   ]
 
   const cell = qrCell(layout.qrText, spec.qrPx)
+  if (cell < MIN_QR_CELL) {
+    throw new LabelTooSmallError(
+      `That code is too long for a ${mm(spec.widthMm)} x ${mm(spec.heightMm)} mm label to carry a QR anybody can scan. Print it on a bigger label.`
+    )
+  }
   const qrSize = qrModules(layout.qrText) * cell
 
   /** A line of text, already measured, as one TEXT command. */
@@ -268,7 +304,11 @@ export function tsplCommands(layout: LabelLayout, options: TsplOptions = {}): st
 
   if (layout.template === "sleeve_25x15") {
     const choice = fitFont(dots(layout.metaMm))
-    const code = layout.lines[0]?.text ?? ""
+    const code = fitText(
+      layout.lines[0]?.text ?? "",
+      choice.width,
+      Math.max(8, width - dots(PADDING_MM) * 2)
+    )
     const codeWidth = code.length * choice.width
     const total = qrSize + lineGap + choice.height
     const top = Math.max(0, Math.round((height - total) / 2))
