@@ -362,6 +362,21 @@ export function usePrintQueue(onChange: () => void): PrintQueueRunner {
 
         const run = await printRun(jobs, {
           send: async (job) => {
+            // The app draws from its own table of sizes. Where the server
+            // has a template at some other size, the label would come out
+            // wrong with nothing to say so, which is worse than stopping.
+            const spec = LABEL_SPECS[job.template]
+            if (
+              spec &&
+              job.templateWidthMm &&
+              job.templateHeightMm &&
+              (job.templateWidthMm !== spec.widthMm ||
+                job.templateHeightMm !== spec.heightMm)
+            ) {
+              throw new Error(
+                `The server has this label at ${job.templateWidthMm} x ${job.templateHeightMm} mm and this app at ${spec.widthMm} x ${spec.heightMm} mm. Print it with the Print button until the two agree.`
+              )
+            }
             // A code too long for its label is the job's fault, not the
             // printer's, so it is reported as a failure of that one label.
             const bytes = tsplBytes(labelLayout(job), { copies: job.copies })

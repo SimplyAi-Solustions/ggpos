@@ -912,6 +912,16 @@ export interface LabelJobDetail {
   printer?: string
   error?: string
   attempts?: number
+  claimedAt?: string
+  printedAt?: string
+  /**
+   * The size the server has this template at, when it has said. The app
+   * prints from its own table (docs/label-spec.md); a template edited in
+   * PocketBase to some other size stops the job rather than quietly
+   * printing the old one.
+   */
+  templateWidthMm?: number
+  templateHeightMm?: number
 }
 
 /**

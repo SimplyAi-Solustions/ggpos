@@ -61,6 +61,9 @@ function toDetail(job: ExpandedJob): LabelJobDetail {
 
 const JOB_EXPAND = "item,template"
 
+/** As many as one screen can be read at: a queue longer than this is a job for the filters. */
+const JOB_PAGE = 200
+
 /** One job per item. The template follows the item unless one is named. */
 export async function queueLabels(
   itemIds: string[],
@@ -107,12 +110,14 @@ export async function listLabelJobs(
 ): Promise<LabelJobDetail[]> {
   const wanted = status ? (Array.isArray(status) ? status : [status]) : []
   if (isDemo()) return demo.list(wanted)
-  const jobs = await pb.collection("label_jobs").getFullList<ExpandedJob>({
+  // Newest first, and capped: bulk reprint can add 500 at a time and the
+  // printed view would otherwise read every label the shop has ever run.
+  const page = await pb.collection("label_jobs").getList<ExpandedJob>(1, JOB_PAGE, {
     filter: wanted.map((one) => `status = "${quote(one)}"`).join(" || "),
     expand: JOB_EXPAND,
     sort: "-created",
   })
-  return jobs.map(toDetail)
+  return page.items.map(toDetail)
 }
 
 /** The jobs named in `/labels/print?jobs=`, in the order they were asked for. */

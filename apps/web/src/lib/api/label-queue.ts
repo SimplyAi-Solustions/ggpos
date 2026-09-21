@@ -26,7 +26,13 @@ import type {
 /** One job as `POST /api/vault/labels/claim` hands it over. */
 interface ClaimedJob {
   id: string
+  status?: LabelJobStatus
   copies?: number
+  attempts?: number
+  printer?: string
+  claimed_at?: string
+  printed_at?: string
+  error?: string
   template?: { key?: LabelTemplateKey; width_mm?: number; height_mm?: number; dpi?: number }
   item?: {
     id?: string
@@ -63,7 +69,7 @@ function fromClaim(job: ClaimedJob): LabelJobDetail {
   } as StockItemRecord)
   return {
     id: job.id,
-    status: "printing",
+    status: job.status ?? "printing",
     copies: job.copies ?? 1,
     template: job.template?.key ?? "toploader_40x20",
     itemId: item.id ?? "",
@@ -76,6 +82,13 @@ function fromClaim(job: ClaimedJob): LabelJobDetail {
     // The server is the authority on what the QR carries, so its text wins
     // over anything worked out from the code here.
     qrText: item.qr_text || undefined,
+    printer: job.printer ?? "",
+    error: job.error ?? "",
+    attempts: job.attempts ?? 0,
+    claimedAt: job.claimed_at ?? "",
+    printedAt: job.printed_at ?? "",
+    templateWidthMm: job.template?.width_mm,
+    templateHeightMm: job.template?.height_mm,
   }
 }
 

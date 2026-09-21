@@ -45,6 +45,7 @@ export function list(status: LabelJobStatus[] = []): LabelJobDetail[] {
   return demoLabelJobs
     .filter((job) => status.length === 0 || status.includes(job.status))
     .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
+    .slice(0, 200)
     .map((job) => ({ ...job }))
 }
 
