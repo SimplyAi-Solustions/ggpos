@@ -332,6 +332,35 @@ jobs:
           crontab -l | grep -A1 'GG Vault' || true
           REMOTE
 
+      - name: Set the application URL and name in PocketBase
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PATH: ${{ secrets.VPS_PATH }}
+          SITE_HOST: ${{ inputs.site_host }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$VPS_USER@$VPS_HOST" "VPS_PATH='$VPS_PATH' SITE_HOST='$SITE_HOST' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$VPS_PATH/deploy"
+          set -a; . ./.env; set +a
+          # Email links, the QR landing and the Solo reader's callback all
+          # resolve against PocketBase's application URL, so it has to be
+          # the public https address. Done through the API as the admin
+          # superuser so the value lands in the settings table, never in
+          # a file. The password only ever travels on the loopback.
+          TOKEN="$(curl -fsS -X POST http://127.0.0.1:8091/api/collections/_superusers/auth-with-password \
+            -H 'Content-Type: application/json' \
+            --data-binary "$(printf '{"identity":"%s","password":"%s"}' "$GG_ADMIN_EMAIL" "$GG_ADMIN_PASSWORD")" \
+            | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+          if [ -z "$TOKEN" ]; then echo "Could not sign in as the admin superuser to set the application URL" >&2; exit 1; fi
+          curl -fsS -o /dev/null -X PATCH http://127.0.0.1:8091/api/settings \
+            -H "Authorization: $TOKEN" -H 'Content-Type: application/json' \
+            --data-binary "$(printf '{"meta":{"appName":"GG Vault","appURL":"https://%s"}}' "$SITE_HOST")"
+          echo "Application URL set to https://$SITE_HOST"
+          REMOTE
+
       - name: Check the site from the outside
         env:
           SITE_HOST: ${{ inputs.site_host }}
