@@ -41,6 +41,8 @@ export interface UsbDeviceLike {
   productName?: string
   manufacturerName?: string
   serialNumber?: string
+  vendorId?: number
+  productId?: number
   opened?: boolean
   configuration?: UsbConfigurationLike | null
   configurations?: UsbConfigurationLike[]
@@ -49,6 +51,8 @@ export interface UsbDeviceLike {
   selectConfiguration(value: number): Promise<void>
   claimInterface(interfaceNumber: number): Promise<void>
   releaseInterface?(interfaceNumber: number): Promise<void>
+  /** Chrome 101 and later: drops the permission, not just the connection. */
+  forget?(): Promise<void>
   transferOut(
     endpointNumber: number,
     data: BufferSource
@@ -73,6 +77,7 @@ export type PrinterFault =
   | "unsupported"
   | "cancelled"
   | "not_bound"
+  | "busy_elsewhere"
   | "no_endpoint"
   | "disconnected"
   | "failed"
@@ -85,6 +90,8 @@ export const PRINTER_MESSAGES: Record<PrinterFault, string> = {
     "No printer was chosen. Press Connect printer again and pick the T003 from the list.",
   not_bound:
     "Chrome could not open the printer. On Windows the WinUSB driver has to be bound to it first; docs/label-spec.md says how.",
+  busy_elsewhere:
+    "Something else has the printer. Close the other tab with the label queue open, or the label software, then connect again.",
   no_endpoint:
     "That device is not a label printer. Press Connect printer again and pick the T003.",
   disconnected:
@@ -103,7 +110,7 @@ export class PrinterError extends Error {
   }
 }
 
-type Stage = "connect" | "open" | "send"
+type Stage = "connect" | "open" | "claim" | "send"
 
 function errorName(error: unknown): string {
   if (error instanceof Error) return error.name
@@ -139,14 +146,34 @@ export function describePrinterError(error: unknown, stage: Stage): PrinterError
     }
   }
 
+  // Opening is where Windows refuses a device with no WinUSB behind it;
+  // claiming is where another tab or another program is already holding it.
+  // Reading them as one thing sent staff off to run Zadig on a PC where
+  // Zadig had already been run.
   if (stage === "open") {
     if (
       name === "SecurityError" ||
+      name === "NotAllowedError" ||
+      text.includes("access denied") ||
+      text.includes("permission")
+    ) {
+      return new PrinterError("not_bound")
+    }
+    if (name === "NetworkError" || name === "InvalidStateError") {
+      return new PrinterError("not_bound")
+    }
+  }
+
+  if (stage === "claim") {
+    if (
       name === "NetworkError" ||
       name === "InvalidStateError" ||
-      text.includes("access denied") ||
-      text.includes("claim")
+      text.includes("claim") ||
+      text.includes("in use")
     ) {
+      return new PrinterError("busy_elsewhere")
+    }
+    if (name === "SecurityError" || text.includes("access denied")) {
       return new PrinterError("not_bound")
     }
   }
@@ -195,18 +222,68 @@ function findEndpoint(device: UsbDeviceLike): {
   return { interfaceNumber: chosen.interfaceNumber, endpointNumber: endpoint.endpointNumber }
 }
 
+/** Enough to recognise the same printer again tomorrow morning. */
+export interface RememberedPrinter {
+  vendorId: number
+  productId: number
+  serialNumber: string
+  name: string
+}
+
+export function rememberPrinter(printer: UsbPrinter): RememberedPrinter {
+  const device = printer.device
+  return {
+    vendorId: device.vendorId ?? 0,
+    productId: device.productId ?? 0,
+    serialNumber: device.serialNumber ?? "",
+    name: printer.name,
+  }
+}
+
+/**
+ * The same device, not merely a device.
+ *
+ * A browser remembers every device this origin was ever granted, and the
+ * picker has no vendor filter, so "the first one that opens" can be a
+ * scale or a serial adapter. A serial number settles it outright; without
+ * one, the vendor and product ids and the product name together are what
+ * the browser can offer.
+ */
+export function isRememberedPrinter(
+  device: UsbDeviceLike,
+  remembered: RememberedPrinter | null
+): boolean {
+  if (!remembered) return false
+  if ((device.vendorId ?? 0) !== remembered.vendorId) return false
+  if ((device.productId ?? 0) !== remembered.productId) return false
+  if (remembered.serialNumber) {
+    return (device.serialNumber ?? "") === remembered.serialNumber
+  }
+  return (device.productName?.trim() || "Label printer") === remembered.name
+}
+
 /**
  * Open a device, put it on its first configuration and claim the interface
  * the label bytes go to.
+ *
+ * A device that is opened and then turns out not to be a printer is closed
+ * again: the loop that walks the remembered devices must not leave a
+ * scanner or a scale open behind it.
  */
 export async function openPrinter(device: UsbDeviceLike): Promise<UsbPrinter> {
+  let opened = false
+  let stage: Stage = "open"
   try {
-    if (!device.opened) await device.open()
+    if (!device.opened) {
+      await device.open()
+      opened = true
+    }
     if (!device.configuration) {
       const first = device.configurations?.[0]
       await device.selectConfiguration(first?.configurationValue ?? 1)
     }
     const { interfaceNumber, endpointNumber } = findEndpoint(device)
+    stage = "claim"
     await device.claimInterface(interfaceNumber)
     return {
       device,
@@ -215,7 +292,10 @@ export async function openPrinter(device: UsbDeviceLike): Promise<UsbPrinter> {
       endpointNumber,
     }
   } catch (error) {
-    throw describePrinterError(error, "open")
+    if (opened) {
+      await device.close?.().catch(() => undefined)
+    }
+    throw describePrinterError(error, stage)
   }
 }
 
@@ -233,11 +313,17 @@ export async function chooseUsbPrinter(): Promise<UsbPrinter> {
 }
 
 /**
- * The printer this browser was already given. Nothing is asked of the staff
- * member: a device Chrome remembers comes back on its own after a reload.
+ * The printer this browser was already given, and only that one.
+ *
+ * Nothing is asked of the staff member: a device Chrome remembers comes
+ * back on its own after a reload. Without a record of which device was
+ * chosen, nothing is opened at all, because the first device that answers
+ * is not necessarily a printer.
  */
-export async function findUsbPrinter(): Promise<UsbPrinter | null> {
-  if (!usbPrintingSupported()) return null
+export async function findUsbPrinter(
+  remembered: RememberedPrinter | null
+): Promise<UsbPrinter | null> {
+  if (!usbPrintingSupported() || !remembered) return null
   let devices: UsbDeviceLike[]
   try {
     devices = await usb().getDevices()
@@ -245,10 +331,13 @@ export async function findUsbPrinter(): Promise<UsbPrinter | null> {
     return null
   }
   for (const device of devices) {
+    if (!isRememberedPrinter(device, remembered)) continue
     try {
       return await openPrinter(device)
     } catch {
-      // Not this one: a keyboard or a scanner the browser also remembers.
+      // It is the right device and it will not open: the staff member gets
+      // the sentence when they press Connect printer.
+      return null
     }
   }
   return null
@@ -275,11 +364,24 @@ export async function sendToPrinter(
   }
 }
 
-/** Hands the interface back, for a staff member switching printers. */
-export async function releasePrinter(printer: UsbPrinter): Promise<void> {
+/**
+ * Hands the interface back: on leaving the screen, and when a staff member
+ * switches printers. Without this the device stays claimed for the life of
+ * the tab and a second tab cannot have it.
+ *
+ * `forget` also drops the browser's own permission, which is what "Forget
+ * this printer" has to mean if the words are to be true. It exists in
+ * Chrome 101 and later and is optional here, so an older browser still
+ * releases and closes.
+ */
+export async function releasePrinter(
+  printer: UsbPrinter,
+  { forget = false }: { forget?: boolean } = {}
+): Promise<void> {
   try {
     await printer.device.releaseInterface?.(printer.interfaceNumber)
     await printer.device.close?.()
+    if (forget) await printer.device.forget?.()
   } catch {
     // The printer is already gone, which is the state we were after.
   }
