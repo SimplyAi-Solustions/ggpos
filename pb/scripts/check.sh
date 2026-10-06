@@ -7501,6 +7501,10 @@ P8_DUP="$(p8_signup '{"name":"Somebody Else","email":"ROBIN@local.test","marketi
 [ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" name)" = "Robin Hart" ] || fail "a duplicate sign-up changed the existing customer's name"
 ok "sign-up refuses bad input in words, creates a portal customer with no bonus yet, and answers a known address exactly as a new one"
 
+P8_TERMS="$(curl -s "$BASE/api/vault/guild/terms")"
+[ -n "$(echo "$P8_TERMS" | jval name)" ] || fail "GET /api/vault/guild/terms did not name the programme for a guest: $P8_TERMS"
+echo "$P8_TERMS" | grep -q '"enabled"\|"welcome_bonus"\|"id"' && fail "GET /api/vault/guild/terms carries more than the name and the terms: $P8_TERMS"
+
 P8_OTP_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/customers/request-otp" \
   -H "Content-Type: application/json" -d '{"email":"robin@local.test"}')"
 [ "$P8_OTP_STATUS" = "200" ] || fail "request-otp for a signed-up customer returned $P8_OTP_STATUS"

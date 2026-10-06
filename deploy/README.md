@@ -591,6 +591,51 @@ no sale against it, which is the one to refund or match by hand.
 to a card: refund the transaction in SumUp, then record the refund in the
 app so stock and the ledgers agree.
 
+## 15. Epos Now (the till since October 2026) and agents
+
+GG Vault links Guild members to the Epos Now till and starts a paid
+membership when the till sells it (`docs/api-contract.md`, Phase 8;
+`docs/loyalty-guide.md`, "Memberships"). Three settings, all on the
+`settings` record in `/_/`, none of them ever sent to a browser:
+
+- **The API token**: in Epos Now Back Office, Apps > API (an API device
+  for this integration). Epos Now shows a key and a secret; the token is
+  base64 of `key:secret`, which Back Office also shows ready-made as the
+  "Authorization token". Store it in `settings.api_keys` under `eposnow`.
+- **The Guild product**: the Epos Now product id of "GG Guild membership
+  (12 months)", in `settings.eposnow.guild_product_ids` (a list, so a
+  second product can be added later). `settings.eposnow.location_id` is
+  the shop's location, 14037.
+- **The webhook secret**: a long random string, for example
+  `openssl rand -hex 24`, in `settings.api_keys` under `eposnow_webhook`.
+  The webhook URL is then
+  `https://ggpos.ggentertainment.co.uk/api/vault/epos/webhook/<secret>`;
+  set it in Epos Now Back Office for the completed-transaction event (304)
+  only once Richard has agreed. Without it, the five-minute poll
+  (08:00 to 22:00) still starts every membership.
+
+Check it works without waiting: as an admin, `POST /api/vault/epos/poll`
+pulls today's sales at once and answers with what it found.
+
+**Erasure.** GG Vault does not delete customers from Epos Now. When a
+linked customer is erased, every admin gets a notification naming the
+Epos Now customer id: delete that customer in Back Office the same day.
+
+**Agents.** A read-only watcher (Gandalf) signs in to the `agents`
+collection with an email and password. Create one in `/_/` (collection
+`agents`, "New record", `active` on) and keep the password in the Mac
+mini's Keychain. It can read `GET /api/vault/agent/quotes` and
+`/agent/guild-pending` and nothing else. Switch `active` off to stop it.
+
+**Calls from the website.** PocketBase answers every origin
+(`Access-Control-Allow-Origin: *`) because `pocketbase serve` runs
+without `--origins`, so the marketing site can call the sign-up, Guild
+and quote routes directly. To narrow it, add
+`"--origins", "https://ggpos.ggentertainment.co.uk,https://ggentertainment.co.uk,https://preview.ggentertainment.co.uk"`
+to the `ENTRYPOINT` in `pb/Dockerfile`. The website's own
+Content-Security-Policy must allow `connect-src
+https://ggpos.ggentertainment.co.uk`.
+
 ## Before go-live checklist
 
 - [ ] A full restore rehearsal (`deploy/restore.md`) has been completed
@@ -609,6 +654,10 @@ app so stock and the ledgers agree.
       1789819980_batch_api_settings.js` turns this on for you as part of
       the schema migrations, so this is a check, not a step; see
       "pricesync configuration" above
+- [ ] If the Guild is sold at the Epos Now till: the API token, the Guild
+      product id and the webhook secret are set, a test sale to a linked
+      customer started their membership, and Epos Now's terms include a
+      data processing agreement - see "Epos Now" above
 - [ ] VAPID keys are generated, the private key and subject are in `.env`,
       the public key is in `settings.push.vapid_public_key`, and
       `docker compose logs notify` shows a pass completing rather than a

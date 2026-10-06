@@ -968,3 +968,120 @@ A high-effort review of this package found two blocking items, seven to fix, twe
 - **The poll asks SumUp at most once every ten seconds per checkout**, and **a settings save that does not mention the reader no longer unpairs it**.
 
 `pb/scripts/check.sh` section 25 grew by twenty-two assertions for these and for the eleven gaps the review listed, including both rate limits bursted against the rules the migration itself installed, two tills asking for one basket at once, two tills completing one sale at once, two devices claiming labels at once, the reader-status fallback, a refunded and an unreadable amount, a reservation with no end date, the roll-up splitting a group by finish, by source and on a retro title, and a late payment on a cancelled and on an expired row.
+
+## Phase 8: online sign-up, the Guild join, the Epos Now till link and agent read access
+
+Customers can now create a My Vault account themselves, ask to join a paid GG Guild plan and pay for it at the Epos Now till (the shop's till since October 2026), and a watcher (Gandalf) can read what is waiting for staff. Conventions are as above: money is integer GBP pence, dates ISO 8601 or PocketBase's stored form (`2026-10-06 14:30:00.000Z`), errors `{ "status", "message", "data" }` with `message` written to be shown. Token columns: **public** (no token needed; one sent is ignored), **customer**, **staff**, **admin**, and a new one, **agent** (an `agents` token, `$apis.requireAuth("agents")`).
+
+Files: `pb_hooks/signup.pb.js`, `guild.pb.js` (join, terms), `memberships.pb.js` (activate), `eposnow.pb.js`, `agents.pb.js`; `lib/welcome.js`, `lib/memberships.js`, `lib/eposnow.js`, `adapters/eposnow.js`; the pure Epos Now reading in `packages/shared/src/eposnow.ts` (`lib/shared/eposnow.js` in the hooks); migration `1789820820_phase8_signup_guild_epos.js`.
+
+### `POST /api/vault/signup` (public, rate limited 20 per 10 minutes per address)
+
+Request:
+
+```json
+{ "name": "Robin Hart", "email": "robin@example.co.uk", "marketing_consent": true, "terms_accepted": true }
+```
+
+Response, `200`, the same body whether the address was new or already on a card:
+
+```json
+{ "ok": true, "message": "Check your email for a sign-in code." }
+```
+
+- A new address creates a `customers` row with `source: "portal"`, the email stored lower case, `marketing_consent` as sent, a random password nobody knows, and `customer_private.terms_accepted_at` stamped. Audited as `customer_signup` (actor the new customer, meta `{ source, marketing_consent }`).
+- An address already on any card (any case) writes nothing and answers exactly as above. The route therefore reveals nothing the OTP request does not already: the next call is PocketBase's own `POST /api/collections/customers/request-otp` with `{ "email" }`, which answers `{ "otpId" }` for a known and an unknown address alike, then `POST /api/collections/customers/auth-with-otp` with `{ "otpId", "password": "<the 8 digits>" }`, which returns `{ "token", "record" }`. The code lasts five minutes.
+- `400` with a per-field `data` entry and a sentence: no name ("Add your name, then try again."), a name over 200 characters, an email that does not look like one ("That email address does not look right. Check it and try again."), or `terms_accepted` not true ("Tick the box to accept the GG Guild terms, then try again."). `429` from the rate limit.
+- **The welcome bonus waits for the first sign-in.** A portal customer gets no points at creation. Their first successful emailed-code sign-in (an `onRecordAuthRequest` hook on `customers`, `authMethod = "otp"`) writes the `welcome` row and its notification ("100 points are on your card. Show your card at the counter to earn more.", link `/account/guild`) before the token is returned, so the `/me` read straight after shows it. `lib/welcome.js` never writes it twice, so every later sign-in is a no-op. A customer created at the counter (any `source` other than `portal`) gets it on creation exactly as before.
+
+### `GET /api/vault/guild/terms` (public)
+
+`{ "name": "GG Guild", "terms": "<the programme terms as plain text>" }`. The admin's editor HTML is reduced to text with line breaks kept; nothing else off `loyalty_programme` is returned. For a sign-up form to show what is being accepted.
+
+### `POST /api/vault/guild/join` (customer, rate limited 20 a minute)
+
+Request `{ "tier": "<loyalty_tiers id of a paid plan>" }`. Response `201` for a new request, `200` when one was already pending:
+
+```json
+{
+  "membership": {
+    "id": "...", "customer": "...", "tier": "...", "tier_name": "Guild Pass",
+    "status": "pending", "started_at": "", "renews_at": "", "price": 2400,
+    "created": "2026-10-06 14:30:00.000Z"
+  },
+  "till_ready": true
+}
+```
+
+- Creates a `memberships` row with the new status **`pending`**, priced from the tier's new `price` field (pence). It pins no tier: `lib/tiers.js` only reads `active` rows. One pending row per customer: asking again answers with the same row, switched to the tier asked for. Audited as `guild_join`.
+- `400` for a tier that is not a paid plan ("That plan is not one you can join. Pick one from the list."). `409` while the customer already has an `active` membership ("You already have a Guild Pass membership until 6 Oct 2027. Renew it at the counter.").
+- After the row is saved, outside its transaction, the customer is linked to Epos Now (below). `till_ready` is whether that link exists now; a link that could not be made is queued and retried and never fails the join.
+- `GET /api/vault/me/guild` gains `pending: { id, tier, tier_name, price, created } | null` and `plans: [{ id, name, price }]` (every paid-plan tier, lowest `sort` first). Nothing else in that shape changed.
+
+### `POST /api/vault/memberships/{id}/activate` (staff)
+
+Request `{ "months"?: 1..24 (default 12), "price"?: pence (default the pending row's), "payment_note"?: string }`. Starts a `pending` membership from now, for staff who took the money by hand or whose Epos Now sale could not be matched. Response `{ "membership": <the shape above> }`, status `active`. `409` for anything not pending, or when the customer already has an active membership. Notifies the customer (`membership_started`, emailed) and audits `membership_activate`.
+
+Changed alongside it: `POST /api/vault/memberships` (record a plan) now starts the customer's pending row, if they have one, rather than creating a second row beside it; `POST /api/vault/memberships/{id}/renew` refuses a pending row with `409` ("That membership has not started yet. Activate it instead."); `POST /api/vault/memberships/{id}/cancel` on a pending row tells the customer their request was cancelled rather than that a membership ended.
+
+### The Epos Now customer link
+
+`customer_private` gains `epos_customer_id` (unique when set), `epos_sync_status` (`queued` | `linked` | `failed`), `epos_sync_attempts`, `epos_sync_error`, `epos_synced_at` and `terms_accepted_at`. These are on the staff-only record on purpose: a customer may update their own `customers` row, and an Epos Now id a customer could set would let them collect somebody else's Guild payment.
+
+Linking (`lib/eposnow.js`'s `link`) creates the Epos Now customer with `POST v4/Customer` (an array of one): `forename` and `surname` split from the name, `emailAddress`, `cardNumber` = the bare GGC code (`GGC7F3K2Q`, what the My Vault barcode encodes), `signUpLocationId` 14037, and `marketingConsent: { email: <their choice>, text: false, phone: false, mail: false }`. No phone number, address or date of birth is sent. It is retry-safe: before creating anybody it asks `GET v4/Customer/GetByEmail` and links an existing Epos Now customer with the same email and card number instead (one an earlier attempt created and lost the answer to). Every attempt is audited (`epos_customer_link`, `epos_customer_link_failed`, ids only). A failure leaves the row `queued` with the reason; cron `epos_link_retry` (every 5 minutes) retries up to 12 times, then marks it `failed` and notifies the admins once ("Epos Now link failed"). A link is made when a customer joins a paid plan, and by staff with:
+
+`POST /api/vault/customers/{id}/epos-link` (staff): `{}`. Response `{ "link": { status, epos_customer_id, attempts, error, synced_at }, "message": "" }`, always `200`: Epos Now being down is reported in `link.status: "queued"` and `message`, not as an error. A link that had `failed` gets a fresh set of tries when staff press the button.
+
+Erasure (either route) clears the link fields and notifies the admins with the Epos Now customer id to delete in Epos Now Back Office ("Delete a customer in Epos Now"); GG Vault never deletes from Epos Now itself. A pending membership is cancelled by erasure.
+
+### Activation from Epos Now sales
+
+Settings: `settings.eposnow` (`{ "guild_product_ids": [<Epos Now product ids>], "location_id": 14037 }`, not secret) and two keys in `settings.api_keys`: `eposnow` (the API token, sent as `Authorization: Basic <token>`) and `eposnow_webhook` (the secret in the webhook URL). `api_keys` never leaves the server (`GET /api/vault/config` drops it, the Settings screen never reads it); both are set in `/_/` on the `settings` record.
+
+`POST /api/vault/epos/webhook/{token}` (public, rate limited 120 a minute): accepts an Epos Now completed-transaction payload in either the v4 camelCase shape or the older PascalCase one, as one transaction, an array, or inside an envelope (`{ "Data": ... }`). A missing or wrong token is a bare `404`. **The body is never trusted**: each transaction id in it is read back with `GET v4/Transaction/{id}?extended=true` using the shop's own token, and only that answer is acted on, so a leaked webhook URL can do no more than make GG Vault look at a real sale again. A sale Epos Now cannot be asked about right now is left for the poll. Always `200` once the token matches: `{ "received", "activated", "renewed", "unmatched", "deferred" }`.
+
+Cron `epos_poll` (every 5 minutes, acting only between 08:00 and 22:00 Europe/London): `GET v4/Transaction/GetByDate?startDate=<today>T00:00:00&endDate=<today>T23:59:59&status=1&extended=true&page=N`, 200 a page, until a short page. `POST /api/vault/epos/poll` (admin) runs the same pull at any hour and answers `{ pages, seen, guild, activated, renewed, unmatched, skipped, error }`; it is audited as `epos_poll`.
+
+Both feed `handleTransactions`, which for each completed transaction containing a Guild product line (quantity above 0):
+
+1. skips it if `epos_transactions` already has its id (the new collection: `epos_id` unique, `outcome` `activated` | `renewed` | `no_customer` | `unknown_customer` | `no_plan`, `customer`, `membership`, `epos_customer_id`, `amount`, `quantity`, `sold_at`, `source` `webhook` | `poll`; staff may read it, only the hooks write it);
+2. finds the GG Vault customer linked to the transaction's `customerId`. When nobody is linked to that id it reads the Epos Now customer, and if their card number is a GG Vault customer code that customer is linked on the spot (somebody added at the till by hand);
+3. with a customer: in one transaction, writes the `epos_transactions` row first (the unique index settles a webhook and a poll arriving together) and then activates their pending membership, or extends a live one from the later of its end and the sale time, or creates and activates one for the first paid-plan tier. The term is 12 months per unit sold from the sale's own time (Epos Now timestamps carry no zone and are read as UTC), `price` is the Guild lines' amount in pence (`unitPrice × quantity − discountAmount`, through `decimalPoundsToPence`), and `payment_note` is `Epos Now sale <id>`. The customer is notified (`membership_started`, emailed) and it is audited as `membership_activate_epos` or `membership_renew_epos` (actor `epos_now`);
+4. with no customer on the sale, a customer GG Vault does not know, or no paid-plan tier to start: records the sale once and notifies the admins: title "Guild membership sold without a linked customer, link it in The Counter", body naming the Epos Now transaction id. Staff then activate the right customer's membership by hand.
+
+### Agents
+
+`agents` is a new auth collection: email and password sign-in (`POST /api/collections/agents/auth-with-password` with `{ "identity", "password" }`), fields `name` and `active`. Every rule is admin-only, so only an admin creates one, in `/_/` or through the collection API with an admin token (The Counter has no screen for it). An inactive agent cannot sign in (`403`). No collection rule admits an agent token: every staff rule names `staff`, every customer rule compares a customer id, and the three `loyalty_*` collections that used to admit any signed-in record now name staff and customers explicitly. Neither route below writes or audits anything.
+
+`GET /api/vault/agent/quotes?since=<ISO 8601>` (agent, rate limited 60 a minute): quotes in `submitted` or `reviewing` created after `since` (all of them without it), oldest first, at most 100.
+
+```json
+{
+  "quotes": [
+    {
+      "id": "...", "created": "2026-10-06 14:30:00.000Z", "status": "submitted",
+      "drop_off": "post", "line_count": 0, "photo_count": 3,
+      "message_excerpt": "Two Base Set holos and a boxed Game Boy...",
+      "customer_first_name": "Robin",
+      "link": "https://ggpos.ggentertainment.co.uk/counter/quotes/<id>"
+    }
+  ]
+}
+```
+
+`GET /api/vault/agent/guild-pending?since=<ISO 8601>` (agent): pending memberships created after `since`, oldest first, at most 100: `{ "pending": [{ "id", "created", "tier": "Guild Pass", "customer_first_name": "Robin" }] }`.
+
+Both answer `400` for a `since` that is not a date, `401` with no token and `403` for a staff or customer token. Nothing beyond a first name leaves either route; the message excerpt is the customer's own words (140 characters) and may contain whatever they typed.
+
+### Calling these from the website
+
+PocketBase is started without `--origins`, so it answers every origin with `Access-Control-Allow-Origin: *` and handles the preflight itself; `https://ggentertainment.co.uk` and `https://preview.ggentertainment.co.uk` can call `signup`, `guild/terms`, `request-otp`, `auth-with-otp`, `guild/join`, `me/guild` and `quotes` with a bearer token and no cookies. The website's own Content-Security-Policy must allow `connect-src https://ggpos.ggentertainment.co.uk`. Narrowing CORS to the shop's own origins is a deploy change (`--origins=https://ggpos.ggentertainment.co.uk,https://ggentertainment.co.uk,https://preview.ggentertainment.co.uk` on `pocketbase serve` in `pb/Dockerfile`) and has not been made here.
+
+### Implementation notes (as built in Phase 8)
+
+- **Signing up creates the record through `$app`, not the collection API**, so none of the `customers` `*Request` hooks run for it; the route sets the random password itself, and the welcome bonus is deferred by design. The record-level hooks (code, QR token, `customer_private`, notification defaults) run as for any customer.
+- **The welcome bonus moved into `lib/welcome.js`**, called from the existing `customers` create hook (skipped for `source: "portal"`) and from the new OTP sign-in hook. Counter-created behaviour is unchanged.
+- **`loyalty_tiers.price`** is new and edited in the tier sheet on the Loyalty screen (shown for paid plans only).
+- **The Epos Now endpoints come from the v4 Swagger files** and have not been called against the live account. `GET v4/Transaction/{id}` is listed in the Swagger under a malformed path (`/api/v4/Transaction/{id}/{lockTransaction }`); the client calls `v4/Transaction/{id}?extended=true&lockTransaction=false`, which should be confirmed against the live API before the webhook is switched on. Every Epos Now call is answered under test by `adapters/fixture_transport.js`.
+- **`pb/scripts/check.sh` section 27** covers sign-up (refusals, the identical answer for a known address, no bonus before sign-in, the bonus on a real `auth-with-otp`, once), the join (pending, one row, priced, no tier pinned, `/me/guild`), the link (created once, audited, keys never in `/config`, queued and retried when Epos Now is down), activation (webhook read back rather than trusted, 12 months, the till's price, idempotent; the poll by card number; no or unknown customer notified once), staff activation, the agent routes and an agent token reading nothing else, and erasure clearing the link.
+- **Dependencies**: none added. The Code 128 barcode on My Vault is drawn by `bwip-js`, already a dependency for every QR code.

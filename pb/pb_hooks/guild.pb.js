@@ -322,3 +322,38 @@ routerAdd(
   },
   $apis.requireAuth("customers")
 );
+
+// ---------------------------------------------------------------------
+// GET /api/vault/guild/terms   (public, Phase 8)
+//
+// The programme's name and terms as plain text, so somebody signing up
+// online can read what they are accepting before they have an account.
+// `loyalty_programme` is readable by staff and customers only, so a guest
+// gets these two fields through this route and nothing else off the row.
+// ---------------------------------------------------------------------
+routerAdd("GET", "/api/vault/guild/terms", (e) => {
+  let name = "GG Guild";
+  let terms = "";
+  try {
+    const row = e.app.findFirstRecordByFilter("loyalty_programme", "id != ''");
+    name = row.getString("name") || name;
+    // The admin's editor field is HTML; this answers it as text, with each
+    // paragraph or line break kept as a new line, never as markup.
+    terms = row
+      .getString("terms")
+      .replace(/<\s*(br|\/p|\/li|\/h[1-6])\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  } catch (err) {
+    terms = "";
+  }
+  return e.json(200, { name: name, terms: terms });
+});
