@@ -327,6 +327,7 @@ export type CustomerPrivateIdStatusOptions = typeof CustomerPrivateIdStatusOptio
 
 export const CustomerPrivateEposSyncStatusOptions = {
 	"queued": "queued",
+	"in_progress": "in_progress",
 	"linked": "linked",
 	"failed": "failed",
 } as const
@@ -340,8 +341,10 @@ export type CustomerPrivateRecord = {
 	epos_customer_id?: string
 	epos_sync_attempts?: number
 	epos_sync_error?: string
+	epos_sync_started_at?: IsoDateString
 	epos_sync_status?: CustomerPrivateEposSyncStatusOptions
 	epos_synced_at?: IsoDateString
+	erased_at?: IsoDateString
 	flags?: CustomerPrivateFlagsOptions[]
 	id: string
 	id_expiry?: IsoDateString
@@ -350,6 +353,7 @@ export type CustomerPrivateRecord = {
 	id_type?: string
 	id_verified_at?: IsoDateString
 	id_verified_by?: RecordIdString
+	marketing_consent_pending?: boolean
 	notes?: HTMLString
 	points_balance?: number
 	points_expiry_warned_at?: IsoDateString
@@ -428,15 +432,26 @@ export type DisplayStateRecord<Tpayload = unknown> = {
 export const EposTransactionsOutcomeOptions = {
 	"activated": "activated",
 	"renewed": "renewed",
+	"linked_manual": "linked_manual",
+	"manual": "manual",
 	"no_customer": "no_customer",
 	"unknown_customer": "unknown_customer",
+	"erased_customer": "erased_customer",
 	"no_plan": "no_plan",
+	"stale": "stale",
+	"refunded": "refunded",
+	"unpriced": "unpriced",
+	"mixed": "mixed",
+	"too_many": "too_many",
+	"underpaid": "underpaid",
+	"tier_mismatch": "tier_mismatch",
 } as const
 export type EposTransactionsOutcomeOptions = typeof EposTransactionsOutcomeOptions[keyof typeof EposTransactionsOutcomeOptions]
 
 export const EposTransactionsSourceOptions = {
 	"webhook": "webhook",
 	"poll": "poll",
+	"hand": "hand",
 } as const
 export type EposTransactionsSourceOptions = typeof EposTransactionsSourceOptions[keyof typeof EposTransactionsSourceOptions]
 export type EposTransactionsRecord = {
@@ -728,10 +743,19 @@ export const MembershipsStatusOptions = {
 	"cancelled": "cancelled",
 } as const
 export type MembershipsStatusOptions = typeof MembershipsStatusOptions[keyof typeof MembershipsStatusOptions]
+
+export const MembershipsPaidViaOptions = {
+	"hand": "hand",
+	"epos": "epos",
+} as const
+export type MembershipsPaidViaOptions = typeof MembershipsPaidViaOptions[keyof typeof MembershipsPaidViaOptions]
 export type MembershipsRecord = {
 	created: IsoAutoDateString
 	customer: RecordIdString
+	epos_transaction?: string
 	id: string
+	paid_at?: IsoDateString
+	paid_via?: MembershipsPaidViaOptions
 	payment_note?: string
 	price?: number
 	renews_at?: IsoDateString

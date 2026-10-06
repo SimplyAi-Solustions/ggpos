@@ -57,7 +57,7 @@ routerAdd(
       }
     }
 
-    const message = field("message");
+    const message = quotesLib.normaliseText(field("message"));
     if (message.length > 4000) {
       throw e.badRequestError("Keep the description to 4000 characters or fewer.", null);
     }
@@ -296,7 +296,7 @@ routerAdd(
     }
 
     const body = util.body(e);
-    const text = util.asStr(body.body);
+    const text = require(`${__hooks}/lib/quotes.js`).normaliseText(util.asStr(body.body));
     if (!text) {
       throw e.badRequestError("Write a message before sending.", null);
     }
@@ -397,7 +397,7 @@ routerAdd(
     if (!normalized.ok) {
       throw e.badRequestError(normalized.message, null);
     }
-    const note = util.asStr(body.message);
+    const note = require(`${__hooks}/lib/quotes.js`).normaliseText(util.asStr(body.message));
 
     const settingsRow = util.settings(e.app);
     const expires = quotesLib.offerExpiry(e.app, settingsRow, new Date());
@@ -564,7 +564,7 @@ routerAdd(
     }
 
     const body = util.body(e);
-    const reply = util.asStr(body.reply);
+    const reply = require(`${__hooks}/lib/quotes.js`).normaliseText(util.asStr(body.reply));
     const dropOff = util.asStr(body.drop_off);
     if (dropOff && dropOff !== "in_store" && dropOff !== "post") {
       throw e.badRequestError("Pick a drop-off of in_store or post.", null);
@@ -660,7 +660,7 @@ routerAdd(
     }
 
     const body = util.body(e);
-    const reply = util.asStr(body.reply);
+    const reply = require(`${__hooks}/lib/quotes.js`).normaliseText(util.asStr(body.reply));
     const dropOff = util.asStr(body.drop_off);
     if (dropOff && dropOff !== "in_store" && dropOff !== "post") {
       throw e.badRequestError("Pick a drop-off of in_store or post.", null);
@@ -878,7 +878,7 @@ routerAdd(
     }
 
     const body = util.body(e);
-    const note = util.asStr(body.note);
+    const note = require(`${__hooks}/lib/quotes.js`).normaliseText(util.asStr(body.note));
     if (!note) {
       throw e.badRequestError("Say why this quote is being cancelled.", null);
     }

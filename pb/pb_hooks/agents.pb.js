@@ -64,11 +64,6 @@ routerAdd(
       }
     }
 
-    function excerpt(text) {
-      const flat = String(text || "").replace(/\s+/g, " ").trim();
-      return flat.length > 140 ? `${flat.slice(0, 137)}...` : flat;
-    }
-
     let base = "";
     try {
       base = (e.app.settings().meta.appURL || "").replace(/\/+$/, "");
@@ -105,7 +100,6 @@ routerAdd(
         drop_off: row.getString("drop_off") || "in_store",
         line_count: Array.isArray(lines) ? lines.length : 0,
         photo_count: photos && photos.length ? photos.length : 0,
-        message_excerpt: excerpt(row.getString("message")),
         customer_first_name: firstName(row.getString("customer")),
         link: `${base}/counter/quotes/${row.id}`,
       });

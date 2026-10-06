@@ -4,7 +4,7 @@
  * eposnow.pb.js - the Epos Now till, GG Vault's side
  * (docs/api-contract.md's Phase 8 section; logic in lib/eposnow.js).
  *
- *   POST /api/vault/epos/webhook/{token}       (public, the secret is the token)
+ *   POST /api/vault/epos/webhook               (public, Epos Now's Basic credentials)
  *   POST /api/vault/customers/{id}/epos-link   (staff)
  *   POST /api/vault/epos/poll                  (admin, "check Epos Now now")
  *   cron epos_poll                             (every 5 minutes, 08:00-22:00 Europe/London)
@@ -13,24 +13,35 @@
  * The webhook and the poll feed the same idempotent handler. The webhook
  * never trusts the sale its body describes: each transaction id in it is
  * read back from Epos Now with the shop's own API token first, so somebody
- * holding the webhook URL can do no more than make GG Vault look at a real
- * sale again.
+ * holding the webhook credentials can do no more than make GG Vault look
+ * at a real sale again.
  *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
 
 // ---------------------------------------------------------------------
-// POST /api/vault/epos/webhook/{token}   (public)
+// POST /api/vault/epos/webhook   (public; Epos Now's Basic credentials)
+//
+// Epos Now's webhook settings take an API key and secret ("Basic
+// Authentication credentials", Epos Now developer docs, Webhooks) and send
+// them as `Authorization: Basic base64(key:secret)`. They are compared in
+// constant time against `settings.api_keys.eposnow_webhook_key` and
+// `eposnow_webhook_secret`; nothing secret is in the URL, so nothing
+// secret reaches PocketBase's request log.
 // ---------------------------------------------------------------------
-routerAdd("POST", "/api/vault/epos/webhook/{token}", (e) => {
+routerAdd("POST", "/api/vault/epos/webhook", (e) => {
   const epos = require(`${__hooks}/lib/eposnow.js`);
 
   const cfg = epos.config(e.app);
-  const given = String(e.request.pathValue("token") || "");
-  // A missing secret and a wrong one look the same from outside: no route.
-  if (!cfg.webhookToken || given.length !== cfg.webhookToken.length || !$security.equal(given, cfg.webhookToken)) {
-    throw e.notFoundError("Not found.", null);
+  let header = "";
+  try {
+    header = e.request.header.get("Authorization") || "";
+  } catch (err) {
+    header = "";
+  }
+  if (!epos.webhookAuthorised(cfg, header)) {
+    throw e.unauthorizedError("Not authorised.", null);
   }
 
   let payload = null;
@@ -40,29 +51,25 @@ routerAdd("POST", "/api/vault/epos/webhook/{token}", (e) => {
   } catch (err) {
     payload = null;
   }
-  if (payload === null) {
-    try {
-      payload = e.requestInfo().body || null;
-    } catch (err) {
-      payload = null;
-    }
-  }
 
   let result = null;
   try {
-    result = epos.handleWebhook(e.app, payload);
+    result = epos.handleWebhook(e.app, payload, new Date());
   } catch (err) {
-    // Epos Now retries a webhook that does not answer 2xx; the poll will
-    // see the sale anyway, so a failure here is logged, not bounced.
+    // Epos Now can resend a failed webhook; the poll will see the sale
+    // anyway, so a failure here is logged, not bounced.
     console.log(`[epos:webhook] failed: ${err}`);
-    result = { received: 0, error: true };
+    result = { received: 0 };
   }
   return e.json(200, {
     received: result.received || 0,
     activated: result.activated || 0,
     renewed: result.renewed || 0,
+    linked_manual: result.linked_manual || 0,
+    flagged: result.flagged || 0,
     unmatched: result.unmatched || 0,
     deferred: result.deferred || 0,
+    skipped: result.skipped || 0,
   });
 });
 
@@ -120,10 +127,13 @@ routerAdd(
     if (!cfg.token) {
       throw e.error(422, "Epos Now is not set up: save the API token in settings first.", null);
     }
-    if (!cfg.productIds.length) {
+    if (!Object.keys(cfg.productTiers).length) {
       throw e.error(422, "No Guild product is set: add its Epos Now product id in settings first.", null);
     }
-    const result = epos.pollToday(e.app, new Date());
+    if (!cfg.activeFrom) {
+      throw e.error(422, "No start time is set: add settings.eposnow.active_from before polling.", null);
+    }
+    const result = epos.poll(e.app, new Date());
     auditLib.writeAuditLog(e.app, {
       actor: e.auth.id,
       action: "epos_poll",
@@ -157,7 +167,7 @@ cronAdd("epos_poll", "*/5 * * * *", () => {
   if (hour < 8 || hour >= 22) return;
 
   try {
-    const result = epos.pollToday($app, now);
+    const result = epos.poll($app, now);
     if (result.error) console.log(`[cron:epos_poll] ${result.error}`);
     if (result.activated || result.renewed || result.unmatched) {
       console.log(

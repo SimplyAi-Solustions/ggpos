@@ -57,8 +57,8 @@ routerAdd("POST", "/api/vault/signup", (e) => {
     });
   }
   if (!terms) {
-    throw e.badRequestError("Tick the box to accept the GG Guild terms, then try again.", {
-      terms_accepted: new ValidationError("required", "Accept the terms to join."),
+    throw e.badRequestError("Tick the box to accept the terms and the privacy notice.", {
+      terms_accepted: new ValidationError("required", "Tick the box to accept the terms and the privacy notice."),
     });
   }
 
@@ -82,7 +82,9 @@ routerAdd("POST", "/api/vault/signup", (e) => {
       name: name,
       email: email,
       emailVisibility: false,
-      marketing_consent: marketing,
+      // Held back until the address is proved (below): a sign-up typed
+      // with somebody else's address must not opt them in to marketing.
+      marketing_consent: false,
       source: "portal",
       verified: false,
     });
@@ -107,6 +109,7 @@ routerAdd("POST", "/api/vault/signup", (e) => {
       customer: customer.id,
     });
     priv.set("terms_accepted_at", new Date().toISOString());
+    priv.set("marketing_consent_pending", marketing);
     e.app.save(priv);
   } catch (err) {
     console.log(`[signup] could not stamp terms_accepted_at for ${customer.id}: ${err}`);
@@ -134,8 +137,52 @@ onRecordAuthRequest((e) => {
   if (e.authMethod === "otp" && e.record && e.record.getString("source") === "portal") {
     const welcome = require(`${__hooks}/lib/welcome.js`);
     const notifyLib = require(`${__hooks}/lib/notify.js`);
+
+    // The address is now proved, so the marketing choice made at sign-up
+    // takes effect, once.
+    try {
+      const priv = e.app.findFirstRecordByFilter("customer_private", "customer = {:customer}", {
+        customer: e.record.id,
+      });
+      if (priv.getBool("marketing_consent_pending")) {
+        const customer = e.app.findRecordById("customers", e.record.id);
+        customer.set("marketing_consent", true);
+        e.app.save(customer);
+        e.record.set("marketing_consent", true);
+        priv.set("marketing_consent_pending", false);
+        e.app.save(priv);
+      }
+    } catch (err) {
+      console.log(`[signup] could not apply the marketing choice for ${e.record.id}: ${err}`);
+    }
+
     const result = welcome.award(e.app, e.record, { signedIn: true });
     notifyLib.sendPending(e.app, result.pending);
   }
   e.next();
 }, "customers");
+
+// ---------------------------------------------------------------------
+// Cron: purge_unverified_signups, nightly at 03:05.
+//
+// An online sign-up nobody ever signed in to after 30 days is deleted:
+// nobody proved the address, so it is somebody's typing, not a customer.
+// Only a `source: "portal"` record with `verified` still false, and only
+// one with nothing else attached (no trade-in, sale, quote, ledger row,
+// voucher, want, membership, referral or Epos Now link), so a record staff
+// have since used at the counter is never touched. An unverified sign-up
+// can never have joined a paid plan (that needs a signed-in customer), so
+// it has no Epos Now link by construction; the check is there anyway.
+// One audit row each, the customer id only.
+// ---------------------------------------------------------------------
+cronAdd("purge_unverified_signups", "5 3 * * *", () => {
+  const signups = require(`${__hooks}/lib/signups.js`);
+  try {
+    const result = signups.purgeUnverified($app, new Date());
+    if (result.deleted || result.kept) {
+      console.log(`[cron:purge_unverified_signups] deleted ${result.deleted}, kept ${result.kept}`);
+    }
+  } catch (err) {
+    console.log(`[cron:purge_unverified_signups] failed: ${err}`);
+  }
+});

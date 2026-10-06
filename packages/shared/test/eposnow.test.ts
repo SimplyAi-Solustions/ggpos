@@ -7,7 +7,9 @@ import {
   eposTransactionsFrom,
   guildSaleIn,
   isCompletedSale,
+  MAX_GUILD_QUANTITY,
   normaliseProductIds,
+  normaliseProductTiers,
   readEposTransaction,
   splitName,
 } from "../src/eposnow"
@@ -103,26 +105,69 @@ describe("reading transactions", () => {
   })
 })
 
+const PRODUCTS = { "9001": "tier_pass", "9002": "tier_plus" }
+
 describe("guildSaleIn", () => {
   const [first, second] = eposTransactionsFrom(V4_PAGE)
 
-  it("adds up the Guild lines only", () => {
-    expect(guildSaleIn(first!, [9001])).toEqual({ quantity: 1, amountPence: 2400 })
-    expect(guildSaleIn(first!, ["9001", "1234"])).toEqual({ quantity: 2, amountPence: 2650 })
+  it("adds up the Guild lines only, and names the product's tier", () => {
+    expect(guildSaleIn(first!, PRODUCTS)).toEqual({
+      kind: "sale",
+      tierId: "tier_pass",
+      quantity: 1,
+      amountPence: 2400,
+    })
   })
 
   it("is null when no Guild product was sold, or none is set up", () => {
-    expect(guildSaleIn(second!, [9001])).toBeNull()
-    expect(guildSaleIn(first!, [])).toBeNull()
-    expect(guildSaleIn(first!, "9001")).toBeNull()
+    expect(guildSaleIn(second!, PRODUCTS)).toBeNull()
+    expect(guildSaleIn(first!, {})).toBeNull()
+    expect(guildSaleIn(first!, ["9001"])).toBeNull()
   })
 
-  it("leaves a refunded line out", () => {
-    const refund = readEposTransaction({
+  it("calls a negative quantity or price a refund, never a sale", () => {
+    for (const line of [
+      { productId: 9001, unitPrice: 24, quantity: -1 },
+      { productId: 9001, unitPrice: -24, quantity: 1 },
+    ]) {
+      const tx = readEposTransaction({ id: 9, statusId: 1, transactionItems: [line] })
+      expect(guildSaleIn(tx!, PRODUCTS)?.kind).toBe("refund")
+    }
+  })
+
+  it("will not activate a line at no price or of no quantity", () => {
+    for (const line of [
+      { productId: 9001, unitPrice: 0, quantity: 1 },
+      { productId: 9001, unitPrice: 24, quantity: 0 },
+    ]) {
+      const tx = readEposTransaction({ id: 9, statusId: 1, transactionItems: [line] })
+      expect(guildSaleIn(tx!, PRODUCTS)?.kind).toBe("unpriced")
+    }
+  })
+
+  it("caps a sale at two memberships", () => {
+    const two = readEposTransaction({
       id: 9,
-      transactionItems: [{ productId: 9001, unitPrice: 24, quantity: -1 }],
+      transactionItems: [{ productId: 9001, unitPrice: 24, quantity: 2 }],
     })
-    expect(guildSaleIn(refund!, [9001])).toBeNull()
+    expect(guildSaleIn(two!, PRODUCTS)).toMatchObject({ kind: "sale", quantity: 2, amountPence: 4800 })
+    const three = readEposTransaction({
+      id: 9,
+      transactionItems: [{ productId: 9001, unitPrice: 24, quantity: 3 }],
+    })
+    expect(guildSaleIn(three!, PRODUCTS)?.kind).toBe("too_many")
+    expect(MAX_GUILD_QUANTITY).toBe(2)
+  })
+
+  it("will not guess between two plans in one sale", () => {
+    const tx = readEposTransaction({
+      id: 9,
+      transactionItems: [
+        { productId: 9001, unitPrice: 24, quantity: 1 },
+        { productId: 9002, unitPrice: 48, quantity: 1 },
+      ],
+    })
+    expect(guildSaleIn(tx!, PRODUCTS)?.kind).toBe("mixed")
   })
 
   it("never lets a discount take a line below nothing", () => {
@@ -130,15 +175,27 @@ describe("guildSaleIn", () => {
       id: 10,
       transactionItems: [{ productId: 9001, unitPrice: 24, quantity: 1, discountAmount: 30 }],
     })
-    expect(guildSaleIn(tx!, [9001])).toEqual({ quantity: 1, amountPence: 0 })
+    expect(guildSaleIn(tx!, PRODUCTS)).toMatchObject({ kind: "sale", amountPence: 0 })
+  })
+})
+
+describe("normaliseProductTiers", () => {
+  it("keeps product ids as text and drops blanks", () => {
+    expect(normaliseProductTiers({ 9001: "tier_pass", " 42 ": " t ", "": "x", "7": "" })).toEqual({
+      "9001": "tier_pass",
+      "42": "t",
+    })
+    expect(normaliseProductTiers(["9001"])).toEqual({})
+    expect(normaliseProductTiers(null)).toEqual({})
   })
 })
 
 describe("isCompletedSale", () => {
-  it("accepts status 1, and a payload that does not say", () => {
+  it("accepts status 1 only, and fails closed on a missing or unknown status", () => {
     expect(isCompletedSale(readEposTransaction({ id: 1, statusId: 1 })!)).toBe(true)
-    expect(isCompletedSale(readEposTransaction({ id: 1 })!)).toBe(true)
+    expect(isCompletedSale(readEposTransaction({ id: 1 })!)).toBe(false)
     expect(isCompletedSale(readEposTransaction({ id: 1, statusId: 3 })!)).toBe(false)
+    expect(isCompletedSale(readEposTransaction({ id: 1, Status: "Complete" })!)).toBe(false)
   })
 })
 

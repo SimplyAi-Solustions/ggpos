@@ -93,8 +93,63 @@ function activate(app, membership, opts) {
   membership.set("renews_at", util.addMonths(startedAt, opts.months).toISOString());
   membership.set("price", opts.price);
   if (opts.paymentNote) membership.set("payment_note", opts.paymentNote);
+  stampPayment(membership, opts, startedAt);
   app.save(membership);
   return membership;
+}
+
+/**
+ * How this term was paid for: `paidVia` "hand" (a staff route) or "epos"
+ * (a till sale), when, and which Epos Now sale if one is known. Read by
+ * lib/eposnow.js so a till sale arriving after staff already recorded the
+ * same payment is linked to it rather than adding a second term.
+ */
+function stampPayment(membership, opts, at) {
+  if (!opts.paidVia) return;
+  membership.set("paid_via", opts.paidVia);
+  membership.set("paid_at", (at || new Date()).toISOString());
+  membership.set("epos_transaction", opts.eposTransaction || "");
+}
+
+/**
+ * The `epos_transaction_id` a staff route was given, as Epos Now's digits,
+ * or "" when none was sent. Null when one was sent that is not a number.
+ */
+function eposIdFromBody(value) {
+  if (value === undefined || value === null || value === "") return "";
+  var text = String(value).trim();
+  return /^\d{1,12}$/.test(text) ? text : null;
+}
+
+/** True when an Epos Now sale is already in `epos_transactions`. */
+function eposSaleRecorded(app, eposId) {
+  try {
+    app.findFirstRecordByFilter("epos_transactions", "epos_id = {:id}", { id: eposId });
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * A staff route recording a payment it was told the till took: one
+ * `epos_transactions` row (outcome `manual`, source `hand`), so a later
+ * webhook or poll sees that sale as already done. Call inside the route's
+ * transaction; the unique index on `epos_id` settles a race with the poll.
+ */
+function recordHandSale(app, opts) {
+  app.save(
+    new Record(app.findCollectionByNameOrId("epos_transactions"), {
+      epos_id: opts.eposId,
+      outcome: "manual",
+      customer: opts.customerId,
+      membership: opts.membershipId,
+      amount: opts.price,
+      quantity: 1,
+      sold_at: new Date().toISOString(),
+      source: "hand",
+    })
+  );
 }
 
 /**
@@ -111,6 +166,7 @@ function extend(app, membership, opts) {
   membership.set("renews_at", util.addMonths(base, opts.months).toISOString());
   membership.set("price", opts.price);
   if (opts.paymentNote) membership.set("payment_note", opts.paymentNote);
+  stampPayment(membership, opts, from);
   app.save(membership);
   return membership;
 }
@@ -124,4 +180,8 @@ module.exports = {
   shape: shape,
   activate: activate,
   extend: extend,
+  stampPayment: stampPayment,
+  eposIdFromBody: eposIdFromBody,
+  eposSaleRecorded: eposSaleRecorded,
+  recordHandSale: recordHandSale,
 };

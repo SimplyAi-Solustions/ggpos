@@ -145,16 +145,30 @@ function freshenUpdated(json) {
 //    created, with an id worked out from their card number so the same
 //    customer always gets the same id.
 //  - GET v4/Customer/GetByEmail: nobody, so every link takes the create path.
-//  - GET v4/Customer/770001: a customer added at the till by hand whose card
-//    number is GGC-EP0S1D, which pb/scripts/check.sh gives a counter customer
-//    so a sale to 770001 can be matched by card number.
-//  - GET v4/Transaction/{id}: the id says what the sale is. "6<customer id>"
-//    is a Guild sale (product 9001, £24.00) to that Epos Now customer;
-//    "5000" a Guild sale with nobody attached; "5001" a sale of something
-//    else; "5002" a Guild sale to customer 999999, whom nobody knows. Any
-//    other id is a 404.
-//  - GET v4/Transaction/GetByDate: today's page, the four sales above with
-//    "6770001" as the Guild sale, every time stamped now.
+//  - GET v4/Customer/{id}: 770001 and 770002 are two till customers both
+//    carrying card number GGC-EP0S1D (one GG Vault customer added at the
+//    till twice); 770003 carries GGC-ER4SDB, a customer pb/scripts/check.sh
+//    erases; 555555 is a 503 (Epos Now down while a sale is matched); any
+//    other id is a 404, so the sale falls back to the link GG Vault holds.
+//  - GET v4/Transaction/{id}: the id says what the sale is (all status 1,
+//    stamped now, unless said otherwise):
+//      "6<customer id>"  a Guild sale (product 9001, £24.00) to that customer
+//      "7<customer id>"  product 9002, the second plan (£48.00)
+//      "5000"  a Guild sale with nobody attached
+//      "5001"  a sale of something else
+//      "5002"  a Guild sale to customer 999999, whom nobody knows
+//      "5003"  a Guild refund (quantity -1) to 770001
+//      "5004"  three Guild memberships at once to 770001
+//      "5005"  a Guild line at £10.00 to 770001 (below the tier's price)
+//      "5006"  a Guild sale to 770001 three days ago
+//      "5007"  a Guild sale to 770001 with no status at all
+//      "5008"  a Guild sale to 770003 (the erased customer)
+//      "5009"  a Guild sale to 555555 (customer lookup down)
+//    Any other id is a 400, "Can not find transaction with ID: N", which is
+//    what the live API answers.
+//  - GET v4/Transaction/GetByDate: one page with 5000 to 5009 and
+//    "6770001". startDate must be a zone-less date and time no more than
+//    37 hours back, with a status=1 filter, or the call is refused.
 // The Authorization header must be "Basic <token>", or the call is a 401.
 
 function eposCustomerIdFor(cardNumber) {
@@ -164,38 +178,40 @@ function eposCustomerIdFor(cardNumber) {
   return 700000 + sum;
 }
 
-function eposNowStamp() {
+function eposNowStamp(daysAgo) {
   // Zone-less, the way Epos Now writes it.
-  return new Date().toISOString().slice(0, 19);
+  return new Date(Date.now() - (daysAgo || 0) * 86400000).toISOString().slice(0, 19);
 }
 
 function eposTransactionFor(id) {
   var text = String(id);
   var guild = { productId: 9001, unitPrice: 24, quantity: 1, discountAmount: null };
-  if (text === "5000") {
-    return { id: 5000, customerId: null, dateTime: eposNowStamp(), statusId: 1, transactionItems: [guild] };
+  function tx(txId, customerId, items, extra) {
+    var out = { id: Number(txId), customerId: customerId, dateTime: eposNowStamp(0), statusId: 1, transactionItems: items };
+    for (var k in extra || {}) out[k] = extra[k];
+    return out;
   }
-  if (text === "5001") {
-    return {
-      id: 5001,
-      customerId: 770001,
-      dateTime: eposNowStamp(),
-      statusId: 1,
-      transactionItems: [{ productId: 1234, unitPrice: 4.99, quantity: 2 }],
-    };
+  if (text === "5000") return tx(5000, null, [guild]);
+  if (text === "5001") return tx(5001, 770001, [{ productId: 1234, unitPrice: 4.99, quantity: 2 }]);
+  if (text === "5002") return tx(5002, 999999, [guild]);
+  if (text === "5003") return tx(5003, 770001, [{ productId: 9001, unitPrice: 24, quantity: -1 }]);
+  if (text === "5004") return tx(5004, 770001, [{ productId: 9001, unitPrice: 24, quantity: 3 }]);
+  if (text === "5005") return tx(5005, 770001, [{ productId: 9001, unitPrice: 10, quantity: 1 }]);
+  if (text === "5006") return tx(5006, 770001, [guild], { dateTime: eposNowStamp(3) });
+  if (text === "5007") {
+    var noStatus = tx(5007, 770001, [guild]);
+    delete noStatus.statusId;
+    return noStatus;
   }
-  if (text === "5002") {
-    return { id: 5002, customerId: 999999, dateTime: eposNowStamp(), statusId: 1, transactionItems: [guild] };
-  }
+  if (text === "5008") return tx(5008, 770003, [guild]);
+  if (text === "5009") return tx(5009, 555555, [guild]);
   if (/^6\d+$/.test(text)) {
-    return {
-      id: Number(text),
-      customerId: Number(text.slice(1)),
-      dateTime: eposNowStamp(),
-      statusId: 1,
-      transactionItems: [guild, { productId: 1234, unitPrice: 2.5, quantity: 1 }],
+    return tx(text, Number(text.slice(1)), [guild, { productId: 1234, unitPrice: 2.5, quantity: 1 }], {
       tenders: [{ tenderTypeId: 1, amount: 26.5 }],
-    };
+    });
+  }
+  if (/^7\d+$/.test(text)) {
+    return tx(text, Number(text.slice(1)), [{ productId: 9002, unitPrice: 48, quantity: 1 }]);
   }
   return null;
 }
@@ -240,23 +256,41 @@ function eposnowRespond(call, url) {
   if (method === "GET" && path.indexOf("v4/Customer/GetByEmail") === 0) {
     return ok([]);
   }
-  if (method === "GET" && path === "v4/Customer/770001") {
-    return ok({ id: 770001, forename: "Till", surname: "Added", cardNumber: "GGCEP0S1D" });
+  if (method === "GET" && (path === "v4/Customer/770001" || path === "v4/Customer/770002")) {
+    return ok({ id: Number(path.slice(12)), forename: "Till", surname: "Added", cardNumber: "GGCEP0S1D" });
+  }
+  if (method === "GET" && path === "v4/Customer/770003") {
+    return ok({ id: 770003, forename: "Gone", surname: "Away", cardNumber: "GGCER4SDB" });
+  }
+  if (method === "GET" && path === "v4/Customer/555555") {
+    return { statusCode: 503, json: { message: "Service Unavailable" }, headers: {}, body: null };
   }
   if (method === "GET" && /^v4\/Customer\/\d+$/.test(path)) {
     return { statusCode: 404, json: null, headers: {}, body: null };
   }
   if (method === "GET" && path.indexOf("v4/Transaction/GetByDate?") === 0) {
-    if (!/startDate=\d{4}-\d{2}-\d{2}T00%3A00%3A00/.test(path) || path.indexOf("status=1") < 0) {
-      return refuse(call, "GetByDate without a zone-less day start or status=1: " + path);
+    if (!/startDate=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}(&|$)/.test(path) || path.indexOf("status=1") < 0) {
+      return refuse(call, "GetByDate without a zone-less start time or status=1: " + path);
+    }
+    // Each poll looks back 36 hours at most (lib/eposnow.js's POLL_HOURS):
+    // a start further back than that is a regression to "pull everything".
+    var startMatch = /startDate=([^&]+)/.exec(path);
+    var startAt = startMatch ? Date.parse(decodeURIComponent(startMatch[1]) + "Z") : NaN;
+    if (isNaN(startAt) || startAt < Date.now() - 37 * 3600000) {
+      return refuse(call, "GetByDate reaching back more than 36 hours: " + path);
     }
     if (/page=([2-9]|\d\d)/.test(path)) return ok([]);
-    return ok([eposTransactionFor("5000"), eposTransactionFor("5001"), eposTransactionFor("5002"), eposTransactionFor("6770001")]);
+    var page = [];
+    var ids = ["5000", "5001", "5002", "5003", "5004", "5005", "5006", "5007", "5008", "5009", "6770001"];
+    for (var i = 0; i < ids.length; i++) page.push(eposTransactionFor(ids[i]));
+    return ok(page);
   }
   var txMatch = /^v4\/Transaction\/(\d+)\?/.exec(path);
   if (method === "GET" && txMatch) {
-    var tx = eposTransactionFor(txMatch[1]);
-    return tx ? ok(tx) : { statusCode: 404, json: null, headers: {}, body: null };
+    var found = eposTransactionFor(txMatch[1]);
+    return found
+      ? ok(found)
+      : { statusCode: 400, json: "Can not find transaction with ID: " + txMatch[1], headers: {}, body: null };
   }
   return refuse(call, "");
 }

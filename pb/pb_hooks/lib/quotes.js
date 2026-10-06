@@ -175,7 +175,18 @@ function normalizeOfferLines(app, util, rawLines) {
   return { ok: true, lines: lines, offerTotal: offerTotal };
 }
 
+/**
+ * Text a customer or member of staff typed, with every line ending as a
+ * plain "\n". Browsers send multipart text fields with "\r\n" (and an old
+ * Mac a bare "\r"), which would otherwise be stored as it came and show up
+ * in staff views and anything that reads the message back.
+ */
+function normaliseText(text) {
+  return String(text === null || text === undefined ? "" : text).replace(/\r\n?/g, "\n");
+}
+
 module.exports = {
+  normaliseText: normaliseText,
   sniffImageMime: sniffImageMime,
   photoFileName: photoFileName,
   ukDateShort: ukDateShort,

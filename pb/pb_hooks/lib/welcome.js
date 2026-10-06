@@ -88,6 +88,14 @@ function award(app, customer, opts) {
       out.pending = n.pending || [];
     }
   } catch (err) {
+    // Two sign-ins racing each other both saw no welcome row; the unique
+    // index on points_ledger (customer, ref) WHERE reason = 'welcome' let
+    // exactly one through, and this is the other one. Nothing to undo.
+    if (/unique/i.test(String(err))) {
+      out.awarded = false;
+      out.pending = [];
+      return out;
+    }
     console.log(`[welcome] the welcome bonus failed for ${customer.id}: ${err}`);
   }
   return out;

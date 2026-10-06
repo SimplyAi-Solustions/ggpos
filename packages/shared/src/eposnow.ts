@@ -52,13 +52,6 @@ export interface EposTransaction {
   lines: EposLine[]
 }
 
-export interface GuildSale {
-  /** How many Guild product units the transaction sold. */
-  quantity: number
-  /** What those lines came to, in integer GBP pence. */
-  amountPence: number
-}
-
 type Dict = Record<string, unknown>
 
 function isDict(value: unknown): value is Dict {
@@ -188,26 +181,91 @@ export function normaliseProductIds(ids: unknown): string[] {
 }
 
 /**
- * The Guild product lines in a transaction, added up, or null when it sold
- * none. A line with a quantity of 0 or less is a refund or a void, not a
- * sale, and is left out.
+ * `settings.eposnow.guild_products`, `{ "<Epos Now product id>": "<loyalty_tiers id>" }`,
+ * with blank keys and values dropped. The product decides the tier: a
+ * customer who asked for one plan online and paid at the till for another
+ * gets the one they paid for.
  */
-export function guildSaleIn(tx: EposTransaction, productIds: unknown): GuildSale | null {
-  const wanted = normaliseProductIds(productIds)
-  if (wanted.length === 0) return null
+export function normaliseProductTiers(map: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!isDict(map)) return out
+  for (const key of Object.keys(map)) {
+    const product = idText(key)
+    const tier = typeof map[key] === "string" ? (map[key] as string).trim() : ""
+    if (product && tier) out[product] = tier
+  }
+  return out
+}
+
+/** The most Guild memberships one sale may start; above it a person checks. */
+export const MAX_GUILD_QUANTITY = 2
+
+export type GuildSaleKind =
+  /** A plain sale: one tier, a positive price, 1 or 2 units. */
+  | "sale"
+  /** A Guild line with a negative quantity or amount: a refund at the till. */
+  | "refund"
+  /** A Guild line at no price, or of no quantity: nothing to activate. */
+  | "unpriced"
+  /** Lines for more than one paid plan in one sale. */
+  | "mixed"
+  /** More than `MAX_GUILD_QUANTITY` units. */
+  | "too_many"
+
+export interface GuildSaleResult {
+  kind: GuildSaleKind
+  /** The tier the product maps to (the first one seen, for `mixed`). */
+  tierId: string
+  quantity: number
+  /** What the Guild lines came to, integer GBP pence (never below 0). */
+  amountPence: number
+}
+
+/**
+ * What a transaction's Guild product lines amount to, or null when it has
+ * none. Only `kind: "sale"` may ever start or extend a membership; every
+ * other kind is for a person to look at.
+ */
+export function guildSaleIn(tx: EposTransaction, productTiers: unknown): GuildSaleResult | null {
+  const map = normaliseProductTiers(productTiers)
+  const lines = tx.lines.filter((line) => map[line.productId] !== undefined)
+  if (lines.length === 0) return null
+
+  const tiers: string[] = []
   let quantity = 0
   let amountPence = 0
-  for (const line of tx.lines) {
-    if (!wanted.includes(line.productId) || line.quantity <= 0) continue
+  let refund = false
+  let unpriced = false
+  for (const line of lines) {
+    const tierId = map[line.productId] as string
+    if (!tiers.includes(tierId)) tiers.push(tierId)
+    if (line.quantity < 0 || line.unitPence < 0) {
+      refund = true
+      continue
+    }
+    if (line.quantity === 0 || line.unitPence === 0) {
+      unpriced = true
+      continue
+    }
     quantity += line.quantity
     amountPence += line.amountPence
   }
-  return quantity > 0 ? { quantity, amountPence } : null
+  const tierId = tiers[0] ?? ""
+  let kind: GuildSaleKind = "sale"
+  if (refund) kind = "refund"
+  else if (unpriced || quantity === 0) kind = "unpriced"
+  else if (tiers.length > 1) kind = "mixed"
+  else if (quantity > MAX_GUILD_QUANTITY) kind = "too_many"
+  return { kind, tierId, quantity, amountPence }
 }
 
-/** A completed sale, or one whose payload did not say (a completion webhook). */
+/**
+ * A completed sale, and nothing else. Fails closed: a transaction whose
+ * status is missing or not one Epos Now uses for "complete" (`statusId` 1 on
+ * `GET v4/Transaction/{id}` and the `GetByDate` list) is never acted on.
+ */
 export function isCompletedSale(tx: EposTransaction): boolean {
-  return tx.statusId === null || tx.statusId === EPOS_STATUS_COMPLETE
+  return tx.statusId === EPOS_STATUS_COMPLETE
 }
 
 /** "Sam de la Cruz" as `{ forename: "Sam", surname: "de la Cruz" }`, within Epos Now's limits. */

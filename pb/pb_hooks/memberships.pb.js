@@ -43,6 +43,17 @@ routerAdd(
     const months = util.asInt(body.months, 0);
     const price = util.asInt(body.price, 0);
     const paymentNote = util.asStr(body.payment_note);
+    // Phase 8: the Epos Now sale this payment was rung through, if staff
+    // know it, so the webhook or the poll sees that sale as already done
+    // and never adds a second term on top of this one.
+    const eposMembershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const eposTransactionId = eposMembershipsLib.eposIdFromBody(body.epos_transaction_id);
+    if (eposTransactionId === null) {
+      throw e.badRequestError("An Epos Now transaction id is a number. Copy it from the sale on the till.", null);
+    }
+    if (eposTransactionId && eposMembershipsLib.eposSaleRecorded(e.app, eposTransactionId)) {
+      throw e.error(409, `Epos Now sale ${eposTransactionId} has already been used for a membership. Check the member it went to.`, null);
+    }
     const now = new Date();
 
     let customer = null;
@@ -109,6 +120,16 @@ routerAdd(
       membership.set("price", price);
       membership.set("payment_note", paymentNote);
       txApp.save(membership);
+      eposMembershipsLib.stampPayment(membership, { paidVia: "hand", eposTransaction: eposTransactionId }, new Date());
+      txApp.save(membership);
+      if (eposTransactionId) {
+        eposMembershipsLib.recordHandSale(txApp, {
+          eposId: eposTransactionId,
+          customerId: membership.getString("customer"),
+          membershipId: membership.id,
+          price: membership.getInt("price"),
+        });
+      }
 
       const n = notifyLib.notify(txApp, {
         customer: customerId,
@@ -165,6 +186,17 @@ routerAdd(
     const months = util.asInt(body.months, 0);
     const price = util.asInt(body.price, 0);
     const paymentNote = util.asStr(body.payment_note);
+    // Phase 8: the Epos Now sale this payment was rung through, if staff
+    // know it, so the webhook or the poll sees that sale as already done
+    // and never adds a second term on top of this one.
+    const eposMembershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const eposTransactionId = eposMembershipsLib.eposIdFromBody(body.epos_transaction_id);
+    if (eposTransactionId === null) {
+      throw e.badRequestError("An Epos Now transaction id is a number. Copy it from the sale on the till.", null);
+    }
+    if (eposTransactionId && eposMembershipsLib.eposSaleRecorded(e.app, eposTransactionId)) {
+      throw e.error(409, `Epos Now sale ${eposTransactionId} has already been used for a membership. Check the member it went to.`, null);
+    }
     const now = new Date();
 
     let membership = null;
@@ -225,6 +257,16 @@ routerAdd(
       live.set("price", price);
       if (paymentNote) live.set("payment_note", paymentNote);
       txApp.save(live);
+      eposMembershipsLib.stampPayment(live, { paidVia: "hand", eposTransaction: eposTransactionId }, new Date());
+      txApp.save(live);
+      if (eposTransactionId) {
+        eposMembershipsLib.recordHandSale(txApp, {
+          eposId: eposTransactionId,
+          customerId: live.getString("customer"),
+          membershipId: live.id,
+          price: live.getInt("price"),
+        });
+      }
 
       auditLib.writeAuditLog(txApp, {
         actor: staff.id,
@@ -375,6 +417,17 @@ routerAdd(
     const price =
       body.price === undefined || body.price === "" ? membership.getInt("price") : util.asInt(body.price, -1);
     const paymentNote = util.asStr(body.payment_note) || "Paid at the counter.";
+    // Phase 8: the Epos Now sale this payment was rung through, if staff
+    // know it, so the webhook or the poll sees that sale as already done
+    // and never adds a second term on top of this one.
+    const eposMembershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const eposTransactionId = eposMembershipsLib.eposIdFromBody(body.epos_transaction_id);
+    if (eposTransactionId === null) {
+      throw e.badRequestError("An Epos Now transaction id is a number. Copy it from the sale on the till.", null);
+    }
+    if (eposTransactionId && eposMembershipsLib.eposSaleRecorded(e.app, eposTransactionId)) {
+      throw e.error(409, `Epos Now sale ${eposTransactionId} has already been used for a membership. Check the member it went to.`, null);
+    }
     if (months < 1 || months > 24) {
       throw e.badRequestError("Pick a length of 1 to 24 months.", null);
     }
@@ -408,6 +461,16 @@ routerAdd(
         price: price,
         paymentNote: paymentNote,
       });
+      eposMembershipsLib.stampPayment(live, { paidVia: "hand", eposTransaction: eposTransactionId }, new Date());
+      txApp.save(live);
+      if (eposTransactionId) {
+        eposMembershipsLib.recordHandSale(txApp, {
+          eposId: eposTransactionId,
+          customerId: live.getString("customer"),
+          membershipId: live.id,
+          price: live.getInt("price"),
+        });
+      }
       const name = membershipsLib.tierName(txApp, live.getString("tier")) || "membership";
       const n = notifyLib.notify(txApp, {
         customer: customerId,

@@ -26,11 +26,18 @@
  *    watcher. Created by an admin only, and no existing collection's rules
  *    let it read anything (the three `loyalty_*` rules that used to admit
  *    "any signed-in record" now name staff and customers explicitly).
- *  - `settings.eposnow` (`{ guild_product_ids, location_id }`) and two
- *    empty keys merged into `settings.api_keys`: `eposnow` (the API token)
- *    and `eposnow_webhook` (the secret in the webhook URL). `api_keys` is
- *    dropped wholesale by `GET /api/vault/config` and never read by the
- *    Settings screen, so neither reaches a browser.
+ *  - `settings.eposnow` (`{ guild_products: { "<Epos Now product id>":
+ *    "<loyalty_tiers id>" }, location_id, active_from }`, `active_from`
+ *    stamped with the time this migration ran) and three empty keys merged
+ *    into `settings.api_keys`: `eposnow` (the API token) and
+ *    `eposnow_webhook_key`/`eposnow_webhook_secret` (the Basic credentials
+ *    Epos Now sends with each webhook). `api_keys` is dropped wholesale by
+ *    `GET /api/vault/config` and never read by the Settings screen, so none
+ *    of them reaches a browser.
+ *  - `memberships.paid_via`/`paid_at`/`epos_transaction`; `customer_private`
+ *    `epos_sync_started_at`, `erased_at` and `marketing_consent_pending`.
+ *  - A unique index on `points_ledger (customer, ref) WHERE reason =
+ *    'welcome'`, unless existing rows already break it (reported, not failed).
  *  - Rate limits appended to the existing list, never replacing it.
  */
 migrate(
@@ -47,6 +54,14 @@ migrate(
     const statusField = memberships.fields.getByName("status");
     statusField.values = ["pending", "active", "lapsed", "cancelled"];
     memberships.fields.add(statusField);
+    // How the current term was paid for, so an Epos Now sale arriving after
+    // a member of staff already recorded the payment by hand is linked to
+    // it rather than adding a second year (lib/eposnow.js).
+    memberships.fields.add(
+      new Field({ name: "paid_via", type: "select", maxSelect: 1, values: ["hand", "epos"] })
+    );
+    memberships.fields.add(new Field({ name: "paid_at", type: "date" }));
+    memberships.fields.add(new Field({ name: "epos_transaction", type: "text", max: 40 }));
     memberships.addIndex("idx_memberships_customer_status", false, "customer, status", "");
     app.save(memberships);
 
@@ -77,9 +92,17 @@ migrate(
         name: "epos_sync_status",
         type: "select",
         maxSelect: 1,
-        values: ["queued", "linked", "failed"],
+        values: ["queued", "in_progress", "linked", "failed"],
       })
     );
+    // When the current attempt to reach Epos Now began: a second attempt
+    // backs off while it is recent, and the retry cron clears a stale one.
+    priv.fields.add(new Field({ name: "epos_sync_started_at", type: "date" }));
+    // Set by an erasure, so nothing ever links an erased customer again.
+    priv.fields.add(new Field({ name: "erased_at", type: "date" }));
+    // An online sign-up's marketing choice, held until the email address is
+    // proved by the first emailed-code sign-in, then moved onto customers.
+    priv.fields.add(new Field({ name: "marketing_consent_pending", type: "bool" }));
     priv.fields.add(new Field({ name: "epos_sync_attempts", type: "number", onlyInt: true, min: 0 }));
     priv.fields.add(new Field({ name: "epos_sync_error", type: "text", max: 300 }));
     priv.fields.add(new Field({ name: "epos_synced_at", type: "date" }));
@@ -111,7 +134,23 @@ migrate(
           type: "select",
           required: true,
           maxSelect: 1,
-          values: ["activated", "renewed", "no_customer", "unknown_customer", "no_plan"],
+          values: [
+            "activated",
+            "renewed",
+            "linked_manual",
+            "manual",
+            "no_customer",
+            "unknown_customer",
+            "erased_customer",
+            "no_plan",
+            "stale",
+            "refunded",
+            "unpriced",
+            "mixed",
+            "too_many",
+            "underpaid",
+            "tier_mismatch",
+          ],
         },
         { name: "customer", type: "relation", collectionId: customers.id, maxSelect: 1 },
         { name: "membership", type: "relation", collectionId: memberships.id, maxSelect: 1 },
@@ -119,7 +158,7 @@ migrate(
         { name: "amount", type: "number", onlyInt: true },
         { name: "quantity", type: "number", onlyInt: true },
         { name: "sold_at", type: "date" },
-        { name: "source", type: "select", maxSelect: 1, values: ["webhook", "poll"] },
+        { name: "source", type: "select", maxSelect: 1, values: ["webhook", "poll", "hand"] },
         { name: "created", type: "autodate", onCreate: true },
         { name: "updated", type: "autodate", onCreate: true, onUpdate: true },
       ],
@@ -164,7 +203,13 @@ migrate(
       settingsRow = null; // fresh, pre-seed database
     }
     if (settingsRow) {
-      settingsRow.set("eposnow", { guild_product_ids: [], location_id: 14037 });
+      // `active_from` is when this migration ran: no Epos Now sale before
+      // it ever starts a membership, whatever a webhook or a poll says.
+      settingsRow.set("eposnow", {
+        guild_products: {},
+        location_id: 14037,
+        active_from: new Date().toISOString(),
+      });
       let keys = {};
       try {
         const raw = settingsRow.get("api_keys");
@@ -174,9 +219,39 @@ migrate(
         keys = {};
       }
       if (keys.eposnow === undefined) keys.eposnow = "";
-      if (keys.eposnow_webhook === undefined) keys.eposnow_webhook = "";
+      if (keys.eposnow_webhook_key === undefined) keys.eposnow_webhook_key = "";
+      if (keys.eposnow_webhook_secret === undefined) keys.eposnow_webhook_secret = "";
       settingsRow.set("api_keys", keys);
       app.save(settingsRow);
+    }
+
+    // ---------------------------------------------------------------------
+    // points_ledger: one welcome row per customer per origin. (customer,
+    // ref) rather than customer alone, because a merge moves the
+    // duplicate's own welcome row (ref = the duplicate's id) onto the kept
+    // customer and then takes it back with an adjust row; two rows for one
+    // customer with the same ref is exactly the double award a race would
+    // write. A database that already holds such a pair is reported and the
+    // index left off, rather than failing the deploy.
+    // ---------------------------------------------------------------------
+    const dupes = arrayOf(
+      new DynamicModel({ customer: "", ref: "", n: 0 })
+    );
+    app
+      .db()
+      .newQuery(
+        "SELECT customer, ref, COUNT(*) AS n FROM points_ledger WHERE reason = 'welcome' GROUP BY customer, ref HAVING COUNT(*) > 1"
+      )
+      .all(dupes);
+    if (dupes.length > 0) {
+      console.log(
+        `[migration 1789820820] ${dupes.length} customer(s) already hold two welcome rows with the same ref; ` +
+          "the unique welcome index was not created. Fix them with an adjust row, then add idx_points_ledger_welcome_unique by hand."
+      );
+    } else {
+      const ledger = app.findCollectionByNameOrId("points_ledger");
+      ledger.addIndex("idx_points_ledger_welcome_unique", true, "customer, ref", "reason = 'welcome'");
+      app.save(ledger);
     }
 
     // ---------------------------------------------------------------------
@@ -195,10 +270,9 @@ migrate(
     }
     rules.push({ label: "POST /api/vault/signup", audience: "", duration: 600, maxRequests: 20 });
     rules.push({ label: "POST /api/vault/guild/join", audience: "@auth", duration: 60, maxRequests: 20 });
-    // Prefixes (a label ending in "/"), since the token or the query is
-    // part of what follows. Epos Now itself calls the webhook with no
-    // token of ours, hence audience "".
-    rules.push({ label: "POST /api/vault/epos/webhook/", audience: "", duration: 60, maxRequests: 120 });
+    // Epos Now calls the webhook with its own Basic credentials, not a
+    // PocketBase token, hence audience "". The agent label is a prefix.
+    rules.push({ label: "POST /api/vault/epos/webhook", audience: "", duration: 60, maxRequests: 120 });
     rules.push({ label: "GET /api/vault/agent/", audience: "", duration: 60, maxRequests: 60 });
     appSettings.rateLimits.rules = rules;
     app.save(appSettings);
@@ -208,7 +282,7 @@ migrate(
     const DROPPED = [
       "POST /api/vault/signup",
       "POST /api/vault/guild/join",
-      "POST /api/vault/epos/webhook/",
+      "POST /api/vault/epos/webhook",
       "GET /api/vault/agent/",
     ];
 
@@ -243,13 +317,18 @@ migrate(
         keys = {};
       }
       delete keys.eposnow;
-      delete keys.eposnow_webhook;
+      delete keys.eposnow_webhook_key;
+      delete keys.eposnow_webhook_secret;
       settingsRow.set("api_keys", keys);
       app.save(settingsRow);
     }
     const settings = app.findCollectionByNameOrId("settings");
     settings.fields.removeByName("eposnow");
     app.save(settings);
+
+    const ledger = app.findCollectionByNameOrId("points_ledger");
+    ledger.removeIndex("idx_points_ledger_welcome_unique");
+    app.save(ledger);
 
     app.delete(app.findCollectionByNameOrId("agents"));
     app.delete(app.findCollectionByNameOrId("epos_transactions"));
@@ -258,6 +337,9 @@ migrate(
     priv.removeIndex("idx_customer_private_epos_sync_status");
     priv.removeIndex("idx_customer_private_epos_customer_unique");
     for (const name of [
+      "marketing_consent_pending",
+      "erased_at",
+      "epos_sync_started_at",
       "epos_synced_at",
       "epos_sync_error",
       "epos_sync_attempts",
@@ -291,6 +373,9 @@ migrate(
     }
     const memberships = app.findCollectionByNameOrId("memberships");
     memberships.removeIndex("idx_memberships_customer_status");
+    memberships.fields.removeByName("epos_transaction");
+    memberships.fields.removeByName("paid_at");
+    memberships.fields.removeByName("paid_via");
     const statusField = memberships.fields.getByName("status");
     statusField.values = ["active", "lapsed", "cancelled"];
     memberships.fields.add(statusField);

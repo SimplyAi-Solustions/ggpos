@@ -48,6 +48,9 @@ BACKDATE_PID=""
 # callback secret (section 25).
 P7_BACKDATE_PID=""
 
+# A sixth, the same idea for a customers row's `created` (section 27).
+P8_BACKDATE_PID=""
+
 # A fifth, on its own data directory, started with GG_ADMIN_EMAIL and
 # GG_ADMIN_PASSWORD set so the seed really creates the first admin
 # (section 26).
@@ -128,6 +131,10 @@ cleanup() {
   if [ -n "$P7_BACKDATE_PID" ] && kill -0 "$P7_BACKDATE_PID" 2>/dev/null; then
     kill "$P7_BACKDATE_PID" 2>/dev/null || true
     wait "$P7_BACKDATE_PID" 2>/dev/null || true
+  fi
+  if [ -n "$P8_BACKDATE_PID" ] && kill -0 "$P8_BACKDATE_PID" 2>/dev/null; then
+    kill "$P8_BACKDATE_PID" 2>/dev/null || true
+    wait "$P8_BACKDATE_PID" 2>/dev/null || true
   fi
   if [ -n "$FIRSTRUN_PID" ] && kill -0 "$FIRSTRUN_PID" 2>/dev/null; then
     kill "$FIRSTRUN_PID" 2>/dev/null || true
@@ -7387,10 +7394,11 @@ P7_BACKDATE_PID=""
 #     Epos Now customer link and activation, and agent read access
 #     (1789820820_phase8_signup_guild_epos.js; pb_hooks/signup.pb.js,
 #     guild.pb.js, memberships.pb.js, eposnow.pb.js, agents.pb.js;
-#     lib/welcome.js, lib/memberships.js, lib/eposnow.js,
+#     lib/welcome.js, lib/memberships.js, lib/eposnow.js, lib/signups.js,
 #     adapters/eposnow.js). Still under GG_ADAPTER_TRANSPORT_MODE=fixture:
 #     every Epos Now call is answered by adapters/fixture_transport.js's
-#     own Epos Now block, and anything it does not know throws.
+#     own Epos Now block (its banner lists what each id means), and
+#     anything it does not know throws.
 # -----------------------------------------------------------------------
 
 p8_reset_limits() {
@@ -7422,7 +7430,7 @@ p8_first() {
 }
 
 p8_signup() {
-  # $1 JSON body -> "<status> <body>" on one line
+  # $1 JSON body -> "<body> <status>" on one line
   curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/signup" -H "Content-Type: application/json" -d "$1"
 }
 
@@ -7441,7 +7449,68 @@ p8_otp_sign_in() {
     -d "{\"otpId\":\"$otp\",\"password\":\"81726354\"}" | jval token
 }
 
+P8_HOOK_AUTH="Basic $(printf '%s' 'ggvault-check:check-webhook-secret-0123' | base64)"
+p8_hook() {
+  # $1 JSON body -> the webhook's own answer, sent with Epos Now's Basic credentials
+  curl -s -X POST "$BASE/api/vault/epos/webhook" -H "Authorization: $P8_HOOK_AUTH" \
+    -H "Content-Type: application/json" -d "$1"
+}
+
+p8_link() {
+  # $1 customer id -> their Epos Now id after a staff "Link to Epos Now"
+  curl -s -X POST "$BASE/api/vault/customers/$1/epos-link" -H "Authorization: $PLAIN_TOKEN" | jval link.epos_customer_id
+}
+
+p8_member() {
+  # $1 name, $2 email -> "<customer id> <epos id> <pending membership id> <customer token>"
+  local id token pending epos
+  id="$(p5_make_customer "$1" "$2")"
+  token="$(p5_impersonate "$id")"
+  pending="$(curl -s -X POST "$BASE/api/vault/guild/join" -H "Authorization: $token" \
+    -H "Content-Type: application/json" -d "{\"tier\":\"$P8_TIER_ID\"}" | jval membership.id)"
+  epos="$(p8_link "$id")"
+  echo "$id $epos $pending $token"
+}
+
+p8_months_between() {
+  node -e 'const a=new Date(process.argv[1].replace(" ","T")),b=new Date(process.argv[2].replace(" ","T"));process.stdout.write(String((b.getUTCFullYear()-a.getUTCFullYear())*12+b.getUTCMonth()-a.getUTCMonth()))' "$1" "$2"
+}
+
 p8_reset_limits
+
+# A short-lived helper on the same data directory, the section 24 way: its
+# only hook backdates a customers row's `created` (an autodate PocketBase
+# restamps on every write), for the 30-day purge of unverified sign-ups.
+mkdir -p "$TMP_DIR/check_p8_backdate_hooks"
+cat >"$TMP_DIR/check_p8_backdate_hooks/backdate.pb.js" <<'P8_BACKDATE_HOOK'
+/// Throwaway, written by pb/scripts/check.sh. Never part of pb_hooks/.
+routerAdd(
+  "POST",
+  "/api/check/backdate-customer",
+  (e) => {
+    const body = (e.requestInfo() || {}).body || {};
+    $app
+      .db()
+      .newQuery("UPDATE customers SET created = {:created} WHERE id = {:id}")
+      .bind({ created: String(body.created || ""), id: String(body.id || "") })
+      .execute();
+    return e.json(200, { ok: true });
+  },
+  $apis.requireSuperuserAuth()
+);
+P8_BACKDATE_HOOK
+P8_BACKDATE_PORT="$(node -e "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});")"
+"$PB" serve --http "127.0.0.1:$P8_BACKDATE_PORT" --dir "$TMP_DIR" \
+  --hooksDir "$TMP_DIR/check_p8_backdate_hooks" --hooksWatch=false \
+  --migrationsDir "$MIGRATIONS_DIR" --publicDir "$PUBLIC_DIR" \
+  >"$TMP_DIR/p8-backdate.log" 2>&1 &
+P8_BACKDATE_PID=$!
+for _ in $(seq 1 80); do
+  curl -sf "http://127.0.0.1:$P8_BACKDATE_PORT/api/health" >/dev/null 2>&1 && break
+  sleep 0.25
+done
+curl -sf "http://127.0.0.1:$P8_BACKDATE_PORT/api/health" >/dev/null 2>&1 \
+  || fail "the phase 8 backdating helper did not start: $(tail -n 5 "$TMP_DIR/p8-backdate.log")"
 
 # --- 27a. The migration's own shape ---------------------------------------
 P8_MEMBERSHIPS_SCHEMA="$(curl -s "$BASE/api/collections/memberships" -H "Authorization: $SUPER_TOKEN")"
@@ -7462,17 +7531,21 @@ for name in loyalty_programme loyalty_tiers loyalty_rewards; do
     = '@request.auth.collectionName = "staff" || @request.auth.collectionName = "customers"' ] \
     || fail "$name.listRule still admits any signed-in record"
 done
-for label in "POST /api/vault/signup" "POST /api/vault/guild/join" "POST /api/vault/epos/webhook/" "GET /api/vault/agent/"; do
+for label in "POST /api/vault/signup" "POST /api/vault/guild/join" "POST /api/vault/epos/webhook" "GET /api/vault/agent/"; do
   [ -n "$(p7_sumup_limit "$label")" ] || fail "no rate limit for $label"
 done
 [ -n "$(p7_sumup_limit "customers:requestOTP")" ] || fail "the Phase 5 rate limits were replaced rather than added to"
-ok "phase 8 schema: pending memberships, admin-only agents, hook-only epos_transactions, loyalty reads named, rate limits added"
+curl -s "$BASE/api/collections/points_ledger" -H "Authorization: $SUPER_TOKEN" | grep -q "idx_points_ledger_welcome_unique" \
+  || fail "points_ledger has no unique welcome index"
+ok "phase 8 schema: pending memberships, admin-only agents, hook-only epos_transactions, loyalty reads named, rate limits added, one welcome row per origin"
 
 # --- 27b. POST /api/vault/signup ------------------------------------------
 P8_NO_TERMS="$(p8_signup '{"name":"Robin Hart","email":"robin@local.test","terms_accepted":false}')"
 [ "${P8_NO_TERMS##* }" = "400" ] || fail "a sign-up without the terms returned ${P8_NO_TERMS##* }, expected 400"
-echo "$P8_NO_TERMS" | grep -qF "Tick the box to accept the GG Guild terms, then try again." \
-  || fail "the terms refusal does not say what to do: $P8_NO_TERMS"
+echo "$P8_NO_TERMS" | grep -qF "Tick the box to accept the terms and the privacy notice." \
+  || fail "the terms refusal does not say what to do in general words: $P8_NO_TERMS"
+[ "$(echo "${P8_NO_TERMS% *}" | jval data.terms_accepted.message)" = "Tick the box to accept the terms and the privacy notice." ] \
+  || fail "the terms refusal has no matching field error: $P8_NO_TERMS"
 P8_BAD_EMAIL="$(p8_signup '{"name":"Robin Hart","email":"robin-at-local","terms_accepted":true}')"
 [ "${P8_BAD_EMAIL##* }" = "400" ] || fail "a sign-up with a broken email returned ${P8_BAD_EMAIL##* }, expected 400"
 P8_NO_NAME="$(p8_signup '{"name":"  ","email":"robin@local.test","terms_accepted":true}')"
@@ -7485,9 +7558,10 @@ P8_NEW_BODY="${P8_NEW% *}"
 P8_ROBIN_ID="$(p8_first customers 'email = "robin@local.test"' id)"
 [ -n "$P8_ROBIN_ID" ] || fail "the sign-up did not create a customer (stored lower case)"
 [ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" source)" = "portal" ] || fail "a signed-up customer's source is not portal"
-[ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" marketing_consent)" = "true" ] || fail "the marketing choice was not kept"
-P8_ROBIN_CODE="$(p8_first customers "id = \"$P8_ROBIN_ID\"" code)"
-[ -n "$P8_ROBIN_CODE" ] || fail "a signed-up customer has no GGC code"
+[ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" marketing_consent)" = "false" ] \
+  || fail "marketing consent was recorded before the email address was proved"
+[ "$(p8_first customer_private "customer = \"$P8_ROBIN_ID\"" marketing_consent_pending)" = "true" ] \
+  || fail "the marketing choice was not held for the first sign-in"
 [ -n "$(p8_first customer_private "customer = \"$P8_ROBIN_ID\"" terms_accepted_at)" ] || fail "terms_accepted_at was not stamped"
 [ "$(p8_count points_ledger "customer = \"$P8_ROBIN_ID\" && reason = \"welcome\"")" = "0" ] \
   || fail "a signed-up customer got the welcome bonus before ever signing in"
@@ -7499,17 +7573,17 @@ P8_DUP="$(p8_signup '{"name":"Somebody Else","email":"ROBIN@local.test","marketi
   || fail "a known address got a different answer from a new one: ${P8_DUP% *} vs $P8_NEW_BODY"
 [ "$(p8_count customers 'email = "robin@local.test"')" = "1" ] || fail "a duplicate sign-up created a second customer"
 [ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" name)" = "Robin Hart" ] || fail "a duplicate sign-up changed the existing customer's name"
-ok "sign-up refuses bad input in words, creates a portal customer with no bonus yet, and answers a known address exactly as a new one"
-
-P8_TERMS="$(curl -s "$BASE/api/vault/guild/terms")"
-[ -n "$(echo "$P8_TERMS" | jval name)" ] || fail "GET /api/vault/guild/terms did not name the programme for a guest: $P8_TERMS"
-echo "$P8_TERMS" | grep -q '"enabled"\|"welcome_bonus"\|"id"' && fail "GET /api/vault/guild/terms carries more than the name and the terms: $P8_TERMS"
+ok "sign-up refuses bad input in general words, holds back marketing and the bonus, and answers a known address exactly as a new one"
 
 P8_OTP_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/customers/request-otp" \
   -H "Content-Type: application/json" -d '{"email":"robin@local.test"}')"
 [ "$P8_OTP_STATUS" = "200" ] || fail "request-otp for a signed-up customer returned $P8_OTP_STATUS"
 
-# --- 27c. The welcome bonus waits for the first emailed-code sign-in ------
+P8_TERMS="$(curl -s "$BASE/api/vault/guild/terms")"
+[ -n "$(echo "$P8_TERMS" | jval name)" ] || fail "GET /api/vault/guild/terms did not name the programme for a guest: $P8_TERMS"
+echo "$P8_TERMS" | grep -q '"enabled"\|"welcome_bonus"\|"id"' && fail "GET /api/vault/guild/terms carries more than the name and the terms: $P8_TERMS"
+
+# --- 27c. The first emailed-code sign-in: the bonus, the marketing choice -
 P8_ROBIN_TOKEN="$(p8_otp_sign_in "$P8_ROBIN_ID" "robin@local.test")"
 [ -n "$P8_ROBIN_TOKEN" ] || fail "a signed-up customer could not sign in with an emailed code"
 [ "$(p8_count points_ledger "customer = \"$P8_ROBIN_ID\" && reason = \"welcome\"")" = "1" ] \
@@ -7518,19 +7592,33 @@ P8_ROBIN_TOKEN="$(p8_otp_sign_in "$P8_ROBIN_ID" "robin@local.test")"
   || fail "the welcome bonus is not on the balance /me reads straight after signing in"
 [ "$(p8_first notifications "customer = \"$P8_ROBIN_ID\" && type = \"welcome\"" link)" = "/account/guild" ] \
   || fail "the signed-in welcome notification does not open the Guild"
+[ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" marketing_consent)" = "true" ] \
+  || fail "the marketing choice did not take effect once the address was proved"
+[ "$(p8_first customer_private "customer = \"$P8_ROBIN_ID\"" marketing_consent_pending)" = "false" ] \
+  || fail "the held marketing choice was not cleared"
+[ "$(p8_first customers "id = \"$P8_ROBIN_ID\"" verified)" = "true" ] \
+  || fail "an emailed-code sign-in did not mark the address verified, which the 30-day purge relies on"
 P8_ROBIN_TOKEN="$(p8_otp_sign_in "$P8_ROBIN_ID" "robin@local.test")"
 [ "$(p8_count points_ledger "customer = \"$P8_ROBIN_ID\" && reason = \"welcome\"")" = "1" ] \
   || fail "a second sign-in awarded the welcome bonus again"
+P8_SECOND_WELCOME="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/points_ledger/records" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P8_ROBIN_ID\",\"delta\":100,\"reason\":\"welcome\",\"ref\":\"$P8_ROBIN_ID\"}")"
+[ "$P8_SECOND_WELCOME" = "400" ] || fail "the database accepted a second welcome row for one customer ($P8_SECOND_WELCOME)"
 P8_COUNTER_ID="$(p5_make_customer "Counter Made" "counter-made@local.test")"
 [ "$(p8_count points_ledger "customer = \"$P8_COUNTER_ID\" && reason = \"welcome\"")" = "1" ] \
   || fail "a counter-created customer no longer gets the welcome bonus on creation"
-ok "the welcome bonus lands on a signed-up customer's first code sign-in, once, and counter customers are unchanged"
+ok "the first code sign-in applies the marketing choice and the welcome bonus, once, and the index refuses a second welcome"
 
 # --- 27d. The Guild join, before Epos Now is set up ----------------------
 P8_TIER_ID="$(curl -s -X POST "$BASE/api/collections/loyalty_tiers/records" -H "Authorization: $STAFF_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Guild Pass","threshold_points":0,"sort":50,"paid_plan":true,"price":2400,"perks":[]}' | jval id)"
 [ -n "$P8_TIER_ID" ] || fail "could not create the paid plan tier"
+P8_TIER2_ID="$(curl -s -X POST "$BASE/api/collections/loyalty_tiers/records" -H "Authorization: $STAFF_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Guild Plus","threshold_points":0,"sort":60,"paid_plan":true,"price":4800,"perks":[]}' | jval id)"
+[ -n "$P8_TIER2_ID" ] || fail "could not create the second paid plan tier"
 P8_EARNED_TIER="$(curl -s "$BASE/api/collections/loyalty_tiers/records?filter=paid_plan%3Dfalse" -H "Authorization: $STAFF_TOKEN" | jval items.0.id)"
 
 P8_JOIN_BAD="$(curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/guild/join" -H "Authorization: $P8_ROBIN_TOKEN" \
@@ -7563,25 +7651,39 @@ P8_GUILD="$(curl -s "$BASE/api/vault/me/guild" -H "Authorization: $P8_ROBIN_TOKE
 echo "$P8_GUILD" | grep -qF "\"id\":\"$P8_TIER_ID\"" || fail "/me/guild does not list the paid plan to join: $P8_GUILD"
 ok "the Guild join makes one pending, tier-priced membership, pins nothing, queues the till link and shows in /me/guild"
 
-# --- 27e. The Epos Now link -------------------------------------------------
+# --- 27e. Epos Now settings and the customer link ---------------------------
 P8_SETTINGS_ID="$(curl -s "$BASE/api/collections/settings/records" -H "Authorization: $SUPER_TOKEN" | jval items.0.id)"
-P8_API_KEYS="$(curl -s "$BASE/api/collections/settings/records/$P8_SETTINGS_ID" -H "Authorization: $SUPER_TOKEN" | node -e '
-  let d = "";
-  process.stdin.on("data", (c) => (d += c));
-  process.stdin.on("end", () => {
-    const keys = JSON.parse(d).api_keys || {};
-    keys.eposnow = "Y2hlY2s6ZXBvcw==";
-    keys.eposnow_webhook = "check-epos-webhook-secret-0123";
-    process.stdout.write(JSON.stringify({ api_keys: keys, eposnow: { guild_product_ids: [9001], location_id: 14037 } }));
-  });
-')"
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/settings/records/$P8_SETTINGS_ID" \
-  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d "$P8_API_KEYS")" = "200" ] \
-  || fail "could not save the Epos Now settings"
-curl -s "$BASE/api/vault/config" -H "Authorization: $STAFF_TOKEN" | grep -qF "check-epos-webhook-secret" \
-  && fail "GET /api/vault/config leaks the Epos Now webhook secret"
-curl -s "$BASE/api/vault/config" -H "Authorization: $STAFF_TOKEN" | grep -qF "Y2hlY2s6ZXBvcw==" \
-  && fail "GET /api/vault/config leaks the Epos Now token"
+p8_settings() {
+  # $1 active_from ISO -> saves the Epos Now settings with that start
+  local patch
+  patch="$(curl -s "$BASE/api/collections/settings/records/$P8_SETTINGS_ID" -H "Authorization: $SUPER_TOKEN" | node -e '
+    let d = "";
+    process.stdin.on("data", (c) => (d += c));
+    process.stdin.on("end", () => {
+      const keys = JSON.parse(d).api_keys || {};
+      keys.eposnow = "Y2hlY2s6ZXBvcw==";
+      keys.eposnow_webhook_key = "ggvault-check";
+      keys.eposnow_webhook_secret = "check-webhook-secret-0123";
+      const products = {};
+      products["9001"] = process.argv[2];
+      products["9002"] = process.argv[3];
+      process.stdout.write(JSON.stringify({
+        api_keys: keys,
+        eposnow: { guild_products: products, location_id: 14037, active_from: process.argv[1] },
+      }));
+    });
+  ' "$1" "$P8_TIER_ID" "$P8_TIER2_ID")"
+  [ "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/collections/settings/records/$P8_SETTINGS_ID" \
+    -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d "$patch")" = "200" ] \
+    || fail "could not save the Epos Now settings"
+}
+P8_MIGRATED_FROM="$(curl -s "$BASE/api/collections/settings/records/$P8_SETTINGS_ID" -H "Authorization: $SUPER_TOKEN" | jval eposnow.active_from)"
+[ -n "$P8_MIGRATED_FROM" ] || fail "the migration did not stamp settings.eposnow.active_from"
+p8_settings "$(node -e 'console.log(new Date(Date.now() - 3600000).toISOString())')"
+for secret in "check-webhook-secret-0123" "Y2hlY2s6ZXBvcw=="; do
+  curl -s "$BASE/api/vault/config" -H "Authorization: $STAFF_TOKEN" | grep -qF "$secret" \
+    && fail "GET /api/vault/config leaks an Epos Now secret"
+done
 
 P8_LINK="$(curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/customers/$P8_ROBIN_ID/epos-link" -H "Authorization: $PLAIN_TOKEN")"
 [ "${P8_LINK##* }" = "200" ] || fail "the staff link returned ${P8_LINK##* }: $P8_LINK"
@@ -7618,75 +7720,142 @@ P8_KIT_PENDING="$(echo "${P8_KIT_JOIN% *}" | jval membership.id)"
 [ "$(p8_first customer_private "customer = \"$P8_KIT_ID\"" epos_sync_status)" = "queued" ] || fail "the retry cron gave up too soon"
 ok "with Epos Now down the join still succeeds, and the link is queued, audited and retried by the cron"
 
-# --- 27f. Activation from an Epos Now sale ----------------------------------
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/epos/webhook/not-the-secret" \
-  -H "Content-Type: application/json" -d '{}')" = "404" ] || fail "a wrong webhook token was not a 404"
+# An attempt already under way makes a second one back off; the cron frees
+# one that died part way.
+P8_BUSY_ID="$(p5_make_customer "Bea Busy" "bea-busy@local.test")"
+P8_BUSY_PRIV="$(p8_first customer_private "customer = \"$P8_BUSY_ID\"" id)"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/customer_private/records/$P8_BUSY_PRIV" -H "Authorization: $SUPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"epos_sync_status\":\"in_progress\",\"epos_sync_started_at\":\"$(node -e 'console.log(new Date().toISOString())')\"}"
+P8_BUSY="$(curl -s -X POST "$BASE/api/vault/customers/$P8_BUSY_ID/epos-link" -H "Authorization: $PLAIN_TOKEN")"
+[ "$(echo "$P8_BUSY" | jval link.status)" = "in_progress" ] || fail "a link already in progress did not make a second attempt back off: $P8_BUSY"
+[ "$(p8_first customer_private "customer = \"$P8_BUSY_ID\"" epos_customer_id)" = "" ] || fail "a second, concurrent attempt still created an Epos Now customer"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/customer_private/records/$P8_BUSY_PRIV" -H "Authorization: $SUPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"epos_sync_started_at\":\"$(node -e 'console.log(new Date(Date.now() - 20 * 60000).toISOString())')\"}"
+curl -s -o /dev/null -X POST "$BASE/api/crons/epos_link_retry" -H "Authorization: $SUPER_TOKEN"
+[ "$(p8_first customer_private "customer = \"$P8_BUSY_ID\"" epos_sync_status)" = "linked" ] \
+  || fail "the retry cron did not clear a stale in-progress mark and link the customer"
+ok "a link in progress makes a second attempt back off, and the retry cron clears a stale mark"
+
+# --- 27f. The webhook: Epos Now's Basic credentials, and no replay ---------
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/epos/webhook" -H "Content-Type: application/json" -d '{}')" = "401" ] \
+  || fail "a webhook with no credentials was not a 401"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/epos/webhook" \
+  -H "Authorization: Basic $(printf '%s' 'ggvault-check:wrong' | base64)" -H "Content-Type: application/json" -d '{}')" = "401" ] \
+  || fail "a webhook with the wrong secret was not a 401"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/epos/webhook/check-webhook-secret-0123" \
+  -H "Content-Type: application/json" -d '{}')" = "404" ] \
+  || fail "the secret still works in the URL, where request logs record it"
+
+# active_from: nothing before it ever activates.
+p8_settings "$(node -e 'console.log(new Date(Date.now() + 3600000).toISOString())')"
+P8_EARLY="$(p8_hook '[{"id":6999998}]')"
+[ "$(echo "$P8_EARLY" | jval activated)" = "0" ] || fail "a sale before active_from activated something: $P8_EARLY"
+[ "$(p8_count epos_transactions 'epos_id = "6999998" && outcome = "stale"')" = "1" ] || fail "a sale before active_from was not recorded as stale"
+p8_settings "$(node -e 'console.log(new Date(Date.now() - 3600000).toISOString())')"
+
 # A forged body for a real sale: the route reads the sale back from Epos
 # Now, so the forged price and product are never what counts.
 P8_SALE_ID="6$P8_ROBIN_EPOS"
-P8_HOOK="$(curl -s -X POST "$BASE/api/vault/epos/webhook/check-epos-webhook-secret-0123" -H "Content-Type: application/json" \
-  -d "{\"TransactionID\":$P8_SALE_ID,\"CustomerID\":$P8_ROBIN_EPOS,\"TransactionItems\":[{\"ProductID\":9001,\"UnitPrice\":0.01,\"Quantity\":9}]}")"
+P8_HOOK="$(p8_hook "{\"TransactionID\":$P8_SALE_ID,\"CustomerID\":$P8_ROBIN_EPOS,\"TransactionItems\":[{\"ProductID\":9001,\"UnitPrice\":0.01,\"Quantity\":9}]}")"
 [ "$(echo "$P8_HOOK" | jval activated)" = "1" ] || fail "the webhook did not activate the membership: $P8_HOOK"
 [ "$(p8_first memberships "id = \"$P8_PENDING_ID\"" status)" = "active" ] || fail "the pending membership is not active after the sale"
 [ "$(p8_first memberships "id = \"$P8_PENDING_ID\"" price)" = "2400" ] || fail "the price is not the till's line amount in pence (a forged body was trusted?)"
+[ "$(p8_first memberships "id = \"$P8_PENDING_ID\"" paid_via)" = "epos" ] || fail "the membership does not say the till paid for it"
 p8_first memberships "id = \"$P8_PENDING_ID\"" payment_note | grep -qF "$P8_SALE_ID" || fail "the payment note does not carry the Epos Now transaction id"
-P8_STARTED="$(p8_first memberships "id = \"$P8_PENDING_ID\"" started_at)"
-P8_RENEWS="$(p8_first memberships "id = \"$P8_PENDING_ID\"" renews_at)"
-node -e 'const a=new Date(process.argv[1].replace(" ","T")),b=new Date(process.argv[2].replace(" ","T"));const m=(b.getUTCFullYear()-a.getUTCFullYear())*12+b.getUTCMonth()-a.getUTCMonth();process.exit(m===12?0:1)' "$P8_STARTED" "$P8_RENEWS" \
-  || fail "the membership does not run 12 months from the sale ($P8_STARTED to $P8_RENEWS)"
+[ "$(p8_months_between "$(p8_first memberships "id = \"$P8_PENDING_ID\"" started_at)" "$(p8_first memberships "id = \"$P8_PENDING_ID\"" renews_at)")" = "12" ] \
+  || fail "the membership does not run 12 months from the sale"
 [ "$(p8_count epos_transactions "epos_id = \"$P8_SALE_ID\" && outcome = \"activated\"")" = "1" ] || fail "the sale was not recorded"
 [ "$(p8_first customer_private "customer = \"$P8_ROBIN_ID\"" tier)" = "$P8_TIER_ID" ] || fail "the activated membership did not pin the tier"
-P8_HOOK_AGAIN="$(curl -s -X POST "$BASE/api/vault/epos/webhook/check-epos-webhook-secret-0123" -H "Content-Type: application/json" \
-  -d "[{\"id\":$P8_SALE_ID}]")"
-[ "$(echo "$P8_HOOK_AGAIN" | jval activated)" = "0" ] || fail "the same sale activated twice: $P8_HOOK_AGAIN"
-[ "$(p8_count epos_transactions "epos_id = \"$P8_SALE_ID\"")" = "1" ] || fail "the same sale was recorded twice"
-[ "$(p8_count audit_log "action = \"membership_activate_epos\" && record = \"$P8_PENDING_ID\"")" = "1" ] \
+P8_HOOK_AGAIN="$(p8_hook "[{\"id\":$P8_SALE_ID}]")"
+[ "$(echo "$P8_HOOK_AGAIN" | jval activated)" = "0" ] && [ "$(echo "$P8_HOOK_AGAIN" | jval skipped)" = "1" ] \
+  || fail "the same sale was acted on twice: $P8_HOOK_AGAIN"
+[ "$(p8_count audit_log "action = \"membership_activated_epos\" && record = \"$P8_PENDING_ID\"")" = "1" ] \
   || fail "the activation was not audited exactly once"
+P8_UNKNOWN_TX="$(p8_hook '[{"id":123456}]')"
+[ "$(echo "$P8_UNKNOWN_TX" | jval activated)" = "0" ] && [ "$(echo "$P8_UNKNOWN_TX" | jval deferred)" = "0" ] \
+  || fail "an id Epos Now does not know (its 400) was not simply dropped: $P8_UNKNOWN_TX"
 P8_JOIN_LIVE="$(curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/guild/join" -H "Authorization: $P8_ROBIN_TOKEN" \
   -H "Content-Type: application/json" -d "{\"tier\":\"$P8_TIER_ID\"}")"
 [ "${P8_JOIN_LIVE##* }" = "409" ] || fail "joining with a live membership returned ${P8_JOIN_LIVE##* }, expected 409"
-ok "a webhook sale (read back from Epos Now, never trusted) activates the pending membership for 12 months, once"
+ok "the webhook takes Epos Now's Basic credentials only, ignores sales before active_from, reads each sale back, and activates once for 12 months"
 
-# The poll: no customer, an unknown customer, a sale of something else,
-# and a till-added customer matched by the card number on their record.
-P8_TILL_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" -H "Authorization: $STAFF_TOKEN" \
-  -H "Content-Type: application/json" -d '{"name":"Till Added","code":"GGCEP0S1D","source":"counter"}' | jval id)"
-[ -n "$P8_TILL_ID" ] || fail "could not create the card-number customer"
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/epos/poll" -H "Authorization: $PLAIN_TOKEN")" = "403" ] \
-  || fail "a plain staff member could run the Epos Now poll"
-P8_STAFF_NOTES_BEFORE="$(p8_count notifications "type = \"epos_guild_unlinked\"")"
-P8_POLL="$(curl -s -X POST "$BASE/api/vault/epos/poll" -H "Authorization: $STAFF_TOKEN")"
-[ "$(echo "$P8_POLL" | jval guild)" = "3" ] || fail "the poll did not find the three Guild sales: $P8_POLL"
-[ "$(echo "$P8_POLL" | jval activated)" = "1" ] || fail "the poll did not activate the card-number customer: $P8_POLL"
-[ "$(echo "$P8_POLL" | jval unmatched)" = "2" ] || fail "the poll did not flag the two unmatched sales: $P8_POLL"
-[ "$(p8_first customer_private "customer = \"$P8_TILL_ID\"" epos_customer_id)" = "770001" ] \
-  || fail "the card-number customer was not linked to their Epos Now id"
-[ "$(p8_first memberships "customer = \"$P8_TILL_ID\"" status)" = "active" ] || fail "the card-number customer has no active membership"
-[ "$(p8_count epos_transactions 'epos_id = "5000" && outcome = "no_customer"')" = "1" ] || fail "the no-customer sale was not recorded"
-[ "$(p8_count epos_transactions 'epos_id = "5002" && outcome = "unknown_customer"')" = "1" ] || fail "the unknown-customer sale was not recorded"
-[ "$(p8_count epos_transactions 'epos_id = "5001"')" = "0" ] || fail "a sale with no Guild product was recorded"
-[ "$(p8_first notifications "type = \"epos_guild_unlinked\"" title)" = "Guild membership sold without a linked customer, link it in The Counter" ] \
-  || fail "the unmatched sale notification does not carry the agreed title"
-p8_first notifications 'type = "epos_guild_unlinked" && body ~ "5002"' body | grep -qF "5002" \
-  || fail "the unmatched sale notification does not name the transaction id"
-P8_STAFF_NOTES_AFTER="$(p8_count notifications "type = \"epos_guild_unlinked\"")"
-P8_POLL_AGAIN="$(curl -s -X POST "$BASE/api/vault/epos/poll" -H "Authorization: $STAFF_TOKEN")"
-[ "$(echo "$P8_POLL_AGAIN" | jval activated)" = "0" ] && [ "$(echo "$P8_POLL_AGAIN" | jval unmatched)" = "0" ] \
-  || fail "a second poll acted on the same sales again: $P8_POLL_AGAIN"
-[ "$(p8_count notifications "type = \"epos_guild_unlinked\"")" = "$P8_STAFF_NOTES_AFTER" ] \
-  || fail "a second poll notified staff again about the same sale"
-[ "$P8_STAFF_NOTES_AFTER" -gt "$P8_STAFF_NOTES_BEFORE" ] || fail "no staff notification was written for an unmatched sale"
-ok "the poll activates by card number, flags a Guild sale with no or an unknown customer to staff once, and is idempotent"
+# Two deliveries of one sale at the same moment: one membership change.
+read -r P8_CORA_ID P8_CORA_EPOS P8_CORA_PENDING P8_CORA_TOKEN <<<"$(p8_member "Cora Twice" "cora@local.test")"
+p8_hook "[{\"id\":6$P8_CORA_EPOS}]" >"$TMP_DIR/p8-race1.json" &
+P8_RACE_PID=$!
+p8_hook "[{\"id\":6$P8_CORA_EPOS}]" >"$TMP_DIR/p8-race2.json"
+wait "$P8_RACE_PID"
+[ "$(p8_count epos_transactions "epos_id = \"6$P8_CORA_EPOS\"")" = "1" ] || fail "two deliveries of one sale were both recorded"
+[ "$(p8_count memberships "customer = \"$P8_CORA_ID\" && status = \"active\"")" = "1" ] || fail "two deliveries of one sale left more than one live membership"
+[ "$(p8_months_between "$(p8_first memberships "customer = \"$P8_CORA_ID\"" started_at)" "$(p8_first memberships "customer = \"$P8_CORA_ID\"" renews_at)")" = "12" ] \
+  || fail "two deliveries of one sale added more than 12 months"
+ok "two deliveries of one sale at once change the membership once"
 
-# --- 27g. Staff activation of a pending membership by hand -----------------
-P8_RENEW_PENDING="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/memberships/$P8_KIT_PENDING/renew" \
-  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" -d '{"months":12,"price":2400}')"
-[ "$P8_RENEW_PENDING" = "409" ] || fail "renewing a pending membership returned $P8_RENEW_PENDING, expected 409"
-P8_ACTIVATE="$(curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/memberships/$P8_KIT_PENDING/activate" \
+# --- 27g. The product decides the tier; a different live plan is left alone -
+read -r P8_TESS_ID P8_TESS_EPOS P8_TESS_PENDING P8_TESS_TOKEN <<<"$(p8_member "Tess Tier" "tess@local.test")"
+P8_TESS_HOOK="$(p8_hook "[{\"id\":7$P8_TESS_EPOS}]")"
+[ "$(echo "$P8_TESS_HOOK" | jval activated)" = "1" ] || fail "the Guild Plus sale did not activate: $P8_TESS_HOOK"
+[ "$(p8_first memberships "id = \"$P8_TESS_PENDING\"" tier)" = "$P8_TIER2_ID" ] \
+  || fail "the membership took the tier the customer asked for, not the product sold"
+[ "$(p8_first memberships "id = \"$P8_TESS_PENDING\"" price)" = "4800" ] || fail "the Guild Plus price is not the till's"
+p8_first notifications 'type = "epos_guild_check" && body ~ "asked online for Guild Pass"' body | grep -qF "Guild Plus" \
+  || fail "staff were not told the customer paid for a different plan than they asked for"
+P8_TESS_MISMATCH="$(p8_hook "[{\"id\":6$P8_TESS_EPOS}]")"
+[ "$(echo "$P8_TESS_MISMATCH" | jval renewed)" = "0" ] || fail "a Guild Pass sale extended a live Guild Plus: $P8_TESS_MISMATCH"
+[ "$(p8_count epos_transactions "epos_id = \"6$P8_TESS_EPOS\" && outcome = \"tier_mismatch\"")" = "1" ] \
+  || fail "a sale for a different plan than the live one was not recorded as a mismatch"
+ok "the product sold decides the tier, the asked-for plan is updated with staff told, and a sale for another plan never extends a live one"
+
+# --- 27h. Hand payments and till sales never add up to two terms ----------
+read -r P8_HANA_ID P8_HANA_EPOS P8_HANA_PENDING P8_HANA_TOKEN <<<"$(p8_member "Hana Hand" "hana@local.test")"
+P8_HANA_ACT="$(curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/memberships/$P8_HANA_PENDING/activate" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"epos_transaction_id\":\"6$P8_HANA_EPOS\"}")"
+[ "${P8_HANA_ACT##* }" = "200" ] || fail "activating by hand with the Epos Now sale number returned ${P8_HANA_ACT##* }: $P8_HANA_ACT"
+[ "$(p8_count epos_transactions "epos_id = \"6$P8_HANA_EPOS\" && outcome = \"manual\" && source = \"hand\"")" = "1" ] \
+  || fail "the hand activation did not record the Epos Now sale"
+P8_HANA_RENEWS="$(p8_first memberships "id = \"$P8_HANA_PENDING\"" renews_at)"
+P8_HANA_HOOK="$(p8_hook "[{\"id\":6$P8_HANA_EPOS}]")"
+[ "$(echo "$P8_HANA_HOOK" | jval renewed)" = "0" ] && [ "$(echo "$P8_HANA_HOOK" | jval activated)" = "0" ] \
+  || fail "the till sale staff had already recorded by hand added a second term: $P8_HANA_HOOK"
+[ "$(p8_first memberships "id = \"$P8_HANA_PENDING\"" renews_at)" = "$P8_HANA_RENEWS" ] || fail "the hand-recorded membership's end moved"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/memberships" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P8_KIT_ID\",\"tier\":\"$P8_TIER_ID\",\"months\":12,\"price\":2400,\"epos_transaction_id\":\"6$P8_HANA_EPOS\"}")" = "409" ] \
+  || fail "one Epos Now sale number could be used for two memberships"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/memberships/$P8_KIT_PENDING/activate" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" -d '{"epos_transaction_id":"not-a-number"}')" = "400" ] \
+  || fail "an Epos Now sale number that is not a number was accepted"
+
+read -r P8_HUGO_ID P8_HUGO_EPOS P8_HUGO_PENDING P8_HUGO_TOKEN <<<"$(p8_member "Hugo Hand" "hugo@local.test")"
+curl -s -o /dev/null -X POST "$BASE/api/vault/memberships" -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P8_HUGO_ID\",\"tier\":\"$P8_TIER_ID\",\"months\":12,\"price\":2400,\"payment_note\":\"Cash\"}"
+[ "$(p8_first memberships "id = \"$P8_HUGO_PENDING\"" paid_via)" = "hand" ] || fail "a hand-recorded plan does not say it was paid by hand"
+P8_HUGO_RENEWS="$(p8_first memberships "id = \"$P8_HUGO_PENDING\"" renews_at)"
+P8_HUGO_HOOK="$(p8_hook "[{\"id\":6$P8_HUGO_EPOS}]")"
+[ "$(echo "$P8_HUGO_HOOK" | jval linked_manual)" = "1" ] || fail "a till sale after a recent hand payment was not linked to it: $P8_HUGO_HOOK"
+[ "$(p8_first memberships "id = \"$P8_HUGO_PENDING\"" renews_at)" = "$P8_HUGO_RENEWS" ] || fail "a linked till sale extended the hand-recorded term"
+[ "$(p8_first memberships "id = \"$P8_HUGO_PENDING\"" epos_transaction)" = "6$P8_HUGO_EPOS" ] || fail "the hand-recorded term was not linked to the till sale"
+[ "$(p8_count epos_transactions "epos_id = \"6$P8_HUGO_EPOS\" && outcome = \"linked_manual\"")" = "1" ] || fail "the linked sale was not recorded as linked_manual"
+p8_first notifications 'type = "epos_guild_check" && body ~ "recorded by hand"' body | grep -qF "6$P8_HUGO_EPOS" \
+  || fail "staff were not told a till sale was linked to a hand payment"
+
+read -r P8_IDA_ID P8_IDA_EPOS P8_IDA_PENDING P8_IDA_TOKEN <<<"$(p8_member "Ida Old" "ida@local.test")"
+curl -s -o /dev/null -X POST "$BASE/api/vault/memberships" -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"customer\":\"$P8_IDA_ID\",\"tier\":\"$P8_TIER_ID\",\"months\":12,\"price\":2400}"
+curl -s -o /dev/null -X PATCH "$BASE/api/collections/memberships/records/$P8_IDA_PENDING" -H "Authorization: $SUPER_TOKEN" \
+  -H "Content-Type: application/json" -d "{\"paid_at\":\"$(node -e 'console.log(new Date(Date.now() - 8 * 86400000).toISOString())')\"}"
+P8_IDA_HOOK="$(p8_hook "[{\"id\":6$P8_IDA_EPOS}]")"
+[ "$(echo "$P8_IDA_HOOK" | jval renewed)" = "1" ] || fail "a till sale more than 7 days after a hand payment did not renew: $P8_IDA_HOOK"
+ok "a hand payment given the sale number, or within 7 days, absorbs the till sale; an older one is renewed"
+
+P8_KIT_ACT="$(curl -s -w ' %{http_code}' -X POST "$BASE/api/vault/memberships/$P8_KIT_PENDING/activate" \
   -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" -d '{"price":2000,"payment_note":"Cash at the counter"}')"
-[ "${P8_ACTIVATE##* }" = "200" ] || fail "activating a pending membership returned ${P8_ACTIVATE##* }: $P8_ACTIVATE"
-[ "$(echo "${P8_ACTIVATE% *}" | jval membership.status)" = "active" ] || fail "the activation did not make it active"
-[ "$(echo "${P8_ACTIVATE% *}" | jval membership.price)" = "2000" ] || fail "the activation did not keep the price staff gave"
+[ "${P8_KIT_ACT##* }" = "200" ] || fail "activating a pending membership returned ${P8_KIT_ACT##* }: $P8_KIT_ACT"
+[ "$(echo "${P8_KIT_ACT% *}" | jval membership.status)" = "active" ] || fail "the activation did not make it active"
+[ "$(echo "${P8_KIT_ACT% *}" | jval membership.price)" = "2000" ] || fail "the activation did not keep the price staff gave"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/memberships/$P8_KIT_PENDING/activate" \
   -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" -d '{}')" = "409" ] \
   || fail "activating an active membership again was not a 409"
@@ -7695,13 +7864,129 @@ P8_PEND3_ID="$(p5_make_customer "Pat Pending" "pat-pending@local.test")"
 P8_PAT_TOKEN="$(p5_impersonate "$P8_PEND3_ID")"
 P8_PAT_PENDING="$(curl -s -X POST "$BASE/api/vault/guild/join" -H "Authorization: $P8_PAT_TOKEN" \
   -H "Content-Type: application/json" -d "{\"tier\":\"$P8_TIER_ID\"}" | jval membership.id)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/memberships/$P8_PAT_PENDING/renew" \
+  -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" -d '{"months":12,"price":2400}')" = "409" ] \
+  || fail "renewing a pending membership was not a 409"
 P8_RECORD="$(curl -s -X POST "$BASE/api/vault/memberships" -H "Authorization: $PLAIN_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$P8_PEND3_ID\",\"tier\":\"$P8_TIER_ID\",\"months\":12,\"price\":2400}")"
 [ "$(echo "$P8_RECORD" | jval membership.id)" = "$P8_PAT_PENDING" ] || fail "recording a plan beside a pending one made a second row: $P8_RECORD"
 [ "$(p8_count memberships "customer = \"$P8_PEND3_ID\"")" = "1" ] || fail "the customer has two memberships after a plan was recorded"
 ok "staff can still activate a pending membership by hand, and recording a plan starts the pending row rather than adding one"
 
-# --- 27h. Agents: their two routes, and nothing else -----------------------
+# --- 27i. The poll: 36 hours, and every kind of sale nobody should act on --
+P8_TILL_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" -H "Authorization: $STAFF_TOKEN" \
+  -H "Content-Type: application/json" -d '{"name":"Till Added","code":"GGCEP0S1D","source":"counter"}' | jval id)"
+[ -n "$P8_TILL_ID" ] || fail "could not create the card-number customer"
+P8_ERIN_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" -H "Authorization: $STAFF_TOKEN" \
+  -H "Content-Type: application/json" -d '{"name":"Erin Erased","code":"GGCER4SDB","source":"counter"}' | jval id)"
+[ -n "$P8_ERIN_ID" ] || fail "could not create the customer to erase"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/me/delete" -H "Authorization: $(p5_impersonate "$P8_ERIN_ID")")" = "200" ] \
+  || fail "could not erase the card-number check's second customer"
+[ "$(curl -s -X POST "$BASE/api/vault/customers/$P8_ERIN_ID/epos-link" -H "Authorization: $PLAIN_TOKEN" | jval link.epos_customer_id)" = "" ] \
+  || fail "an erased customer was linked to Epos Now"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/epos/poll" -H "Authorization: $PLAIN_TOKEN")" = "403" ] \
+  || fail "a plain staff member could run the Epos Now poll"
+P8_POLL="$(curl -s -X POST "$BASE/api/vault/epos/poll" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P8_POLL" | jval error)" = "" ] || fail "the poll's window was refused (more than 36 hours back?): $P8_POLL"
+[ "$(echo "$P8_POLL" | jval activated)" = "1" ] || fail "the poll did not activate the card-number customer: $P8_POLL"
+[ "$(echo "$P8_POLL" | jval flagged)" = "4" ] || fail "the poll did not flag the refund, the three-at-once, the underpaid and the stale sale: $P8_POLL"
+[ "$(echo "$P8_POLL" | jval unmatched)" = "3" ] || fail "the poll did not flag the no-customer, unknown and erased sales: $P8_POLL"
+[ "$(echo "$P8_POLL" | jval deferred)" = "1" ] || fail "the poll did not leave the sale it could not match for later: $P8_POLL"
+[ "$(p8_first customer_private "customer = \"$P8_TILL_ID\"" epos_customer_id)" = "770001" ] \
+  || fail "the card-number customer was not linked to their Epos Now id"
+[ "$(p8_first memberships "customer = \"$P8_TILL_ID\"" status)" = "active" ] || fail "the card-number customer has no active membership"
+for p8_expect in "5000 no_customer" "5002 unknown_customer" "5003 refunded" "5004 too_many" "5005 underpaid" "5006 stale" "5008 erased_customer"; do
+  [ "$(p8_count epos_transactions "epos_id = \"${p8_expect% *}\" && outcome = \"${p8_expect#* }\"")" = "1" ] \
+    || fail "Epos Now sale ${p8_expect% *} was not recorded as ${p8_expect#* }"
+done
+for p8_none in 5001 5007 5009; do
+  [ "$(p8_count epos_transactions "epos_id = \"$p8_none\"")" = "0" ] || fail "Epos Now sale $p8_none was recorded (it is not a Guild sale, not complete, or not yet matchable)"
+done
+[ "$(p8_count memberships "customer = \"$P8_ERIN_ID\"")" = "0" ] || fail "an erased customer was given a membership"
+[ "$(p8_first customer_private "customer = \"$P8_ERIN_ID\"" epos_customer_id)" = "" ] || fail "an erased customer was relinked by card number"
+[ "$(p8_first notifications "type = \"epos_guild_refund\"" title)" = "Guild membership refunded at the till, check the member in The Counter" ] \
+  || fail "the refund notification does not carry the agreed title"
+p8_first notifications 'type = "epos_guild_refund"' body | grep -qF "5003" || fail "the refund notification does not name the transaction"
+[ "$(p8_first notifications "type = \"epos_guild_unlinked\" && body ~ \"5002\"" title)" = "Guild membership sold without a linked customer, link it in The Counter" ] \
+  || fail "the unmatched sale notification does not carry the agreed title"
+P8_STAFF_NOTES="$(p8_count notifications 'type ~ "epos_guild"')"
+P8_POLL_AGAIN="$(curl -s -X POST "$BASE/api/vault/epos/poll" -H "Authorization: $STAFF_TOKEN")"
+[ "$(echo "$P8_POLL_AGAIN" | jval activated)" = "0" ] && [ "$(echo "$P8_POLL_AGAIN" | jval flagged)" = "0" ] && [ "$(echo "$P8_POLL_AGAIN" | jval unmatched)" = "0" ] \
+  || fail "a second poll acted on the same sales again: $P8_POLL_AGAIN"
+[ "$(p8_count notifications 'type ~ "epos_guild"')" = "$P8_STAFF_NOTES" ] || fail "a second poll notified staff again about the same sales"
+ok "the poll looks back 36 hours, activates by card number, flags refunds, stale, over-quantity, underpaid, unknown and erased sales once, and skips anything not complete"
+
+# The card number is authoritative: a second Epos Now customer for the same
+# member moves the link and is audited.
+P8_DUPE_HOOK="$(p8_hook '[{"id":6770002}]')"
+[ "$(echo "$P8_DUPE_HOOK" | jval renewed)" = "1" ] || fail "a sale to a second Epos Now customer with the member's card number was not theirs: $P8_DUPE_HOOK"
+[ "$(p8_first customer_private "customer = \"$P8_TILL_ID\"" epos_customer_id)" = "770002" ] || fail "the link did not move to the Epos Now id the sale used"
+[ "$(p8_count audit_log "action = \"epos_customer_relink\" && meta.customer = \"$P8_TILL_ID\"")" = "1" ] || fail "moving the link was not audited"
+ok "the GGC card number decides the member, and moving the link to a second Epos Now customer is audited"
+
+# --- 27j. A merge carries the till link, or tells the admins about two -----
+P8_MERGE_STEPUP="$(curl -s -X POST "$BASE/api/vault/step-up" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"password\":\"$STAFF_PASSWORD\"}" | jval token)"
+P8_KEEP_ID="$(p5_make_customer "Mo Keep" "mo-keep@local.test")"
+P8_DUPE_ID="$(p5_make_customer "Mo Dupe" "mo-dupe@local.test")"
+P8_DUPE_EPOS="$(p8_link "$P8_DUPE_ID")"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P8_DUPE_ID/merge" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $P8_MERGE_STEPUP" -H "Content-Type: application/json" \
+  -d "{\"into\":\"$P8_KEEP_ID\"}")" = "200" ] || fail "could not merge the linked duplicate"
+[ "$(p8_first customer_private "customer = \"$P8_KEEP_ID\"" epos_customer_id)" = "$P8_DUPE_EPOS" ] \
+  || fail "a merge dropped the duplicate's Epos Now link instead of carrying it to the kept record"
+P8_KEEP2_ID="$(p5_make_customer "Jo Keep" "jo-keep@local.test")"
+P8_DUPE2_ID="$(p5_make_customer "Jo Dupe" "jo-dupe@local.test")"
+P8_KEEP2_EPOS="$(p8_link "$P8_KEEP2_ID")"
+P8_DUPE2_EPOS="$(p8_link "$P8_DUPE2_ID")"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/customers/$P8_DUPE2_ID/merge" \
+  -H "Authorization: $STAFF_TOKEN" -H "X-Step-Up: $P8_MERGE_STEPUP" -H "Content-Type: application/json" \
+  -d "{\"into\":\"$P8_KEEP2_ID\"}")" = "200" ] || fail "could not merge two linked records"
+[ "$(p8_first customer_private "customer = \"$P8_KEEP2_ID\"" epos_customer_id)" = "$P8_KEEP2_EPOS" ] || fail "a merge replaced the kept record's own Epos Now link"
+P8_MERGE_NOTE="$(p8_first notifications 'type = "epos_merge"' body)"
+echo "$P8_MERGE_NOTE" | grep -qF "$P8_KEEP2_EPOS" && echo "$P8_MERGE_NOTE" | grep -qF "$P8_DUPE2_EPOS" \
+  || fail "the admins were not told both Epos Now ids after a merge: $P8_MERGE_NOTE"
+ok "a merge carries the till link to a kept record without one, and names both Epos Now ids to the admins when both had one"
+
+# --- 27k. Unverified sign-ups are purged after 30 days ---------------------
+p8_signup '{"name":"Una Unclaimed","email":"una@local.test","terms_accepted":true}' >/dev/null
+p8_signup '{"name":"Vic Linked","email":"vic@local.test","terms_accepted":true}' >/dev/null
+P8_UNA_ID="$(p8_first customers 'email = "una@local.test"' id)"
+P8_VIC_ID="$(p8_first customers 'email = "vic@local.test"' id)"
+p8_link "$P8_VIC_ID" >/dev/null
+P8_OLD="$(node -e 'console.log(new Date(Date.now() - 31 * 86400000).toISOString().replace("T", " "))')"
+for p8_old_id in "$P8_UNA_ID" "$P8_VIC_ID" "$P8_ROBIN_ID"; do
+  [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$P8_BACKDATE_PORT/api/check/backdate-customer" \
+    -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"id\":\"$p8_old_id\",\"created\":\"$P8_OLD\"}")" = "200" ] || fail "could not backdate customer $p8_old_id"
+done
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/purge_unverified_signups" -H "Authorization: $SUPER_TOKEN")" = "204" ] \
+  || fail "could not run the purge_unverified_signups cron"
+[ "$(p8_count customers "id = \"$P8_UNA_ID\"")" = "0" ] || fail "an unverified sign-up 31 days old was not purged"
+[ "$(p8_count customer_private "customer = \"$P8_UNA_ID\"")" = "0" ] || fail "the purged sign-up's private record was left behind"
+[ "$(p8_count audit_log "action = \"customer_unverified_purge\" && record = \"$P8_UNA_ID\"")" = "1" ] || fail "the purge was not audited"
+[ "$(p8_count customers "id = \"$P8_VIC_ID\"")" = "1" ] || fail "an unverified sign-up staff had linked to Epos Now was purged"
+[ "$(p8_count customers "id = \"$P8_ROBIN_ID\"")" = "1" ] || fail "a verified customer was purged"
+ok "an unverified online sign-up is purged after 30 days and audited; a verified one, or one staff have used, is kept"
+
+# --- 27l. Quote text arrives with browser line endings ---------------------
+printf '%s' "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" | base64 -d >"$TMP_DIR/p8-photo.png" 2>/dev/null \
+  || printf '%s' "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" | base64 -D >"$TMP_DIR/p8-photo.png"
+P8_CRLF_QUOTE="$(curl -s -X POST "$BASE/api/vault/quotes" -H "Authorization: $P8_ROBIN_TOKEN" \
+  -F "photos=@$TMP_DIR/p8-photo.png;type=image/png" -F "message=$(printf 'Two holos\r\nand a boxed Game Boy\r\n')" -F "drop_off=post" | jval quote.id)"
+[ -n "$P8_CRLF_QUOTE" ] || fail "could not submit the line-endings quote"
+P8_CRLF_MSG="$(curl -s "$BASE/api/collections/quotes/records/$P8_CRLF_QUOTE" -H "Authorization: $SUPER_TOKEN" | node -e '
+  let d = ""; process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => process.stdout.write(JSON.stringify(JSON.parse(d).message)));
+')"
+echo "$P8_CRLF_MSG" | grep -qF '\r' && fail "a quote message was stored with \\r line endings: $P8_CRLF_MSG"
+echo "$P8_CRLF_MSG" | grep -qF 'Two holos\nand a boxed' || fail "a quote message lost its line break: $P8_CRLF_MSG"
+curl -s -o /dev/null -X POST "$BASE/api/vault/quotes/$P8_CRLF_QUOTE/messages" -H "Authorization: $P8_ROBIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"body":"Line one\r\nLine two"}'
+p8_first quote_messages "quote = \"$P8_CRLF_QUOTE\"" body | od -c | grep -q '\\r' && fail "a quote reply was stored with \\r line endings"
+ok "quote messages and replies are stored with plain line endings"
+
+# --- 27m. Agents: their two routes, and nothing else -----------------------
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/collections/agents/records" -H "Authorization: $PLAIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"email":"sneaky@agents.local","password":"agentpassword123","passwordConfirm":"agentpassword123","name":"Sneaky","active":true}')" != "200" ] \
@@ -7723,7 +8008,7 @@ P8_AGENT_TOKEN="$(curl -s -X POST "$BASE/api/collections/agents/auth-with-passwo
   -d '{"identity":"watcher@agents.local","password":"agentpassword123"}' | jval token)"
 [ -n "$P8_AGENT_TOKEN" ] || fail "the agent could not sign in"
 
-P8_QUOTE_SINCE="$(node -e 'console.log(new Date(Date.now() - 1000).toISOString())')"
+P8_QUOTE_SINCE="$(node -e 'console.log(new Date().toISOString())')"
 P8_QUOTE_ID="$(curl -s -X POST "$BASE/api/collections/quotes/records" -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$P8_ROBIN_ID\",\"status\":\"submitted\",\"drop_off\":\"post\",\"message\":\"Two Base Set holos and a boxed Game Boy. Robin Hart, robin@local.test.\"}" | jval id)"
 [ -n "$P8_QUOTE_ID" ] || fail "could not create the agent check's quote"
@@ -7734,20 +8019,20 @@ P8_AQ="$(curl -s -G "$BASE/api/vault/agent/quotes" -H "Authorization: $P8_AGENT_
 [ "$(echo "$P8_AQ" | jval quotes.0.drop_off)" = "post" ] || fail "the agent quote does not carry drop_off"
 [ "$(echo "$P8_AQ" | jval quotes.0.photo_count)" = "0" ] || fail "the agent quote has no photo count"
 echo "$P8_AQ" | jval quotes.0.link | grep -q "/counter/quotes/$P8_QUOTE_ID\$" || fail "the agent quote has no staff link"
-echo "$P8_AQ" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const q=JSON.parse(d).quotes[0];const keys=Object.keys(q).sort().join(",");process.exit(keys==="created,customer_first_name,drop_off,id,line_count,link,message_excerpt,photo_count,status"?0:1)})' \
+echo "$P8_AQ" | grep -qF "Base Set" && fail "the agent quote carries the customer's own message: $P8_AQ"
+echo "$P8_AQ" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const q=JSON.parse(d).quotes[0];const keys=Object.keys(q).sort().join(",");process.exit(keys==="created,customer_first_name,drop_off,id,line_count,link,photo_count,status"?0:1)})' \
   || fail "the agent quote carries fields beyond the agreed list: $P8_AQ"
 [ "$(curl -s -G "$BASE/api/vault/agent/quotes" -H "Authorization: $P8_AGENT_TOKEN" --data-urlencode "since=yesterday-ish" -o /dev/null -w '%{http_code}')" = "400" ] \
   || fail "a since that is not a date was not refused"
-P8_AG="$(curl -s "$BASE/api/vault/agent/guild-pending" -H "Authorization: $P8_AGENT_TOKEN")"
-echo "$P8_AG" | grep -qF "Hart" && fail "the agent's pending list carries a surname: $P8_AG"
-echo "$P8_AG" | grep -qF "@" && fail "the agent's pending list carries an email address: $P8_AG"
 P8_LATE_ID="$(p5_make_customer "Lee Later" "lee-later@local.test")"
 P8_LEE_TOKEN="$(p5_impersonate "$P8_LATE_ID")"
 curl -s -o /dev/null -X POST "$BASE/api/vault/guild/join" -H "Authorization: $P8_LEE_TOKEN" -H "Content-Type: application/json" -d "{\"tier\":\"$P8_TIER_ID\"}"
 P8_AG="$(curl -s "$BASE/api/vault/agent/guild-pending" -H "Authorization: $P8_AGENT_TOKEN")"
+echo "$P8_AG" | grep -qF "Later" && fail "the agent's pending list carries a surname: $P8_AG"
+echo "$P8_AG" | grep -qF "@" && fail "the agent's pending list carries an email address: $P8_AG"
 echo "$P8_AG" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const rows=JSON.parse(d).pending;const lee=rows.find(r=>r.customer_first_name==="Lee");process.exit(lee&&lee.tier==="Guild Pass"&&Object.keys(lee).sort().join(",")==="created,customer_first_name,id,tier"?0:1)})' \
   || fail "the agent's pending list does not show the new sign-up as id, created, tier and first name only: $P8_AG"
-ok "an agent reads new quotes and pending Guild sign-ups with a first name and nothing more personal"
+ok "an agent reads new quotes and pending Guild sign-ups with a first name and no message, email or surname"
 
 P8_PHOTO_DOC_ID="$(curl -s "$BASE/api/collections/id_documents/records?perPage=1" -H "Authorization: $SUPER_TOKEN" | jval items.0.id)"
 for p8_path in \
@@ -7798,13 +8083,18 @@ for p8_agent_route in "/api/vault/agent/quotes" "/api/vault/agent/guild-pending"
 done
 ok "an agent token reads no collection, no ID photo and no staff or customer route, and nobody else can use the agent routes"
 
-# --- 27i. Erasure clears the till link and tells the admins ----------------
+# --- 27n. Erasure clears the till link, marks the record, tells the admins -
 P8_ERASE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/vault/me/delete" -H "Authorization: $P8_ROBIN_TOKEN")"
 [ "$P8_ERASE" = "200" ] || fail "the signed-up customer could not delete their account ($P8_ERASE)"
 [ "$(p8_first customer_private "customer = \"$P8_ROBIN_ID\"" epos_customer_id)" = "" ] || fail "erasure left the Epos Now link in place"
+[ -n "$(p8_first customer_private "customer = \"$P8_ROBIN_ID\"" erased_at)" ] || fail "erasure did not mark the record erased"
 p8_first notifications 'type = "epos_erase"' body | grep -qF "$P8_ROBIN_EPOS" \
   || fail "erasure did not tell the admins which Epos Now customer to delete"
-ok "erasing a linked customer clears the link and asks an admin to delete them in Epos Now"
+ok "erasing a linked customer clears the link, marks them erased and asks an admin to delete them in Epos Now"
+
+kill "$P8_BACKDATE_PID" 2>/dev/null || true
+wait "$P8_BACKDATE_PID" 2>/dev/null || true
+P8_BACKDATE_PID=""
 
 # -----------------------------------------------------------------------
 # 26. The forced password change at first sign-in

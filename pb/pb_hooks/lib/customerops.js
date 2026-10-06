@@ -130,6 +130,11 @@ function erase(app, customerId, opts) {
     priv.set("epos_sync_error", "");
     priv.set("epos_synced_at", "");
     priv.set("terms_accepted_at", "");
+    priv.set("marketing_consent_pending", false);
+    priv.set("epos_sync_started_at", "");
+    // Never linked again, by a staff press, the retry cron or a card
+    // number on a till sale (lib/eposnow.js checks this first).
+    priv.set("erased_at", new Date().toISOString());
     app.save(priv);
     if (eposId) {
       var notifyLib = require(`${__hooks}/lib/notify.js`);
