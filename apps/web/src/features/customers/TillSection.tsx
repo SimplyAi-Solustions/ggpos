@@ -73,6 +73,7 @@ export function TillSection({
         months: parseCount(form.months) ?? 12,
         price: poundsToPence(form.price) ?? 0,
         payment_note: form.note.trim() || undefined,
+        epos_transaction_id: form.eposTransaction.trim() || undefined,
       }),
     onSuccess: (membership) => {
       setError(null)

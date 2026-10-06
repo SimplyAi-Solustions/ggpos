@@ -735,6 +735,8 @@ export interface MembershipForm {
   months: string
   price: string
   note: string
+  /** The till's transaction number, when the payment went through Epos Now. */
+  eposTransaction: string
 }
 
 export const EMPTY_MEMBERSHIP: MembershipForm = {
@@ -744,6 +746,7 @@ export const EMPTY_MEMBERSHIP: MembershipForm = {
   months: "12",
   price: "",
   note: "",
+  eposTransaction: "",
 }
 
 export function validateMembership(form: MembershipForm): Errors {

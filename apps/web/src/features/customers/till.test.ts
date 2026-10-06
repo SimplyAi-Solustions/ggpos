@@ -28,6 +28,12 @@ describe("eposLinkSentence", () => {
     expect(sentence).toMatch(/Check the Epos Now API token, then link again\.$/)
   })
 
+  it("says a link already under way is under way", () => {
+    expect(eposLinkSentence({ ...base, status: "in_progress" })).toBe(
+      "Being added to the till now. Check again in a minute."
+    )
+  })
+
   it("says what an unlinked customer cannot do", () => {
     expect(eposLinkSentence(base)).toMatch(/will not scan at Epos Now/)
   })

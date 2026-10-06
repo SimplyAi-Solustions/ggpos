@@ -675,7 +675,7 @@ test.describe("signing up online", () => {
     await page.getByLabel("Name").fill("Robin Hart")
     await page.getByLabel("Email").fill("robin.hart@example.co.uk")
     await page.getByRole("button", { name: "Create my account" }).click()
-    await expect(page.getByText("Accept the terms to join. Read them first if you like.")).toBeVisible()
+    await expect(page.getByText("Tick the box to accept the terms and the privacy notice.")).toBeVisible()
 
     await page.getByRole("button", { name: "Read the terms" }).click()
     const terms = page.getByRole("dialog", { name: "GG Guild terms" })

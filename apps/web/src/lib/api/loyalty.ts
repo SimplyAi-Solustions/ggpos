@@ -335,7 +335,9 @@ function toEposLink(row: EposLinkRow | null | undefined): EposLink {
   const status = row?.epos_sync_status
   return {
     status:
-      status === "queued" || status === "linked" || status === "failed" ? status : "",
+      status === "queued" || status === "in_progress" || status === "linked" || status === "failed"
+        ? status
+        : "",
     eposCustomerId: row?.epos_customer_id ?? "",
     attempts: row?.epos_sync_attempts ?? 0,
     error: row?.epos_sync_error ?? "",

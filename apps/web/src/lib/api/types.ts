@@ -2220,6 +2220,8 @@ export interface MembershipInput {
   /** Integer GBP pence. */
   price: number
   payment_note?: string
+  /** The Epos Now sale it was paid through, so the till sync never adds it twice. */
+  epos_transaction_id?: string
 }
 
 /** `POST /api/vault/memberships/:id/renew`. */
@@ -2227,6 +2229,8 @@ export interface MembershipRenewal {
   months: number
   price: number
   payment_note?: string
+  /** The Epos Now sale it was paid through, so the till sync never adds it twice. */
+  epos_transaction_id?: string
 }
 
 /** `POST /api/vault/signup` (Phase 8). */
@@ -2254,7 +2258,7 @@ export type MembershipActivation = MembershipRenewal
  * this customer, under which Epos Now id, and where a failed link has got to.
  */
 export interface EposLink {
-  status: "" | "queued" | "linked" | "failed"
+  status: "" | "queued" | "in_progress" | "linked" | "failed"
   eposCustomerId: string
   attempts: number
   error: string

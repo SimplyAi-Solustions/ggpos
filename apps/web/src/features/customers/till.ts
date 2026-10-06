@@ -9,6 +9,9 @@ export function eposLinkSentence(link: EposLink): string {
   if (link.status === "linked" || link.eposCustomerId) {
     return `On the till as Epos Now customer ${link.eposCustomerId}.`
   }
+  if (link.status === "in_progress") {
+    return "Being added to the till now. Check again in a minute."
+  }
   if (link.status === "queued") {
     return link.attempts > 0
       ? `Not on the till yet. Epos Now did not answer, so it tries again every five minutes (${link.attempts} ${link.attempts === 1 ? "try" : "tries"} so far).`

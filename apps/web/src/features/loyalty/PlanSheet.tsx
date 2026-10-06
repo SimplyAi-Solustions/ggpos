@@ -198,6 +198,29 @@ export function PlanSheet({
               />
             </Field>
 
+            <Field
+              label="Epos Now sale"
+              htmlFor="plan-epos"
+              layout="stacked"
+              hint="Optional"
+            >
+              <Input
+                id="plan-epos"
+                className="tnum"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={12}
+                placeholder="The transaction number on the till receipt"
+                value={draft.eposTransaction}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    eposTransaction: event.target.value.replace(/\D/g, ""),
+                  }))
+                }
+              />
+            </Field>
+
             <Field label="Note" htmlFor="plan-note" layout="stacked">
               <Textarea
                 id="plan-note"

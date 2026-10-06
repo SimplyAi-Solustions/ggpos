@@ -139,7 +139,7 @@ export function demoSignUp(input: SignUpInput): SignUpResult {
     throw new Error("That email address does not look right. Check it and try again.")
   }
   if (!input.terms_accepted) {
-    throw new Error("Tick the box to accept the GG Guild terms, then try again.")
+    throw new Error("Tick the box to accept the terms and the privacy notice.")
   }
   if (!demoPortalCustomerForEmail(email)) {
     const created = demoCreateCustomer({

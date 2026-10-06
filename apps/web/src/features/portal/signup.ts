@@ -25,6 +25,6 @@ export function validateSignUp(input: {
   else if (email.length > 254 || !EMAIL_SHAPE.test(email)) {
     errors.email = "That email address does not look right. Check it and try again."
   }
-  if (!input.terms) errors.terms = "Accept the terms to join. Read them first if you like."
+  if (!input.terms) errors.terms = "Tick the box to accept the terms and the privacy notice."
   return errors
 }

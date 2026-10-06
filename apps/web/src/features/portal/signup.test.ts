@@ -13,7 +13,7 @@ describe("validateSignUp", () => {
     const errors = validateSignUp({ name: "  ", email: "", terms: false })
     expect(errors.name).toBe("Add your name.")
     expect(errors.email).toMatch(/^Add your email address/)
-    expect(errors.terms).toMatch(/^Accept the terms/)
+    expect(errors.terms).toMatch(/^Tick the box to accept the terms/)
   })
 
   it("refuses an address that is not one", () => {
