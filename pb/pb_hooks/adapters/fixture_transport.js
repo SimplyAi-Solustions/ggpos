@@ -99,6 +99,41 @@ function resolveNowPlaceholders(json) {
   return json;
 }
 
+/**
+ * The TCGdex fixture's price `updated` stamps, moved forward so the newest
+ * sits an hour before now and every other keeps its distance from it. A
+ * file captured on 19 Sep 2026 went past adapters/pricing_policy.js's
+ * 72-hour freshness window three days later, after which every source in
+ * it read as stale and the refresh-prices checks picked the newest stale
+ * row instead of the first fresh one. Only ever moves a stamp forward, so
+ * a fixture that is already fresh is served exactly as it is on disk.
+ */
+function freshenUpdated(json) {
+  var stamps = [];
+  function walk(node) {
+    if (!node || typeof node !== "object") return;
+    for (var key in node) {
+      if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+      var value = node[key];
+      if (key === "updated" && typeof value === "string" && !isNaN(Date.parse(value))) {
+        stamps.push({ node: node, at: Date.parse(value) });
+      } else if (value && typeof value === "object") {
+        walk(value);
+      }
+    }
+  }
+  walk(json);
+  if (!stamps.length) return json;
+  var newest = 0;
+  for (var i = 0; i < stamps.length; i++) if (stamps[i].at > newest) newest = stamps[i].at;
+  var shift = Date.now() - 3600000 - newest;
+  if (shift <= 0) return json;
+  for (var j = 0; j < stamps.length; j++) {
+    stamps[j].node.updated = new Date(stamps[j].at + shift).toISOString();
+  }
+  return json;
+}
+
 // -- The Solo reader fixtures (see the Readers API block in respond()) ---
 
 /**
@@ -296,8 +331,8 @@ function respond(call) {
   if (url.indexOf("api.frankfurter") >= 0) return ok(loadFixture("frankfurter_gbp_latest.json"));
 
   // -- TCGdex (Pokemon): exact card, then free-text search. ------------------
-  if (url.indexOf("api.tcgdex.net/v2/en/sets/") >= 0) return ok(loadFixture("tcgdex_sv151_199.json"));
-  if (url.indexOf("api.tcgdex.net/v2/en/cards?") >= 0) return ok(loadFixture("tcgdex_search_charizard.json"));
+  if (url.indexOf("api.tcgdex.net/v2/en/sets/") >= 0) return ok(freshenUpdated(loadFixture("tcgdex_sv151_199.json")));
+  if (url.indexOf("api.tcgdex.net/v2/en/cards?") >= 0) return ok(freshenUpdated(loadFixture("tcgdex_search_charizard.json")));
 
   // -- Scryfall (MTG): the exact-card fixture doubles as a one-row search
   //    result - scryfall.search() only ever reads res.json.data[]. ----------
