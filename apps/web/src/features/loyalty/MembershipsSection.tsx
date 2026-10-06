@@ -27,6 +27,8 @@ export interface MembershipsSectionProps {
   onRecord: (form: MembershipForm) => Promise<unknown>
   onRenew: (id: string, form: MembershipForm) => Promise<unknown>
   onCancel: (id: string) => Promise<unknown>
+  /** Start a plan somebody asked for online, once they have paid (Phase 8). */
+  onActivate: (id: string, form: MembershipForm) => Promise<unknown>
   onDismissError: () => void
 }
 
@@ -38,9 +40,11 @@ export function MembershipsSection({
   onRecord,
   onRenew,
   onCancel,
+  onActivate,
   onDismissError,
 }: MembershipsSectionProps) {
   const [recording, setRecording] = React.useState(false)
+  const [activating, setActivating] = React.useState<MembershipRecord | null>(null)
   const [renewing, setRenewing] = React.useState<MembershipRecord | null>(null)
   const [cancelling, setCancelling] = React.useState<MembershipRecord | null>(null)
 
@@ -72,6 +76,24 @@ export function MembershipsSection({
             <span className="tnum text-[15px] text-foreground">
               {formatGBP(membership.price)}
             </span>
+            {membership.status === "pending" ? (
+              <span className="flex items-center gap-6">
+                <Button
+                  variant="text"
+                  type="button"
+                  onClick={() => setActivating(membership)}
+                >
+                  Activate
+                </Button>
+                <Button
+                  variant="text-destructive"
+                  type="button"
+                  onClick={() => setCancelling(membership)}
+                >
+                  Cancel
+                </Button>
+              </span>
+            ) : null}
             {membership.status === "active" ? (
               <span className="flex items-center gap-6">
                 <Button
@@ -141,6 +163,33 @@ export function MembershipsSection({
         onDismissError={onDismissError}
       />
 
+      <PlanSheet
+        open={activating !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) setActivating(null)
+        }}
+        title="Activate"
+        description={
+          activating
+            ? `${activating.customerName} asked to join ${activating.tierName} online. Record what they paid at the counter.`
+            : ""
+        }
+        customer={
+          activating ? { id: activating.customer, name: activating.customerName } : null
+        }
+        tiers={null}
+        initial={
+          activating
+            ? { price: penceToPounds(activating.price), tier: activating.tier }
+            : undefined
+        }
+        busy={busy}
+        error={error}
+        saveLabel="Activate"
+        onSubmit={(form) => onActivate(activating?.id ?? "", form)}
+        onDismissError={onDismissError}
+      />
+
       <ConfirmDialog
         open={cancelling !== null}
         onOpenChange={(open: boolean) => {
@@ -152,7 +201,9 @@ export function MembershipsSection({
         title="Cancel this plan"
         description={
           cancelling
-            ? `${cancelling.customerName} goes back to the tier their points earn them. Nothing is refunded here: hand that back through SumUp.`
+            ? cancelling.status === "pending"
+              ? `${cancelling.customerName} asked to join online and has not paid. They are told it was cancelled.`
+              : `${cancelling.customerName} goes back to the tier their points earn them. Nothing is refunded here: hand that back through SumUp.`
             : ""
         }
         confirmLabel="Cancel the plan"

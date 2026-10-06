@@ -55,6 +55,7 @@ import {
 } from "@/features/loyalty/mapping"
 import { poundsToPence, parseCount } from "@/features/settings/mapping"
 import {
+  activateMembership,
   cancelMembership,
   getLoyaltyAdmin,
   listMemberships,
@@ -290,6 +291,21 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
     },
     onError: (problem) =>
       setPlanError(refusalOrFallback(problem, "That renewal did not go through.")),
+  })
+
+  const activate = useMutation({
+    mutationFn: ({ id, form }: { id: string; form: MembershipForm }) =>
+      activateMembership(id, {
+        months: parseCount(form.months) ?? 12,
+        price: poundsToPence(form.price) ?? 0,
+        payment_note: form.note.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setPlanError(null)
+      settleMemberships()
+    },
+    onError: (problem) =>
+      setPlanError(refusalOrFallback(problem, "That membership was not activated.")),
   })
 
   const stop = useMutation({
@@ -532,12 +548,13 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
         <MembershipsSection
           memberships={memberships}
           tiers={admin.tiers}
-          busy={plan.isPending || renew.isPending || stop.isPending}
+          busy={plan.isPending || renew.isPending || stop.isPending || activate.isPending}
           error={planError}
           onDismissError={() => setPlanError(null)}
           onRecord={(form) => plan.mutateAsync(form)}
           onRenew={(id, form) => renew.mutateAsync({ id, form })}
           onCancel={(id) => stop.mutateAsync(id)}
+          onActivate={(id, form) => activate.mutateAsync({ id, form })}
         />
       </Section>
 

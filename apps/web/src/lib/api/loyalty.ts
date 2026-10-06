@@ -33,6 +33,8 @@ import type {
   LoyaltyRuleWrite,
   LoyaltyTierRecord,
   LoyaltyTierWrite,
+  EposLink,
+  MembershipActivation,
   MembershipInput,
   MembershipRecord,
   MembershipRenewal,
@@ -249,7 +251,7 @@ export async function listMemberships(
   const rows = await pb.collection("memberships").getFullList<MembershipRow>({
     filter: status === "all" ? "" : `status = "${status}"`,
     expand: "customer,tier",
-    sort: "-started_at",
+    sort: "-started_at,-created",
   })
   return rows.map(toMembership)
 }
@@ -288,6 +290,93 @@ export async function renewMembership(
     { method: "POST", body: input }
   )
   return toMembership(result.membership)
+}
+
+/** A customer's request to join a paid plan, waiting for payment (Phase 8), or null. */
+export async function pendingMembershipFor(
+  customerId: string
+): Promise<MembershipRecord | null> {
+  if (isDemo()) return demo.demoPendingFor(customerId)
+  const page = await pb.collection("memberships").getList<MembershipRow>(1, 1, {
+    filter: `customer = "${escapeFilter(customerId)}" && status = "pending"`,
+    expand: "customer,tier",
+    sort: "-created",
+  })
+  const row = page.items[0]
+  return row ? toMembership(row) : null
+}
+
+/** Starts a pending plan by hand, `POST /api/vault/memberships/:id/activate`. */
+export async function activateMembership(
+  id: string,
+  input: MembershipActivation
+): Promise<MembershipRecord> {
+  if (isDemo()) return demo.demoActivateMembership(id, input)
+  const result = await pb.send<{
+    membership: MembershipRow & { tier_name?: string }
+  }>(`/api/vault/memberships/${id}/activate`, { method: "POST", body: input })
+  // The route answers with the plan's own fields and its tier's name, not an
+  // expanded record, so the name is carried across by hand.
+  const record = toMembership(result.membership)
+  return result.membership.tier_name
+    ? { ...record, tierName: result.membership.tier_name }
+    : record
+}
+
+interface EposLinkRow {
+  epos_customer_id?: string
+  epos_sync_status?: string
+  epos_sync_attempts?: number
+  epos_sync_error?: string
+  epos_synced_at?: string
+}
+
+function toEposLink(row: EposLinkRow | null | undefined): EposLink {
+  const status = row?.epos_sync_status
+  return {
+    status:
+      status === "queued" || status === "linked" || status === "failed" ? status : "",
+    eposCustomerId: row?.epos_customer_id ?? "",
+    attempts: row?.epos_sync_attempts ?? 0,
+    error: row?.epos_sync_error ?? "",
+    syncedAt: row?.epos_synced_at ?? "",
+  }
+}
+
+/** Whether the Epos Now till knows this customer, off `customer_private`. */
+export async function getEposLink(customerId: string): Promise<EposLink> {
+  if (isDemo()) return demo.demoEposLink(customerId)
+  const page = await pb.collection("customer_private").getList<EposLinkRow>(1, 1, {
+    filter: `customer = "${escapeFilter(customerId)}"`,
+    fields: "epos_customer_id,epos_sync_status,epos_sync_attempts,epos_sync_error,epos_synced_at",
+  })
+  return toEposLink(page.items[0])
+}
+
+/**
+ * Adds the customer to the Epos Now till, card number and all,
+ * `POST /api/vault/customers/:id/epos-link`. Epos Now being down is not a
+ * refusal: the link comes back `queued` with the reason, and the server
+ * tries again every five minutes.
+ */
+export async function linkToEposNow(
+  customerId: string
+): Promise<{ link: EposLink; message: string }> {
+  if (isDemo()) return demo.demoLinkToEposNow(customerId)
+  const result = await pb.send<{
+    link?: { status?: string; epos_customer_id?: string; attempts?: number; error?: string; synced_at?: string }
+    message?: string
+  }>(`/api/vault/customers/${customerId}/epos-link`, { method: "POST", body: {} })
+  return {
+    link: toEposLink({
+      epos_customer_id: result.link?.epos_customer_id,
+      epos_sync_status: result.link?.status,
+      epos_sync_attempts: result.link?.attempts,
+      epos_sync_error: result.link?.error,
+      epos_synced_at: result.link?.synced_at,
+    }),
+    message: result.message ?? "",
+  }
 }
 
 export async function cancelMembership(id: string): Promise<MembershipRecord> {

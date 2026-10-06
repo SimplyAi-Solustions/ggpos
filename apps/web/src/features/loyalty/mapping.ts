@@ -413,6 +413,8 @@ export interface TierForm {
   thresholdPoints: string
   sort: string
   paidPlan: boolean
+  /** Pounds and pence, for a paid plan: what My Vault asks the customer to pay. */
+  price: string
   percentOff: boolean
   percentOffValue: string
   percentOffScope: string[]
@@ -441,6 +443,7 @@ export function tierToForm(record: LoyaltyTierRecord, index = 0): TierForm {
     thresholdPoints: String(record.threshold_points ?? 0),
     sort: String(record.sort ?? (index + 1) * 10),
     paidPlan: record.paid_plan === true,
+    price: record.paid_plan === true ? penceToPounds(record.price ?? 0) : "",
     percentOff: Boolean(percent),
     percentOffValue: percent && "value" in percent ? String(percent.value) : "5",
     percentOffScope: percent && "scope" in percent ? percent.scope : ["sealed"],
@@ -464,6 +467,7 @@ export function emptyTier(key: string, sort: number): TierForm {
     thresholdPoints: "0",
     sort: String(sort),
     paidPlan: false,
+    price: "",
     percentOff: false,
     percentOffValue: "5",
     percentOffScope: ["sealed"],
@@ -533,6 +537,12 @@ export function validateTier(form: TierForm, others: TierForm[]): Errors {
   if (parseSigned(form.sort) === null) {
     errors.sort = "Sort is a whole number. The lowest shows first."
   }
+  if (form.paidPlan) {
+    const price = poundsToPence(form.price)
+    if (price === null || price < 0) {
+      errors.price = "A price is in pounds and pence, for example 24.00."
+    }
+  }
   if (form.percentOff) {
     const percent = parseCount(form.percentOffValue)
     if (percent === null || percent <= 0 || percent > 100) {
@@ -565,6 +575,7 @@ export function formToTier(form: TierForm): LoyaltyTierWrite {
     sort: parseSigned(form.sort) ?? 0,
     perks: tierPerks(form) as unknown[],
     paid_plan: form.paidPlan,
+    price: form.paidPlan ? (poundsToPence(form.price) ?? 0) : 0,
   }
 }
 
@@ -814,6 +825,7 @@ export function rewardLimits(reward: LoyaltyRewardRecord): string {
 /** "Renews 12 Oct 2027", or what happened to a plan that is not running. */
 export function planLine(membership: MembershipRecord): string {
   const renews = formatShortDate(membership.renews_at)
+  if (membership.status === "pending") return "Waiting for payment"
   if (membership.status === "cancelled") return "Cancelled"
   if (membership.status === "lapsed") return `Lapsed on ${renews}`
   return `Renews ${renews}`

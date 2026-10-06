@@ -43,10 +43,18 @@ export function setDemoPortalCustomer(id: string) {
   active = id || DEMO_PORTAL_CUSTOMER_ID
 }
 
+/** Cards made by the demo's own sign-up screen this session, by email. */
+const signedUp = new Map<string, string>()
+
+/** Remember a demo sign-up so the code step can find the card. */
+export function registerDemoPortalEmail(email: string, id: string) {
+  signedUp.set(email.trim().toLowerCase(), id)
+}
+
 /** The demo card behind a typed email address, or null. */
 export function demoPortalCustomerForEmail(email: string): string | null {
   const clean = email.trim().toLowerCase()
   if (!clean || clean === DEMO_PORTAL_EMAIL) return DEMO_PORTAL_CUSTOMER_ID
   if (clean === DEMO_PORTAL_NO_CREDIT_EMAIL) return DEMO_PORTAL_NO_CREDIT_ID
-  return null
+  return signedUp.get(clean) ?? null
 }

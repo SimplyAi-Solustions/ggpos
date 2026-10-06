@@ -476,7 +476,7 @@ export function ProfileScreen() {
                 },
                 {
                   heading: "Who sees it",
-                  body: "Staff who need it to do their job, SumUp for card payments, and our email and text message provider. We do not sell your data.",
+                  body: "Staff who need it to do their job, SumUp for card payments, Epos Now (our till) for your name, email address and card number once you join a paid plan or ask us to add you, and our email and text message provider. We do not sell your data.",
                 },
                 {
                   heading: "Your rights",

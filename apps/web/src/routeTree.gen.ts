@@ -23,6 +23,7 @@ import { Route as AccountGuildRouteImport } from "./routes/account.guild"
 import { Route as AccountMeRouteImport } from "./routes/account.me"
 import { Route as AccountNotificationsRouteImport } from "./routes/account.notifications"
 import { Route as AccountPointsRouteImport } from "./routes/account.points"
+import { Route as AccountSignUpRouteImport } from "./routes/account.sign-up"
 import { Route as AccountWantListRouteImport } from "./routes/account.want-list"
 import { Route as AccountWantsRouteImport } from "./routes/account.wants"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
@@ -129,6 +130,11 @@ const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
 const AccountPointsRoute = AccountPointsRouteImport.update({
   id: "/points",
   path: "/points",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountSignUpRoute = AccountSignUpRouteImport.update({
+  id: "/sign-up",
+  path: "/sign-up",
   getParentRoute: () => AccountRoute,
 } as any)
 const AccountWantListRoute = AccountWantListRouteImport.update({
@@ -333,6 +339,7 @@ export interface FileRoutesByFullPath {
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
   "/account/points": typeof AccountPointsRoute
+  "/account/sign-up": typeof AccountSignUpRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
@@ -384,6 +391,7 @@ export interface FileRoutesByTo {
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
   "/account/points": typeof AccountPointsRoute
+  "/account/sign-up": typeof AccountSignUpRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
@@ -438,6 +446,7 @@ export interface FileRoutesById {
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
   "/account/points": typeof AccountPointsRoute
+  "/account/sign-up": typeof AccountSignUpRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
@@ -493,6 +502,7 @@ export interface FileRouteTypes {
     | "/account/me"
     | "/account/notifications"
     | "/account/points"
+    | "/account/sign-up"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
@@ -544,6 +554,7 @@ export interface FileRouteTypes {
     | "/account/me"
     | "/account/notifications"
     | "/account/points"
+    | "/account/sign-up"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
@@ -597,6 +608,7 @@ export interface FileRouteTypes {
     | "/account/me"
     | "/account/notifications"
     | "/account/points"
+    | "/account/sign-up"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
@@ -747,6 +759,13 @@ declare module "@tanstack/react-router" {
       path: "/points"
       fullPath: "/account/points"
       preLoaderRoute: typeof AccountPointsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/sign-up": {
+      id: "/account/sign-up"
+      path: "/sign-up"
+      fullPath: "/account/sign-up"
+      preLoaderRoute: typeof AccountSignUpRouteImport
       parentRoute: typeof AccountRoute
     }
     "/account/want-list": {
@@ -1018,6 +1037,7 @@ interface AccountRouteChildren {
   AccountMeRoute: typeof AccountMeRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountPointsRoute: typeof AccountPointsRoute
+  AccountSignUpRoute: typeof AccountSignUpRoute
   AccountWantListRoute: typeof AccountWantListRoute
   AccountWantsRoute: typeof AccountWantsRoute
   AccountIndexRoute: typeof AccountIndexRoute
@@ -1037,6 +1057,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountMeRoute: AccountMeRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountPointsRoute: AccountPointsRoute,
+  AccountSignUpRoute: AccountSignUpRoute,
   AccountWantListRoute: AccountWantListRoute,
   AccountWantsRoute: AccountWantsRoute,
   AccountIndexRoute: AccountIndexRoute,

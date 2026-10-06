@@ -664,3 +664,56 @@ test.describe("the guard", () => {
     await expect(page.getByRole("heading", { name: "Want list" })).toBeVisible()
   })
 })
+
+test.describe("signing up online", () => {
+  test("creates an account and signs in with the emailed code", async ({ page }) => {
+    await page.goto("/account?demo=1")
+    await page.getByRole("link", { name: "Create an account" }).click()
+    await expect(page.getByRole("heading", { name: "Join GG Guild" })).toBeVisible()
+
+    // Nothing is sent until the terms are accepted, and the screen says so.
+    await page.getByLabel("Name").fill("Robin Hart")
+    await page.getByLabel("Email").fill("robin.hart@example.co.uk")
+    await page.getByRole("button", { name: "Create my account" }).click()
+    await expect(page.getByText("Accept the terms to join. Read them first if you like.")).toBeVisible()
+
+    await page.getByRole("button", { name: "Read the terms" }).click()
+    const terms = page.getByRole("dialog", { name: "GG Guild terms" })
+    await expect(terms).toContainText("not transferable")
+    await expect(terms).toContainText("shared with Epos Now, our till")
+    await page.keyboard.press("Escape")
+    await expect(terms).toHaveCount(0)
+
+    await page.getByRole("switch", { name: "The terms" }).click()
+    await page.getByRole("button", { name: "Create my account" }).click()
+
+    // The same code step every sign-in uses.
+    await expect(page.getByText("We sent it to robin.hart@example.co.uk.")).toBeVisible()
+    await page.getByLabel("Code", { exact: true }).fill(DEMO_CODE)
+    await page.getByRole("button", { name: "Sign in" }).click()
+    await expect(page.getByRole("heading", { name: "My card" })).toBeVisible()
+    await expect(page.getByTestId("guild-card-front")).toContainText("Robin Hart")
+  })
+})
+
+test.describe("joining a paid plan", () => {
+  test("asks to join, then shows the price, the barcode and the QR for the counter", async ({
+    page,
+  }) => {
+    await signIn(page, DEMO_NO_CREDIT_EMAIL)
+    await page.getByRole("link", { name: "Guild", exact: true }).click()
+    await expect(page.getByRole("heading", { name: "GG Guild" })).toBeVisible()
+
+    const plans = page.getByTestId("guild-plans")
+    await expect(plans).toContainText("Guild Pass")
+    await expect(plans).toContainText("£24.00 for 12 months, paid at the counter.")
+    await plans.getByRole("button", { name: "Ask to join" }).click()
+
+    const pending = page.getByTestId("guild-pending")
+    await expect(pending).toContainText("Pay at the counter to start your membership.")
+    await expect(page.getByTestId("guild-pending-price")).toHaveText("£24.00")
+    await expect(pending.getByRole("img", { name: /^Barcode for card GGC-/ })).toBeVisible()
+    await expect(pending.getByRole("img", { name: /^Guild card QR for GGC-/ })).toBeVisible()
+    await expect(page.getByTestId("guild-plans")).toHaveCount(0)
+  })
+})
