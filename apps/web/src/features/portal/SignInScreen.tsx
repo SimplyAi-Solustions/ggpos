@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
@@ -26,25 +26,36 @@ import { rememberDemoSession } from "@/features/portal/session"
  *
  * The same shape as the counter's sign-in, with a code where the password
  * is: one Anton line, two underlined fields one after the other, one black
- * block button. There is no password to forget and no account to create
- * here, because the card is created at the counter; a customer with no email
- * on file is told to ask, rather than being left guessing why the code never
- * arrives.
+ * block button. There is no password to forget. A card made at the counter
+ * is claimed by signing in with the email address on it; somebody new
+ * creates an account on the sign-up screen (`SignUpScreen`), which hands
+ * back here at the code step with `start`, so the code form is one form.
  */
-export function SignInScreen({ next }: { next?: string }) {
+export function SignInScreen({
+  next,
+  start,
+}: {
+  next?: string
+  /** Arrive at the code step: the sign-up screen has already sent one. */
+  start?: { email: string; otpId: string }
+}) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const demo = isDemo()
 
-  const [step, setStep] = React.useState<"email" | "code">("email")
-  const [email, setEmail] = React.useState(demo ? DEMO_PORTAL_EMAIL : "")
-  const [otpId, setOtpId] = React.useState("")
+  const [step, setStep] = React.useState<"email" | "code">(start ? "code" : "email")
+  const [email, setEmail] = React.useState(
+    start?.email ?? (demo ? DEMO_PORTAL_EMAIL : "")
+  )
+  const [otpId, setOtpId] = React.useState(start?.otpId ?? "")
   const [code, setCode] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
-  const [waitLeft, setWaitLeft] = React.useState(0)
+  const [waitLeft, setWaitLeft] = React.useState(start ? RESEND_SECONDS : 0)
   /** Said once, when the wait is armed, rather than ticked out loud. */
-  const [announcement, setAnnouncement] = React.useState("")
+  const [announcement, setAnnouncement] = React.useState(
+    start ? `Code sent. You can ask for another in ${RESEND_SECONDS} seconds.` : ""
+  )
   const codeRef = React.useRef<HTMLInputElement>(null)
 
   // "Send another" wakes up after a minute, so a slow mail server does not
@@ -138,14 +149,21 @@ export function SignInScreen({ next }: { next?: string }) {
             id="portal-email-help"
             className="mt-4 text-[15px] leading-[1.5] text-muted-foreground-2"
           >
-            Use the address on your Guild card. If we do not have one for you,
-            ask at the counter and we will add it.
+            Use the address on your Guild card, or the one you signed up with.
+            A card made at the counter without an email address can have one
+            added there.
           </p>
 
-          <div className="mt-12">
+          <div className="mt-12 flex flex-col items-start gap-8">
             <Button type="submit" trailingArrow loading={busy}>
               Send me a code
             </Button>
+            <div className="flex flex-col items-start gap-2">
+              <Hint>New to GG Guild</Hint>
+              <Button variant="text" render={<Link to="/account/sign-up" />}>
+                Create an account
+              </Button>
+            </div>
           </div>
         </form>
       ) : (
@@ -184,7 +202,7 @@ export function SignInScreen({ next }: { next?: string }) {
             id="portal-code-help"
             className="mt-4 text-[15px] leading-[1.5] text-muted-foreground-2"
           >
-            We sent it to {email}. It is good for ten minutes.
+            We sent it to {email}. It works for five minutes.
           </p>
 
           <p aria-live="polite" className="sr-only">

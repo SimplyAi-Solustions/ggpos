@@ -88,3 +88,19 @@ export function roundToRetailEnding(pence: number): number {
   if (rem <= 49) return pounds * 100 + 49
   return pounds * 100 + 99
 }
+
+/**
+ * A pounds amount that arrives as a JSON number or a decimal string (Epos Now
+ * sends `24`, `24.5` or `24.00` for £24.00) as integer pence. A number is
+ * written to two places first, so the binary float never reaches the
+ * arithmetic, and then parsed as a string like every other decimal here.
+ * Returns null for anything that is not a plain amount.
+ */
+export function decimalPoundsToPence(value: unknown): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null
+    return parseDecimalToMinor(value.toFixed(2))
+  }
+  if (typeof value === "string") return parseDecimalToMinor(value)
+  return null
+}

@@ -1045,6 +1045,8 @@ export interface LoyaltyTierRow {
   sort?: number
   perks?: unknown[]
   paid_plan?: boolean
+  /** What a paid plan costs, integer GBP pence. 0 or absent for an earned tier. */
+  price?: number
 }
 
 /**
@@ -2148,6 +2150,8 @@ export interface LoyaltyTierWrite {
   sort: number
   perks: unknown[]
   paid_plan: boolean
+  /** Integer GBP pence; 0 for an earned tier. */
+  price: number
 }
 
 export type RewardType = RewardVoucher["type"]
@@ -2186,7 +2190,11 @@ export interface LoyaltyRewardWrite {
   image?: File | null
 }
 
-export type MembershipStatus = "active" | "lapsed" | "cancelled"
+/**
+ * `pending` is a customer's online request to join, waiting for payment at
+ * the counter (Phase 8). It pins no tier until it is activated.
+ */
+export type MembershipStatus = "pending" | "active" | "lapsed" | "cancelled"
 
 /** `memberships`, with the customer and tier joined for the list. */
 export interface MembershipRecord {
@@ -2212,6 +2220,8 @@ export interface MembershipInput {
   /** Integer GBP pence. */
   price: number
   payment_note?: string
+  /** The Epos Now sale it was paid through, so the till sync never adds it twice. */
+  epos_transaction_id?: string
 }
 
 /** `POST /api/vault/memberships/:id/renew`. */
@@ -2219,6 +2229,40 @@ export interface MembershipRenewal {
   months: number
   price: number
   payment_note?: string
+  /** The Epos Now sale it was paid through, so the till sync never adds it twice. */
+  epos_transaction_id?: string
+}
+
+/** `POST /api/vault/signup` (Phase 8). */
+export interface SignUpInput {
+  name: string
+  email: string
+  marketing_consent: boolean
+  terms_accepted: boolean
+}
+
+/**
+ * The one answer the sign-up route gives, whether the address was new or
+ * already on a card: the emailed code that follows is what signs them in.
+ */
+export interface SignUpResult {
+  ok: boolean
+  message: string
+}
+
+/** `POST /api/vault/memberships/:id/activate`: a pending plan paid for by hand. */
+export type MembershipActivation = MembershipRenewal
+
+/**
+ * The Epos Now link on `customer_private` (Phase 8): whether the till knows
+ * this customer, under which Epos Now id, and where a failed link has got to.
+ */
+export interface EposLink {
+  status: "" | "queued" | "in_progress" | "linked" | "failed"
+  eposCustomerId: string
+  attempts: number
+  error: string
+  syncedAt: string
 }
 
 /** The two perks with a monthly allowance, and the four informational ones. */

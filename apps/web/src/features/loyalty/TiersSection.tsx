@@ -7,6 +7,7 @@
  * is simply absent from the tier rather than stored as a zero.
  */
 import * as React from "react"
+import { formatGBP } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
 import { PERK_LABEL } from "@/features/loyalty/perks"
+import { poundsToPence } from "@/features/settings/mapping"
 import {
   PERK_SCOPES,
   emptyTier,
@@ -133,6 +135,26 @@ function TierFormBody({
               the points say.
             </p>
           </Field>
+
+          {draft.paidPlan ? (
+            <Field label="Price" htmlFor="tier-price" layout="stacked" error={shown.price}>
+              <Input
+                id="tier-price"
+                className="tnum"
+                inputMode="decimal"
+                autoComplete="off"
+                maxLength={9}
+                placeholder="24.00"
+                trailingHint="£"
+                value={draft.price}
+                aria-invalid={Boolean(shown.price) || undefined}
+                onChange={(event) => onChange({ price: event.target.value })}
+              />
+              <p className="mt-2 max-w-[48ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                What My Vault asks a customer to pay at the counter when they join online.
+              </p>
+            </Field>
+          ) : null}
 
           {draft.paidPlan ? null : (
             <Field
@@ -307,7 +329,14 @@ export function TiersSection({ tiers, onSave, refused }: TiersSectionProps) {
                   </span>
                 </span>
                 {tier.paidPlan ? (
-                  <Badge variant="outline">Paid plan</Badge>
+                  <span className="flex shrink-0 items-center gap-3">
+                    {poundsToPence(tier.price) ? (
+                      <span className="tnum text-[15px] text-foreground">
+                        {formatGBP(poundsToPence(tier.price) ?? 0)}
+                      </span>
+                    ) : null}
+                    <Badge variant="outline">Paid plan</Badge>
+                  </span>
                 ) : (
                   <span className="tnum shrink-0 text-[15px] text-foreground">
                     {(Number(tier.thresholdPoints) || 0).toLocaleString("en-GB")}

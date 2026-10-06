@@ -7,7 +7,7 @@
  */
 import { Link } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { formatGBP } from "@gg/shared"
+import { displayCode, formatGBP } from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
 import { Hint, MicroLabel } from "@/components/ui/micro-label"
@@ -17,6 +17,7 @@ import { useCountUp } from "@/design/motion"
 import { getCurrentCashSession, getTodayStats } from "@/lib/api"
 import { countQuotesWaiting } from "@/lib/api/quotes"
 import { countHoldsEndingToday } from "@/lib/api/wants"
+import { listMemberships } from "@/lib/api/loyalty"
 import { getSparklines } from "@/lib/api/reports"
 import type { SparklineSeries, TodayStats } from "@/lib/api/types"
 
@@ -118,6 +119,15 @@ export function HomeScreen() {
   const { data: holdsToday = 0 } = useQuery({
     queryKey: ["holds-ending-today"],
     queryFn: () => countHoldsEndingToday(),
+    staleTime: 60_000,
+  })
+
+  // Phase 8: customers who asked to join a paid plan online and pay at the
+  // counter. Usually settled by the Epos Now sale on its own; listed here so
+  // whoever is serving can find the record when it is not.
+  const { data: signUps = [] } = useQuery({
+    queryKey: ["memberships", "pending"],
+    queryFn: () => listMemberships("pending"),
     staleTime: 60_000,
   })
 
@@ -227,6 +237,49 @@ export function HomeScreen() {
           </>
         )}
       </div>
+
+      {signUps.length > 0 ? (
+        <div data-testid="guild-signups" className="border-b border-hairline-soft py-6">
+          <MicroLabel className="mb-3">Guild sign-ups to pay</MicroLabel>
+          <ul className="flex flex-col">
+            {signUps.slice(0, 6).map((membership) => (
+              <li
+                key={membership.id}
+                className="flex flex-wrap items-center gap-x-6 gap-y-1 py-2"
+              >
+                <span className="min-w-0 flex-1 truncate text-[15px] text-foreground">
+                  {membership.customerName}
+                </span>
+                <span className="tnum font-mono text-[13px] text-muted-foreground-2">
+                  {displayCode(membership.customerCode)}
+                </span>
+                <Hint>{membership.tierName}</Hint>
+                <span className="tnum text-[15px] text-foreground">
+                  {formatGBP(membership.price)}
+                </span>
+                {membership.customerCode ? (
+                  <Button
+                    variant="text"
+                    render={
+                      <Link
+                        to="/counter/customers/$code"
+                        params={{ code: membership.customerCode }}
+                      />
+                    }
+                  >
+                    Open
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          {signUps.length > 6 ? (
+            <p className="mt-2 text-[13px] leading-[1.45] text-muted-foreground-2">
+              {`${signUps.length - 6} more on the Loyalty screen.`}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-16">
         <MicroLabel tone="ink" className="mb-5">

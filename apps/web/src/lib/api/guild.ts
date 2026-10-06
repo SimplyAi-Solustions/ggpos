@@ -16,6 +16,7 @@ import { pbCustomer } from "@/lib/pb-customer"
 import { isDemo } from "@/lib/api/mode"
 import {
   demoGuild,
+  demoJoinGuild,
   demoPoints,
   demoRedeem,
   demoRewards,
@@ -52,6 +53,30 @@ export interface GuildSummary {
     pending: number
   }
   vouchers_open: number
+  /**
+   * A request to join a paid plan, waiting for payment at the counter
+   * (Phase 8). Null when there is none. It pins no tier until it is paid.
+   */
+  pending?: GuildPending | null
+  /** The paid plans a customer can ask to join online, cheapest sort first. */
+  plans?: GuildPlan[]
+}
+
+/** A paid plan as My Vault offers it. `price` is integer GBP pence; 0 when unset. */
+export interface GuildPlan {
+  id: string
+  name: string
+  price: number
+}
+
+/** `/me/guild`'s `pending`, and the membership `POST /api/vault/guild/join` answers with. */
+export interface GuildPending {
+  id: string
+  tier: string
+  tier_name: string
+  /** Integer GBP pence, as asked when they joined. */
+  price: number
+  created: string
 }
 
 /**
@@ -198,4 +223,39 @@ export async function redeemReward(id: string): Promise<PortalVoucher> {
     )
   }
   return voucher as PortalVoucher
+}
+
+// ---------------------------------------------------------------------------
+// Joining a paid plan (Phase 8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Asks to join a paid plan, `POST /api/vault/guild/join`. Nothing is taken
+ * here: the answer is a pending membership the customer pays for at the
+ * counter, by showing the barcode on their Guild screen at the till. Asking
+ * again answers with the same pending row; a live membership is a 409 with
+ * the sentence to show.
+ */
+export async function joinGuild(tierId: string): Promise<GuildPending> {
+  if (isDemo()) return demoJoinGuild(tierId)
+  const result = await pbCustomer.send<{
+    membership?: {
+      id: string
+      tier: string
+      tier_name: string
+      price: number
+      created: string
+    }
+  }>("/api/vault/guild/join", { method: "POST", body: { tier: tierId } })
+  const membership = result?.membership
+  if (!membership) {
+    throw new Error("Your request did not come back as expected. Check the Guild screen before trying again.")
+  }
+  return {
+    id: membership.id,
+    tier: membership.tier,
+    tier_name: membership.tier_name,
+    price: membership.price,
+    created: membership.created,
+  }
 }

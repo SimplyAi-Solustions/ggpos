@@ -4,8 +4,9 @@
  * guild.pb.js - My Vault's Guild pages (docs/PLAN.md, "Customers, 'My
  * Vault' > Guild"; docs/api-contract.md's Phase 6 section).
  *
- *   GET /api/vault/me/guild    (customer)
- *   GET /api/vault/me/points   (customer)
+ *   GET  /api/vault/me/guild    (customer)
+ *   GET  /api/vault/me/points   (customer)
+ *   POST /api/vault/guild/join  (customer, Phase 8)
  *
  * Both are read-only and both are about the caller alone: every query
  * filters on `e.auth.id`, so there is no id in either path to get wrong.
@@ -77,6 +78,25 @@ routerAdd(
 
     const counts = referralsLib.countsFor(e.app, customer.id);
 
+    // Phase 8: the paid plans a customer can ask to join online, and the
+    // one waiting for payment at the counter, if they have asked.
+    const membershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const plans = membershipsLib.paidPlans(e.app).map((row) => ({
+      id: row.id,
+      name: row.getString("name"),
+      price: row.getInt("price"),
+    }));
+    const pendingRow = membershipsLib.latest(e.app, customer.id, "pending");
+    const pending = pendingRow
+      ? {
+          id: pendingRow.id,
+          tier: pendingRow.getString("tier"),
+          tier_name: membershipsLib.tierName(e.app, pendingRow.getString("tier")),
+          price: pendingRow.getInt("price"),
+          created: pendingRow.getString("created"),
+        }
+      : null;
+
     return e.json(200, {
       points_name: pointsName,
       tier: state.tier ? { id: state.tier.id, name: state.tier.name } : null,
@@ -92,6 +112,8 @@ routerAdd(
         pending: counts.pending,
       },
       vouchers_open: vouchersOpen,
+      pending: pending,
+      plans: plans,
     });
   },
   $apis.requireAuth("customers")
@@ -204,3 +226,134 @@ routerAdd(
   },
   $apis.requireAuth("customers")
 );
+
+// ---------------------------------------------------------------------
+// POST /api/vault/guild/join   (customer, Phase 8)
+//
+// An expression of interest, paid for at the counter: a `pending`
+// membership for a paid-plan tier, priced from the tier. One pending row
+// at a time (asking again answers with the same row, switched to the tier
+// asked for), and refused while a membership is already live. The Epos
+// Now customer is created straight after (lib/eposnow.js), so the barcode
+// My Vault shows attaches them at the till; if Epos Now is down the link
+// is queued and retried, and the join itself has already succeeded.
+// ---------------------------------------------------------------------
+routerAdd(
+  "POST",
+  "/api/vault/guild/join",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const membershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const epos = require(`${__hooks}/lib/eposnow.js`);
+
+    const customer = e.auth;
+    const body = util.body(e);
+    const tierId = util.asStr(body.tier);
+
+    let tier = null;
+    try {
+      tier = e.app.findRecordById("loyalty_tiers", tierId);
+    } catch (err) {
+      tier = null;
+    }
+    if (!tier || !tier.getBool("paid_plan")) {
+      throw e.badRequestError("That plan is not one you can join. Pick one from the list.", {
+        tier: new ValidationError("invalid", "Pick a plan from the list."),
+      });
+    }
+
+    const active = membershipsLib.latest(e.app, customer.id, "active");
+    if (active) {
+      throw e.error(
+        409,
+        `You already have a ${membershipsLib.tierName(e.app, active.getString("tier")) || "Guild"} membership until ${membershipsLib.ukDate(active.getString("renews_at"))}. Renew it at the counter.`,
+        null
+      );
+    }
+
+    let membership = null;
+    let created = false;
+    e.app.runInTransaction((txApp) => {
+      const existing = membershipsLib.latest(txApp, customer.id, "pending");
+      if (existing) {
+        membership = existing;
+        if (existing.getString("tier") !== tier.id || existing.getInt("price") !== tier.getInt("price")) {
+          existing.set("tier", tier.id);
+          existing.set("price", tier.getInt("price"));
+          txApp.save(existing);
+        }
+        return;
+      }
+      membership = new Record(txApp.findCollectionByNameOrId("memberships"), {
+        customer: customer.id,
+        tier: tier.id,
+        status: "pending",
+        price: tier.getInt("price"),
+        payment_note: "Asked to join online. Pay at the counter.",
+      });
+      txApp.save(membership);
+      created = true;
+
+      auditLib.writeAuditLog(txApp, {
+        actor: customer.id,
+        action: "guild_join",
+        collection: "memberships",
+        record: membership.id,
+        meta: { customer: customer.id, tier: tier.id, price: tier.getInt("price") },
+        ip: e.realIP(),
+      });
+    });
+
+    // Outside the transaction, and never able to fail the join.
+    let link = null;
+    try {
+      epos.queue(e.app, customer.id);
+      epos.link(e.app, customer.id, { actor: customer.id, ip: e.realIP() });
+      link = epos.linkShape(epos.privateFor(e.app, customer.id));
+    } catch (err) {
+      console.log(`[guild:join] the Epos Now link for ${customer.id} did not run: ${err}`);
+    }
+
+    return e.json(created ? 201 : 200, {
+      membership: membershipsLib.shape(e.app, e.app.findRecordById("memberships", membership.id)),
+      till_ready: Boolean(link && link.status === "linked"),
+    });
+  },
+  $apis.requireAuth("customers")
+);
+
+// ---------------------------------------------------------------------
+// GET /api/vault/guild/terms   (public, Phase 8)
+//
+// The programme's name and terms as plain text, so somebody signing up
+// online can read what they are accepting before they have an account.
+// `loyalty_programme` is readable by staff and customers only, so a guest
+// gets these two fields through this route and nothing else off the row.
+// ---------------------------------------------------------------------
+routerAdd("GET", "/api/vault/guild/terms", (e) => {
+  let name = "GG Guild";
+  let terms = "";
+  try {
+    const row = e.app.findFirstRecordByFilter("loyalty_programme", "id != ''");
+    name = row.getString("name") || name;
+    // The admin's editor field is HTML; this answers it as text, with each
+    // paragraph or line break kept as a new line, never as markup.
+    terms = row
+      .getString("terms")
+      .replace(/<\s*(br|\/p|\/li|\/h[1-6])\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  } catch (err) {
+    terms = "";
+  }
+  return e.json(200, { name: name, terms: terms });
+});

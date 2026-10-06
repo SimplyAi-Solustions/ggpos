@@ -24,9 +24,12 @@ import {
   demoPatchMe,
   demoRequestCode,
   demoSignIn,
+  demoSignUp,
 } from "@/lib/api/demo/portal"
 import type {
   CardLanding,
+  SignUpInput,
+  SignUpResult,
   CreditLedgerRecord,
   TradeInLineRecord,
   TradeInRecord,
@@ -61,6 +64,61 @@ export async function requestCode(email: string): Promise<string> {
   } catch (error) {
     throw new PortalSignInError(signInMessage(error))
   }
+}
+
+/**
+ * Creates a My Vault account online, `POST /api/vault/signup`.
+ *
+ * The answer is the same whether the address was new or already on a card,
+ * so this never tells anybody who shops here; the code `requestCode` sends
+ * next is what signs them in either way.
+ */
+export async function signUp(input: SignUpInput): Promise<SignUpResult> {
+  const body: SignUpInput = {
+    name: input.name.trim(),
+    email: input.email.trim(),
+    marketing_consent: input.marketing_consent,
+    terms_accepted: input.terms_accepted,
+  }
+  if (isDemo()) return demoSignUp(body)
+  try {
+    return await pbCustomer.send<SignUpResult>("/api/vault/signup", {
+      method: "POST",
+      body,
+    })
+  } catch (error) {
+    throw new PortalSignInError(signUpMessage(error))
+  }
+}
+
+/** `GET /api/vault/guild/terms`: what somebody signing up is agreeing to, as text. */
+export interface GuildTerms {
+  name: string
+  terms: string
+}
+
+export async function getGuildTerms(): Promise<GuildTerms> {
+  if (isDemo()) {
+    return {
+      name: "GG Guild",
+      // The demo shop's own programme terms (lib/api/demo/loyalty.ts).
+      terms:
+        "Points are earned on what you pay and are not transferable. The shop can change the programme with notice at the counter.",
+    }
+  }
+  return pbCustomer.send<GuildTerms>("/api/vault/guild/terms", { method: "GET" })
+}
+
+/** The sentence a refused sign-up shows: the server's own, or a plain fallback. */
+export function signUpMessage(error: unknown): string {
+  if (error instanceof ClientResponseError) {
+    if (error.status === 429) {
+      return "Too many tries from here. Wait ten minutes and try again."
+    }
+    const spoken = error.message?.trim()
+    if (spoken && error.status >= 400 && error.status < 500) return spoken
+  }
+  return "We could not reach the shop. Check your connection and try again."
 }
 
 /** Exchanges the emailed code for a customer session. */

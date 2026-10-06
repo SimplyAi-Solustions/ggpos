@@ -47,6 +47,7 @@ import type {
   MembershipRecord,
   MembershipRenewal,
   MembershipStatus,
+  EposLink,
   PerkWallet,
   PerkWalletEntry,
   PointsAdjustment,
@@ -148,6 +149,8 @@ export const tiers: LoyaltyTierRecord[] = DEMO_TIERS.map((tier) => ({
   sort: tier.sort,
   perks: tier.perks as unknown[],
   paid_plan: tier.paidPlan,
+  // £24.00 for the one paid plan, the price My Vault asks for at the counter.
+  price: tier.paidPlan ? 2400 : 0,
   colour_token: `tier-${tier.name.toLowerCase().replace(/\s+/g, "-")}`,
 }))
 
@@ -566,6 +569,19 @@ export function demoRecordMembership(input: MembershipInput): MembershipRecord {
   if (memberships.some((row) => row.customer === input.customer && row.status === "active")) {
     refuse("That customer already has an active plan. Renew it instead.")
   }
+  const waiting = memberships.find(
+    (entry) => entry.customer === input.customer && entry.status === "pending"
+  )
+  if (waiting) {
+    waiting.tier = input.tier
+    waiting.status = "active"
+    waiting.started_at = new Date().toISOString()
+    waiting.renews_at = monthsAhead(new Date(), input.months)
+    waiting.price = input.price
+    waiting.payment_note = input.payment_note ?? ""
+    recomputeTier(input.customer)
+    return toMembership(waiting)
+  }
   const row: DemoMembership = {
     id: id("membership"),
     customer: input.customer,
@@ -590,6 +606,9 @@ export function demoRenewMembership(
   if (row.status === "cancelled") {
     refuse("That plan was cancelled. Record a new one instead.")
   }
+  if (row.status === "pending") {
+    refuse("That membership has not started yet. Activate it instead.")
+  }
   const from = new Date(row.renews_at) > new Date() ? new Date(row.renews_at) : new Date()
   row.renews_at = monthsAhead(from, input.months)
   row.status = "active"
@@ -597,6 +616,105 @@ export function demoRenewMembership(
   if (input.payment_note) row.payment_note = input.payment_note
   recomputeTier(row.customer)
   return toMembership(row)
+}
+
+/** The customer's pending request to join a paid plan, or null (Phase 8). */
+export function demoPendingFor(customerId: string): MembershipRecord | null {
+  const row = memberships.find(
+    (entry) => entry.customer === customerId && entry.status === "pending"
+  )
+  return row ? toMembership(row) : null
+}
+
+/**
+ * The demo's `POST /api/vault/guild/join`: one pending row per customer,
+ * priced from the tier, refused while a plan is live.
+ */
+export function demoRequestPlan(customerId: string, tierId: string): MembershipRecord {
+  const tier = tiers.find((row) => row.id === tierId)
+  if (!tier || tier.paid_plan !== true) {
+    refuse("That plan is not one you can join. Pick one from the list.")
+  }
+  const live = memberships.find(
+    (entry) => entry.customer === customerId && entry.status === "active"
+  )
+  if (live) {
+    refuse(`You already have a ${tierName(live.tier)} membership. Renew it at the counter.`)
+  }
+  const existing = memberships.find(
+    (entry) => entry.customer === customerId && entry.status === "pending"
+  )
+  if (existing) {
+    existing.tier = tier.id
+    existing.price = tier.price ?? 0
+    return toMembership(existing)
+  }
+  const row: DemoMembership = {
+    id: id("membership"),
+    customer: customerId,
+    tier: tier.id,
+    status: "pending",
+    started_at: "",
+    renews_at: "",
+    price: tier.price ?? 0,
+    payment_note: "Asked to join online. Pay at the counter.",
+  }
+  memberships.unshift(row)
+  return toMembership(row)
+}
+
+/** The demo's `POST /api/vault/memberships/:id/activate`. */
+export function demoActivateMembership(
+  membershipId: string,
+  input: MembershipRenewal
+): MembershipRecord {
+  const row = memberships.find((entry) => entry.id === membershipId)
+  if (!row) refuse("That plan is not on file any more.")
+  if (row.status !== "pending") {
+    refuse("Only a membership waiting for payment can be activated. Renew a live one instead.")
+  }
+  row.status = "active"
+  row.started_at = new Date().toISOString()
+  row.renews_at = monthsAhead(new Date(), input.months)
+  row.price = input.price
+  row.payment_note = input.payment_note ?? "Paid at the counter."
+  recomputeTier(row.customer)
+  return toMembership(row)
+}
+
+/** Every customer's Epos Now link in the demo shop, by customer id. */
+const eposLinks = new Map<string, EposLink>([
+  [
+    "cust_demo_3",
+    { status: "linked", eposCustomerId: "781204", attempts: 0, error: "", syncedAt: daysAgo(48) },
+  ],
+])
+
+export function demoEposLink(customerId: string): EposLink {
+  return (
+    eposLinks.get(customerId) ?? {
+      status: "",
+      eposCustomerId: "",
+      attempts: 0,
+      error: "",
+      syncedAt: "",
+    }
+  )
+}
+
+/** The demo's staff "Link to Epos Now": always works, since there is no till. */
+export function demoLinkToEposNow(customerId: string): { link: EposLink; message: string } {
+  const current = demoEposLink(customerId)
+  if (current.status === "linked") return { link: current, message: "" }
+  const link: EposLink = {
+    status: "linked",
+    eposCustomerId: String(700000 + Math.floor(Math.random() * 89999)),
+    attempts: 0,
+    error: "",
+    syncedAt: new Date().toISOString(),
+  }
+  eposLinks.set(customerId, link)
+  return { link, message: "" }
 }
 
 export function demoCancelMembership(membershipId: string): MembershipRecord {

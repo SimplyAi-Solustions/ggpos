@@ -10,10 +10,16 @@ import {
   DEMO_PORTAL_CUSTOMER_ID,
   demoPortalCustomerId,
 } from "@/lib/api/demo/portal-seed"
-import { programme as demoProgramme } from "@/lib/api/demo/loyalty"
+import {
+  demoPendingFor,
+  demoRequestPlan,
+  programme as demoProgramme,
+  tiers as demoTierRows,
+} from "@/lib/api/demo/loyalty"
 import { DEMO_TIERS } from "@/lib/api/demo/store"
 import { PROGRAMME_OFF } from "@/features/portal/guild"
 import type {
+  GuildPending,
   GuildSummary,
   PortalReward,
   PortalVoucher,
@@ -560,6 +566,41 @@ export function demoGuild(): GuildSummary {
       pending: headline ? 1 : 0,
     },
     vouchers_open: liveVouchersFor(customerId).length,
+    pending: pendingFor(customerId),
+    plans: demoTierRows
+      .filter((row) => row.paid_plan === true)
+      .map((row) => ({ id: row.id, name: row.name ?? "Plan", price: row.price ?? 0 })),
+  }
+}
+
+function pendingFor(customerId: string): GuildPending | null {
+  const row = demoPendingFor(customerId)
+  return row
+    ? {
+        id: row.id,
+        tier: row.tier,
+        tier_name: row.tierName,
+        price: row.price,
+        created: new Date().toISOString(),
+      }
+    : null
+}
+
+/** The demo's `POST /api/vault/guild/join` for whichever card is signed in. */
+export function demoJoinGuild(tierId: string): GuildPending {
+  const customerId = me().customer.id
+  if (membershipFor(customerId)) {
+    throw new Error(
+      "You already have a Guild Pass membership. Renew it at the counter."
+    )
+  }
+  const row = demoRequestPlan(customerId, tierId)
+  return {
+    id: row.id,
+    tier: row.tier,
+    tier_name: row.tierName,
+    price: row.price,
+    created: new Date().toISOString(),
   }
 }
 

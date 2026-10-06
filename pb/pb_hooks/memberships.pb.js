@@ -8,6 +8,7 @@
  *   POST /api/vault/memberships              (staff)
  *   POST /api/vault/memberships/{id}/renew   (staff)
  *   POST /api/vault/memberships/{id}/cancel  (staff)
+ *   POST /api/vault/memberships/{id}/activate (staff, Phase 8)
  *   cron memberships_lapse                   (nightly)
  *
  * The tier itself is never written here: `memberships` create and update
@@ -42,6 +43,17 @@ routerAdd(
     const months = util.asInt(body.months, 0);
     const price = util.asInt(body.price, 0);
     const paymentNote = util.asStr(body.payment_note);
+    // Phase 8: the Epos Now sale this payment was rung through, if staff
+    // know it, so the webhook or the poll sees that sale as already done
+    // and never adds a second term on top of this one.
+    const eposMembershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const eposTransactionId = eposMembershipsLib.eposIdFromBody(body.epos_transaction_id);
+    if (eposTransactionId === null) {
+      throw e.badRequestError("An Epos Now transaction id is a number. Copy it from the sale on the till.", null);
+    }
+    if (eposTransactionId && eposMembershipsLib.eposSaleRecorded(e.app, eposTransactionId)) {
+      throw e.error(409, `Epos Now sale ${eposTransactionId} has already been used for a membership. Check the member it went to.`, null);
+    }
     const now = new Date();
 
     let customer = null;
@@ -93,16 +105,31 @@ routerAdd(
     let pending = [];
 
     e.app.runInTransaction((txApp) => {
-      const membership = new Record(txApp.findCollectionByNameOrId("memberships"), {
-        customer: customerId,
-        tier: tier.id,
-        status: "active",
-        started_at: now.toISOString(),
-        renews_at: renewsAt,
-        price: price,
-        payment_note: paymentNote,
-      });
+      // A customer who asked to join online already has a pending row:
+      // taking their money starts that one rather than leaving it behind
+      // beside a second (Phase 8).
+      const membershipsLib = require(`${__hooks}/lib/memberships.js`);
+      const waiting = membershipsLib.latest(txApp, customerId, "pending");
+      const membership = waiting
+        ? waiting
+        : new Record(txApp.findCollectionByNameOrId("memberships"), { customer: customerId });
+      membership.set("tier", tier.id);
+      membership.set("status", "active");
+      membership.set("started_at", now.toISOString());
+      membership.set("renews_at", renewsAt);
+      membership.set("price", price);
+      membership.set("payment_note", paymentNote);
       txApp.save(membership);
+      eposMembershipsLib.stampPayment(membership, { paidVia: "hand", eposTransaction: eposTransactionId }, new Date());
+      txApp.save(membership);
+      if (eposTransactionId) {
+        eposMembershipsLib.recordHandSale(txApp, {
+          eposId: eposTransactionId,
+          customerId: membership.getString("customer"),
+          membershipId: membership.id,
+          price: membership.getInt("price"),
+        });
+      }
 
       const n = notifyLib.notify(txApp, {
         customer: customerId,
@@ -159,6 +186,17 @@ routerAdd(
     const months = util.asInt(body.months, 0);
     const price = util.asInt(body.price, 0);
     const paymentNote = util.asStr(body.payment_note);
+    // Phase 8: the Epos Now sale this payment was rung through, if staff
+    // know it, so the webhook or the poll sees that sale as already done
+    // and never adds a second term on top of this one.
+    const eposMembershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const eposTransactionId = eposMembershipsLib.eposIdFromBody(body.epos_transaction_id);
+    if (eposTransactionId === null) {
+      throw e.badRequestError("An Epos Now transaction id is a number. Copy it from the sale on the till.", null);
+    }
+    if (eposTransactionId && eposMembershipsLib.eposSaleRecorded(e.app, eposTransactionId)) {
+      throw e.error(409, `Epos Now sale ${eposTransactionId} has already been used for a membership. Check the member it went to.`, null);
+    }
     const now = new Date();
 
     let membership = null;
@@ -175,6 +213,9 @@ routerAdd(
     }
     if (membership.getString("status") === "cancelled") {
       throw e.error(409, "That membership was cancelled. Start a new one instead.", null);
+    }
+    if (membership.getString("status") === "pending") {
+      throw e.error(409, "That membership has not started yet. Activate it instead.", null);
     }
 
     // Renewing a lapsed membership makes it active again, so the same
@@ -216,6 +257,16 @@ routerAdd(
       live.set("price", price);
       if (paymentNote) live.set("payment_note", paymentNote);
       txApp.save(live);
+      eposMembershipsLib.stampPayment(live, { paidVia: "hand", eposTransaction: eposTransactionId }, new Date());
+      txApp.save(live);
+      if (eposTransactionId) {
+        eposMembershipsLib.recordHandSale(txApp, {
+          eposId: eposTransactionId,
+          customerId: live.getString("customer"),
+          membershipId: live.id,
+          price: live.getInt("price"),
+        });
+      }
 
       auditLib.writeAuditLog(txApp, {
         actor: staff.id,
@@ -282,6 +333,7 @@ routerAdd(
 
     let result = null;
     let pending = [];
+    const wasPending = membership.getString("status") === "pending";
 
     e.app.runInTransaction((txApp) => {
       const live = txApp.findRecordById("memberships", membership.id);
@@ -289,12 +341,16 @@ routerAdd(
       txApp.save(live);
 
       // The `memberships` update hook (loyalty.pb.js) re-evaluates the
-      // tier off the back of that save, so nothing here writes it.
+      // tier off the back of that save, so nothing here writes it. A
+      // sign-up that was never paid for gets its own wording: nothing
+      // has ended, because nothing had started.
       const n = notifyLib.notify(txApp, {
         customer: live.getString("customer"),
         type: "membership_lapsed",
-        title: `Your ${tierName} has ended`,
-        body: `Your ${tierName} was cancelled on ${tiers.ukDayMonth(new Date().toISOString())}. Ask at the counter to start it again.`,
+        title: wasPending ? `Your ${tierName} request was cancelled` : `Your ${tierName} has ended`,
+        body: wasPending
+          ? `The shop cancelled your request to join ${tierName}. Ask at the counter if you would still like to join.`
+          : `Your ${tierName} was cancelled on ${tiers.ukDayMonth(new Date().toISOString())}. Ask at the counter to start it again.`,
         link: "/account/guild",
         email: true,
       });
@@ -320,6 +376,121 @@ routerAdd(
           price: live.getInt("price"),
         },
       };
+    });
+
+    notifyLib.sendPending(e.app, pending);
+    return e.json(200, result);
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// POST /api/vault/memberships/{id}/activate   (staff, Phase 8)
+//
+// A pending membership (asked for online) paid for at the counter by hand,
+// for when the Epos Now sale could not be matched to the customer or the
+// shop took the money some other way. `{ months?, price?, payment_note? }`:
+// 12 months and the price the row was asked at, unless staff say otherwise.
+// ---------------------------------------------------------------------
+routerAdd(
+  "POST",
+  "/api/vault/memberships/{id}/activate",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const notifyLib = require(`${__hooks}/lib/notify.js`);
+    const membershipsLib = require(`${__hooks}/lib/memberships.js`);
+
+    const staff = e.auth;
+    const body = util.body(e);
+
+    let membership = null;
+    try {
+      membership = e.app.findRecordById("memberships", e.request.pathValue("id"));
+    } catch (err) {
+      throw e.notFoundError("That membership was not found.", null);
+    }
+    if (membership.getString("status") !== "pending") {
+      throw e.error(409, "Only a membership waiting for payment can be activated. Renew a live one instead.", null);
+    }
+    const months = body.months === undefined || body.months === "" ? 12 : util.asInt(body.months, 0);
+    const price =
+      body.price === undefined || body.price === "" ? membership.getInt("price") : util.asInt(body.price, -1);
+    const paymentNote = util.asStr(body.payment_note) || "Paid at the counter.";
+    // Phase 8: the Epos Now sale this payment was rung through, if staff
+    // know it, so the webhook or the poll sees that sale as already done
+    // and never adds a second term on top of this one.
+    const eposMembershipsLib = require(`${__hooks}/lib/memberships.js`);
+    const eposTransactionId = eposMembershipsLib.eposIdFromBody(body.epos_transaction_id);
+    if (eposTransactionId === null) {
+      throw e.badRequestError("An Epos Now transaction id is a number. Copy it from the sale on the till.", null);
+    }
+    if (eposTransactionId && eposMembershipsLib.eposSaleRecorded(e.app, eposTransactionId)) {
+      throw e.error(409, `Epos Now sale ${eposTransactionId} has already been used for a membership. Check the member it went to.`, null);
+    }
+    if (months < 1 || months > 24) {
+      throw e.badRequestError("Pick a length of 1 to 24 months.", null);
+    }
+    if (price < 0) {
+      throw e.badRequestError("A membership price cannot be negative.", null);
+    }
+
+    const customerId = membership.getString("customer");
+    let other = null;
+    try {
+      other = e.app.findFirstRecordByFilter("memberships", 'customer = {:customer} && status = "active"', {
+        customer: customerId,
+      });
+    } catch (err) {
+      other = null;
+    }
+    if (other) {
+      throw e.error(
+        409,
+        `This customer already has a membership until ${membershipsLib.ukDate(other.getString("renews_at"))}. Renew that one instead.`,
+        null
+      );
+    }
+
+    let result = null;
+    let pending = [];
+    e.app.runInTransaction((txApp) => {
+      const live = membershipsLib.activate(txApp, txApp.findRecordById("memberships", membership.id), {
+        startedAt: new Date(),
+        months: months,
+        price: price,
+        paymentNote: paymentNote,
+      });
+      eposMembershipsLib.stampPayment(live, { paidVia: "hand", eposTransaction: eposTransactionId }, new Date());
+      txApp.save(live);
+      if (eposTransactionId) {
+        eposMembershipsLib.recordHandSale(txApp, {
+          eposId: eposTransactionId,
+          customerId: live.getString("customer"),
+          membershipId: live.id,
+          price: live.getInt("price"),
+        });
+      }
+      const name = membershipsLib.tierName(txApp, live.getString("tier")) || "membership";
+      const n = notifyLib.notify(txApp, {
+        customer: customerId,
+        type: "membership_started",
+        title: `Your ${name} is live`,
+        body: `Your ${name} runs until ${membershipsLib.ukDate(live.getString("renews_at"))}. The perks are in My Vault, under Guild.`,
+        link: "/account/guild",
+        email: true,
+      });
+      pending = n.pending || [];
+
+      auditLib.writeAuditLog(txApp, {
+        actor: staff.id,
+        action: "membership_activate",
+        collection: "memberships",
+        record: live.id,
+        meta: { customer: customerId, tier: live.getString("tier"), months: months, price: price },
+        ip: e.realIP(),
+      });
+      result = { membership: membershipsLib.shape(txApp, live) };
     });
 
     notifyLib.sendPending(e.app, pending);

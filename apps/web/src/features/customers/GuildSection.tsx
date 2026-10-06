@@ -28,6 +28,7 @@ import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
 import { formatShortDate } from "@/features/customers/format"
 import { AdjustSheet } from "@/features/loyalty/AdjustSheet"
 import { PlanSheet } from "@/features/loyalty/PlanSheet"
+import { TillSection } from "@/features/customers/TillSection"
 import { PERK_LABEL, isCountedPerk, perkCountLine, perkValueLine, remaining } from "@/features/loyalty/perks"
 import { POINTS_REASON_LABEL } from "@/features/loyalty/ledger"
 import { voucherStatusWord, voucherWorth } from "@/features/loyalty/vouchers"
@@ -212,6 +213,7 @@ export function GuildSection({
         months: parseCount(form.months) ?? 12,
         price: poundsToPence(form.price) ?? 0,
         payment_note: form.note.trim() || undefined,
+        epos_transaction_id: form.eposTransaction.trim() || undefined,
       }),
     onSuccess: (membership) => {
       setError(null)
@@ -228,6 +230,7 @@ export function GuildSection({
         months: parseCount(form.months) ?? 12,
         price: poundsToPence(form.price) ?? 0,
         payment_note: form.note.trim() || undefined,
+        epos_transaction_id: form.eposTransaction.trim() || undefined,
       }),
     onSuccess: (membership) => {
       setError(null)
@@ -425,6 +428,13 @@ export function GuildSection({
           </Button>
         </div>
       )}
+
+      {/* ---- Asked to join online, and the Epos Now till (Phase 8) ---- */}
+      <TillSection
+        customerId={customerId}
+        customerName={customerName}
+        hasLivePlan={Boolean(guild.membership)}
+      />
 
       {/* ---- Referrals ---- */}
       <MicroLabel tone="ink" className="mt-12 mb-4">

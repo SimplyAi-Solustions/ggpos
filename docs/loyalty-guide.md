@@ -15,7 +15,7 @@ One record, `loyalty_programme`, holds the whole programme:
 - **Maximum points share of a sale**: caps how much of one sale's total can be paid with points, so points cannot cover an entire large purchase.
 - **Expiry (months inactive)**: how long a customer can go without activity before their points start expiring.
 - **Tier window**: the rolling period, 12 months by default, that tier thresholds are measured against.
-- **Welcome bonus**: points awarded when a customer joins.
+- **Welcome bonus**: points awarded when a customer joins. A customer made at the counter gets it straight away; one who signed up online in My Vault gets it the first time they sign in with the emailed code, so an address nobody owns never collects points.
 - **Referral bonus**: points awarded to the referrer and to the referee.
 - **Terms**: the programme terms text shown when a customer joins.
 
@@ -51,7 +51,21 @@ A customer shares their referral code. When the person they referred completes t
 
 ## Memberships
 
-`memberships` records a paid, Guild Pass style plan: which tier it grants, whether it is active, lapsed or cancelled, when it started and renews, and what was paid. These are recorded by staff for now; billing through Stripe is a possible later addition, not part of v1.
+`memberships` records a paid, Guild Pass style plan: which tier it grants, whether it is pending, active, lapsed or cancelled, when it started and renews, and what was paid. A paid-plan tier carries a **price** (set in the tier sheet on the Loyalty screen), which is what My Vault asks a customer to pay.
+
+A membership starts in one of three ways:
+
+- **Online, paid at the till.** A signed-in customer presses "Ask to join" on the Guild screen in My Vault. That makes a **pending** membership at the tier's price; it gives no perks and pins no tier yet. The Guild screen then says "Pay at the counter to start your membership", with the price and a barcode of their card code. At the Epos Now till, scan that barcode to attach the customer to the sale and ring up the Guild membership product. GG Vault sees the sale (within five minutes, or at once if the Epos Now webhook is switched on) and starts the membership for 12 months from the sale, at the price the till charged, with the Epos Now transaction number in the payment note. The customer is told it is live.
+- **At the counter by hand.** "Record a plan" on the customer's Guild block or the Loyalty screen, as before. If the customer had a pending request, recording a plan starts that one rather than adding a second. A pending request can also be started with "Activate", which defaults to 12 months and the price they were quoted.
+- **Renewing.** "Renew" adds months to a live plan from whichever is later, today or its current end. A pending request cannot be renewed: activate it instead.
+
+For the till to know a customer, they must be **linked to Epos Now**: GG Vault creates the Epos Now customer with their card code as the card number, name and email address. This happens when somebody asks to join online, and staff can do it for anybody with "Link to Epos Now" on the customer's record. If Epos Now is down the link waits and is retried every five minutes; the record says where it has got to. A customer added in Epos Now Back Office by hand, with their GG Vault card code as the card number, is linked automatically the first time they buy the Guild product; the card code always wins, so a member added to the till twice is still found.
+
+If the Guild product is sold with **no customer attached**, or to an Epos Now customer GG Vault does not know, nothing is activated and every admin gets a notification, "Guild membership sold without a linked customer, link it in The Counter", naming the Epos Now transaction. Find the customer, then use "Activate" (or "Record a plan") on their record with the payment note from the sale.
+
+Pending sign-ups are listed on Home ("Guild sign-ups to pay") and on the Loyalty screen's memberships list, each with Activate and Cancel. Cancelling a pending request tells the customer it was cancelled; nothing was paid, so nothing is refunded.
+
+Which Epos Now product starts which plan is set in `settings.eposnow.guild_products` (`{ "<product id>": "<tier id>" }`): the product sold decides the tier, whatever the customer asked for online, and staff are told when the two differ. A till sale only starts a membership on its own when it is a plain completed sale from the last 48 hours (and after `settings.eposnow.active_from`), for one or two memberships, at no less than the tier's price. Anything else is recorded and sent to the admins: a refund ("Guild membership refunded at the till, check the member in The Counter"; nothing is reversed automatically, so cancel the membership by hand if that is right), an old sale, three or more at once, an underpaid sale, a sale of a different plan from the one the member already has, or an erased customer. If staff recorded the payment by hand, type the Epos Now transaction number into "Epos Now sale" on the plan sheet so the till sale is never counted again; a till sale within 7 days of a hand payment without one is linked to it rather than adding another year. The Epos Now API token and the webhook's key and secret are in `settings.api_keys` (`eposnow`, `eposnow_webhook_key`, `eposnow_webhook_secret`), all in `/_/` for now. Card payment for memberships through Stripe remains a possible later addition.
 
 ## Expiry and warnings
 

@@ -17,6 +17,7 @@ exports.eurDecimalToGbpPence = eurDecimalToGbpPence;
 exports.applyPercent = applyPercent;
 exports.roundToStep = roundToStep;
 exports.roundToRetailEnding = roundToRetailEnding;
+exports.decimalPoundsToPence = decimalPoundsToPence;
 /** Round half-up to an integer, symmetric for negatives. */
 function roundHalfUp(value) {
     const sign = value < 0 ? -1 : 1;
@@ -82,4 +83,21 @@ function roundToRetailEnding(pence) {
     if (rem <= 49)
         return pounds * 100 + 49;
     return pounds * 100 + 99;
+}
+/**
+ * A pounds amount that arrives as a JSON number or a decimal string (Epos Now
+ * sends `24`, `24.5` or `24.00` for £24.00) as integer pence. A number is
+ * written to two places first, so the binary float never reaches the
+ * arithmetic, and then parsed as a string like every other decimal here.
+ * Returns null for anything that is not a plain amount.
+ */
+function decimalPoundsToPence(value) {
+    if (typeof value === "number") {
+        if (!Number.isFinite(value))
+            return null;
+        return parseDecimalToMinor(value.toFixed(2));
+    }
+    if (typeof value === "string")
+        return parseDecimalToMinor(value);
+    return null;
 }

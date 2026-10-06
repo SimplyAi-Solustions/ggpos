@@ -6,6 +6,7 @@ import { DEMO_CARDS, DEMO_GAMES } from "@/lib/api/fixtures"
 import { dayBounds, formatDate } from "@/lib/dates"
 import {
   DEMO_CUSTOMERS,
+  demoCreateCustomer,
   demoCreditLedgerFor,
   findDemoCustomer,
 } from "@/lib/api/demo/customers"
@@ -25,6 +26,7 @@ import {
   DEMO_PORTAL_NO_CREDIT_ID,
   demoPortalCustomerForEmail,
   demoPortalCustomerId,
+  registerDemoPortalEmail,
   setDemoPortalCustomer,
 } from "@/lib/api/demo/portal-seed"
 import { demoMembershipTier } from "@/lib/api/demo/portal-guild"
@@ -32,6 +34,8 @@ import type { GuildNotificationType } from "@/lib/api/guild"
 import type {
   CardLanding,
   HoldRow,
+  SignUpInput,
+  SignUpResult,
   NewQuoteInput,
   NewWantInput,
   NotificationPage,
@@ -122,6 +126,32 @@ export function demoRequestCode(email: string): { otpId: string } {
   }
   pendingEmail = clean
   return { otpId: "demo-otp" }
+}
+
+/**
+ * The demo's `POST /api/vault/signup`: a portal card for a new address, and
+ * the same quiet answer as the server for one already on a card.
+ */
+export function demoSignUp(input: SignUpInput): SignUpResult {
+  const email = input.email.trim().toLowerCase()
+  if (!input.name.trim()) throw new Error("Add your name, then try again.")
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("That email address does not look right. Check it and try again.")
+  }
+  if (!input.terms_accepted) {
+    throw new Error("Tick the box to accept the terms and the privacy notice.")
+  }
+  if (!demoPortalCustomerForEmail(email)) {
+    const created = demoCreateCustomer({
+      name: input.name,
+      email,
+      marketingConsent: input.marketing_consent,
+    })
+    const entry = findDemoCustomer(created.id)
+    if (entry) entry.customer.source = "portal"
+    registerDemoPortalEmail(email, created.id)
+  }
+  return { ok: true, message: "Check your email for a sign-in code." }
 }
 
 export function demoSignIn(code: string): VaultMe {

@@ -1,16 +1,20 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { Link } from "@tanstack/react-router"
-import { useQuery } from "@tanstack/react-query"
-import { displayCode } from "@gg/shared"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { displayCode, encodeCode, formatGBP } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { SectionHeading } from "@/components/ui/micro-label"
+import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { getGuild } from "@/lib/api/guild"
+import { getGuild, joinGuild, type GuildPlan } from "@/lib/api/guild"
 import { getMe } from "@/lib/api/portal"
+import { refusalOrFallback } from "@/lib/api/refusal"
+import { QrCode } from "@/features/customers/GuildCard"
+import { portalLink } from "@/features/customers/format"
+import { Code128 } from "@/features/portal/Barcode"
 import { usePortalDock } from "@/features/portal/dock"
 import { formatDate } from "@/features/portal/format"
 import {
@@ -53,6 +57,126 @@ function TierRail({ position }: { position: number }) {
         className="absolute top-0 size-2.5 rounded-full bg-foreground"
         style={{ left: `calc(${position} * (100% - 0.625rem))` }}
       />
+    </div>
+  )
+}
+
+/**
+ * A paid plan, from asking to join to paying for it.
+ *
+ * Nothing is paid online: asking to join makes a pending membership, and the
+ * customer pays at the counter by showing this screen. The barcode is their
+ * bare GGC code, the card number on the shop's Epos Now till, so scanning it
+ * puts them on the sale and the sale starts the membership. The QR beside it
+ * is the same one on their card, for The Counter's own scanner.
+ */
+function MembershipBlock({
+  pending,
+  plans,
+  live,
+  code,
+  qrToken,
+}: {
+  pending: { tier_name: string; price: number } | null
+  plans: GuildPlan[]
+  live: boolean
+  code: string
+  qrToken: string | undefined
+}) {
+  const queryClient = useQueryClient()
+  const [refusal, setRefusal] = React.useState<string | null>(null)
+  const join = useMutation({
+    mutationFn: (plan: GuildPlan) => joinGuild(plan.id),
+    onSuccess: async () => {
+      setRefusal(null)
+      await queryClient.invalidateQueries({ queryKey: ["portal", "guild"] })
+    },
+    onError: (problem) =>
+      setRefusal(
+        refusalOrFallback(problem, "Your request did not go through. Try again in a minute.")
+      ),
+  })
+
+  if (pending) {
+    return (
+      <div data-testid="guild-pending">
+        <SectionHeading className="mt-16">Your membership</SectionHeading>
+        <p className="max-w-[48ch] text-base leading-[1.5] text-foreground">
+          Pay at the counter to start your membership.
+        </p>
+        {pending.price > 0 ? (
+          <span
+            data-testid="guild-pending-price"
+            className="tnum mt-5 block text-[20px] leading-none font-medium text-foreground"
+          >
+            {formatGBP(pending.price)}
+          </span>
+        ) : null}
+        <Note className="mt-3">
+          {`${pending.tier_name}, for 12 months from the day you pay.`}
+        </Note>
+
+        <div className="mt-10 flex w-full max-w-[360px] flex-col gap-3">
+          <MicroLabel>Show at the till</MicroLabel>
+          <Code128
+            text={encodeCode(code)}
+            title={`Barcode for card ${displayCode(code)}`}
+            className="h-[88px] w-full px-3 py-2"
+          />
+          <span className="tnum font-mono text-[13px] text-foreground">
+            {displayCode(code)}
+          </span>
+        </div>
+        <div className="mt-8 flex items-center gap-5">
+          <QrCode
+            text={portalLink(qrToken)}
+            title={`Guild card QR for ${displayCode(code)}`}
+            className="shrink-0"
+            style={{ width: 96, height: 96 }}
+          />
+          <Note className="max-w-[32ch]">
+            The same QR as your card, if the counter scans that instead.
+          </Note>
+        </div>
+      </div>
+    )
+  }
+
+  if (live || plans.length === 0) return null
+
+  return (
+    <div data-testid="guild-plans">
+      <SectionHeading className="mt-16">Paid membership</SectionHeading>
+      <ul className="flex flex-col">
+        {plans.map((plan) => (
+          <li
+            key={plan.id}
+            className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-hairline-soft py-4 first:border-t"
+          >
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="text-[15px] leading-[1.35] text-foreground">{plan.name}</span>
+              <Note>
+                {plan.price > 0
+                  ? `${formatGBP(plan.price)} for 12 months, paid at the counter.`
+                  : "12 months, paid at the counter."}
+              </Note>
+            </span>
+            <Button
+              type="button"
+              variant="text"
+              disabled={join.isPending}
+              onClick={() => join.mutate(plan)}
+            >
+              Ask to join
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {refusal ? (
+        <p role="alert" className="mt-4 max-w-[52ch] text-[15px] leading-[1.5] text-destructive">
+          {refusal}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -151,6 +275,14 @@ export function GuildScreen() {
           </Note>
         ) : null}
       </div>
+
+      <MembershipBlock
+        pending={summary.pending ?? null}
+        plans={summary.plans ?? []}
+        live={Boolean(summary.membership)}
+        code={me.data.customer.code}
+        qrToken={me.data.customer.qr_token}
+      />
 
       <SectionHeading className="mt-16">Points</SectionHeading>
       <span

@@ -333,6 +333,37 @@ routerAdd(
             targetPrivate.set("id_verified_at", duplicatePrivate.getString("id_verified_at"));
           }
 
+          // Phase 8: the sign-up's terms stamp, and the Epos Now link. The
+          // link moves only when the record being kept has none; two
+          // different Epos Now customers cannot both point at one GG Vault
+          // record (the unique index), so the admins are told both ids and
+          // decide which till record to keep.
+          if (!targetPrivate.getString("terms_accepted_at") && duplicatePrivate.getString("terms_accepted_at")) {
+            targetPrivate.set("terms_accepted_at", duplicatePrivate.getString("terms_accepted_at"));
+          }
+          const duplicateEpos = duplicatePrivate.getString("epos_customer_id");
+          const targetEpos = targetPrivate.getString("epos_customer_id");
+          if (duplicateEpos && !targetEpos) {
+            // Off the duplicate first: the id is unique across the table.
+            duplicatePrivate.set("epos_customer_id", "");
+            txApp.save(duplicatePrivate);
+            targetPrivate.set("epos_customer_id", duplicateEpos);
+            targetPrivate.set("epos_sync_status", "linked");
+            targetPrivate.set("epos_sync_error", "");
+            targetPrivate.set("epos_synced_at", duplicatePrivate.getString("epos_synced_at") || new Date().toISOString());
+            moved.epos_link = duplicateEpos;
+          } else if (duplicateEpos && targetEpos && duplicateEpos !== targetEpos) {
+            const notifyLib = require(`${__hooks}/lib/notify.js`);
+            notifyLib.notify(txApp, {
+              staffAll: true,
+              type: "epos_merge",
+              title: "Two Epos Now customers for one member",
+              body: `${target.getString("name")} (${target.getString("code")}) was merged with a duplicate. The record kept is Epos Now customer ${targetEpos}; the duplicate was Epos Now customer ${duplicateEpos}. Merge or delete ${duplicateEpos} in Epos Now Back Office.`,
+              link: `/counter/customers/${target.getString("code")}`,
+            });
+            moved.epos_link_conflict = duplicateEpos;
+          }
+
           txApp.save(targetPrivate);
         }
 

@@ -968,3 +968,153 @@ A high-effort review of this package found two blocking items, seven to fix, twe
 - **The poll asks SumUp at most once every ten seconds per checkout**, and **a settings save that does not mention the reader no longer unpairs it**.
 
 `pb/scripts/check.sh` section 25 grew by twenty-two assertions for these and for the eleven gaps the review listed, including both rate limits bursted against the rules the migration itself installed, two tills asking for one basket at once, two tills completing one sale at once, two devices claiming labels at once, the reader-status fallback, a refunded and an unreadable amount, a reservation with no end date, the roll-up splitting a group by finish, by source and on a retro title, and a late payment on a cancelled and on an expired row.
+
+## Phase 8: online sign-up, the Guild join, the Epos Now till link and agent read access
+
+Customers can now create a My Vault account themselves, ask to join a paid GG Guild plan and pay for it at the Epos Now till (the shop's till since October 2026), and a watcher (Gandalf) can read what is waiting for staff. Conventions are as above: money is integer GBP pence, dates ISO 8601 or PocketBase's stored form (`2026-10-06 14:30:00.000Z`), errors `{ "status", "message", "data" }` with `message` written to be shown. Token columns: **public** (no token needed; one sent is ignored), **customer**, **staff**, **admin**, and a new one, **agent** (an `agents` token, `$apis.requireAuth("agents")`).
+
+Files: `pb_hooks/signup.pb.js`, `guild.pb.js` (join, terms), `memberships.pb.js` (activate), `eposnow.pb.js`, `agents.pb.js`; `lib/welcome.js`, `lib/memberships.js`, `lib/eposnow.js`, `adapters/eposnow.js`; the pure Epos Now reading in `packages/shared/src/eposnow.ts` (`lib/shared/eposnow.js` in the hooks); migration `1789820820_phase8_signup_guild_epos.js`.
+
+### `POST /api/vault/signup` (public, rate limited 20 per 10 minutes per address)
+
+Request:
+
+```json
+{ "name": "Robin Hart", "email": "robin@example.co.uk", "marketing_consent": true, "terms_accepted": true }
+```
+
+Response, `200`, the same body whether the address was new or already on a card:
+
+```json
+{ "ok": true, "message": "Check your email for a sign-in code." }
+```
+
+- A new address creates a `customers` row with `source: "portal"`, the email stored lower case, `marketing_consent` **false**, a random password nobody knows, and on `customer_private` `terms_accepted_at` stamped and the marketing choice held in `marketing_consent_pending`. The choice only takes effect on the first emailed-code sign-in, once the address is proved, so a sign-up typed with somebody else's address never opts them in. Audited as `customer_signup` (actor the new customer, meta `{ source, marketing_consent }`).
+- An address already on any card (any case) writes nothing and answers exactly as above. The route therefore reveals nothing the OTP request does not already: the next call is PocketBase's own `POST /api/collections/customers/request-otp` with `{ "email" }`, which answers `{ "otpId" }` for a known and an unknown address alike, then `POST /api/collections/customers/auth-with-otp` with `{ "otpId", "password": "<the 8 digits>" }`, which returns `{ "token", "record" }`. The code lasts five minutes.
+- `400` with a per-field `data` entry and a sentence: no name ("Add your name, then try again."), a name over 200 characters, an email that does not look like one ("That email address does not look right. Check it and try again."), or `terms_accepted` not true ("Tick the box to accept the terms and the privacy notice.", the same words on `data.terms_accepted`, general because the website's sell-to-us form uses the same sign-up). `429` from the rate limit.
+- **The welcome bonus waits for the first sign-in.** A portal customer gets no points at creation. Their first successful emailed-code sign-in (an `onRecordAuthRequest` hook on `customers`, `authMethod = "otp"`) writes the `welcome` row and its notification ("100 points are on your card. Show your card at the counter to earn more.", link `/account/guild`) before the token is returned, so the `/me` read straight after shows it. `lib/welcome.js` never writes it twice, so every later sign-in is a no-op. A customer created at the counter (any `source` other than `portal`) gets it on creation exactly as before.
+
+### `GET /api/vault/guild/terms` (public)
+
+`{ "name": "GG Guild", "terms": "<the programme terms as plain text>" }`. The admin's editor HTML is reduced to text with line breaks kept; nothing else off `loyalty_programme` is returned. For a sign-up form to show what is being accepted.
+
+### `POST /api/vault/guild/join` (customer, rate limited 20 a minute)
+
+Request `{ "tier": "<loyalty_tiers id of a paid plan>" }`. Response `201` for a new request, `200` when one was already pending:
+
+```json
+{
+  "membership": {
+    "id": "...", "customer": "...", "tier": "...", "tier_name": "Guild Pass",
+    "status": "pending", "started_at": "", "renews_at": "", "price": 2400,
+    "created": "2026-10-06 14:30:00.000Z"
+  },
+  "till_ready": true
+}
+```
+
+- Creates a `memberships` row with the new status **`pending`**, priced from the tier's new `price` field (pence). It pins no tier: `lib/tiers.js` only reads `active` rows. One pending row per customer: asking again answers with the same row, switched to the tier asked for. Audited as `guild_join`.
+- `400` for a tier that is not a paid plan ("That plan is not one you can join. Pick one from the list."). `409` while the customer already has an `active` membership ("You already have a Guild Pass membership until 6 Oct 2027. Renew it at the counter.").
+- After the row is saved, outside its transaction, the customer is linked to Epos Now (below). `till_ready` is whether that link exists now; a link that could not be made is queued and retried and never fails the join.
+- `GET /api/vault/me/guild` gains `pending: { id, tier, tier_name, price, created } | null` and `plans: [{ id, name, price }]` (every paid-plan tier, lowest `sort` first). Nothing else in that shape changed.
+
+### `POST /api/vault/memberships/{id}/activate` (staff)
+
+Request `{ "months"?: 1..24 (default 12), "price"?: pence (default the pending row's), "payment_note"?: string, "epos_transaction_id"?: string of digits }`. Starts a `pending` membership from now, for staff who took the money by hand or whose Epos Now sale could not be matched. Response `{ "membership": <the shape above> }`, status `active`. `409` for anything not pending, or when the customer already has an active membership. Notifies the customer (`membership_started`, emailed) and audits `membership_activate`.
+
+Changed alongside it: `POST /api/vault/memberships` (record a plan) now starts the customer's pending row, if they have one, rather than creating a second row beside it; `POST /api/vault/memberships/{id}/renew` refuses a pending row with `409` ("That membership has not started yet. Activate it instead."); `POST /api/vault/memberships/{id}/cancel` on a pending row tells the customer their request was cancelled rather than that a membership ended.
+
+**Hand payments and the till never add up to two terms.** All three hand routes (record, renew, activate) stamp the membership `paid_via: "hand"` and `paid_at`, and accept an optional `epos_transaction_id` (digits; `400` otherwise): the Epos Now sale the payment went through. Given one, the route writes an `epos_transactions` row for it (outcome `manual`, source `hand`) in the same transaction, so the webhook and the poll treat that sale as already done; a sale number already used is `409` ("Epos Now sale N has already been used for a membership. Check the member it went to."). Without one, a till sale for the same customer and tier that arrives within 7 days of a hand payment with no sale attached is linked to it (outcome `linked_manual`, the sale id stored on `memberships.epos_transaction`), adds no time, and the admins are told.
+
+### The Epos Now customer link
+
+`customer_private` gains `epos_customer_id` (unique when set), `epos_sync_status` (`queued` | `in_progress` | `linked` | `failed`), `epos_sync_started_at`, `epos_sync_attempts`, `epos_sync_error`, `epos_synced_at`, `terms_accepted_at`, `marketing_consent_pending` and `erased_at`. These are on the staff-only record on purpose: a customer may update their own `customers` row, and an Epos Now id a customer could set would let them collect somebody else's Guild payment.
+
+Linking (`lib/eposnow.js`'s `link`) creates the Epos Now customer with `POST v4/Customer` (an array of one): `forename` and `surname` split from the name, `emailAddress`, `cardNumber` = the bare GGC code (`GGC7F3K2Q`, what the My Vault barcode encodes), `signUpLocationId` 14037, and `marketingConsent: { email: <their choice>, text: false, phone: false, mail: false }`. No phone number, address or date of birth is sent. It is retry-safe twice over. Before calling Epos Now it marks the link `in_progress` with a time, inside a transaction (PocketBase runs those one at a time), so a second attempt for the same customer backs off with `link.status: "in_progress"` rather than creating a second Epos Now customer; and it asks `GET v4/Customer/GetByEmail` first and links an existing Epos Now customer with the same email and card number (one an earlier attempt created and lost the answer to). Every attempt is audited (`epos_customer_link`, `epos_customer_link_failed`, ids only). A failure leaves the row `queued` with the reason; cron `epos_link_retry` (every 5 minutes) first returns any `in_progress` mark older than 10 minutes to `queued`, then retries up to 12 times, then marks it `failed` and notifies the admins once ("Epos Now link failed"). An erased customer (`erased_at` set) is never linked. A link is made when a customer joins a paid plan, and by staff with:
+
+`POST /api/vault/customers/{id}/epos-link` (staff): `{}`. Response `{ "link": { status, epos_customer_id, attempts, error, synced_at }, "message": "" }`, always `200`: Epos Now being down is reported in `link.status: "queued"` and `message`, not as an error. A link that had `failed` gets a fresh set of tries when staff press the button.
+
+Erasure (either route) clears the link fields, sets `erased_at`, cancels a pending membership and notifies the admins with the Epos Now customer id to delete in Epos Now Back Office ("Delete a customer in Epos Now"); GG Vault never deletes from Epos Now itself. A merge carries the duplicate's link (and `terms_accepted_at`) to the record kept when that record has none; when both are linked to different Epos Now customers the kept link stays and the admins are told both ids.
+
+### Activation from Epos Now sales
+
+Settings (in `/_/`, on the `settings` record):
+
+- `settings.eposnow`: `{ "guild_products": { "<Epos Now product id>": "<loyalty_tiers id>" }, "location_id": 14037, "active_from": "<ISO time>" }`. The product sold decides the tier. `active_from` is stamped by the migration with the time it ran; no sale before it is ever acted on. Not secret.
+- `settings.api_keys.eposnow`: the API token, sent as `Authorization: Basic <token>`.
+- `settings.api_keys.eposnow_webhook_key` and `eposnow_webhook_secret`: the API key and secret entered under the webhook's advanced settings in Epos Now Back Office. Epos Now's developer documentation ("Webhooks") says these are sent as Basic Authentication credentials, that is `Authorization: Basic base64(key:secret)`.
+
+`api_keys` never leaves the server (`GET /api/vault/config` drops it, the Settings screen never reads it).
+
+`POST /api/vault/epos/webhook` (public, rate limited 120 a minute): `Authorization` must carry the Basic credentials above, compared in constant time, or the answer is a bare `401`. Nothing secret is in the URL, so nothing secret reaches PocketBase's request log. Accepts an Epos Now completed-transaction payload in either the v4 camelCase shape or the older PascalCase one, as one transaction, an array, or inside an envelope (`{ "Data": ... }`). **The body is never trusted**: each transaction id in it that is not already recorded is read back with `GET v4/Transaction/{id}?extended=true` using the shop's own token, and only that answer is acted on. An id Epos Now does not know (it answers `400`, "Can not find transaction with ID: N") is dropped; a sale Epos Now cannot be asked about right now is left for the poll. Always `200` once authorised: `{ "received", "activated", "renewed", "linked_manual", "flagged", "unmatched", "deferred", "skipped" }`.
+
+Cron `epos_poll` (every 5 minutes, acting only between 08:00 and 22:00 Europe/London): `GET v4/Transaction/GetByDate?startDate=<36 hours ago, never before active_from>&endDate=<now>&status=1&extended=true&page=N` (zone-less UTC times), 200 a page, until a short page. One list call a page and no per-sale detail calls, since `extended=true` carries the items and a sale already recorded costs nothing more; with the occasional customer lookup for a new Guild sale that is roughly 170 calls a day, far inside Epos Now's request allowance. `POST /api/vault/epos/poll` (admin) runs the same pull at any hour and answers `{ pages, seen, guild, activated, renewed, linked_manual, flagged, unmatched, deferred, skipped, error }`; it is audited as `epos_poll`.
+
+Both feed `handleTransactions`. A transaction is only considered when its status is `statusId` 1 (completed); a missing or other status is ignored (fails closed). For each one with a Guild product line, unless `epos_transactions` already has its id (the new collection: `epos_id` unique; `outcome`; `customer`; `membership`; `epos_customer_id`; `amount`; `quantity`; `sold_at`; `source` `webhook` | `poll` | `hand`; staff may read it, only the hooks write it):
+
+1. **Never activated, recorded once and sent to the admins instead:** a sale with no time, from before `active_from`, or more than 48 hours old (`stale`); any Guild line with a negative quantity or price (`refunded`, titled "Guild membership refunded at the till, check the member in The Counter"; nothing is reversed automatically); a Guild line at no price or of no quantity (`unpriced`); lines for two different plans (`mixed`); more than 2 units (`too_many`); a product whose tier is not a paid plan (`no_plan`); or an amount below the tier's price times the quantity (`underpaid`).
+2. **The customer.** The GGC card number on the Epos Now customer (`GET v4/Customer/{id}`) is authoritative: the GG Vault customer who owns that code is the one, even if a different Epos Now id was linked to them, and the link is moved to this id and audited (`epos_customer_relink`, naming the previous id and any customer it was taken from). Without a GGC card number, the customer linked to the id. An erased customer is never matched (`erased_customer`); nobody attached (`no_customer`) or nobody known (`unknown_customer`) are recorded and the admins notified: "Guild membership sold without a linked customer, link it in The Counter", naming the transaction. If Epos Now cannot be asked just now, nothing is recorded and the next poll tries again.
+3. **The membership**, in one transaction that writes the `epos_transactions` row first (the unique index settles a webhook and a poll arriving together) and reads the customer's active and pending rows inside it:
+   - a live membership on a different tier: nothing changes (`tier_mismatch`, admins told);
+   - a live membership paid by hand in the last 7 days with no sale attached: linked to this sale, no time added (`linked_manual`, admins told);
+   - any other live membership: extended from the later of its end and the sale time (`renewed`);
+   - otherwise the pending row, or a new row, is activated on the product's tier (`activated`). If the pending row asked for a different tier, it takes the product's tier and the admins are told.
+
+   The term is 12 months per unit from the sale's own time (Epos Now timestamps carry no zone and are read as UTC), `price` is the Guild lines' amount in pence (`unitPrice × quantity − discountAmount`, through `decimalPoundsToPence`), `payment_note` is `Epos Now sale <id>`, and the membership is stamped `paid_via: "epos"` with the sale id. The customer is notified (`membership_started`, emailed) for an activation or renewal, and every outcome is audited as `membership_<outcome>_epos` (actor `epos_now`).
+
+### Agents
+
+`agents` is a new auth collection: email and password sign-in (`POST /api/collections/agents/auth-with-password` with `{ "identity", "password" }`), fields `name` and `active`. Every rule is admin-only, so only an admin creates one, in `/_/` or through the collection API with an admin token (The Counter has no screen for it). An inactive agent cannot sign in (`403`). No collection rule admits an agent token: every staff rule names `staff`, every customer rule compares a customer id, and the three `loyalty_*` collections that used to admit any signed-in record now name staff and customers explicitly. Neither route below writes or audits anything.
+
+`GET /api/vault/agent/quotes?since=<ISO 8601>` (agent, rate limited 60 a minute): quotes in `submitted` or `reviewing` created after `since` (all of them without it), oldest first, at most 100.
+
+```json
+{
+  "quotes": [
+    {
+      "id": "...", "created": "2026-10-06 14:30:00.000Z", "status": "submitted",
+      "drop_off": "post", "line_count": 0, "photo_count": 3,
+      "customer_first_name": "Robin",
+      "link": "https://ggpos.ggentertainment.co.uk/counter/quotes/<id>"
+    }
+  ]
+}
+```
+
+`GET /api/vault/agent/guild-pending?since=<ISO 8601>` (agent): pending memberships created after `since`, oldest first, at most 100: `{ "pending": [{ "id", "created", "tier": "Guild Pass", "customer_first_name": "Robin" }] }`.
+
+Both answer `400` for a `since` that is not a date, `401` with no token and `403` for a staff or customer token. Nothing beyond a first name leaves either route: a quote's own message is never sent, because a customer can type anything into it.
+
+### Calling these from the website
+
+PocketBase is started without `--origins`, so it answers every origin with `Access-Control-Allow-Origin: *` and handles the preflight itself; `https://ggentertainment.co.uk` and `https://preview.ggentertainment.co.uk` can call `signup`, `guild/terms`, `request-otp`, `auth-with-otp`, `guild/join`, `me/guild` and `quotes` with a bearer token and no cookies. The website's own Content-Security-Policy must allow `connect-src https://ggpos.ggentertainment.co.uk`. Narrowing CORS to the shop's own origins is a deploy change (`--origins=https://ggpos.ggentertainment.co.uk,https://ggentertainment.co.uk,https://preview.ggentertainment.co.uk` on `pocketbase serve` in `pb/Dockerfile`) and has not been made here.
+
+### Implementation notes (as built in Phase 8)
+
+- **Signing up creates the record through `$app`, not the collection API**, so none of the `customers` `*Request` hooks run for it; the route sets the random password itself, and the welcome bonus is deferred by design. The record-level hooks (code, QR token, `customer_private`, notification defaults) run as for any customer.
+- **The welcome bonus moved into `lib/welcome.js`**, called from the existing `customers` create hook (skipped for `source: "portal"`) and from the new OTP sign-in hook. Counter-created behaviour is unchanged.
+- **`loyalty_tiers.price`** is new and edited in the tier sheet on the Loyalty screen (shown for paid plans only).
+- **The Epos Now endpoints come from the v4 Swagger files** and have not been called against the live account by this build. `GET v4/Transaction/{id}` is listed in the Swagger under a malformed path (`/api/v4/Transaction/{id}/{lockTransaction }`); the client calls `v4/Transaction/{id}?extended=true&lockTransaction=false`, and an unknown id answers `400` with "Can not find transaction with ID: N" (confirmed live by the shop). The completed status is `statusId` 1 (`TransactionStatus` in the Swagger). Webhook authentication follows Epos Now's developer documentation ("Webhooks": Basic Authentication credentials, the API key and secret). Every Epos Now call is answered under test by `adapters/fixture_transport.js`.
+- **`pb/scripts/check.sh` section 27** covers sign-up (refusals in general words, the identical answer for a known address, marketing and the bonus held until a real `auth-with-otp`, once, and the unique welcome index), the join, the link (created once, audited, keys never in `/config`, queued and retried when Epos Now is down, a link in progress making a second attempt back off and a stale mark cleared by the cron), the webhook (Basic credentials only, nothing secret in the URL, `active_from`, every sale read back, two concurrent deliveries changing one membership once), the product deciding the tier, hand payments with and without a sale number and the 7-day link, the poll (36-hour window enforced by the fixture, refunds, stale, too many, underpaid, no, unknown and erased customers flagged once, an incomplete sale ignored, a sale it cannot match left for later), the card number moving a link, merges, the 30-day purge of unverified sign-ups, quote line endings, the agent routes and an agent token reading nothing else, and erasure.
+- **Dependencies**: none added. The Code 128 barcode on My Vault is drawn by `bwip-js`, already a dependency for every QR code.
+
+### Review round (as fixed)
+
+An independent review found fourteen issues and the website integration two more; each is fixed above and covered by section 27 or the shared unit tests:
+
+1. Replayed or old sales: `active_from` and a 48-hour limit, outcome `stale`, admins told (check.sh 27f, 27i).
+2. Hand activation plus a till sale making two terms: `epos_transaction_id` on the hand routes and the 7-day `linked_manual` rule (27h).
+3. The tier came from the customer's request: `guild_products` maps product to tier, mismatches are flagged, underpaid sales refused (27g, 27i; `guildSaleIn` tests).
+4. Refunds and negative lines: never activated, `refunded` sent to staff, at most 2 units (27i; `guildSaleIn` tests).
+5. `message_excerpt` removed from the agent quotes route (27m).
+6. Duplicate Epos Now customers: the GGC card number is authoritative and moves the link with an audit row; links are marked in progress before calling Epos Now (27e, 27i).
+7. Merges carry the Epos Now link and the terms stamp, or name both ids to the admins (27j).
+8. A unique index on `points_ledger (customer, ref) WHERE reason = 'welcome'`, with the race handled in `lib/welcome.js` (27a, 27c).
+9. Marketing consent held until the address is proved; unverified sign-ups purged after 30 days (27b, 27c, 27k).
+10. The poll covers a rolling 36 hours without detail calls (27i, the fixture refuses a wider window).
+11. The webhook secret moved from the URL to Epos Now's Basic credentials header (27f).
+12. `isCompletedSale` fails closed (`isCompletedSale` tests; 27i, sale 5007).
+13. The active and pending rows are read inside the transaction (27f, the concurrent deliveries).
+14. Erased customers are never linked or matched by card number (27i).
+15. The terms refusal is worded for any form that uses the sign-up (27b).
+16. Quote messages and replies are stored with plain `\n` line endings (27l).

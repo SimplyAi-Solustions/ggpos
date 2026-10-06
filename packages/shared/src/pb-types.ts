@@ -9,6 +9,7 @@ export const Collections = {
 	Otps: "_otps",
 	Superusers: "_superusers",
 	AdapterState: "adapter_state",
+	Agents: "agents",
 	AuditLog: "audit_log",
 	CardSets: "card_sets",
 	Cards: "cards",
@@ -21,6 +22,7 @@ export const Collections = {
 	Customers: "customers",
 	DailyStats: "daily_stats",
 	DisplayState: "display_state",
+	EposTransactions: "epos_transactions",
 	FxRates: "fx_rates",
 	Games: "games",
 	IdDocuments: "id_documents",
@@ -147,6 +149,19 @@ export type AdapterStateRecord<Tvalue = unknown> = {
 	key: string
 	updated: IsoAutoDateString
 	value?: null | Tvalue
+}
+
+export type AgentsRecord = {
+	active?: boolean
+	created: IsoAutoDateString
+	email: string
+	emailVisibility?: boolean
+	id: string
+	name: string
+	password: string
+	tokenKey: string
+	updated: IsoAutoDateString
+	verified?: boolean
 }
 
 export type AuditLogRecord<Tmeta = unknown> = {
@@ -309,12 +324,27 @@ export const CustomerPrivateIdStatusOptions = {
 	"rejected": "rejected",
 } as const
 export type CustomerPrivateIdStatusOptions = typeof CustomerPrivateIdStatusOptions[keyof typeof CustomerPrivateIdStatusOptions]
+
+export const CustomerPrivateEposSyncStatusOptions = {
+	"queued": "queued",
+	"in_progress": "in_progress",
+	"linked": "linked",
+	"failed": "failed",
+} as const
+export type CustomerPrivateEposSyncStatusOptions = typeof CustomerPrivateEposSyncStatusOptions[keyof typeof CustomerPrivateEposSyncStatusOptions]
 export type CustomerPrivateRecord = {
 	address?: string
 	created: IsoAutoDateString
 	credit_balance?: number
 	customer: RecordIdString
 	dob?: IsoDateString
+	epos_customer_id?: string
+	epos_sync_attempts?: number
+	epos_sync_error?: string
+	epos_sync_started_at?: IsoDateString
+	epos_sync_status?: CustomerPrivateEposSyncStatusOptions
+	epos_synced_at?: IsoDateString
+	erased_at?: IsoDateString
 	flags?: CustomerPrivateFlagsOptions[]
 	id: string
 	id_expiry?: IsoDateString
@@ -323,9 +353,11 @@ export type CustomerPrivateRecord = {
 	id_type?: string
 	id_verified_at?: IsoDateString
 	id_verified_by?: RecordIdString
+	marketing_consent_pending?: boolean
 	notes?: HTMLString
 	points_balance?: number
 	points_expiry_warned_at?: IsoDateString
+	terms_accepted_at?: IsoDateString
 	tier?: RecordIdString
 	updated: IsoAutoDateString
 }
@@ -395,6 +427,46 @@ export type DisplayStateRecord<Tpayload = unknown> = {
 	token?: string
 	updated: IsoAutoDateString
 	updated_by?: RecordIdString
+}
+
+export const EposTransactionsOutcomeOptions = {
+	"activated": "activated",
+	"renewed": "renewed",
+	"linked_manual": "linked_manual",
+	"manual": "manual",
+	"no_customer": "no_customer",
+	"unknown_customer": "unknown_customer",
+	"erased_customer": "erased_customer",
+	"no_plan": "no_plan",
+	"stale": "stale",
+	"refunded": "refunded",
+	"unpriced": "unpriced",
+	"mixed": "mixed",
+	"too_many": "too_many",
+	"underpaid": "underpaid",
+	"tier_mismatch": "tier_mismatch",
+} as const
+export type EposTransactionsOutcomeOptions = typeof EposTransactionsOutcomeOptions[keyof typeof EposTransactionsOutcomeOptions]
+
+export const EposTransactionsSourceOptions = {
+	"webhook": "webhook",
+	"poll": "poll",
+	"hand": "hand",
+} as const
+export type EposTransactionsSourceOptions = typeof EposTransactionsSourceOptions[keyof typeof EposTransactionsSourceOptions]
+export type EposTransactionsRecord = {
+	amount?: number
+	created: IsoAutoDateString
+	customer?: RecordIdString
+	epos_customer_id?: string
+	epos_id: string
+	id: string
+	membership?: RecordIdString
+	outcome: EposTransactionsOutcomeOptions
+	quantity?: number
+	sold_at?: IsoDateString
+	source?: EposTransactionsSourceOptions
+	updated: IsoAutoDateString
 }
 
 export type FxRatesRecord<Tquotes = unknown> = {
@@ -658,21 +730,32 @@ export type LoyaltyTiersRecord<Tperks = unknown> = {
 	name: string
 	paid_plan?: boolean
 	perks?: null | Tperks
+	price?: number
 	sort?: number
 	threshold_points?: number
 	updated: IsoAutoDateString
 }
 
 export const MembershipsStatusOptions = {
+	"pending": "pending",
 	"active": "active",
 	"lapsed": "lapsed",
 	"cancelled": "cancelled",
 } as const
 export type MembershipsStatusOptions = typeof MembershipsStatusOptions[keyof typeof MembershipsStatusOptions]
+
+export const MembershipsPaidViaOptions = {
+	"hand": "hand",
+	"epos": "epos",
+} as const
+export type MembershipsPaidViaOptions = typeof MembershipsPaidViaOptions[keyof typeof MembershipsPaidViaOptions]
 export type MembershipsRecord = {
 	created: IsoAutoDateString
 	customer: RecordIdString
+	epos_transaction?: string
 	id: string
+	paid_at?: IsoDateString
+	paid_via?: MembershipsPaidViaOptions
 	payment_note?: string
 	price?: number
 	renews_at?: IsoDateString
@@ -1044,7 +1127,7 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
+export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Teposnow = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
@@ -1056,6 +1139,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	email?: null | Temail
 	email_api_key?: string
 	email_provider?: SettingsEmailProviderOptions
+	eposnow?: null | Teposnow
 	holds?: null | Tholds
 	id: string
 	id_photo_retention_months?: number
@@ -1333,6 +1417,7 @@ export type MfasResponse<Texpand = unknown> = Required<MfasRecord> & BaseSystemF
 export type OtpsResponse<Texpand = unknown> = Required<OtpsRecord> & BaseSystemFields<Texpand>
 export type SuperusersResponse<Texpand = unknown> = Required<SuperusersRecord> & AuthSystemFields<Texpand>
 export type AdapterStateResponse<Tvalue = unknown, Texpand = unknown> = Required<AdapterStateRecord<Tvalue>> & BaseSystemFields<Texpand>
+export type AgentsResponse<Texpand = unknown> = Required<AgentsRecord> & AuthSystemFields<Texpand>
 export type AuditLogResponse<Tmeta = unknown, Texpand = unknown> = Required<AuditLogRecord<Tmeta>> & BaseSystemFields<Texpand>
 export type CardSetsResponse<Texternal_ids = unknown, Texpand = unknown> = Required<CardSetsRecord<Texternal_ids>> & BaseSystemFields<Texpand>
 export type CardsResponse<Texternal_ids = unknown, Tfinishes_available = unknown, Tprices = unknown, Texpand = unknown> = Required<CardsRecord<Texternal_ids, Tfinishes_available, Tprices>> & BaseSystemFields<Texpand>
@@ -1345,6 +1430,7 @@ export type CustomerPrivateResponse<Texpand = unknown> = Required<CustomerPrivat
 export type CustomersResponse<Texpand = unknown> = Required<CustomersRecord> & AuthSystemFields<Texpand>
 export type DailyStatsResponse<Tbuy_in_total_by_payout = unknown, Tsales_total_by_payment = unknown, Texpand = unknown> = Required<DailyStatsRecord<Tbuy_in_total_by_payout, Tsales_total_by_payment>> & BaseSystemFields<Texpand>
 export type DisplayStateResponse<Tpayload = unknown, Texpand = unknown> = Required<DisplayStateRecord<Tpayload>> & BaseSystemFields<Texpand>
+export type EposTransactionsResponse<Texpand = unknown> = Required<EposTransactionsRecord> & BaseSystemFields<Texpand>
 export type FxRatesResponse<Tquotes = unknown, Texpand = unknown> = Required<FxRatesRecord<Tquotes>> & BaseSystemFields<Texpand>
 export type GamesResponse<Texpand = unknown> = Required<GamesRecord> & BaseSystemFields<Texpand>
 export type IdDocumentsResponse<Texpand = unknown> = Required<IdDocumentsRecord> & BaseSystemFields<Texpand>
@@ -1373,7 +1459,7 @@ export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemp
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Teposnow = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Teposnow, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
@@ -1393,6 +1479,7 @@ export type CollectionRecords = {
 	_otps: OtpsRecord
 	_superusers: SuperusersRecord
 	adapter_state: AdapterStateRecord
+	agents: AgentsRecord
 	audit_log: AuditLogRecord
 	card_sets: CardSetsRecord
 	cards: CardsRecord
@@ -1405,6 +1492,7 @@ export type CollectionRecords = {
 	customers: CustomersRecord
 	daily_stats: DailyStatsRecord
 	display_state: DisplayStateRecord
+	epos_transactions: EposTransactionsRecord
 	fx_rates: FxRatesRecord
 	games: GamesRecord
 	id_documents: IdDocumentsRecord
@@ -1452,6 +1540,7 @@ export type CollectionResponses = {
 	_otps: OtpsResponse
 	_superusers: SuperusersResponse
 	adapter_state: AdapterStateResponse
+	agents: AgentsResponse
 	audit_log: AuditLogResponse
 	card_sets: CardSetsResponse
 	cards: CardsResponse
@@ -1464,6 +1553,7 @@ export type CollectionResponses = {
 	customers: CustomersResponse
 	daily_stats: DailyStatsResponse
 	display_state: DisplayStateResponse
+	epos_transactions: EposTransactionsResponse
 	fx_rates: FxRatesResponse
 	games: GamesResponse
 	id_documents: IdDocumentsResponse
