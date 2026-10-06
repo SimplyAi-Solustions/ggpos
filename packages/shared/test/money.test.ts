@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   applyPercent,
   convertMinorToGbpPence,
+  decimalPoundsToPence,
   eurDecimalToGbpPence,
   formatGBP,
   parseDecimalToMinor,
@@ -80,5 +81,28 @@ describe("offer maths", () => {
     expect(roundToRetailEnding(1250)).toBe(1299)
     expect(roundToRetailEnding(1249)).toBe(1249)
     expect(roundToRetailEnding(1200)).toBe(1249)
+  })
+})
+
+describe("decimalPoundsToPence", () => {
+  it("reads a JSON number of pounds as pence", () => {
+    expect(decimalPoundsToPence(24)).toBe(2400)
+    expect(decimalPoundsToPence(24.5)).toBe(2450)
+    expect(decimalPoundsToPence(0.45)).toBe(45)
+    expect(decimalPoundsToPence(19.99)).toBe(1999)
+  })
+  it("does not let float error reach the pence", () => {
+    expect(decimalPoundsToPence(0.1 + 0.2)).toBe(30)
+    expect(decimalPoundsToPence(23.999999999)).toBe(2400)
+  })
+  it("reads a decimal string", () => {
+    expect(decimalPoundsToPence("24.00")).toBe(2400)
+    expect(decimalPoundsToPence("-1.50")).toBe(-150)
+  })
+  it("refuses anything that is not an amount", () => {
+    expect(decimalPoundsToPence(Number.NaN)).toBeNull()
+    expect(decimalPoundsToPence("twelve")).toBeNull()
+    expect(decimalPoundsToPence(null)).toBeNull()
+    expect(decimalPoundsToPence(undefined)).toBeNull()
   })
 })

@@ -93,60 +93,21 @@ onRecordCreateRequest((e) => {
 
   const customerId = e.record.id;
   const referrerId = e.record.getString("referred_by");
-  const programme = util.programme(e.app);
-
-  // Never twice for the same customer: a merge keeps the record it is
-  // folding into, welcome row and all, and never asks for a second one.
-  let alreadyWelcomed = false;
-  try {
-    alreadyWelcomed =
-      e.app.findRecordsByFilter(
-        "points_ledger",
-        'customer = {:customer} && reason = "welcome"',
-        "",
-        1,
-        0,
-        { customer: customerId }
-      ).length > 0;
-  } catch (err) {
-    alreadyWelcomed = false;
-  }
-
+  const welcome = require(`${__hooks}/lib/welcome.js`);
   const notifyLib = require(`${__hooks}/lib/notify.js`);
-  let pending = [];
-  try {
-    if (programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed) {
-      e.app.save(
-        new Record(e.app.findCollectionByNameOrId("points_ledger"), {
-          customer: customerId,
-          delta: programme.welcomeBonus,
-          reason: "welcome",
-          ref: customerId,
-        })
-      );
 
-      // One notification for joining, naming the bonus, in place of the
-      // "you are now a Member" a first tier would otherwise produce
-      // (lib/tiers.js's isJoiningTier). Only when there is an address to
-      // send it to: a customer created at the counter without one has
-      // nowhere to read it, and the row would just be noise in the list
-      // they find when they do claim the account.
-      if (e.record.getString("email")) {
-        const tiers = require(`${__hooks}/lib/tiers.js`);
-        const n = notifyLib.notify(e.app, {
-          customer: customerId,
-          type: "welcome",
-          title: "Welcome to GG Guild",
-          body: `${tiers.formatPoints(programme.welcomeBonus)} points are on your card. Sign in to My Vault with this email address to see them.`,
-          link: "/account",
-          email: true,
-        });
-        pending = n.pending || [];
-      }
-    }
+  // A customer who signed up online waits for their first emailed-code
+  // sign-in before the welcome bonus lands (signup.pb.js), so an address
+  // nobody owns never collects points. Every other customer gets it now,
+  // exactly as before. lib/welcome.js never writes it twice.
+  let pending = [];
+  if (e.record.getString("source") !== "portal") {
+    pending = welcome.award(e.app, e.record).pending;
+  }
+  try {
     if (referrerId) referrals.createPending(e.app, referrerId, customerId);
   } catch (err) {
-    console.log(`[loyalty] welcome bonus or referral failed for ${customerId}: ${err}`);
+    console.log(`[loyalty] referral failed for ${customerId}: ${err}`);
   }
   // After the writes, never between them (lib/notify.js).
   notifyLib.sendPending(e.app, pending);

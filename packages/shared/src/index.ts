@@ -4,3 +4,4 @@ export * from "./pb-types";
 export * from "./pricing";
 export * from "./loyalty";
 export * from "./saleline";
+export * from "./eposnow";

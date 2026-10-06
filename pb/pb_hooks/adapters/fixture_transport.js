@@ -134,6 +134,133 @@ function freshenUpdated(json) {
   return json;
 }
 
+// -- Epos Now -----------------------------------------------------------
+//
+// Answered from this module, like the reader fixtures, because what Epos
+// Now says back is a function of the request. Nothing is remembered between
+// calls.
+//
+//  - POST v4/Customer: a customer whose email contains "eposdown" gets a 503
+//    (Epos Now being down, so the link queues and retries); anybody else is
+//    created, with an id worked out from their card number so the same
+//    customer always gets the same id.
+//  - GET v4/Customer/GetByEmail: nobody, so every link takes the create path.
+//  - GET v4/Customer/770001: a customer added at the till by hand whose card
+//    number is GGC-EP0S1D, which pb/scripts/check.sh gives a counter customer
+//    so a sale to 770001 can be matched by card number.
+//  - GET v4/Transaction/{id}: the id says what the sale is. "6<customer id>"
+//    is a Guild sale (product 9001, £24.00) to that Epos Now customer;
+//    "5000" a Guild sale with nobody attached; "5001" a sale of something
+//    else; "5002" a Guild sale to customer 999999, whom nobody knows. Any
+//    other id is a 404.
+//  - GET v4/Transaction/GetByDate: today's page, the four sales above with
+//    "6770001" as the Guild sale, every time stamped now.
+// The Authorization header must be "Basic <token>", or the call is a 401.
+
+function eposCustomerIdFor(cardNumber) {
+  var sum = 0;
+  var text = String(cardNumber || "");
+  for (var i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) % 89999;
+  return 700000 + sum;
+}
+
+function eposNowStamp() {
+  // Zone-less, the way Epos Now writes it.
+  return new Date().toISOString().slice(0, 19);
+}
+
+function eposTransactionFor(id) {
+  var text = String(id);
+  var guild = { productId: 9001, unitPrice: 24, quantity: 1, discountAmount: null };
+  if (text === "5000") {
+    return { id: 5000, customerId: null, dateTime: eposNowStamp(), statusId: 1, transactionItems: [guild] };
+  }
+  if (text === "5001") {
+    return {
+      id: 5001,
+      customerId: 770001,
+      dateTime: eposNowStamp(),
+      statusId: 1,
+      transactionItems: [{ productId: 1234, unitPrice: 4.99, quantity: 2 }],
+    };
+  }
+  if (text === "5002") {
+    return { id: 5002, customerId: 999999, dateTime: eposNowStamp(), statusId: 1, transactionItems: [guild] };
+  }
+  if (/^6\d+$/.test(text)) {
+    return {
+      id: Number(text),
+      customerId: Number(text.slice(1)),
+      dateTime: eposNowStamp(),
+      statusId: 1,
+      transactionItems: [guild, { productId: 1234, unitPrice: 2.5, quantity: 1 }],
+      tenders: [{ tenderTypeId: 1, amount: 26.5 }],
+    };
+  }
+  return null;
+}
+
+function eposnowRespond(call, url) {
+  var headers = call.headers || {};
+  if (!/^Basic \S+$/.test(String(headers.Authorization || ""))) {
+    return { statusCode: 401, json: { message: "Unauthorized" }, headers: {}, body: null };
+  }
+  var path = url.replace(/^https:\/\/api\.eposnowhq\.com\/api\//, "");
+  var method = call.method || "GET";
+
+  if (method === "POST" && path === "v4/Customer") {
+    var list = [];
+    try {
+      list = JSON.parse(call.body || "[]");
+    } catch (err) {
+      list = [];
+    }
+    var first = Array.isArray(list) ? list[0] || {} : {};
+    if (String(first.emailAddress || "").indexOf("eposdown") >= 0) {
+      return { statusCode: 503, json: { message: "Service Unavailable" }, headers: {}, body: null };
+    }
+    if (!first.forename || !first.cardNumber) {
+      return { statusCode: 400, json: "forename and cardNumber are required", headers: {}, body: null };
+    }
+    return {
+      statusCode: 201,
+      json: [
+        {
+          id: eposCustomerIdFor(first.cardNumber),
+          forename: first.forename,
+          surname: first.surname || null,
+          emailAddress: first.emailAddress || null,
+          cardNumber: first.cardNumber,
+        },
+      ],
+      headers: {},
+      body: null,
+    };
+  }
+  if (method === "GET" && path.indexOf("v4/Customer/GetByEmail") === 0) {
+    return ok([]);
+  }
+  if (method === "GET" && path === "v4/Customer/770001") {
+    return ok({ id: 770001, forename: "Till", surname: "Added", cardNumber: "GGCEP0S1D" });
+  }
+  if (method === "GET" && /^v4\/Customer\/\d+$/.test(path)) {
+    return { statusCode: 404, json: null, headers: {}, body: null };
+  }
+  if (method === "GET" && path.indexOf("v4/Transaction/GetByDate?") === 0) {
+    if (!/startDate=\d{4}-\d{2}-\d{2}T00%3A00%3A00/.test(path) || path.indexOf("status=1") < 0) {
+      return refuse(call, "GetByDate without a zone-less day start or status=1: " + path);
+    }
+    if (/page=([2-9]|\d\d)/.test(path)) return ok([]);
+    return ok([eposTransactionFor("5000"), eposTransactionFor("5001"), eposTransactionFor("5002"), eposTransactionFor("6770001")]);
+  }
+  var txMatch = /^v4\/Transaction\/(\d+)\?/.exec(path);
+  if (method === "GET" && txMatch) {
+    var tx = eposTransactionFor(txMatch[1]);
+    return tx ? ok(tx) : { statusCode: 404, json: null, headers: {}, body: null };
+  }
+  return refuse(call, "");
+}
+
 // -- The Solo reader fixtures (see the Readers API block in respond()) ---
 
 /**
@@ -458,6 +585,12 @@ function respond(call) {
   }
   if (url.indexOf("api.sumup.com") >= 0 && url.indexOf("client_transaction_id=") >= 0) {
     return readerTransactionRespond(call, url);
+  }
+
+  // -- Epos Now (the customer link and the Guild activation,
+  //    pb_hooks/lib/eposnow.js) --------------------------------------------
+  if (url.indexOf("api.eposnowhq.com") >= 0) {
+    return eposnowRespond(call, url);
   }
 
   return refuse(call, "");

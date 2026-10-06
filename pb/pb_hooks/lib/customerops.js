@@ -120,7 +120,43 @@ function erase(app, customerId, opts) {
     priv.set("id_ref_last4", "");
     priv.set("id_verified_by", "");
     priv.set("id_verified_at", "");
+    // Phase 8: the Epos Now link. The till's own copy of the name, email
+    // address and card number lives in Epos Now, which GG Vault does not
+    // delete from; the admins are told which customer to remove there.
+    var eposId = priv.getString("epos_customer_id");
+    priv.set("epos_customer_id", "");
+    priv.set("epos_sync_status", "");
+    priv.set("epos_sync_attempts", 0);
+    priv.set("epos_sync_error", "");
+    priv.set("epos_synced_at", "");
+    priv.set("terms_accepted_at", "");
     app.save(priv);
+    if (eposId) {
+      var notifyLib = require(`${__hooks}/lib/notify.js`);
+      notifyLib.notify(app, {
+        staffAll: true,
+        type: "epos_erase",
+        title: "Delete a customer in Epos Now",
+        body: `A GG Vault customer was erased who was linked to Epos Now customer ${eposId}. Delete that customer in Epos Now Back Office so their name and email address go from the till too.`,
+        link: "/counter/customers",
+      });
+      removed.epos_link = 1;
+    }
+  }
+
+  // --- a Guild sign-up they never paid for ---------------------------------
+  var waiting = [];
+  try {
+    waiting = app.findRecordsByFilter("memberships", 'customer = {:customer} && status = "pending"', "", 0, 0, {
+      customer: customerId,
+    });
+  } catch (err) {
+    waiting = [];
+  }
+  for (var w = 0; w < waiting.length; w++) {
+    if (!waiting[w]) continue;
+    waiting[w].set("status", "cancelled");
+    app.save(waiting[w]);
   }
 
   // --- the customer record itself -----------------------------------------
