@@ -602,17 +602,23 @@ membership when the till sells it (`docs/api-contract.md`, Phase 8;
   for this integration). Epos Now shows a key and a secret; the token is
   base64 of `key:secret`, which Back Office also shows ready-made as the
   "Authorization token". Store it in `settings.api_keys` under `eposnow`.
-- **The Guild product**: the Epos Now product id of "GG Guild membership
-  (12 months)", in `settings.eposnow.guild_product_ids` (a list, so a
-  second product can be added later). `settings.eposnow.location_id` is
-  the shop's location, 14037.
-- **The webhook secret**: a long random string, for example
-  `openssl rand -hex 24`, in `settings.api_keys` under `eposnow_webhook`.
-  The webhook URL is then
-  `https://ggpos.ggentertainment.co.uk/api/vault/epos/webhook/<secret>`;
-  set it in Epos Now Back Office for the completed-transaction event (304)
-  only once Richard has agreed. Without it, the five-minute poll
-  (08:00 to 22:00) still starts every membership.
+- **The Guild products**: `settings.eposnow.guild_products` maps each Epos
+  Now product id to the GG Guild tier it sells, for example
+  `{ "9001": "<the Guild Pass tier id>" }`. `settings.eposnow.location_id`
+  is the shop's location, 14037. `settings.eposnow.active_from` was set by
+  the migration to the moment it ran: no till sale before it is ever acted
+  on. Move it forward to the moment the product is first sold if the
+  product was set up later.
+- **The webhook credentials**: a key (for example `ggvault`) and a long
+  random secret (`openssl rand -hex 24`, ASCII only), in
+  `settings.api_keys` under `eposnow_webhook_key` and
+  `eposnow_webhook_secret`. In Epos Now Back Office, point the
+  completed-transaction webhook (event 304) at
+  `https://ggpos.ggentertainment.co.uk/api/vault/epos/webhook` and enter the
+  same key and secret as its Basic Authentication credentials (advanced
+  settings). Do this only once Richard has agreed. Without it, the
+  five-minute poll (08:00 to 22:00, looking back 36 hours) still starts
+  every membership.
 
 Check it works without waiting: as an admin, `POST /api/vault/epos/poll`
 pulls today's sales at once and answers with what it found.
