@@ -153,7 +153,7 @@ describe("booking at the counter", () => {
     expect(member.customer?.member).toBe(true)
     const notJoined = table({
       resource: "res_table_4",
-      customer: "cust_demo_2",
+      customer: "cust_demo_4",
       starts_at: at("15:00"),
       ends_at: at("16:00"),
     })
@@ -306,10 +306,10 @@ describe("walk-in sessions", () => {
 
 describe("events", () => {
   it("enters a member at the Guild fee for the whole party", () => {
-    const entry = demoCreateBooking({ event: "event_demo_league", party_size: 2, customer: "cust_demo_4" }, "staff")
+    const entry = demoCreateBooking({ event: "event_demo_league", party_size: 2, customer: "cust_demo_2" }, "staff")
     expect(entry).toMatchObject({ kind: "event", status: "confirmed", price: 800, party_size: 2 })
     expect(entry.event?.name).toBe("Pokémon League")
-    expect(demoGetEvent("event_demo_league").entries.map((row) => row.name)).toContain("T Bradbury")
+    expect(demoGetEvent("event_demo_league").entries.map((row) => row.name)).toContain("Tom Bradbury")
   })
 
   it("refuses a second entry for the same customer", () => {
@@ -422,7 +422,7 @@ describe("My Vault", () => {
   })
 
   it("charges somebody who has not joined the Guild the full fee", () => {
-    setDemoPortalCustomer("cust_demo_2")
+    setDemoPortalCustomer("cust_demo_4")
     expect(demoCreateBooking({ event: "event_demo_league_1", party_size: 1 }, "customer")).toMatchObject({
       status: "held",
       price: 500,

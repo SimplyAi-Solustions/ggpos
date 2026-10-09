@@ -257,6 +257,7 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
       return {
         item: null,
         productId: null,
+        productKind: "booking",
         title: planned.title,
         qty: 1,
         unitPrice: planned.amount,

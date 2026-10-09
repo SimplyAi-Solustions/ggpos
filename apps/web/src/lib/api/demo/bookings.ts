@@ -85,11 +85,12 @@ const SEED_HOURS: OpeningHours = {
 }
 
 /**
- * Who is in the Guild. Every customer carded before the Guild existed is a
- * member (section 1); Tom Bradbury is the demo's seller who never joined, so
- * the member price has somebody to be different for.
+ * Who is in the Guild, for a demo customer with no `guild_joined_at` field.
+ * Every customer carded before the Guild existed is a member (section 1);
+ * T Bradbury, the portal duplicate, has not joined, so the member price has
+ * somebody to be different for.
  */
-const NOT_JOINED = new Set(["cust_demo_2"])
+const NOT_JOINED = new Set(["cust_demo_4"])
 
 /** A sale line that paid towards a booking, as BK's `payments` reads them. */
 interface DemoPayment {
