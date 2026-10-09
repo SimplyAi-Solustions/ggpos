@@ -23,6 +23,53 @@ onRecordAuthRequest((e) => {
 }, "staff");
 
 /**
+ * A password sign-in clears a PIN lock (docs/api-contract-epos.md,
+ * section 2, "PIN hashing"): five wrong PINs lock a PIN until an admin
+ * resets it or its owner proves who they are with their password.
+ *
+ * onRecordAuthRequest fires for every way a token is handed out: a password
+ * sign-in ("password"), a token refresh and an impersonation (""), and the
+ * till's PIN unlock ("pin", till_auth.pb.js). Only the first proves the
+ * password, so only the first clears anything. The password has already been
+ * checked by the time this runs, and the handler above has already refused
+ * an inactive account.
+ *
+ * The clear is written before `e.next()` so the record in the sign-in
+ * response already shows it, and it is audited as `pin_lock_cleared` in the
+ * same transaction. A sign-in with nothing to clear writes nothing.
+ */
+onRecordAuthRequest((e) => {
+  const record = e.record;
+  if (
+    record &&
+    e.authMethod === "password" &&
+    (record.getBool("pin_locked") || record.getInt("pin_failures") > 0)
+  ) {
+    const audit = require(`${__hooks}/lib/audit.js`);
+    const wasLocked = record.getBool("pin_locked");
+    const failures = record.getInt("pin_failures");
+    const ip = e.realIP();
+    e.app.runInTransaction((txApp) => {
+      const fresh = txApp.findRecordById("staff", record.id);
+      fresh.set("pin_failures", 0);
+      fresh.set("pin_locked", false);
+      txApp.save(fresh);
+      audit.writeAuditLog(txApp, {
+        actor: record.id,
+        action: "pin_lock_cleared",
+        collection: "staff",
+        record: record.id,
+        meta: { by: record.id, method: "password", was_locked: wasLocked, failures: failures },
+        ip: ip,
+      });
+    });
+    record.set("pin_failures", 0);
+    record.set("pin_locked", false);
+  }
+  e.next();
+}, "staff");
+
+/**
  * The first-sign-in password change.
  *
  * `staff.must_change_password` (1789820760_staff_must_change_password.js)
@@ -163,7 +210,8 @@ onRecordUpdateRequest((e) => {
  * its session alive, and change its own password. Everything else is
  * refused with 403, so the counter's own redirect is a convenience rather
  * than the only thing standing between a leaked temporary password and
- * the shop's customer list.
+ * the shop's customer list. (The till's three lock-screen routes are let
+ * through too, because they never read the token; see below.)
  *
  * A global middleware is the only place this can live: the account is
  * refused the whole API, not one collection or one route, and PocketBase's
@@ -206,6 +254,24 @@ routerUse((e) => {
   // whose token happens to be in the browser. HEAD as well as GET,
   // because that is what `wget --spider` sends.
   if ((method === "GET" || method === "HEAD") && path === "/api/health") allowed = true;
+
+  // The other way out: a member of staff who is not an admin cannot PATCH
+  // their own row (staff's rules are admin-only), so the route that changes
+  // the caller's own password for any role (staff_admin.pb.js,
+  // docs/api-contract-epos.md section 2) is how they leave the lock. It
+  // only ever changes the caller's own password, after checking the old one.
+  if (method === "POST" && path === "/api/vault/staff/me/password") allowed = true;
+
+  // The till's lock screen (till_auth.pb.js). These three never read the
+  // token: they answer to the registered device alone and are open to a
+  // request with no token at all, so holding them back from a locked one
+  // protects nothing. Letting them through means somebody else can still
+  // switch user at a till where a locked account was the last one unlocked,
+  // whatever token the counter happens to send along.
+  if (method === "GET" && (path === "/api/vault/till/roster" || path === "/api/vault/till/device")) {
+    allowed = true;
+  }
+  if (method === "POST" && path === "/api/vault/till/unlock") allowed = true;
 
   for (let i = 0; i < staffPaths.length && !allowed; i++) {
     // Keeping the session alive. The counter holds a locked account on
