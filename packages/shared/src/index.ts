@@ -6,3 +6,4 @@ export * from "./loyalty";
 export * from "./saleline";
 export * from "./permissions";
 export * from "./epos-types";
+export * from "./till"
