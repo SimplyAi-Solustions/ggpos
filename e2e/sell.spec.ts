@@ -52,11 +52,17 @@ async function goTill(page: Page) {
 }
 
 async function showItems(page: Page) {
+  // The till first: the tab is only there once it has drawn, and checking
+  // before then would skip the tap on a phone.
+  await expect(page.getByTestId("till")).toBeVisible()
   const tab = page.getByRole("tab", { name: /^(Items|Pay|Done)$/ })
   if (await tab.isVisible()) await tab.click()
 }
 
 async function showTicket(page: Page) {
+  // The till first: the tab is only there once it has drawn, and checking
+  // before then would skip the tap on a phone.
+  await expect(page.getByTestId("till")).toBeVisible()
   const tab = page.getByTestId("till-ticket-tab")
   if (await tab.isVisible()) await tab.click()
 }

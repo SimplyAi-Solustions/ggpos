@@ -73,6 +73,9 @@ async function tillScan(page: Page, code: string) {
 
 /** Below 900px the ticket is a tab of its own. */
 async function showTicket(page: Page) {
+  // The till first: the tab is only there once it has drawn, and checking
+  // before then would skip the tap on a phone.
+  await expect(page.getByTestId("till")).toBeVisible()
   const tab = page.getByTestId("till-ticket-tab")
   if (await tab.isVisible()) await tab.click()
 }
