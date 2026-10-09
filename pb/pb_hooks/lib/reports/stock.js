@@ -185,6 +185,31 @@ function build(app, util, params) {
   };
 }
 
+/**
+ * Held stock as it stands now, for the dashboard (docs/api-contract-launch.md,
+ * section 3): the same population and the same cost as this report's
+ * value_cost (`query.STOCK_STATUS_FILTER`, `cost` times `qty`), at its sell
+ * price too, and the units held. No price snapshot is read, so it costs one
+ * scan of the held items and nothing per item.
+ *
+ * @returns {{cost: number, retail: number, items: number}}
+ */
+function heldTotals(app) {
+  var query = require(`${__hooks}/lib/reports/query.js`);
+  var held = query.findAllByFilter(app, "items", query.STOCK_STATUS_FILTER, "", {});
+  var cost = 0;
+  var retail = 0;
+  var units = 0;
+  for (var i = 0; i < held.length; i++) {
+    if (!held[i]) continue;
+    var qty = Math.max(0, held[i].getInt("qty"));
+    cost += held[i].getInt("cost") * qty;
+    retail += held[i].getInt("price") * qty;
+    units += qty;
+  }
+  return { cost: cost, retail: retail, items: units };
+}
+
 /** totals keys that are pence, not a plain count or an array -
  * lib/reports/scheduled.js's emailed totals read this instead of guessing
  * from the field name. */
@@ -207,6 +232,7 @@ var PERIOD_SCOPED_TOTALS = { sell_through: true };
 
 module.exports = {
   build: build,
+  heldTotals: heldTotals,
   VALID_BY: VALID_BY,
   MONEY_FIELDS: MONEY_FIELDS,
   PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,

@@ -9,7 +9,7 @@
  * built database; the call signatures here do not change.
  */
 import { ClientResponseError } from "pocketbase"
-import { generateCode } from "@gg/shared"
+import { generateCode, treatmentFields } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -182,7 +182,8 @@ export async function createItem(input: NewItemInput): Promise<ItemRecord> {
     notes: input.notes || undefined,
     status: "in_stock" as const,
     source: "supplier" as const,
-    tax_scheme: input.taxScheme ?? ("standard" as const),
+    // The treatment as stored: a scheme and a rate (@gg/shared `treatmentFields`).
+    ...treatmentFields(input.vatTreatment ?? "standard"),
     // Left out, the item-create hook files it by kind and game
     // (docs/api-contract-inventory.md, section 1.2).
     category: input.categoryId || undefined,

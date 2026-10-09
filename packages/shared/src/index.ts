@@ -13,3 +13,5 @@ export * from "./categories";
 export * from "./bookings";
 export * from "./agents";
 export * from "./online";
+export * from "./dashboard";
+export * from "./vatreturn";

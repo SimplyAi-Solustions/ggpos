@@ -44,6 +44,7 @@ import { TillsSection } from "@/features/settings/TillsSection"
 import { BookingsSection } from "@/features/settings/BookingsSection"
 import { GuildSettingsSection } from "@/features/settings/GuildSettingsSection"
 import { WebsiteSection } from "@/features/settings/WebsiteSection"
+import { VatProductsSection, VatSection } from "@/features/settings/VatSection"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   getSettings,
@@ -83,7 +84,7 @@ import {
   type SettingsForm,
 } from "@/features/settings/mapping"
 import type { GameRecord, PricingRuleRow, SettingsRecord } from "@/lib/api/types"
-import { formatGBP } from "@gg/shared"
+import { formatGBP, standardRateOf } from "@gg/shared"
 
 /** The same treatment the Sell and Cash screens give a blocked block button. */
 const BLOCKED = "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
@@ -796,33 +797,10 @@ function Editor({
             onChange={(next) => set({ shopEmail: next })}
             error={shown.shopEmail}
           />
-          <Field label="VAT registered" layout="auto">
-            <div className="flex items-center gap-4">
-              <Switch
-                checked={form.vatRegistered}
-                onCheckedChange={(checked: boolean) => set({ vatRegistered: checked })}
-                aria-label="VAT registered"
-              />
-              <span className="text-[15px] text-foreground">
-                {form.vatRegistered ? "Registered" : "Not registered"}
-              </span>
-            </div>
-            <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-              Second-hand goods bought from the public are margin scheme lines
-              either way. New supplier stock is standard rated.
-            </p>
-          </Field>
-          <TextField
-            id="vat-number"
-            label="VAT number"
-            maxLength={20}
-            value={form.vatNumber}
-            onChange={(next) => set({ vatNumber: next })}
-            error={shown.vatNumber}
-            note="Printed on receipts while the shop is VAT registered."
-          />
         </div>
       </Section>
+
+      <VatSection form={form} set={set} errors={shown} />
 
       {/* ---- Receipt terms ---- */}
       <Section title="Receipt terms">
@@ -928,6 +906,8 @@ function Editor({
 
       <BookingsSection admin />
       <WebsiteSection />
+
+      <VatProductsSection standardRate={standardRateOf(baseline.vatStandardRate)} />
 
       {dock
         ? createPortal(

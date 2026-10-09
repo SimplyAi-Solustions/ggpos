@@ -63,6 +63,11 @@ export const DEMO_SETTINGS_RECORD: SettingsRecord = {
   vat_number: "",
   id_photo_retention_months: 12,
   vat_registered: false,
+  // VAT as pb_migrations/1789821120_launch_schema.js seeds it: no start
+  // date, quarters from January, 20 percent.
+  vat_registered_from: "",
+  vat_period_start_month: 1,
+  vat_standard_rate: 20,
   shop_name: "GG Entertainment",
   shop_address: "Market Place",
   shop_town: "Bolsover",

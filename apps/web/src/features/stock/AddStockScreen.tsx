@@ -9,7 +9,11 @@ import {
   adjustForCondition,
   displayCode,
   formatGBP,
+  isVatTreatment,
   parseDecimalToMinor,
+  standardRateOf,
+  treatmentLabel,
+  treatmentOf,
   type CardCondition,
   type CategoryBranch,
 } from "@gg/shared"
@@ -64,6 +68,7 @@ import {
   type ItemRecord,
 } from "@/lib/api"
 import { CATEGORY_TREE_KEY, useCategoryTree } from "@/lib/api/categories"
+import { useVaultConfig } from "@/lib/api/config"
 import { useCardPrices, usePricingSettings } from "@/lib/api/prices"
 import type { PriceSource } from "@gg/shared"
 
@@ -237,6 +242,9 @@ export function AddStockScreen({
     queryKey: ["locations"],
     queryFn: listLocations,
   })
+  // The VAT select says the shop's own standard rate.
+  const { data: config } = useVaultConfig()
+  const standardRate = standardRateOf(config?.settings.vat_standard_rate)
 
   const form = useForm<AddStockValues>({
     resolver: zodResolver(addStockSchema),
@@ -277,8 +285,10 @@ export function AddStockScreen({
         setValue("gameId", defaults.game, validate)
         filled.push("game")
       }
-      if (defaults.tax_scheme === "margin" || defaults.tax_scheme === "standard") {
-        setValue("taxScheme", defaults.tax_scheme, validate)
+      // The branch's treatment, any of the five (its scheme and rate together).
+      const treatment = treatmentOf(defaults.tax_scheme, defaults.vat_rate)
+      if (treatment) {
+        setValue("taxScheme", treatment, validate)
         filled.push("VAT treatment")
       }
       const what = listed(filled)
@@ -416,7 +426,7 @@ export function AddStockScreen({
         notes: values.notes,
         marketAtIntake: adjustedMarket ?? undefined,
         categoryId: values.categoryId || undefined,
-        taxScheme: values.taxScheme,
+        vatTreatment: values.taxScheme,
       }),
     onSuccess: (item, values) => {
       setLabelNote(null)
@@ -653,15 +663,16 @@ export function AddStockScreen({
                     <SelectTrigger id="stock-vat">
                       <SelectValue>
                         {(value: string) =>
-                          TAX_SCHEMES.find((option) => option.value === value)?.label ??
-                          "Standard rate"
+                          isVatTreatment(value)
+                            ? treatmentLabel(value, standardRate)
+                            : treatmentLabel("standard", standardRate)
                         }
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {TAX_SCHEMES.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
-                          {option.label}
+                          {treatmentLabel(option.value, standardRate)}
                         </SelectItem>
                       ))}
                     </SelectContent>

@@ -41,6 +41,8 @@ import { Heatmap, SeriesChart, type ChartDatum } from "@/features/reports/charts
 import { busiestSlot } from "@/features/reports/heatmap-summary"
 import { canOverlay, overlayRows } from "@/features/reports/overlay"
 import { buildCsv, csvFilename, downloadCsv } from "@/features/reports/csv"
+import { downloadXlsx, xlsxFilename } from "@/features/reports/excel"
+import { reportBook } from "@/features/reports/excel-report"
 import { DateRangeControl } from "@/features/reports/DateRangeControl"
 import { ReportTable } from "@/features/reports/ReportTable"
 import { SaveViewSheet, SavedViewsRow } from "@/features/reports/SavedViews"
@@ -174,7 +176,17 @@ function Panel({
   )
 }
 
-export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
+export function ReportScreen({
+  reportKey,
+  initialBy,
+  initialBranch,
+}: {
+  reportKey: ReportKey
+  /** The dimension to open on, when it is one of this report's (a link from the dashboard). */
+  initialBy?: string
+  /** For Sales by category, the branch to open drilled into. */
+  initialBranch?: string
+}) {
   const spec = REPORT_SPECS[reportKey]
   const dock = useCounterDock()
   const staff = useStaff()
@@ -183,11 +195,15 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
 
   const [range, setRange] = React.useState<DateRange>(() => resolvePreset("last30", today))
   const [group, setGroup] = React.useState<ReportGroup>("day")
-  const [by, setBy] = React.useState<string>(spec.dimensions[0]?.key ?? "")
+  const [by, setBy] = React.useState<string>(() =>
+    initialBy && spec.dimensions.some((dimension) => dimension.key === initialBy)
+      ? initialBy
+      : (spec.dimensions[0]?.key ?? "")
+  )
   // Sales by category drills down the tree (docs/api-contract-inventory.md,
   // section 1.4): the branch whose child branches the rows are, "" for the
   // top level.
-  const [branchId, setBranchId] = React.useState("")
+  const [branchId, setBranchId] = React.useState(initialBy === "category" ? (initialBranch ?? "") : "")
   const byCategory = by === "category"
   const branch = byCategory ? branchId : ""
   const tree = useCategoryTree({ enabled: byCategory })
@@ -317,6 +333,21 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
       envelope.table
     )
     downloadCsv(csvFilename(reportKey, range.from, range.to), text)
+  }
+
+  /** The same rows as an Excel file: one sheet per table and a cover (launch contract, section 3). */
+  function exportExcel() {
+    if (!envelope) return
+    downloadXlsx(
+      xlsxFilename(reportKey, range.from, range.to),
+      reportBook({
+        spec,
+        envelope,
+        columns,
+        range,
+        bucketTitle: (label) => bucketTitle(label, group),
+      })
+    )
   }
 
   const heatmap = reportKey === "sales" ? (envelope?.totals?.heatmap as number[][]) : undefined
@@ -501,6 +532,9 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
 
       <div className="mt-24 flex flex-wrap items-center gap-8">
         <div className="hidden min-[900px]:block">{primary}</div>
+        <Button variant="text" disabled={!envelope} onClick={exportExcel}>
+          Export Excel
+        </Button>
         <Button variant="text" onClick={() => setSaveOpen(true)}>
           Save view
         </Button>

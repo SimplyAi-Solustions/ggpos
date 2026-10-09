@@ -355,6 +355,7 @@ export const CategoriesDefaultTaxSchemeOptions = {
 	"margin": "margin",
 	"standard": "standard",
 	"exempt": "exempt",
+	"zero": "zero",
 } as const
 export type CategoriesDefaultTaxSchemeOptions = typeof CategoriesDefaultTaxSchemeOptions[keyof typeof CategoriesDefaultTaxSchemeOptions]
 export type CategoriesRecord = {
@@ -614,6 +615,7 @@ export const ItemsTaxSchemeOptions = {
 	"margin": "margin",
 	"standard": "standard",
 	"exempt": "exempt",
+	"zero": "zero",
 } as const
 export type ItemsTaxSchemeOptions = typeof ItemsTaxSchemeOptions[keyof typeof ItemsTaxSchemeOptions]
 
@@ -1235,6 +1237,7 @@ export const SaleLinesTaxSchemeOptions = {
 	"margin": "margin",
 	"standard": "standard",
 	"exempt": "exempt",
+	"zero": "zero",
 } as const
 export type SaleLinesTaxSchemeOptions = typeof SaleLinesTaxSchemeOptions[keyof typeof SaleLinesTaxSchemeOptions]
 
@@ -1608,6 +1611,7 @@ export const TillProductsTaxSchemeOptions = {
 	"standard": "standard",
 	"margin": "margin",
 	"exempt": "exempt",
+	"zero": "zero",
 } as const
 export type TillProductsTaxSchemeOptions = typeof TillProductsTaxSchemeOptions[keyof typeof TillProductsTaxSchemeOptions]
 export type TillProductsRecord = {

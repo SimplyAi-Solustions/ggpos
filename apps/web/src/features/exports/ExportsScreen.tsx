@@ -22,9 +22,11 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { useCounterDock } from "@/app/counter-dock"
 import { useStaff } from "@/lib/auth"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { downloadXlsx, sheetFromCsv, xlsxFilename } from "@/features/reports/excel"
 import {
   downloadExport,
   endListings as endListingsCall,
+  fetchExportText,
   inStockItemIds,
   lastRunOf,
   listEndListings,
@@ -82,6 +84,8 @@ function ExportRow({
   detail,
   onRun,
   pending,
+  onExcel,
+  excelPending,
   disabled,
   children,
 }: {
@@ -89,6 +93,9 @@ function ExportRow({
   detail: string
   onRun: () => void
   pending: boolean
+  /** The same file as an Excel workbook (docs/api-contract-launch.md, section 3). */
+  onExcel: () => void
+  excelPending: boolean
   /** A dated file cannot be taken while the range would be refused. */
   disabled?: boolean
   children?: React.ReactNode
@@ -114,15 +121,26 @@ function ExportRow({
       {/* Seven black discs down one page is seven primary actions. The one
           block button on this screen is the import; taking a file is a
           secondary action, so it reads as the tracked text link it is. */}
-      <Button
-        variant="text"
-        loading={pending}
-        disabled={disabled}
-        onClick={onRun}
-        aria-label={`Download the ${def.label} file`}
-      >
-        Download
-      </Button>
+      <span className="flex items-center gap-8">
+        <Button
+          variant="text"
+          loading={pending}
+          disabled={disabled}
+          onClick={onRun}
+          aria-label={`Download the ${def.label} file`}
+        >
+          Download
+        </Button>
+        <Button
+          variant="text"
+          loading={excelPending}
+          disabled={disabled}
+          onClick={onExcel}
+          aria-label={`Download ${def.label} as Excel`}
+        >
+          Excel
+        </Button>
+      </span>
     </li>
   )
 }
@@ -373,6 +391,32 @@ export function ExportsScreen() {
       ),
   })
 
+  // The same file as an Excel workbook: the export's own CSV, typed column
+  // by column and written with a cover (docs/api-contract-launch.md, section 3).
+  const [excelRunning, setExcelRunning] = React.useState<ExportKey | null>(null)
+  const runExcel = useMutation({
+    mutationFn: async (def: ExportDef) => {
+      setExcelRunning(def.key)
+      const ids = def.key === "ebay-listings" ? await inStockItemIds() : []
+      const input = { from: range.from, to: range.to, ids }
+      const text = await fetchExportText({
+        key: def.key,
+        path: exportPath(def.key, input),
+        filename: exportFilename(def.key, input),
+      })
+      downloadXlsx(xlsxFilename(def.key, def.dated ? range.from : undefined, def.dated ? range.to : undefined), {
+        title: def.label,
+        range: def.dated ? { from: range.from, to: range.to } : null,
+        made: new Date(),
+        sheets: [sheetFromCsv(def.label, text)],
+        notes: [def.note],
+      })
+    },
+    onMutate: () => setExportError(null),
+    onSettled: () => setExcelRunning(null),
+    onError: (err) => setExportError(refusalOrFallback(err, "That file did not download. Try again.")),
+  })
+
   async function chooseFile(type: CsvImportType, file: File | null) {
     setResult(null)
     setSummary(null)
@@ -527,6 +571,8 @@ export function ExportsScreen() {
               pending={running === def.key}
               disabled={Boolean(def.dated && rangeProblem)}
               onRun={() => run.mutate(def)}
+              excelPending={excelRunning === def.key}
+              onExcel={() => runExcel.mutate(def)}
             />
           ))}
         </ul>

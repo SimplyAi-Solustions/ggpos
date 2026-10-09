@@ -18,19 +18,26 @@
 import { ClientResponseError } from "pocketbase"
 import {
   TENDER_LABELS,
+  branchLabel,
   breakdown,
   buildCode,
-  categoryForKind,
   checkPointsRedemption,
   evaluateSalePoints,
   formatGBP,
   isGuildMember,
   penceToPoints,
   pointsCum,
+  rateFor,
   refundAmount,
   remainingQty,
+  resolveVat,
   spread,
+  standardRateOf,
+  vatApplies,
+  vatInside,
   type SaleLineForPoints,
+  type TaxScheme,
+  type VatSource,
   type SaleLookup,
   type SaleTradeIn,
   type Tender,
@@ -60,6 +67,8 @@ import {
   noteDemoTillTradeIn,
 } from "@/lib/api/demo/till-session"
 import { demoProduct, demoRecordVoids } from "@/lib/api/demo/till"
+import { demoBranch, demoCategoryId, demoCategoryPaths, demoProductHome } from "@/lib/api/demo/categories"
+import { demoSettings } from "@/lib/api/demo/settings"
 import {
   demoPlanBookingLine,
   demoSettleBookingLine,
@@ -108,6 +117,8 @@ export const DEMO_STEP_UP_PASSWORD = DEMO_STAFF.password
 
 /** A demo sale with what the till adds to it: its tenders, its refunds and its trade-in. */
 interface TillDemoSale extends DemoSale {
+  /** The VAT its lines carry, as the server stores it. */
+  vat_total?: number
   register?: string
   tenders?: Tender[]
   refund_count?: number
@@ -238,12 +249,40 @@ interface PlannedLine {
   unitPrice: number
   discount: number
   total: number
-  taxScheme: "margin" | "standard" | "exempt"
+  taxScheme: TaxScheme
+  /** The rate the line is charged at: 0 unless standard and inside the registration. */
+  vatRate: number
   note: string
   kind: string
   game: string | null
   /** A booking line (docs/api-contract-launch.md, section 4, "Paying"). */
   bookingId?: string
+  /** Its home branch, for the X report's label. */
+  branch: string
+}
+
+/**
+ * A line's scheme and the rate it is charged at, exactly as the sale route
+ * works it (docs/api-contract-launch.md, section 3): its own treatment, else
+ * its branch's, and nothing before the demo settings' registration date.
+ */
+function demoLineVat(own: VatSource, branchId: string, fallback: TaxScheme): { taxScheme: TaxScheme; vatRate: number } {
+  const settings = demoSettings()
+  const branch = branchId ? demoBranch(branchId) : undefined
+  const resolved = resolveVat({
+    own,
+    branch: branch ? { scheme: branch.defaults.tax_scheme, rate: branch.defaults.vat_rate } : null,
+    fallback,
+    standardRate: standardRateOf(settings.vat_standard_rate),
+  })
+  const charged = vatApplies(
+    { registered: settings.vat_registered === true, from: settings.vat_registered_from },
+    new Date()
+  )
+  return {
+    taxScheme: resolved.scheme,
+    vatRate: rateFor({ taxScheme: resolved.scheme, rate: resolved.rate, vatRegistered: charged }),
+  }
 }
 
 function planLines(payload: TillSalePayload): PlannedLine[] {
@@ -254,6 +293,8 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
     if ("booking" in line) {
       const earlier = payload.lines.slice(0, index).flatMap((other) => ("booking" in other ? [other] : []))
       const planned = demoPlanBookingLine(line, index, earlier)
+      // The Booking till product: standard rated, filed under Services.
+      const services = demoCategoryId("services")
       return {
         item: null,
         productId: null,
@@ -263,11 +304,12 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
         unitPrice: planned.amount,
         discount,
         total: planned.amount - discount,
-        taxScheme: "standard",
+        ...demoLineVat({ scheme: "standard", rate: 0 }, services, "standard"),
         note: line.note ?? "",
         kind: "other",
         game: null,
         bookingId: line.booking,
+        branch: services,
       }
     }
     if ("item" in line) {
@@ -296,10 +338,11 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
         unitPrice,
         discount,
         total,
-        taxScheme: item.tax_scheme ?? "margin",
+        ...demoLineVat({ scheme: item.tax_scheme, rate: item.vat_rate }, item.category ?? "", "margin"),
         note: line.note ?? "",
         kind: item.kind,
         game: item.game ?? null,
+        branch: item.category ?? "",
       }
     }
 
@@ -328,10 +371,11 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
       unitPrice,
       discount,
       total,
-      taxScheme: product.tax_scheme,
+      ...demoLineVat({ scheme: product.tax_scheme, rate: product.vat_rate }, demoProductHome(product.id), "standard"),
       note: line.note ?? "",
       kind: "other",
       game: null,
+      branch: demoProductHome(product.id),
     }
   })
 }
@@ -980,6 +1024,7 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
 
   let saleRecord: TillTicketResult["sale"] = null
   let earned = 0
+  let vatTotal = 0
   if (lines.length > 0) {
     const number = nextSaleNumber()
     const saleId = demoId("sale")
@@ -997,6 +1042,9 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
     // as the server's sale route sends them.
     const sellsMembership = lines.some((line) => line.productKind === "membership")
     const joinsWithSale = Boolean(customer && !customer.member && sellsMembership)
+    // Each line's VAT inside its net after the spread, as the server stores it.
+    const vatAmounts = lines.map((line, index) => vatInside(nets[index] ?? 0, line.vatRate))
+    vatTotal = vatAmounts.reduce((sum, amount) => sum + amount, 0)
     const pointsLines: SaleLineForPoints[] = lines.map((line, index) => ({
       game: line.game,
       kind: line.kind,
@@ -1049,7 +1097,8 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
       refund_count: 0,
       refunds: [],
       ...(trade ? { trade_in: trade.entry.record.id } : {}),
-      lines: lines.map((line): TillDemoLine => ({
+      vat_total: vatTotal,
+      lines: lines.map((line, index): TillDemoLine => ({
         id: demoId("sale_line"),
         sale: saleId,
         item: line.item?.id ?? "",
@@ -1058,7 +1107,9 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
         qty: line.qty,
         unit_price: line.unitPrice,
         discount: line.discount,
-        tax_scheme: line.taxScheme === "exempt" ? "margin" : line.taxScheme,
+        tax_scheme: line.taxScheme,
+        vat_rate: line.vatRate,
+        vat_amount: vatAmounts[index] ?? 0,
         status: "sold",
         sku: line.item?.sku ?? "",
         title: line.title,
@@ -1102,7 +1153,8 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
     noteDemoTillSale({
       number,
       staff: { id: DEMO_STAFF.id, name: DEMO_STAFF.name },
-      category: categoryForKind(lines[0]?.kind),
+      // The branch path's first two levels, as the server's X labels a line.
+      category: branchLabel(demoCategoryPaths().get(lines[0]?.branch ?? "")),
       gross: subtotal,
       discount,
       tenders: rows.map((row) => ({ method: row.method, amount: row.amount })),
@@ -1145,7 +1197,7 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
           sale: saleRecord,
           tenders: rows,
           change: paid.change,
-          vat_total: 0,
+          vat_total: vatTotal,
           receipt: { number: saleRecord?.number ?? "" },
           points_earned: earned,
           credit_balance: customer?.creditBalance ?? 0,
@@ -1224,7 +1276,7 @@ export function lookupSale(raw: string): { sale: SaleLookup } {
       net: row?.net ?? 0,
       refundable_qty: remaining,
       refundable_amount: row ? refundAmount(row, remaining) : 0,
-      tax_scheme: (line.tax_scheme ?? "margin") as "margin" | "standard" | "exempt",
+      tax_scheme: line.tax_scheme ?? "margin",
     }
   })
 

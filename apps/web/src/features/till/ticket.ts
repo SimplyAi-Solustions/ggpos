@@ -49,7 +49,7 @@ export type Adjustment =
   | { kind: "amount"; value: number }
   | { kind: "percent"; value: number }
 
-export type TaxScheme = "margin" | "standard" | "exempt"
+export type TaxScheme = "margin" | "standard" | "zero" | "exempt"
 
 export const NO_ADJUSTMENT: Adjustment = { kind: "none" }
 
@@ -218,7 +218,9 @@ export function lineFromItem(item: ItemDetail): TicketLine {
     maxQty: maxQtyFor(item.kind, item.qty ?? 1),
     game: item.game || null,
     taxScheme: item.tax_scheme ?? schemeForKind(item.kind),
-    vatRate: 20,
+    // The item's own rate when it carries one (reduced, 5), else the
+    // standard 20; the server's resolution is what is charged.
+    vatRate: item.tax_scheme === "standard" && (item.vat_rate ?? 0) > 0 ? (item.vat_rate as number) : 20,
     discount: NO_ADJUSTMENT,
     note: "",
     category: item.category || null,

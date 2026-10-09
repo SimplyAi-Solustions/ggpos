@@ -369,7 +369,9 @@ function buildTillReport(input) {
             category.net += net;
             category.count += qty;
             categories.set(line.category, category);
-            if (input.vat_registered && line.tax_scheme === "standard") {
+            // A standard line sold before `vat_registered_from` carries no rate,
+            // so it is no VAT row (docs/api-contract-launch.md, section 3).
+            if (input.vat_registered && line.tax_scheme === "standard" && line.vat_rate > 0) {
                 const vat = (_b = vatByRate.get(line.vat_rate)) !== null && _b !== void 0 ? _b : { rate: line.vat_rate, net: 0, vat: 0, gross: 0 };
                 vat.gross += net;
                 vat.vat += line.vat_amount;

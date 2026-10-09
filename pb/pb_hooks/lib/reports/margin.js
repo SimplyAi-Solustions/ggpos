@@ -3,12 +3,13 @@
  * price net of refunds minus cost), the margin-scheme VAT estimate, and
  * markdowns (docs/PLAN.md, "Reporting"; docs/api-contract.md, Phase 4).
  *
- * Margin-scheme VAT estimate: HMRC's margin scheme charges VAT on one sixth
- * of the POSITIVE margin on margin-scheme lines (the VAT fraction of the
- * standard 20 percent rate: margin/6 = margin * 20/120). This is an
- * estimate for the reports screen, not a return, and reads zero whenever
- * settings.vat_registered is off - CLAUDE.md's "Pricing" section treats a
- * concrete VAT figure as a business decision, never invented.
+ * Margin-scheme VAT estimate: HMRC's margin scheme charges VAT on the
+ * standard rate's fraction (one sixth at 20 percent) of each margin-scheme
+ * line's POSITIVE margin, line by line and rounded half-up per line, through
+ * lib/shared/vat.js's `marginVat`, the same figure the dashboard and the VAT
+ * return use (docs/api-contract-launch.md, section 3). It reads zero for a
+ * sale outside the VAT registration (VAT off, or before
+ * `settings.vat_registered_from`).
  *
  * Markdowns use price versus market_at_intake as the proxy the brief asks
  * for: an item whose current price sits below what it was taken in at
@@ -21,16 +22,24 @@
 
 var VALID_BY = { game: true, kind: true, staff: true };
 
-function build(app, util, params) {
+/**
+ * Every line of every sale that occurred in the range (`sale.occurred_at`,
+ * UTC days), in "created,id" order, as kept after its refunds: the line,
+ * its sale, its as-sold breakdown (lib/shared/saleline.js, the arithmetic
+ * the refund route and the stock book use), the units and the net kept, the
+ * stock item and what the units kept cost. A line refunded in full is
+ * included with nothing kept. This report and the dashboard
+ * (lib/reports/dashboard.js) both walk the range through this one function,
+ * so their revenue and cost agree to the penny.
+ *
+ * @returns {Array<{line, sale, entry, soldQty, soldNet, item, unitCost, cost}>}
+ */
+function soldLines(app, util, from, to) {
   var dates = require(`${__hooks}/lib/reports/dates.js`);
   var query = require(`${__hooks}/lib/reports/query.js`);
   var saleline = require(`${__hooks}/lib/shared/saleline.js`);
-  var money = require(`${__hooks}/lib/shared/money.js`);
 
-  var by = VALID_BY[params.by] ? params.by : "game";
-  var group = params.group;
-  var bounds = dates.rangeParams(params.from, params.to);
-
+  var bounds = dates.rangeParams(from, to);
   var linesInRange = [];
   try {
     linesInRange = app.findRecordsByFilter(
@@ -46,19 +55,12 @@ function build(app, util, params) {
   }
 
   var itemLookup = query.cachedLookup(app, "items");
-  var staffLookup = query.cachedLookup(app, "staff");
-  var gameLookup = query.cachedLookup(app, "games");
   // One batched sales fetch for every sale referenced in linesInRange,
   // grouping the lines already in hand rather than a findRecordById plus a
   // fresh sale_lines re-query per sale - see query.saleBreakdownsByLine.
   var breakdownsBySale = query.saleBreakdownsByLine(app, util, linesInRange);
 
-  var byDay = {};
-  var groups = query.grouper();
-  var totalRevenue = 0;
-  var totalCost = 0;
-  var vatableMargin = 0; // positive margin on margin-scheme lines only
-
+  var out = [];
   for (var i = 0; i < linesInRange.length; i++) {
     var line = linesInRange[i];
     if (!line) continue;
@@ -67,17 +69,72 @@ function build(app, util, params) {
     var entry = held.breakdown.byId[line.id];
     if (!entry) continue;
     var soldQty = saleline.remainingQty(entry);
-    if (soldQty <= 0) continue; // refunded in full: nothing was sold
-
-    var soldNet = entry.net - saleline.cumNet(entry.net, entry.qty, entry.refundedQty);
     var item = itemLookup(line.getString("item"));
     var unitCost = item ? item.getInt("cost") : 0;
-    var cost = unitCost * soldQty;
+    out.push({
+      line: line,
+      sale: held.sale,
+      entry: entry,
+      soldQty: soldQty,
+      soldNet: entry.net - saleline.cumNet(entry.net, entry.qty, entry.refundedQty),
+      item: item,
+      unitCost: unitCost,
+      cost: unitCost * soldQty,
+    });
+  }
+  return out;
+}
+
+/** A PocketBase date ("2026-10-09 14:00:00.000Z") as a Date. */
+function pbDate(value) {
+  return new Date(String(value || "").replace(" ", "T"));
+}
+
+function build(app, util, params) {
+  var dates = require(`${__hooks}/lib/reports/dates.js`);
+  var query = require(`${__hooks}/lib/reports/query.js`);
+  var vat = require(`${__hooks}/lib/shared/vat.js`);
+
+  var by = VALID_BY[params.by] ? params.by : "game";
+  var group = params.group;
+
+  var staffLookup = query.cachedLookup(app, "staff");
+  var gameLookup = query.cachedLookup(app, "games");
+
+  // The margin scheme's VAT, line by line, exactly as the dashboard and the
+  // VAT return work it: inside the registration only (lib/shared/vat.js).
+  var settingsRow = util.settings(app);
+  var registration = {
+    registered: settingsRow ? settingsRow.getBool("vat_registered") : false,
+    from: settingsRow ? settingsRow.getString("vat_registered_from") : "",
+  };
+  var standardRate = vat.standardRateOf(settingsRow ? settingsRow.getFloat("vat_standard_rate") : 0);
+
+  var byDay = {};
+  var groups = query.grouper();
+  var totalRevenue = 0;
+  var totalCost = 0;
+  var vatEstimate = 0;
+
+  var walked = soldLines(app, util, params.from, params.to);
+  for (var i = 0; i < walked.length; i++) {
+    var held = walked[i];
+    var line = held.line;
+    if (held.soldQty <= 0) continue; // refunded in full: nothing was sold
+
+    var soldNet = held.soldNet;
+    var item = held.item;
+    var cost = held.cost;
     var margin = soldNet - cost;
 
     totalRevenue += soldNet;
     totalCost += cost;
-    if (line.getString("tax_scheme") === "margin" && margin > 0) vatableMargin += margin;
+    if (
+      line.getString("tax_scheme") === "margin" &&
+      vat.vatApplies(registration, pbDate(held.sale.getString("occurred_at")))
+    ) {
+      vatEstimate += vat.marginVat(margin, standardRate);
+    }
 
     var dayKey = (held.sale.getString("occurred_at") || "").slice(0, 10);
     if (dayKey) {
@@ -130,10 +187,6 @@ function build(app, util, params) {
   for (var g = 0; g < table.length; g++) {
     table[g].margin_pct = table[g].revenue > 0 ? query.roundPct((table[g].margin / table[g].revenue) * 100) : 0;
   }
-
-  var settingsRow = util.settings(app);
-  var vatRegistered = settingsRow ? settingsRow.getBool("vat_registered") : false;
-  var vatEstimate = vatRegistered ? money.roundHalfUp(vatableMargin / 6) : 0;
 
   // --- Markdowns: current price below the market it was taken in at ------
   var markdownItems = [];
@@ -201,6 +254,8 @@ var PERIOD_SCOPED_TOTALS = {
 
 module.exports = {
   build: build,
+  soldLines: soldLines,
+  pbDate: pbDate,
   VALID_BY: VALID_BY,
   MONEY_FIELDS: MONEY_FIELDS,
   PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
