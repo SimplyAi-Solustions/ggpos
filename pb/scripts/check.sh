@@ -2753,13 +2753,16 @@ ok "the audit log CSV export is admin only"
 # immediately, and calling it absent.
 wait_for_audit_row() {
   # $1 audit_log filter query string (already url-encoded) -> the response
-  # JSON once totalItems >= 1, or the last response after ~10 seconds.
+  # JSON once it carries a row, or the last response after ~10 seconds.
+  # The row itself, not totalItems: PocketBase counts and lists in two
+  # queries, so a row committed between them reads as a count of 1 with no
+  # items.
   local filter="$1"
   local tries=0
   local json=""
   while [ "$tries" -lt 40 ]; do
     json="$(curl -s "$BASE/api/collections/audit_log/records?$filter" -H "Authorization: $SUPER_TOKEN")"
-    if [ "$(echo "$json" | jval totalItems)" -ge 1 ] 2>/dev/null; then
+    if [ -n "$(echo "$json" | jval items.0.id)" ]; then
       echo "$json"
       return 0
     fi
