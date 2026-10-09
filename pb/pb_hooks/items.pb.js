@@ -111,6 +111,16 @@ onRecordCreate((e) => {
     if (home) e.record.set("category", home);
   }
 
+  // Launch (docs/api-contract-launch.md, section 6): stock filed in a branch
+  // marked show_online, or anywhere beneath one, starts shown on the website.
+  // It only ever switches the flag on, so a create that set it keeps it.
+  if (!e.record.getBool("show_online") && e.record.getString("category")) {
+    const publicStock = require(`${__hooks}/lib/publicstock.js`);
+    if (publicStock.branchStartsOnline(e.app, e.record.getString("category"))) {
+      e.record.set("show_online", true);
+    }
+  }
+
   e.next();
 
   // Phase 3 (docs/PLAN.md, "Card images and market prices"): the first time
