@@ -113,6 +113,8 @@ export interface ItemRecord extends BaseRecord {
    * section 1). The server files a row created without one.
    */
   category?: string
+  /** On the shop's website (docs/api-contract-launch.md, section 6). */
+  show_online?: boolean
 }
 
 /** `label_jobs`. `template` is required by the migration, so queueLabel resolves one. */

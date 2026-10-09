@@ -40,6 +40,7 @@ import { CategoriesSection } from "@/features/settings/CategoriesSection"
 import { PermissionsTable } from "@/features/settings/PermissionsTable"
 import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
+import { WebsiteSection } from "@/features/settings/WebsiteSection"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   getSettings,
@@ -919,6 +920,7 @@ function Editor({
       </section>
 
       <CategoriesSection />
+      <WebsiteSection />
 
       {dock
         ? createPortal(
