@@ -505,6 +505,8 @@ routerAdd(
       if (bookingId) {
         const bookingLine = require(`${__hooks}/lib/bookings.js`).saleLine(e.app, raw, i, {
           vatRegistered: vatRegistered,
+          standardRate: standardRate,
+          lineVat: lineVatOf,
           planned: planned,
         });
         if (!bookingLine.ok) throw e.error(bookingLine.status, bookingLine.message, null);

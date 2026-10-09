@@ -1696,7 +1696,8 @@ function changedFields(record) {
  * switched on, else on none (it reports under Other). Returns { ok, plan }
  * in the sale route's own plan shape, or a refusal.
  *
- * ctx: { vatRegistered, planned (the lines planned so far) }.
+ * ctx: { vatRegistered, standardRate, lineVat (the sale route's resolver),
+ * planned (the lines planned so far) }.
  */
 function saleLine(app, raw, index, ctx) {
   var util = require(__hooks + "/lib/vaultutil.js");
@@ -1745,8 +1746,20 @@ function saleLine(app, raw, index, ctx) {
   if (amount < 1) return refusal(400, "Key an amount for " + name + ".");
   if (amount > left) return refusal(409, name + " has " + money.formatGBP(left) + " left to pay. Change the amount.");
 
-  var taxScheme = product ? product.getString("tax_scheme") || "standard" : "standard";
-  var rate = product ? product.getFloat("vat_rate") : vat.STANDARD_VAT_RATE;
+  // The Booking product's own treatment, else its branch's, through the
+  // sale route's resolver (docs/api-contract-launch.md, section 3); with no
+  // product, the shop's standard rate.
+  var lineVat =
+    product && ctx.lineVat
+      ? ctx.lineVat(product, "standard")
+      : {
+          scheme: "standard",
+          rate: vat.rateFor({
+            taxScheme: "standard",
+            rate: vat.standardRateOf(ctx.standardRate),
+            vatRegistered: ctx.vatRegistered,
+          }),
+        };
   var sentTitle = util.asStr(raw.title);
   return {
     ok: true,
@@ -1763,8 +1776,8 @@ function saleLine(app, raw, index, ctx) {
       qty: 1,
       unitPrice: amount,
       overrideFrom: null,
-      taxScheme: taxScheme,
-      vatRate: vat.rateFor({ taxScheme: taxScheme, rate: product ? rate : vat.STANDARD_VAT_RATE, vatRegistered: ctx.vatRegistered }),
+      taxScheme: lineVat.scheme,
+      vatRate: lineVat.rate,
     },
   };
 }

@@ -207,6 +207,14 @@ S32_MANAGER_TOKEN="$(curl -s -X POST "$BASE/api/collections/staff/auth-with-pass
 [ -n "$S32_CLERK_ID" ] && [ -n "$S32_CLERK_TOKEN" ] && [ -n "$S32_MANAGER_ID" ] && [ -n "$S32_MANAGER_TOKEN" ] \
   || fail "32: could not create the plain staff member and the manager"
 
+# Earlier sections leave lapsed holds and reservations behind, and the
+# crons that put them back in stock run every 15 minutes. Run them now, so
+# one landing part way through cannot move the shelf counts taken below.
+for S32_CRON in holds_release reservations_expire; do
+  S32_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/$S32_CRON" -H "Authorization: $SUPER_TOKEN")"
+  [ "$S32_CRON_STATUS" = "204" ] || fail "32: running the $S32_CRON cron returned $S32_CRON_STATUS, expected 204"
+done
+
 # --- 32a. The seeded tree ------------------------------------------------
 S32_STATUS="$(s32_get "$S32_CLERK_TOKEN" "/api/vault/categories/tree")"
 s32_expect "$S32_STATUS" 200 "" "the category tree for a plain staff member"
