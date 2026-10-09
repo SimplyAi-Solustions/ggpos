@@ -20,7 +20,8 @@
 export const CATEGORY_KINDS = ["single", "graded", "retro", "sealed", "accessory", "other"] as const
 export type CategoryKind = (typeof CATEGORY_KINDS)[number]
 
-export type CategoryTaxScheme = "margin" | "standard" | "exempt"
+/** A branch's default scheme; with `vat_rate` it is one of the five treatments (./vat). */
+export type CategoryTaxScheme = "margin" | "standard" | "zero" | "exempt"
 
 /** Branches go this many levels deep at most: depth 0 to 7. */
 export const MAX_CATEGORY_DEPTH = 8
@@ -40,6 +41,8 @@ export interface CategoryDefaults {
   game?: string
   platform?: string
   tax_scheme?: CategoryTaxScheme
+  /** With a standard scheme: 5 is reduced, 0 or empty the shop's standard rate. */
+  vat_rate?: number
 }
 
 /** A branch of the starter tree, with a stable key the filing rules use. */
@@ -495,8 +498,18 @@ export interface CategoryBranch {
   /** The seeded key ("tcg.pokemon.singles"), or "" for a branch staff added. */
   key: string
   image_url: string
-  /** As ids: the server resolves the starter tree's game and platform keys. */
-  defaults: { kind: CategoryKind | ""; game: string; platform: string; tax_scheme: CategoryTaxScheme | "" }
+  /**
+   * As ids: the server resolves the starter tree's game and platform keys.
+   * `vat_rate` is `categories.default_vat_rate`, which with `tax_scheme`
+   * makes the branch's VAT treatment (docs/api-contract-launch.md, section 3).
+   */
+  defaults: {
+    kind: CategoryKind | ""
+    game: string
+    platform: string
+    tax_scheme: CategoryTaxScheme | ""
+    vat_rate?: number
+  }
   counts: {
     /** Child branches, switched off ones included. */
     children: number

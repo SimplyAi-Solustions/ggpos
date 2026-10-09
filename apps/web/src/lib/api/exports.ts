@@ -99,6 +99,31 @@ export async function downloadExport(call: ExportCall): Promise<void> {
 }
 
 /**
+ * One export's CSV as text, for its Excel copy (docs/api-contract-launch.md,
+ * section 3): the same route and the same rows as the CSV download, turned
+ * into a workbook in the browser. Counted as taking the file.
+ */
+export async function fetchExportText(call: ExportCall): Promise<string> {
+  if (isDemo()) {
+    const text = await demo.exportFile(call.key).text()
+    noteRun(call.key)
+    return text
+  }
+  const response = await fetch(pb.buildURL(call.path), {
+    headers: { Authorization: pb.authStore.token },
+  })
+  if (!response.ok) {
+    throw new ClientResponseError({
+      status: response.status,
+      response: await response.json().catch(() => ({})),
+    })
+  }
+  const text = await response.text()
+  noteRun(call.key)
+  return text
+}
+
+/**
  * The ids of what is in stock, newest first, for the eBay listing file.
  *
  * That route takes an explicit list of ids rather than a filter, and the

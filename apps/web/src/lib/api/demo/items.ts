@@ -2,7 +2,7 @@
  * Stock, answered from the demo item store. Same signatures as the live
  * implementations in `src/lib/api/items.ts`, so no screen branches on mode.
  */
-import { displayCode } from "@gg/shared"
+import { displayCode, treatmentFields } from "@gg/shared"
 
 import { DEMO_GAMES, DEMO_LOCATIONS } from "@/lib/api/fixtures"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
@@ -151,6 +151,7 @@ export function updateItem(id: string, patch: ItemPatch): ItemDetail {
   if (patch.locationId !== undefined) item.location = patch.locationId
   if (patch.status !== undefined) item.status = patch.status
   if (patch.notes !== undefined) item.notes = patch.notes
+  if (patch.vatTreatment !== undefined) Object.assign(item, treatmentFields(patch.vatTreatment))
   item.updated = new Date().toISOString()
   return getItem(item.sku) as ItemDetail
 }

@@ -1,4 +1,4 @@
-import { parseDecimalToMinor } from "@gg/shared"
+import { parseDecimalToMinor, treatmentLabel, VAT_TREATMENTS } from "@gg/shared"
 import { z } from "zod"
 
 /**
@@ -57,11 +57,12 @@ const money = (label: string) =>
     .refine((value) => parseDecimalToMinor(value) !== null, MONEY_HINT)
     .refine((value) => (parseDecimalToMinor(value) ?? -1) >= 0, "Amounts cannot be negative.")
 
-/** How the item is sold for VAT: items take margin or standard, never exempt. */
-export const TAX_SCHEMES = [
-  { value: "margin", label: "Margin scheme" },
-  { value: "standard", label: "Standard rate" },
-] as const
+/**
+ * How the item is sold for VAT: one of the five treatments
+ * (docs/api-contract-launch.md, section 3), labelled at the standard 20
+ * percent; the screen relabels them at the shop's own standard rate.
+ */
+export const TAX_SCHEMES = VAT_TREATMENTS.map((value) => ({ value, label: treatmentLabel(value) }))
 
 export const addStockSchema = z
   .object({
@@ -69,7 +70,7 @@ export const addStockSchema = z
     categoryId: z.string().optional(),
     gameId: z.string().min(1, "Choose the game this belongs to."),
     kind: z.enum(["single", "graded", "retro", "sealed", "accessory", "other"]),
-    taxScheme: z.enum(["margin", "standard"]).default("standard"),
+    taxScheme: z.enum(["margin", "standard", "reduced", "zero", "exempt"]).default("standard"),
     cardId: z.string().optional(),
     title: z.string().trim().optional(),
     setCode: z.string().trim().optional(),

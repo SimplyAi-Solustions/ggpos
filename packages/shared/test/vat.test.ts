@@ -103,10 +103,10 @@ describe("the five treatments", () => {
   })
 
   it("says each one in words", () => {
-    expect(treatmentLabel("standard")).toBe("Standard 20%")
-    expect(treatmentLabel("standard", 17.5)).toBe("Standard 17.5%")
-    expect(treatmentLabel("reduced")).toBe("Reduced 5%")
-    expect(treatmentLabel("zero")).toBe("Zero 0%")
+    expect(treatmentLabel("standard")).toBe("Standard rate, 20%")
+    expect(treatmentLabel("standard", 17.5)).toBe("Standard rate, 17.5%")
+    expect(treatmentLabel("reduced")).toBe("Reduced rate, 5%")
+    expect(treatmentLabel("zero")).toBe("Zero rate, 0%")
     expect(treatmentLabel("exempt")).toBe("Exempt")
     expect(treatmentLabel("margin")).toBe("Margin scheme")
   })

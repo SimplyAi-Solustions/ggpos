@@ -26,9 +26,14 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import {
   CATEGORY_KINDS,
   UNSORTED_KEY,
+  isVatTreatment,
+  standardRateOf,
+  treatmentFields,
+  treatmentLabel,
+  treatmentOf,
+  VAT_TREATMENTS,
   type CategoryBranch,
   type CategoryKind,
-  type CategoryTaxScheme,
   type CategoryTree,
 } from "@gg/shared"
 import { ChevronRightIcon, EllipsisIcon, GripVerticalIcon } from "lucide-react"
@@ -88,6 +93,7 @@ import {
   useCategoryTree,
 } from "@/lib/api/categories"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { useVaultConfig } from "@/lib/api/config"
 
 const OPEN_KEY = "gg-category-tree-open"
 /** How far each level steps in: less on a phone, where eight levels must fit. */
@@ -104,11 +110,6 @@ const KIND_LABELS: Record<CategoryKind, string> = {
   other: "Other",
 }
 
-const TAX_LABELS: Record<CategoryTaxScheme, string> = {
-  margin: "Margin scheme",
-  standard: "Standard rate",
-  exempt: "Exempt",
-}
 
 function readOpen(): string[] | null {
   try {
@@ -503,7 +504,12 @@ function DefaultsForm({
   const [kind, setKind] = React.useState<string>(branch.defaults.kind || NONE)
   const [game, setGame] = React.useState<string>(branch.defaults.game || NONE)
   const [platform, setPlatform] = React.useState<string>(branch.defaults.platform || NONE)
-  const [tax, setTax] = React.useState<string>(branch.defaults.tax_scheme || NONE)
+  // The branch's VAT treatment, one of the five (launch contract, section 3).
+  const [tax, setTax] = React.useState<string>(
+    treatmentOf(branch.defaults.tax_scheme, branch.defaults.vat_rate) ?? NONE
+  )
+  const { data: config } = useVaultConfig()
+  const standardRate = standardRateOf(config?.settings.vat_standard_rate)
   const [image, setImage] = React.useState<File | null | undefined>(undefined)
   const [problem, setProblem] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
@@ -527,7 +533,12 @@ function DefaultsForm({
         default_kind: kind === NONE ? "" : (kind as CategoryKind),
         default_game: game === NONE ? "" : game,
         default_platform: platform === NONE ? "" : platform,
-        default_tax_scheme: tax === NONE ? "" : (tax as CategoryTaxScheme),
+        ...(isVatTreatment(tax)
+          ? {
+              default_tax_scheme: treatmentFields(tax).tax_scheme,
+              default_vat_rate: treatmentFields(tax).vat_rate,
+            }
+          : { default_tax_scheme: "" as const, default_vat_rate: 0 }),
         ...(image === undefined ? {} : { image }),
       })
       onDone()
@@ -596,10 +607,7 @@ function DefaultsForm({
             "branch-vat",
             tax,
             setTax,
-            (Object.keys(TAX_LABELS) as CategoryTaxScheme[]).map((value) => ({
-              value,
-              label: TAX_LABELS[value],
-            }))
+            VAT_TREATMENTS.map((value) => ({ value, label: treatmentLabel(value, standardRate) }))
           )}
           <Field layout="stacked" label="Picture" htmlFor="branch-image">
             <div className="flex flex-col items-start gap-4">

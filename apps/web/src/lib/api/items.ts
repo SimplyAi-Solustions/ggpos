@@ -6,7 +6,7 @@
  * store Add stock appends to. Screens call these, never `pb` directly.
  */
 import { ClientResponseError } from "pocketbase"
-import { displayCode } from "@gg/shared"
+import { displayCode, treatmentFields } from "@gg/shared"
 
 import { formatDateTime } from "@/lib/dates"
 
@@ -189,6 +189,7 @@ export async function updateItem(id: string, patch: ItemPatch): Promise<ItemDeta
   if (patch.locationId !== undefined) body.location = patch.locationId || null
   if (patch.status !== undefined) body.status = patch.status
   if (patch.notes !== undefined) body.notes = patch.notes
+  if (patch.vatTreatment !== undefined) Object.assign(body, treatmentFields(patch.vatTreatment))
   const item = await pb
     .collection("items")
     .update<ExpandedItem>(id, body, { expand: DETAIL_EXPAND })

@@ -12,6 +12,7 @@ import { displayCode, encodeCode, formatGBP } from "@gg/shared"
 import { ChevronRightIcon } from "lucide-react"
 
 import { poundsCell } from "@/features/reports/csv"
+import type { ExcelKind, ExcelValue } from "@/features/reports/excel"
 import { formatPercent } from "@/lib/format"
 import type { ReportKey, ReportRow } from "@/lib/api/types"
 import { formatDay } from "@/features/reports/range"
@@ -58,6 +59,10 @@ export interface ColumnSpec {
   sortValue?: (row: ReportRow) => number | string
   /** Where the column lands in the summary a phone shows instead of a table. */
   summary?: "title" | "detail" | "figure"
+  /** How the Excel download writes the column (features/reports/excel.ts); text when left out. */
+  excel?: ExcelKind
+  /** The Excel cell, when it is not the row's own `key`: money in pence, a percent as its figure. */
+  excelValue?: (row: ReportRow) => ExcelValue
 }
 
 export function textColumn(
@@ -90,6 +95,7 @@ export function moneyColumn(
     csv: (row) => poundsCell(num(row, key)),
     sortValue: (row) => num(row, key),
     summary,
+    excel: "money",
   }
 }
 
@@ -106,6 +112,7 @@ export function countColumn(
     csv: (row) => num(row, key),
     sortValue: (row) => num(row, key),
     summary,
+    excel: "count",
   }
 }
 
@@ -124,6 +131,7 @@ export function percentColumn(
     csv: (row) => num(row, key),
     sortValue: (row) => num(row, key),
     summary,
+    excel: "percent",
   }
 }
 
@@ -172,6 +180,8 @@ function dateColumn(key: string, label: string, summary?: ColumnSpec["summary"])
     },
     sortValue: (row) => str(row, key),
     summary,
+    excel: "date",
+    excelValue: (row) => str(row, key).slice(0, 10),
   }
 }
 
@@ -259,6 +269,8 @@ export function categoryColumns(options: {
       text: (row) => formatGBP(categoryNet(row)),
       csv: (row) => poundsCell(categoryNet(row)),
       sortValue: (row) => categoryNet(row),
+      excel: "money",
+      excelValue: categoryNet,
     },
     countColumn("count", "Sales", "detail"),
   ]
@@ -446,7 +458,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
     ],
     panels: [],
     emptyLine: "Nothing sold {when}, so there is no margin to show.",
-    note: "The VAT figure is a margin scheme estimate, one sixth of the positive margin on margin scheme lines, and reads zero while the shop is not VAT registered. Marked down counts stock priced under its value at intake, which is a proxy for a markdown rather than a log of every price change.",
+    note: "The VAT figure is the margin scheme's VAT: one sixth of each margin scheme line's margin at 20 percent, nothing on a line sold at a loss, and nothing before the shop's VAT registration date. Marked down counts stock priced under its value at intake, which is a proxy for a markdown rather than a log of every price change.",
   },
 
   stock: {
@@ -493,7 +505,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
           textColumn("label", "Name", "title"),
           countColumn("acquired", "Taken in", "detail"),
           countColumn("sold", "Sold"),
-          { ...percentColumn("rate", "Rate", "figure"), text: (row) => String(num(row, "rate")) },
+          { ...percentColumn("rate", "Rate", "figure"), text: (row) => String(num(row, "rate")), excel: "number" },
         ],
       },
       {

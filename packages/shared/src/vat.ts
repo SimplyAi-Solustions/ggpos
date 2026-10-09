@@ -150,17 +150,20 @@ export function standardRateOf(value: unknown): number {
   return Number.isFinite(rate) && rate > 0 && rate <= 100 ? rate : STANDARD_VAT_RATE
 }
 
-/** "Standard 20%", "Reduced 5%", "Zero 0%", "Margin scheme", "Exempt". */
+/**
+ * What every select calls a treatment: "Margin scheme", "Standard rate,
+ * 20%", "Reduced rate, 5%", "Zero rate, 0%", "Exempt".
+ */
 export function treatmentLabel(treatment: VatTreatment, standardRate: number = STANDARD_VAT_RATE): string {
   switch (treatment) {
     case "margin":
       return "Margin scheme"
     case "standard":
-      return `Standard ${standardRateOf(standardRate)}%`
+      return `Standard rate, ${standardRateOf(standardRate)}%`
     case "reduced":
-      return `Reduced ${REDUCED_VAT_RATE}%`
+      return `Reduced rate, ${REDUCED_VAT_RATE}%`
     case "zero":
-      return "Zero 0%"
+      return "Zero rate, 0%"
     default:
       return "Exempt"
   }

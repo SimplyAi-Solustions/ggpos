@@ -206,6 +206,8 @@ export interface CategoryPatch {
   /** A `platforms` id, or "" for none. */
   default_platform?: string
   default_tax_scheme?: CategoryTaxScheme | ""
+  /** With a standard scheme: 5 is reduced, 0 the shop's standard rate. */
+  default_vat_rate?: number
   /** A new picture, or null to take it off. */
   image?: File | null
 }

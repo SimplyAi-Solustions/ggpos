@@ -365,6 +365,13 @@ export interface SettingsForm {
   vatRegistered: boolean
   /** Printed on receipts while VAT registered. */
   vatNumber: string
+  // VAT (docs/api-contract-launch.md, section 3; Settings, VAT)
+  /** YYYY-MM-DD, or "" for none: nothing is charged before it. */
+  vatRegisteredFrom: string
+  /** 1 to 12: the first month of one of the shop's VAT quarters. */
+  vatPeriodStartMonth: number
+  /** Percent, as typed: "20". */
+  vatStandardRate: string
   receiptTerms: string
   // The till (settings.epos, docs/api-contract-epos.md, section 1)
   /** Whole percent: a discount above it needs `discount_over_limit`. */
@@ -458,6 +465,12 @@ export function recordToForm(record: SettingsRecord): SettingsForm {
     shopEmail: record.shop_email ?? "",
     vatRegistered: record.vat_registered === true,
     vatNumber: record.vat_number ?? "",
+    vatRegisteredFrom: (record.vat_registered_from ?? "").slice(0, 10),
+    vatPeriodStartMonth:
+      record.vat_period_start_month && record.vat_period_start_month >= 1 && record.vat_period_start_month <= 12
+        ? record.vat_period_start_month
+        : 1,
+    vatStandardRate: String(record.vat_standard_rate || 20),
     receiptTerms: record.receipt_terms ?? "",
     ...eposToForm(record.epos),
     sourcePriority: sourceOrder(record.source_priority, DEFAULT_TCG_PRIORITY),
@@ -515,6 +528,9 @@ export function formToPatch(form: SettingsForm): Partial<SettingsRecord> {
     shop_email: form.shopEmail.trim(),
     vat_registered: form.vatRegistered,
     vat_number: form.vatNumber.trim(),
+    vat_registered_from: form.vatRegisteredFrom ? `${form.vatRegisteredFrom} 00:00:00.000Z` : "",
+    vat_period_start_month: form.vatPeriodStartMonth,
+    vat_standard_rate: Number(form.vatStandardRate),
     receipt_terms: form.receiptTerms,
     epos: formToEpos(form),
     source_priority: form.sourcePriority,
@@ -727,6 +743,17 @@ export function validateSettings(form: SettingsForm): FormErrors {
   requirePounds(errors, "defaultFloat", form.defaultFloat)
   if (form.vatNumber.trim().length > 20) {
     errors.vatNumber = "A VAT number is at most 20 characters. Check it and try again."
+  }
+  // VAT (launch contract, section 3).
+  if (form.vatRegistered && !form.vatNumber.trim()) {
+    errors.vatNumber = "Enter the VAT number from the registration certificate. It prints on every receipt."
+  }
+  if (form.vatRegistered && !/^\d{4}-\d{2}-\d{2}$/.test(form.vatRegisteredFrom)) {
+    errors.vatRegisteredFrom = "Enter the date VAT registration starts, from the certificate. Nothing is charged before it."
+  }
+  const rate = Number(form.vatStandardRate)
+  if (!/^\d{1,2}(\.\d{1,2})?$/.test(form.vatStandardRate.trim()) || !(rate > 0) || rate >= 100) {
+    errors.vatStandardRate = "Enter the standard rate as a percent, for example 20."
   }
   return errors
 }

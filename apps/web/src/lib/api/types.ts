@@ -99,7 +99,10 @@ export interface ItemRecord extends BaseRecord {
   cost?: number
   market_at_intake?: number
   price?: number
-  tax_scheme?: "margin" | "standard"
+  /** With `vat_rate`, one of the five VAT treatments (`treatmentOf` in @gg/shared). */
+  tax_scheme?: "margin" | "standard" | "zero" | "exempt"
+  /** Percent: 5 is reduced, 0 or empty the shop's standard rate. */
+  vat_rate?: number
   status?: ItemStatus
   location?: string
   source?: "trade_in" | "supplier" | "opening_stock"
@@ -193,8 +196,8 @@ export interface NewItemInput {
   notes?: string
   /** The branch it is filed in; left out, the server files it by kind and game. */
   categoryId?: string
-  /** Margin or standard VAT; standard when nothing says otherwise. */
-  taxScheme?: "margin" | "standard"
+  /** One of the five VAT treatments; standard when nothing says otherwise. */
+  vatTreatment?: VatTreatment
 }
 
 // ---------------------------------------------------------------------------
@@ -555,6 +558,7 @@ import type {
   LoyaltyRule,
   LoyaltyTier,
   TierPerk,
+  VatTreatment,
 } from "@gg/shared"
 
 export type PaymentMethod =
@@ -608,7 +612,9 @@ export interface SaleLineRecord extends BaseRecord {
   unit_price?: number
   discount?: number
   vat_rate?: number
-  tax_scheme?: "margin" | "standard"
+  /** VAT inside the line's net, as charged. */
+  vat_amount?: number
+  tax_scheme?: "margin" | "standard" | "zero" | "exempt"
   status?: "sold" | "refunded"
 }
 
@@ -886,6 +892,8 @@ export interface ItemPatch {
   locationId?: string
   status?: ItemStatus
   notes?: string
+  /** Stored as a scheme and a rate (@gg/shared `treatmentFields`). */
+  vatTreatment?: VatTreatment
 }
 
 // ---- Labels ---------------------------------------------------------------
@@ -1136,6 +1144,14 @@ export interface VaultSettingsRow {
   quote_expiry_days?: number
   id_photo_retention_months?: number
   vat_registered?: boolean
+  /**
+   * VAT (docs/api-contract-launch.md, section 3): the day registration
+   * starts (nothing is charged before it), the first month of a VAT
+   * quarter (1 to 12) and the standard rate in percent.
+   */
+  vat_registered_from?: string
+  vat_period_start_month?: number
+  vat_standard_rate?: number
   shop_name?: string
   shop_address?: string
   shop_town?: string

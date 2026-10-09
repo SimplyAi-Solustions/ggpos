@@ -129,17 +129,20 @@ function standardRateOf(value) {
     const rate = typeof value === "number" ? value : Number(value);
     return Number.isFinite(rate) && rate > 0 && rate <= 100 ? rate : exports.STANDARD_VAT_RATE;
 }
-/** "Standard 20%", "Reduced 5%", "Zero 0%", "Margin scheme", "Exempt". */
+/**
+ * What every select calls a treatment: "Margin scheme", "Standard rate,
+ * 20%", "Reduced rate, 5%", "Zero rate, 0%", "Exempt".
+ */
 function treatmentLabel(treatment, standardRate = exports.STANDARD_VAT_RATE) {
     switch (treatment) {
         case "margin":
             return "Margin scheme";
         case "standard":
-            return `Standard ${standardRateOf(standardRate)}%`;
+            return `Standard rate, ${standardRateOf(standardRate)}%`;
         case "reduced":
-            return `Reduced ${exports.REDUCED_VAT_RATE}%`;
+            return `Reduced rate, ${exports.REDUCED_VAT_RATE}%`;
         case "zero":
-            return "Zero 0%";
+            return "Zero rate, 0%";
         default:
             return "Exempt";
     }

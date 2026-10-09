@@ -84,6 +84,9 @@ async function wireConfig(): Promise<VaultConfig> {
       epos: demoSettings().epos,
       vat_number: demoSettings().vat_number,
       vat_registered: demoSettings().vat_registered,
+      vat_registered_from: demoSettings().vat_registered_from,
+      vat_period_start_month: demoSettings().vat_period_start_month,
+      vat_standard_rate: demoSettings().vat_standard_rate,
     },
     loyalty: {
       ...config.loyalty,

@@ -14,9 +14,15 @@ import {
   adjustForCondition,
   displayCode,
   formatGBP,
+  isVatTreatment,
   parseDecimalToMinor,
+  standardRateOf,
+  treatmentLabel,
+  treatmentOf,
+  VAT_TREATMENTS,
   type CardCondition,
   type CategoryBranch,
+  type VatTreatment,
 } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
@@ -345,6 +351,7 @@ export function ItemPage({ sku }: { sku: string }) {
   // button here reads the same figure rather than a second copy of 48.
   const { data: config } = useVaultConfig()
   const holdHours = config?.settings.holds?.hours ?? 48
+  const standardRate = standardRateOf(config?.settings.vat_standard_rate)
   const cardPrices = useCardPrices(item?.card, item?.finish ?? "", item?.condition || "NM")
   const retroPrices = useRetroPrices(item?.retro_title, item?.completeness ?? "")
   const priced = item?.card ? cardPrices.data : retroPrices.data
@@ -375,7 +382,7 @@ export function ItemPage({ sku }: { sku: string }) {
   }
 
   const save = useMutation({
-    mutationFn: (patch: { price?: number; locationId?: string }) =>
+    mutationFn: (patch: { price?: number; locationId?: string; vatTreatment?: VatTreatment }) =>
       updateItem(item?.id ?? "", patch),
     onSuccess: () => {
       setPriceOpen(false)
@@ -605,6 +612,35 @@ export function ItemPage({ sku }: { sku: string }) {
                 {locations.map((location) => (
                   <SelectItem key={location.id} value={location.id}>
                     {location.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {/* The VAT treatment (docs/api-contract-launch.md, section 3): what
+            the till charges this item at once the shop is registered. None
+            set means its branch's default. */}
+        <div className="flex min-h-12 items-center justify-between gap-6 border-b border-hairline-soft py-3">
+          <MicroLabel>VAT</MicroLabel>
+          <div className="w-[220px]">
+            <Select
+              value={treatmentOf(item.tax_scheme, item.vat_rate)}
+              onValueChange={(next) => {
+                if (isVatTreatment(next)) save.mutate({ vatTreatment: next })
+              }}
+            >
+              <SelectTrigger aria-label="VAT" data-testid="item-vat">
+                <SelectValue placeholder="As its branch">
+                  {(value: string) =>
+                    isVatTreatment(value) ? treatmentLabel(value, standardRate) : "As its branch"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {VAT_TREATMENTS.map((treatment) => (
+                  <SelectItem key={treatment} value={treatment}>
+                    {treatmentLabel(treatment, standardRate)}
                   </SelectItem>
                 ))}
               </SelectContent>

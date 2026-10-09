@@ -51,6 +51,8 @@ interface DemoBranchRow {
   default_game: string
   default_platform: string
   default_tax_scheme: CategoryTaxScheme | ""
+  /** With a standard scheme: 5 is reduced, 0 the shop's standard rate. */
+  default_vat_rate: number
 }
 
 /** The demo id of a seeded branch: "tcg.pokemon.singles" is cat_tcg_pokemon_singles. */
@@ -130,6 +132,7 @@ function seedRows(): DemoBranchRow[] {
       default_game: defaults.game ? (games.get(defaults.game) ?? "") : "",
       default_platform: defaults.platform ? demoPlatformId(defaults.platform) : "",
       default_tax_scheme: defaults.tax_scheme ?? "",
+      default_vat_rate: defaults.vat_rate ?? 0,
     }
   })
 }
@@ -247,6 +250,7 @@ export function demoCategoryTree(): CategoryTree {
         game: row.default_game,
         platform: row.default_platform,
         tax_scheme: row.default_tax_scheme,
+        vat_rate: row.default_vat_rate,
       },
       counts: {
         children: node.children.length,
@@ -397,6 +401,7 @@ export interface DemoBranchInput {
   default_game?: string
   default_platform?: string
   default_tax_scheme?: CategoryTaxScheme | ""
+  default_vat_rate?: number
   /** A data URL standing in for the uploaded file, or "" to take it off. */
   image_url?: string
 }
@@ -428,6 +433,7 @@ export function demoCreateCategory(
     default_game: "",
     default_platform: "",
     default_tax_scheme: "",
+    default_vat_rate: 0,
   }
   store().push(row)
   return demoBranch(row.id) as CategoryBranch
@@ -454,6 +460,7 @@ export function demoUpdateCategory(
   if (input.default_game !== undefined) row.default_game = input.default_game
   if (input.default_platform !== undefined) row.default_platform = input.default_platform
   if (input.default_tax_scheme !== undefined) row.default_tax_scheme = input.default_tax_scheme
+  if (input.default_vat_rate !== undefined) row.default_vat_rate = input.default_vat_rate
   if (input.image_url !== undefined) row.image_url = input.image_url
   return demoBranch(id) as CategoryBranch
 }

@@ -49,7 +49,7 @@ export type Adjustment =
   | { kind: "amount"; value: number }
   | { kind: "percent"; value: number }
 
-export type TaxScheme = "margin" | "standard" | "exempt"
+export type TaxScheme = "margin" | "standard" | "zero" | "exempt"
 
 export const NO_ADJUSTMENT: Adjustment = { kind: "none" }
 

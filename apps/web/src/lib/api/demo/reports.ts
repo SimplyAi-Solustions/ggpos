@@ -309,6 +309,21 @@ const BRANCH_WEIGHTS: Record<string, number> = {
 }
 
 /**
+ * The top-level branches with the share of a range's sales each takes, as
+ * the Sales report's category table splits them, for the demo dashboard
+ * (lib/api/demo/dashboard.ts), so its branches read the same way.
+ */
+export function demoTopBranchShares(from: string): { id: string; label: string; weight: number }[] {
+  return demoCategoryTree()
+    .branches.filter((branch) => branch.parent === "")
+    .map((branch) => ({
+      id: branch.id,
+      label: branch.name,
+      weight: (BRANCH_WEIGHTS[branch.key] ?? 4) * (0.7 + unit(from, `category-${branch.id}`) * 0.6),
+    }))
+}
+
+/**
  * Sales by category (docs/api-contract-inventory.md, section 1.4): the
  * branch's child branches with what each took, plus "In <name> itself" for
  * what is filed on the branch itself. Each level is split from its parent's

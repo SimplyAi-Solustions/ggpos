@@ -204,6 +204,8 @@ function treeResponse(app) {
           game: record.getString("default_game"),
           platform: record.getString("default_platform"),
           tax_scheme: record.getString("default_tax_scheme"),
+          // With the scheme, the branch's VAT treatment (launch contract, section 3).
+          vat_rate: record.getFloat("default_vat_rate"),
         },
         counts: {
           children: node.children.length,

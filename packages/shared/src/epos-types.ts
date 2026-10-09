@@ -93,7 +93,7 @@ export interface ReceiptLine {
   /** What the line comes to after discount. */
   total: number
   vat_rate: number
-  tax_scheme: "margin" | "standard" | "exempt"
+  tax_scheme: "margin" | "standard" | "zero" | "exempt"
   /**
    * On a sale taken with a part-exchange or an exchange (section 7), the
    * lines traded in (`trade`) and brought back (`return`) follow the sale's
@@ -308,7 +308,7 @@ export interface TillCatalogueProduct {
   price: number
   open_price: boolean
   image_url: string
-  tax_scheme: "standard" | "margin" | "exempt"
+  tax_scheme: "standard" | "margin" | "zero" | "exempt"
 }
 
 export interface TillCatalogueItem {
@@ -391,7 +391,7 @@ export interface SaleLookupLine {
   net: number
   refundable_qty: number
   refundable_amount: number
-  tax_scheme: "margin" | "standard" | "exempt"
+  tax_scheme: "margin" | "standard" | "zero" | "exempt"
 }
 
 export interface SaleLookup {
