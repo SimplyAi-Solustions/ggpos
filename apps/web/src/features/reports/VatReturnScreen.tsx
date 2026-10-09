@@ -86,8 +86,11 @@ const RATE_COLUMNS: ColumnSpec[] = [
 /** A treatment as the drill-down says it. */
 function treatmentWords(row: ReportRow, standardRate: number): string {
   const treatment = str(row, "treatment") as VatTreatment
-  if (treatment === "standard" && Number(row.rate) !== standardRate && Number(row.rate) > 0) {
-    return `Standard rate, ${String(row.rate)}%`
+  if (treatment === "standard") {
+    const rate = Number(row.rate)
+    // Sold inside the registration but before VAT was switched on at the till.
+    if (!(rate > 0)) return "Standard, no VAT charged"
+    if (rate !== standardRate) return `Standard rate, ${rate}%`
   }
   return treatmentLabel(treatment, standardRate)
 }
@@ -218,7 +221,7 @@ function Purchases({ vat, admin }: { vat: VatReturn; admin: boolean }) {
       <Field label="Box 4, VAT on purchases" htmlFor="vat-box4">
         <MoneyInput id="vat-box4" value={box4} onChange={setBox4} invalid={Boolean(problem)} />
       </Field>
-      <Field label="Box 7, purchases without VAT" htmlFor="vat-box7">
+      <Field label="Box 7, net purchases" htmlFor="vat-box7">
         <MoneyInput id="vat-box7" value={box7} onChange={setBox7} invalid={Boolean(problem)} />
       </Field>
       <div className="flex flex-wrap items-center gap-8">

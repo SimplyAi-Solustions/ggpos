@@ -168,7 +168,7 @@ function ProductRow({
   })
   const current = treatmentOf(product.tax_scheme, product.vat_rate) ?? "standard"
   return (
-    <li className="flex min-h-14 flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-hairline-soft py-3 first:border-t">
+    <li className="flex min-h-14 flex-col gap-2 border-b border-hairline-soft py-3 first:border-t min-[560px]:flex-row min-[560px]:items-center min-[560px]:justify-between min-[560px]:gap-6">
       <span className="flex min-w-0 flex-col gap-1">
         <span className="text-[15px] text-foreground">{product.name}</span>
         {product.active ? null : <Hint>Switched off</Hint>}
@@ -178,7 +178,7 @@ function ProductRow({
           </span>
         ) : null}
       </span>
-      <div className="w-[220px]">
+      <div className="w-full min-[560px]:w-[220px]">
         <Select
           value={current}
           onValueChange={(next) => {

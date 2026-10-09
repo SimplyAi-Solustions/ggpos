@@ -13,6 +13,10 @@
  * (pb_hooks/lib/vaultutil.js's csvCell). See docs/api-contract.md's Phase 4
  * section for every key, dimension, response shape and refusal.
  *
+ * The launch adds the dashboard, the VAT return and its purchase figures
+ * (docs/api-contract-launch.md, section 3) as routes of their own at the
+ * foot of this file, with their own shapes.
+ *
  * Every real builder lives in pb_hooks/lib/reports/*.js; this file only
  * validates the request and wires it to the right one, keeping the handler
  * itself small (pb/README.md, CLAUDE.md's "Hooks").

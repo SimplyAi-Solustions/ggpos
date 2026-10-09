@@ -39,8 +39,11 @@ const PAYMENT_LABELS: Record<string, string> = {
   none: "(none)",
 }
 
-/** The share of the shop's takings each of the ten best sellers had. */
-const TOP_WEIGHTS = [18, 14, 11, 9, 8, 7, 6, 5, 4, 3]
+/** How many of each of the ten best sellers went, a line of stock selling more than a single card. */
+const TOP_UNITS = [14, 11, 9, 8, 6, 5, 4, 3, 2, 2]
+
+/** Singles, graded cards and retro are one of a kind on the shelf. */
+const ONE_OFF_KINDS = new Set(["single", "graded", "retro"])
 
 function inputFor(from: string, to: string): DashboardInput {
   const settings = demoSettings()
@@ -120,25 +123,24 @@ function inputFor(from: string, to: string): DashboardInput {
   }
 }
 
-/** The demo shelf's ten best sellers over the range, from a third of what was taken. */
+/**
+ * The demo shelf's ten best sellers over the range: a stock line sells by
+ * the dozen, a single card once, each at its own price, largest first.
+ */
 function topItems(board: Dashboard): Dashboard["top_items"] {
   ensureSeeded()
-  const shelf = itemStore()
-    .filter((item) => (item.price ?? 0) > 0)
-    .slice(0, TOP_WEIGHTS.length)
-  const nets = split(Math.max(0, Math.round(board.sales.net / 3)), TOP_WEIGHTS.slice(0, shelf.length))
-  return shelf
+  if (board.sales.net <= 0) return []
+  const shelf = itemStore().filter((item) => (item.price ?? 0) > 0)
+  const lines = shelf.filter((item) => !ONE_OFF_KINDS.has(item.kind))
+  const singles = shelf.filter((item) => ONE_OFF_KINDS.has(item.kind))
+  const picked = [...lines.slice(0, 6), ...singles.slice(0, 4)]
+  return picked
     .map((item, index) => {
-      const net = nets[index] ?? 0
-      return {
-        title: item.title ?? item.sku,
-        sku: item.sku,
-        net,
-        profit: Math.round(net * 0.32),
-        count: Math.max(1, Math.round(net / Math.max(1, item.price ?? 1))),
-      }
+      const count = ONE_OFF_KINDS.has(item.kind) ? 1 : (TOP_UNITS[index] ?? 1)
+      const net = (item.price ?? 0) * count
+      return { title: item.title ?? item.sku, sku: item.sku, net, profit: Math.round(net * 0.32), count }
     })
-    .filter((row) => row.net > 0)
+    .sort((a, b) => b.net - a.net || a.title.localeCompare(b.title))
 }
 
 export function demoDashboard(query: DashboardQuery): Dashboard {
