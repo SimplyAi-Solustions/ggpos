@@ -187,14 +187,19 @@ test.describe("settings", () => {
       "Pricing rules",
       "Sell price",
       "Limits",
+      "Till",
+      "Permissions",
+      "Receipts",
       "Shop",
       "Receipt terms",
       "Price sources",
+      "Tills",
+      "Printers",
     ]) {
-      await expect(page.getByRole("heading", { level: 2, name: section })).toHaveCount(1)
+      await expect(page.getByRole("heading", { level: 2, name: section, exact: true })).toHaveCount(1)
     }
     const headings = await page.getByRole("heading", { level: 2 }).count()
-    expect(headings).toBeGreaterThanOrEqual(7)
+    expect(headings).toBeGreaterThanOrEqual(12)
   })
 
   test("offers Settings in the palette to an admin and not to anybody else", async ({
@@ -236,80 +241,147 @@ test.describe("settings", () => {
     ).toBeVisible()
     await expect(page.getByLabel(/api key/i)).toHaveCount(0)
     await expect(page.getByLabel(/vapid/i)).toHaveCount(0)
-    // The card reader is paired with a code off the reader, never a key.
-    await expect(page.getByLabel("Pairing code")).toBeVisible()
-    await expect(page.getByLabel(/sumup key/i)).toHaveCount(0)
+    // Card payments are keyed on the Tide reader by hand: nothing to pair,
+    // and no key anywhere on the page.
+    await expect(page.getByTestId("card-provider")).toHaveText("Tide Card Reader, keyed by hand.")
+    await expect(page.getByLabel(/sumup/i)).toHaveCount(0)
+    await expect(page.getByText(/SumUp/)).toHaveCount(0)
   })
 
-  // --- The card reader (Phase 7) ---
-  test("says SumUp did not answer rather than that nothing is paired", async ({
-    page,
-  }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem("gg-demo-reader", "down")
-    })
+  // --- The till (Phase 8) ---
+  test("saves the till's settings with the rest", async ({ page }) => {
     await signIn(page)
     await go(page, "Settings")
 
-    // The wrong sentence here sends an admin off to pair a reader that was
-    // paired all along.
-    await expect(page.getByTestId("reader-error")).toHaveText(
-      "SumUp did not answer. Try again in a moment."
-    )
-    await expect(page.getByText("No reader is paired yet.")).toHaveCount(0)
-  })
+    await expect(page.getByLabel("Discount limit")).toHaveValue("10")
+    await expect(page.getByLabel("Auto-lock")).toHaveValue("5")
+    await expect(page.getByLabel("Default float")).toHaveValue("100.00")
 
-  test("pairs a card reader and chooses which one takes the money", async ({
-    page,
-  }) => {
-    await signIn(page)
-    await go(page, "Settings")
-
-    const section = page.getByTestId("card-reader")
-    await expect(section).toBeVisible()
-    // The demo shop has one Solo on the counter already.
-    await expect(section.getByTestId("reader-list").locator("li")).toHaveCount(1)
-    await expect(section).toContainText("Counter Solo")
-    await expect(section).toContainText("In use")
-
-    // A code that is not eight or nine characters is refused in SumUp's words.
-    await section.getByLabel("Pairing code").fill("ABC")
-    await section.getByTestId("pair-reader").click()
+    await page.getByLabel("Discount limit").fill("15")
+    await page.getByLabel("Auto-lock").fill("200")
+    await page.getByRole("group", { name: "Quick cash notes" }).getByRole("button", { name: "£50" }).click()
+    await primary(page, "Save settings").click()
     await expect(
-      section.getByText(
-        "That pairing code was not accepted. Read the code off the reader again; it changes each time."
-      )
+      page.getByText("Enter the minutes as a whole number up to 120, for example 5. Zero never locks on a timer.")
     ).toBeVisible()
 
-    await section.getByLabel("Pairing code").fill("QWER5678")
-    await section.getByLabel("Name").fill("Back counter")
-    await section.getByTestId("pair-reader").click()
+    await page.getByLabel("Auto-lock").fill("3")
+    await page.getByLabel("VAT number").fill("GB123456789")
+    await page.getByLabel("Footer").fill("Thanks for coming in.")
+    await primary(page, "Save settings").click()
+    await expect(page.getByTestId("settings-saved")).toBeVisible()
 
-    await expect(section.getByTestId("reader-note")).toHaveText(
-      "Back counter is paired."
-    )
-    await expect(section.getByTestId("reader-list").locator("li")).toHaveCount(2)
-
-    // The new one takes over only when it is chosen.
-    await section
-      .getByRole("listitem")
-      .filter({ hasText: "Back counter" })
-      .getByRole("button", { name: "Use this reader" })
-      .click()
-    await expect(section.getByTestId("reader-note")).toHaveText(
-      "Card payments go to Back counter."
-    )
+    await go(page, "Stock")
+    await expect(page.getByRole("heading", { name: "Stock" })).toBeVisible()
+    await go(page, "Settings")
+    await expect(page.getByLabel("Discount limit")).toHaveValue("15")
+    await expect(page.getByLabel("Auto-lock")).toHaveValue("3")
+    await expect(page.getByLabel("VAT number")).toHaveValue("GB123456789")
+    await expect(page.getByLabel("Footer")).toHaveValue("Thanks for coming in.")
     await expect(
-      section.getByRole("listitem").filter({ hasText: "Back counter" })
-    ).toContainText("In use")
+      page.getByRole("group", { name: "Quick cash notes" }).getByRole("button", { name: "£50" })
+    ).toHaveAttribute("aria-pressed", "false")
+  })
 
-    // And removing it puts the counter Solo back in use.
-    await section
-      .getByRole("listitem")
-      .filter({ hasText: "Back counter" })
-      .getByRole("button", { name: "Remove Back counter" })
-      .click()
-    await expect(section.getByTestId("reader-list").locator("li")).toHaveCount(1)
-    await expect(section).toContainText("Counter Solo")
+  test("keeps settings and staff with an admin in the permissions table", async ({ page }) => {
+    await signIn(page)
+    await go(page, "Settings")
+
+    const table = page.getByTestId("permissions-table")
+    await table.scrollIntoViewIfNeeded()
+    await expect(table.getByTestId("permission-settings_manage")).toContainText("Admin")
+    await expect(table.getByTestId("permission-settings_manage")).toContainText("Fixed")
+    await expect(table.getByTestId("permission-staff_manage").getByRole("combobox")).toHaveCount(0)
+
+    const noSale = table.getByRole("combobox", { name: "Lowest role for open the drawer with no sale" })
+    await expect(noSale).toContainText("Manager")
+    await noSale.click()
+    await page.getByRole("option", { name: "Staff" }).click()
+    await expect(noSale).toContainText("Staff")
+    await primary(page, "Save settings").click()
+    await expect(page.getByTestId("settings-saved")).toBeVisible()
+  })
+
+  test("registers this browser as a till, and revokes a device", async ({ page }) => {
+    await signIn(page)
+    await go(page, "Settings")
+    const tills = page.getByTestId("tills-section")
+    await tills.scrollIntoViewIfNeeded()
+
+    // The demo browser starts as a till.
+    await expect(tills.getByTestId("this-browser")).toContainText("This browser is a till on Counter")
+    await expect(tills.getByTestId("this-browser-check")).toHaveText("The server knows this device.")
+
+    await tills.getByRole("button", { name: "Forget this device" }).click()
+    await expect(tills.getByText("This browser is not a till.")).toBeVisible()
+
+    await tills.getByRole("button", { name: "Register this device" }).click()
+    const sheet = page.getByRole("dialog", { name: "Register this device" })
+    await expect(sheet).toBeVisible()
+    await sheet.getByRole("button", { name: "Register this device" }).click()
+    await expect(sheet.getByText("Give this device a name, for example Counter Mac.")).toBeVisible()
+    await sheet.getByLabel("Name", { exact: true }).fill("Counter Mac")
+    await sheet.getByRole("button", { name: "Register this device" }).click()
+
+    const stepUp = page.getByRole("dialog", { name: "Confirm your password to continue" })
+    await expect(stepUp).toBeVisible()
+    await stepUp.getByLabel("Password").fill(DEMO_PASSWORD)
+    await stepUp.getByRole("button", { name: "Continue" }).click()
+
+    await expect(sheet).toBeHidden()
+    await expect(tills.getByTestId("this-browser")).toContainText("as Counter Mac")
+    const devices = tills.getByTestId("device-row")
+    await expect(devices.filter({ hasText: "Counter Mac" })).toContainText("This browser")
+
+    // Revoking the old demo till asks once more, then marks it.
+    const old = devices.filter({ hasText: "Demo till" })
+    await old.getByRole("button", { name: "Revoke Demo till" }).click()
+    await old.getByRole("button", { name: "Revoke Demo till" }).click()
+    await expect(old).toContainText("Revoked")
+  })
+
+  test("adds, renames and switches off a register", async ({ page }) => {
+    await signIn(page)
+    await go(page, "Settings")
+    const tills = page.getByTestId("tills-section")
+    await tills.scrollIntoViewIfNeeded()
+
+    await tills.getByRole("button", { name: "Add a register" }).click()
+    const sheet = page.getByRole("dialog", { name: "Add a register" })
+    await sheet.getByLabel("Name", { exact: true }).fill("counter")
+    await sheet.getByRole("button", { name: "Add register" }).click()
+    await expect(
+      sheet.getByText("There is already a register called counter. Choose another name.")
+    ).toBeVisible()
+    await sheet.getByLabel("Name", { exact: true }).fill("Back room")
+    await sheet.getByRole("button", { name: "Add register" }).click()
+    await expect(sheet).toBeHidden()
+    await expect(tills.getByTestId("register-row")).toHaveCount(2)
+
+    await tills.getByRole("button", { name: "Rename Back room" }).click()
+    const rename = page.getByRole("dialog", { name: "Rename Back room" })
+    await rename.getByLabel("Name", { exact: true }).fill("Events table")
+    await rename.getByRole("button", { name: "Save name" }).click()
+    await expect(rename).toBeHidden()
+
+    const row = tills.getByTestId("register-row").filter({ hasText: "Events table" })
+    await row.getByRole("button", { name: "Switch off Events table" }).click()
+    await expect(row).toContainText("Switched off")
+  })
+
+  test("shows a manager the Tills and nothing else", async ({ page }) => {
+    await page.goto("/login?demo=1")
+    await page.getByLabel("Email").fill("mo@ggentertainment.co.uk")
+    await page.getByLabel("Password").fill("ggvault-manager")
+    await page.getByRole("button", { name: "Sign in" }).click()
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+    await go(page, "Settings")
+
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Settings")
+    await expect(page.getByTestId("tills-section")).toBeVisible()
+    await expect(page.getByTestId("rules-matrix")).toHaveCount(0)
+    await expect(page.getByTestId("permissions-table")).toHaveCount(0)
+    // A manager registers devices but does not rename registers.
+    await expect(page.getByRole("button", { name: "Add a register" })).toHaveCount(0)
   })
 })

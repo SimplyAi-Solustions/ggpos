@@ -86,7 +86,7 @@ export function CountTable({
                 <TableRow
                   key={value}
                   data-active={active === value || undefined}
-                  className="data-[active]:bg-row-hover"
+                  className="min-[900px]:data-[active]:bg-row-hover"
                 >
                   <TableCell className="w-28 text-[16px] font-medium">
                     <label htmlFor={id}>{denominationLabel(value)}</label>
