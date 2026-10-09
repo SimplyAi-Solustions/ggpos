@@ -25,6 +25,7 @@ function build(app, util, params) {
   var daily = require(`${__hooks}/lib/reports/daily.js`);
   var saleline = require(`${__hooks}/lib/shared/saleline.js`);
   var money = require(`${__hooks}/lib/shared/money.js`);
+  var paymentLabels = require(`${__hooks}/lib/shared/epos-types.js`).TENDER_LABELS;
 
   var by = VALID_BY[params.by] ? params.by : "game";
   var group = params.group;
@@ -143,7 +144,11 @@ function build(app, util, params) {
       // "none", the same bucket name daily_stats.sales_total_by_payment
       // uses, never blank and never folded into some other method.
       key = held.sale.getString("payment") || "none";
-      label2 = key === "none" ? "(none)" : key;
+      // The tender's own label, so a historic SumUp sale reads "Card
+      // (SumUp)" beside the till's "Card" (docs/api-contract-epos.md,
+      // section 5).
+      label2 =
+        key === "none" ? "(none)" : key === "mixed" ? "Mixed" : paymentLabels[key] || key;
     } else if (by === "staff") {
       key = held.sale.getString("staff") || "";
       var staffRow = staffLookup(key);

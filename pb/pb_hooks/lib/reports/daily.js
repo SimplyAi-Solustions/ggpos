@@ -111,7 +111,21 @@ function buildDayRow(app, dateStr, stockValuation) {
   // so every revenue total the reports package returns is gross minus this
   // one field, computed the one place both live - see
   // docs/api-contract.md's Phase 4 section.
-  var salesTotalByPayment = { sumup_card: 0, cash: 0, store_credit: 0, points: 0, mixed: 0, none: 0 };
+  // One bucket per tender a sale can be paid by. `sumup_card` stays for
+  // the sales taken before SumUp was removed (docs/api-contract-epos.md,
+  // section 5); the till's own card is `card_tide`.
+  var salesTotalByPayment = {
+    sumup_card: 0,
+    card_tide: 0,
+    card_other: 0,
+    cash: 0,
+    store_credit: 0,
+    points: 0,
+    part_exchange: 0,
+    gift_card: 0,
+    mixed: 0,
+    none: 0,
+  };
   var salesRefunded = 0;
   for (var i = 0; i < sales.length; i++) {
     var sale = sales[i];

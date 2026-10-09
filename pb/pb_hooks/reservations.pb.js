@@ -3,9 +3,9 @@
 /**
  * reservations.pb.js - the staff reservation's own expiry cron.
  *
- * Kept in its own file rather than added to crons.pb.js or wants.pb.js,
- * the same way crons_sumup.pb.js is: one cronAdd() per job, in the file
- * that owns the logic behind it (lib/reservations.js).
+ * Kept in its own file rather than added to crons.pb.js or wants.pb.js:
+ * one cronAdd() per job, in the file that owns the logic behind it
+ * (lib/reservations.js).
  *
  * The schedule is offset from wants.pb.js's `holds_release` by five
  * minutes on purpose. Both walk the same `items` query and each skips
