@@ -7,9 +7,17 @@
  *   GET  /api/vault/cash-sessions/current
  *   POST /api/vault/cash-sessions/{id}/close
  *
- * docs/api-contract.md ("Cash sessions"). One session is open at a time;
- * no cash payout and no cash sale happens without one (docs/PLAN.md,
- * "Core flows and rules > Cash").
+ * docs/api-contract.md ("Cash sessions"). No cash payout and no cash sale
+ * happens without an open session (docs/PLAN.md, "Core flows and rules >
+ * Cash").
+ *
+ * Since the EPOS schema a session belongs to a register, one open per
+ * register, and the till opens and closes its own through till.pb.js
+ * (docs/api-contract-epos.md, section 3). These legacy routes keep their
+ * shapes and work on the default register (lib/registers.js), so the web
+ * app's Cash screen keeps working until it moves to the till's routes.
+ * `current` and `close` also take an optional `register`; the session
+ * they return carries its register.
  *
  * cash_movements.amount is signed, so the expected drawer total is the
  * opening float plus every movement - see lib/vaultutil.js.
@@ -84,6 +92,7 @@ routerAdd(
         result = {
           session: {
             id: session.id,
+            register: session.getString("register"),
             opened_by: session.getString("opened_by"),
             opened_at: session.getString("opened_at"),
             float: float,
@@ -104,15 +113,22 @@ routerAdd(
 );
 
 // ---------------------------------------------------------------------
-// GET /api/vault/cash-sessions/current
+// GET /api/vault/cash-sessions/current?register=
 // ---------------------------------------------------------------------
 routerAdd(
   "GET",
   "/api/vault/cash-sessions/current",
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
+    const csv = require(`${__hooks}/lib/csv.js`);
+    const registers = require(`${__hooks}/lib/registers.js`);
 
-    const session = util.openCashSession(e.app);
+    // The named register's session, or the default register's.
+    const found = registers.resolve(e.app, csv.queryParam(e, "register"));
+    if (!found.register) throw e.error(found.status, found.message, null);
+    const registerId = found.register.id;
+
+    const session = registers.openSession(e.app, registerId);
     if (!session) {
       return e.json(200, { session: null, expected: 0, movements: [] });
     }
@@ -136,6 +152,9 @@ routerAdd(
     return e.json(200, {
       session: {
         id: session.id,
+        // A session from before the EPOS schema with no register belongs to
+        // the default register (lib/registers.js openSession).
+        register: session.getString("register") || registerId,
         opened_by: session.getString("opened_by"),
         opened_at: session.getString("opened_at"),
         float: session.getInt("float"),
@@ -156,6 +175,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
+    const registers = require(`${__hooks}/lib/registers.js`);
 
     const staff = e.auth;
     const body = util.body(e);
@@ -168,6 +188,20 @@ routerAdd(
     }
     if (session.getString("closed_at")) {
       throw e.error(409, "That cash session is already closed.", null);
+    }
+
+    // The session's register: its own, or the default register's for a
+    // session from before the EPOS schema. A caller that names a register
+    // only closes that register's drawer.
+    const fallback = registers.defaultRegister(e.app);
+    const sessionRegister = session.getString("register") || (fallback ? fallback.id : "");
+    const named = util.asStr(body.register);
+    if (named) {
+      const found = registers.resolve(e.app, named);
+      if (!found.register) throw e.error(found.status, found.message, null);
+      if (found.register.id !== sessionRegister) {
+        throw e.error(409, "That cash session belongs to another till. Close it from that till.", null);
+      }
     }
 
     const counted = util.asInt(body.counted, 0);
@@ -208,6 +242,7 @@ routerAdd(
     return e.json(200, {
       session: {
         id: session.id,
+        register: sessionRegister,
         opened_by: session.getString("opened_by"),
         opened_at: session.getString("opened_at"),
         float: session.getInt("float"),
