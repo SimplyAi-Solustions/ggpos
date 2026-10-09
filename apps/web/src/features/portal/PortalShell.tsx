@@ -25,7 +25,7 @@ import { useCustomerSession } from "@/features/portal/session"
  * The portal chrome.
  *
  * A phone is personal, so there is no idle lock and no shared-counter
- * behaviour here: the wordmark, a five-slot thumb bar, and the notification
+ * behaviour here: the wordmark, a six-slot thumb bar, and the notification
  * bell with its unread count. At 1440 the bar becomes text links and the
  * whole thing sits in a narrow centred column, which is what a page built
  * for one person in one hand should look like on a desk.

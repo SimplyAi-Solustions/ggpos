@@ -142,7 +142,7 @@ Rules:
 - My Vault (`/account`) is built for one person in one hand, so its column is
   560px, not 1,040px, with the same 20px gutters below 640px and 40px above.
   The header carries the "My Vault" wordmark and the notification bell only.
-  Its bar has five slots, Card, Quotes, Wants, Credit and Me: below 900px it
+  Its bar has six slots, Card, Book, Quotes, Wants, Credit and Me: below 900px it
   is fixed to the bottom with a hairline top edge and the safe-area inset, and
   the screen's one block button sits directly on top of it as one fixed group
   (`usePortalDock` in `features/portal/dock.ts` gives a screen the slot to
@@ -610,7 +610,194 @@ has one colour.
 
 ---
 
-## 11. Verifying a change
+## 11. Launch screens
+
+Four packages added screens after the till: bookings, research and agents,
+photos and the website switch, and the reports dashboard with VAT. They keep
+every rule above, add no token, face or radius, and are built from parts
+section 4 already has. Where a thing stands is said in words, never by colour
+alone, and a server refusal is shown as the server's own sentence.
+
+### Bookings
+
+- `/counter/bookings` has three tabs, Day, Week and Events, with the day and
+  tab in the address so coming back from the till lands where staff left.
+  "New booking" (on Events, "New event") is the one block, docked in the
+  thumb zone below 900px. A 13px line under the date bar says what just
+  happened, in `--destructive` when it went wrong. Week is seven day columns
+  from 900px.
+- The **day grid** has a column per table, PC, console or room, 132px at the
+  least, and the hours down a 56px rail in Space Mono 13px, 72px to the hour,
+  ruled in `--hairline-faint`. Names and hours stay put while the grid
+  scrolls inside itself, so the page never scrolls sideways. A 1px ink line
+  marks now. A free slot draws nothing until it is hovered or focused, then
+  tints to `--row-hover` with a 20px plus; tapping it starts a booking there.
+- A **block** is a 4px-radius outlined box, a touch target like a till tile,
+  sharing its column in lanes where two overlap. It grows from the name (Jost
+  500 14px) to "4 players" or "Walk-in, on the clock", then its state in
+  words ("Held", "Checked in") or what is left to pay ("£8.00 to pay"). Held
+  is a dashed hairline; finished and no-show go grey. Checked in fills ink
+  with paper text, the one block in use, as a chosen chip fills. An event
+  fills the tables it takes on a `--secondary` tint, so the bookings drawn
+  over it still read, "Event" in `MicroLabel` over its name. These are the
+  grid's only fills.
+- **Moving**: press a held or booked block and drag past 6px. A 1px dashed
+  ink outline shows where it lands, snapped to the resource's slot, its
+  length kept. On drop the block sits there at once; if the server refuses
+  it goes back and the notice line says why in the server's words.
+- A **station tile** is 188px wide, hairline-soft, 4px radius, the till
+  tile's shape because it is pressed standing up. Tiles scroll sideways under
+  "Stations" on today's day view: the name in `MicroLabel`, "Free till
+  18:00" or, running, the clock in Space Mono and the charge in Jost ("0:42,
+  £2.50"), and a 48px `key`, "Start" or "Stop".
+- Payment is at the till, never on this screen. Take payment, and Stop on a
+  station, put one line on the ticket and open the till; its meta, where an
+  SKU sits, reads "Booking" in Space Mono 13px. The **Bookings tile** heads
+  the first category, the calendar icon at 28px and "Pay or start" in `Hint`
+  where a price would be; it opens a right sheet of the stations and "To pay
+  today", a 56px `key` per way to pay ("Deposit £6.00").
+- **Events** are hairline rows: date and time in Space Mono 13px, name in
+  Jost 500 16px, "4 of 16 places left" in 13px grey, the fee at the right.
+  The event sheet takes the counter's scanner, so a Guild card checks its
+  holder in; a party past the places left goes on the waitlist, and the
+  block says "Add to the waitlist".
+- **My Vault** gains a sixth slot in its bar, Book: Card, Book, Quotes,
+  Wants, Credit and Me, 65px each at 390, and six text links from 900px.
+  `/account/bookings` is What and Day chips (the days scroll sideways), a
+  "How many" stepper, then each resource with its rate and a `tnum` chip per
+  free time. A tapped time opens "Your choice" under its row: the price in
+  Jost 500 20px and a `Note`, "Paid at the till when you arrive. Nothing is
+  taken now." The block ("Book it", "Enter") docks on the bar below 900px.
+  A booking shows Cancel only before it starts and while nothing is paid.
+- An empty state is one grey sentence that says what to do: "Nothing can be
+  booked on this day: the shop is closed, or every table and station is
+  switched off." The grid loads as a `Skeleton` its own height. Settings,
+  Bookings acts at once, like Tills.
+
+### Research
+
+- "Search eBay sold" and "Ask an agent" are two `text` actions, 32px apart,
+  under the price sources on a trade-in line, in price check and on the item
+  page. The first opens ebay.co.uk's UK sold listings in a new tab; the
+  second sends a request for an agent to claim and is disabled while one is
+  open.
+- A request reads as one line: "Research" in `MicroLabel` ink, where it
+  stands in Jost 15px ("Waiting for an agent", "Gandalf is looking",
+  "Gandalf found 3 sold") and the time in Space Mono 13px ("9 Oct, 14:02").
+  It is read again every five seconds while open. It is always said in words.
+- The comps follow: the agent's own sentence in 13px grey, then a
+  hairline-soft row each, 44px at the least: the sold date in Space Mono
+  13px, the listing's title and condition on one truncated 13px line, the
+  price in Jost 15px `tnum` (GBP and nothing else) and "Listing" as a 13px
+  underlined link. A done request's comps become UK sold comps on the card,
+  so the sources above are read again and lead with them. "Cancel request" is
+  `text-destructive`, shown only while it can still be cancelled.
+- The Research list (`/counter/research`, from Home and the command palette,
+  not the nav) is the one Anton line, a lede, chips for All, Open, Claimed
+  and Done, and hairline rows of title, "Asked by Jo, 9 Oct, 14:02. Searched
+  for ..." and the request as above. Home has one row for it under Waiting.
+- Agents is a Settings section below the Save, acting at once. Each agent is
+  a hairline row: name, "Switched off" in `Hint`, "Token works until 3 Dec
+  2026. Last action 9 Oct, 14:02." in 13px, and `text` actions Actions, New
+  token and Switch off (`text-destructive`), the last two confirming in the
+  row in a sentence that says what stops. A token is shown once, in a sheet,
+  in Space Mono 13px; closing the sheet forgets it.
+- An agent's actions (newest first, from the audit log) are hairline rows:
+  what it did in words ("Asked for research", "Completed research", "Added a
+  UK sold comp"), the time in Space Mono 13px at the right, the detail in
+  13px grey. Never a raw action code.
+
+### Photos, scanning and the website switch
+
+- **Take photo** is a bottom sheet at every width, from the item page and
+  from the saved screen after Add stock (a `text` action under Print label).
+  The first photo is the one the website shows, and the sheet says so. Three
+  ways in, all ending in the same crop: the live camera in a viewfinder up to
+  640px on a hairline edge, "Use the camera app" on a touch device, and
+  "Choose a file". "Take photo" is the block, off until the camera is up.
+- The **capture guide** is the item's own frame from the ratio table in
+  section 5, drawn over the live picture, centred, at 86% of the largest
+  frame that fits; what is inside is what is kept. It is a 2px `--gg-paper`
+  line with a 1px `--gg-ink` outline at 60%, the one place a line is heavier
+  than a hairline, because a hairline vanishes on a moving picture. A
+  viewfinder rests on `--secondary` until the camera is up, as an image
+  waits on its silhouette. Under it: "Plain
+  background, straight on, fill the frame." The picture is cropped, resized
+  to 1600px and re-encoded in the browser, and a 13px line says no location
+  data is kept. It is shown once, with "Take it again" and the block "Save
+  photo".
+- **Photos** on the item page are each a `ProductImage` 160px tall, in the
+  item's ratio with the edge finish, never cropped again on screen. The first
+  says "On the website" in `Hint`; the others offer "Show first"; each has
+  "Remove" in `text-destructive`. Empty: "No photos yet. The website shows the
+  catalogue picture until there is one."
+- The **Website switch** is a hairline row on the item page under VAT:
+  "Website" in `MicroLabel`, the state in words ("Shown online", "Not
+  online") and a `Switch`. One 13px grey line under it says whether the
+  website shows the item right now, from the public feed itself, and if not
+  why. Stock's ticked rows get "Show online" and "Take offline".
+- **Settings, Website** is below the Save and acts at once: `Switch` rows
+  that say their state ("Stock shows on the website", "Hidden"), a minimum
+  price, the branches where new stock starts online ("Starts online") as
+  hairline rows with "Remove", and "On the website now", six rows from the feed with a 40px
+  image, title, condition and price.
+- The **camera scanner** is one bottom sheet wherever it is used: "Hold the
+  barcode or QR code steady in view.", a 4:3 viewfinder on a hairline edge,
+  "Looking for a code" in `Hint` and, if the camera has one, "Torch on" as a
+  `text` action. Which decoder reads is never shown: a browser whose
+  `BarcodeDetector` reads QR codes uses it, Safari and tablets without one
+  use `zxing-wasm`, loaded on first use from the app's own origin. With no
+  camera or no permission the sheet is one sentence.
+
+### Reports dashboard, Excel and VAT
+
+- The **dashboard** is the first thing under Reports, below the page title
+  and lede: the shared range control, a sentence ("... against 1 to 31 Aug")
+  and a "Compare" `Switch`, on. Managers and admins only; anybody else is
+  told so and left with the reports below.
+- **Headline figures** are nine in a `dl`, two columns on a phone and three
+  from 900px, each a `MicroLabel` over the figure. Net sales is the one KPI in
+  Anton (28px, `tnum`); the rest are Jost 500 20px. Under each, in 13px grey,
+  the change against the period before: "+£120.00", "-£15.00", "No change",
+  "+1.2 points" for margin. The sign carries it, never a red or a green.
+- The **day chart**, "Sales and profit", is a line chart 260px tall in the
+  chart tokens: net sales in ink, cost in `--chart-3` and profit the one volt
+  series, 1.5px lines, no dots, hairline axis, `--chart-4` gridlines,
+  Space Mono ticks, a legend, a GBP tooltip and a hidden sentence for a
+  screen reader. Under it are hairline `Table`s (By category, each branch a
+  link into the Sales report; Top items; How it was paid) and Buy-ins and
+  stock as five figures in the same `dl`. Below 900px a table is lines.
+- The **VAT return** (`/counter/reports/vat`, listed under "VAT") opens with a
+  "Quarter" `Select` and, when the server has one, a 15px ink note. The
+  **nine boxes** are one hairline `Table`, not a form: box number, what it is
+  in plain words, the amount right-aligned in `tnum`, in HMRC's order; box 5
+  reads "Net VAT to pay HMRC" or "Net VAT to reclaim from HMRC". Under it, in
+  13px grey: "GG Vault does not file the return. Copy boxes 1 to 9 into the
+  Making Tax Digital software the shop uses (bridging software, or your
+  accountant's) and submit it there by the deadline, then keep this Excel
+  file with the VAT records."
+- A registered shop's return adds four sections. **Purchases**: boxes 4 and
+  7 are typed in, not worked out, so admins get two money fields and "Save
+  purchases"; everybody else gets one sentence. **By rate**. **Margin
+  scheme**: Sales, What they cost, Margin and "VAT at 1/6" as four figures in
+  the `dl`, with a 13px sentence on how they are worked out. **Sales behind
+  it**: chips over every sale and refund line, the first 200 with the count
+  said.
+- **Excel** sits beside CSV. The dashboard and the VAT return end on "Export
+  Excel" as their one block (`--surface-3` until the figures are in) with
+  "Export CSV" as a `text` action. A report keeps CSV as its block and adds
+  "Export Excel" as a `text` action beside it. The file is built in the
+  browser: a cover, a sheet per table, money as £#,##0.00 cells.
+- **VAT treatment** is a `Select` labelled "VAT": "Margin scheme", "Standard
+  rate, 20%", "Reduced rate, 5%", "Zero rate, 0%" or "Exempt". On Add stock
+  it is a form field the chosen branch fills; on the item page it is a row,
+  "VAT" in `MicroLabel` and a 220px select that saves on change, "As its
+  branch" when none is set. Settings, VAT sits in the page's form; "VAT on
+  till products" below the Save saves each choice as it is made.
+
+---
+
+## 12. Verifying a change
 
 ```bash
 pnpm --filter web typecheck

@@ -123,3 +123,18 @@ The editor ("Offers" in Loyalty) starts from templates, each a sentence with bla
 - The research webhook is sent after the request's transaction commits, with a 3 second timeout, and carries `X-GG-Signature` plus the Hermes webhook headers (`X-Webhook-Signature`, `X-Webhook-Signature-V2`, `X-Webhook-Timestamp`). For it to reach Gandalf, the VPS must be able to reach the Mac Mini (Tailscale, for example).
 - MCP tool calls loop back to `GG_LOOPBACK_URL`, else the request's own host when it is this machine, else `http://127.0.0.1:8090`; each call is audited as `mcp_call` with the tool name only. `GET /api/vault/config` no longer carries `agent_webhook`.
 - `docs/agents.md` is the setup guide for Gandalf and any other Hermes agent.
+
+### Reports, Excel and VAT (RV)
+
+- `zero` is a scheme of its own on every treatment select (`1789821200_vat_zero.js`), because an empty `vat_rate` reads 0 and means the shop's standard rate. The five treatments are stored as margin, standard (rate 0, the shop's rate), reduced (standard at 5), zero and exempt. `packages/shared/src/vat.ts` (`resolveVat`, `vatApplies`, `keptLine`) is the one place a stored scheme and rate become the rate charged, for the sale route, a booking line, the eBay orders import, the dashboard, the margin report and the return.
+- Each line is charged by its item's or till product's own treatment, else its branch's default; nothing is charged before `vat_registered_from`, judged on the sale's shop-time date (an eBay order's own date). Registered with no date means registered from the start; Settings asks for the date and the VAT number when VAT is switched on.
+- The margin scheme's VAT is worked line by line (one sixth of the margin at 20 percent, nothing on a line sold at a loss) and only from the registration date. The margin report's VAT estimate now follows the same rule.
+- The return counts a refund in the quarter it was given, from the `sale_refund` audit rows; a refund older than those rows is in no quarter. Quarters and the registration date are in shop time; dashboard days are UTC, like every other report. Boxes 6 and 7 drop the pence. Boxes 4 and 7 are entered per quarter (`POST /api/vault/reports/vat/purchases`, `settings_manage`, audited) and kept in `adapter_state` until purchases are recorded.
+- Margin percentage on the dashboard is profit over net sales less VAT. Buy-ins are read live from `trade_ins`. The dashboard nets refunds against the sale's own period, like the other reports.
+- Excel files are written in the browser and zipped with `fflate` (`zipSync`; its async zip needs blob workers, which the CSP blocks). Money is a number formatted `"£"#,##0.00`, dates are real dates. The button reads "Export Excel", and on Exports "Download <label> as Excel".
+- Still to do: the till catalogue and ticket preview should carry each line's resolved treatment and rate (branch default, shop rate, registration date) so the preview's VAT matches what the server charges; the totals already agree, as prices include VAT.
+
+### Stock online, photos and scanning (WS)
+
+- `/api/public/` carries one rate limit of its own, 180 a minute per client (`1789821240_public_rate_limits.js`), and `items.photos` gets 160, 320 and 640 wide thumbs (`1789821250_item_photo_thumbs.js`) so the feed's small image is a thumb.
+- The zxing reader for Safari and tablets without a native QR reader is served from the app itself, so the CSP needs `'wasm-unsafe-eval'` in `script-src` (`deploy/Caddyfile.snippet`; `deploy/README.md`, section 15). The public routes answer with a minute of caching for the website; My Vault reads availability and events with `no-store`.

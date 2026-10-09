@@ -84,7 +84,7 @@ export function CameraSheet({ open, onOpenChange, onResult }: CameraSheetProps) 
         <SheetHeader>
           <SheetTitle>Camera</SheetTitle>
           <SheetDescription>
-            Hold the barcode or QR code inside the frame.
+            Hold the barcode or QR code steady in view.
           </SheetDescription>
         </SheetHeader>
         <SheetBody>

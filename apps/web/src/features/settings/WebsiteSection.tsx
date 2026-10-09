@@ -178,7 +178,7 @@ function Branches() {
 
   return (
     <div className="mt-14">
-      <MicroLabel className="mb-3 block">New stock starts online in</MicroLabel>
+      <MicroLabel className="mb-3 block">Starts online</MicroLabel>
       {rows.length === 0 ? (
         <p className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground-2" data-testid="website-branches-empty">
           {branches.isPending ? "Reading the branches." : "No branch yet. New stock starts off the website."}
@@ -264,7 +264,7 @@ function Preview() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[15px] text-foreground">{item.title}</span>
-                {item.condition ? <Hint className="block truncate normal-case tracking-normal">{item.condition}</Hint> : null}
+                {item.condition ? <span className="block truncate text-[13px] text-muted-foreground">{item.condition}</span> : null}
               </span>
               <span className="tnum shrink-0 text-[15px] text-foreground">{formatGBP(item.price)}</span>
             </li>
@@ -291,7 +291,7 @@ export function WebsiteSection() {
           {refusalOrFallback(settings.error, "The website settings would not load. Try again.")}
         </p>
       ) : (
-        <Hint>Reading the website settings</Hint>
+        <Hint>Reading settings</Hint>
       )}
       <Branches />
       <Preview />

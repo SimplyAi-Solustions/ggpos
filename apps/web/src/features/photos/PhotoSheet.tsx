@@ -106,7 +106,7 @@ function Guide({ size, ratio }: { size: { width: number; height: number }; ratio
     <div
       aria-hidden="true"
       data-testid="photo-guide"
-      className="pointer-events-none absolute border-2 border-gg-paper outline outline-1 outline-[rgba(11,11,11,0.6)]"
+      className="pointer-events-none absolute border-2 border-gg-paper outline outline-1 outline-gg-ink/60"
       style={{
         left: `${box.x * 100}%`,
         top: `${box.y * 100}%`,

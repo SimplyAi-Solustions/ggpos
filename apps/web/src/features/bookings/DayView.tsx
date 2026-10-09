@@ -6,9 +6,9 @@
  *
  * Touch first. A free slot is a target in its own right: tap it to book.
  * Tap a block to open it. Press and drag a block to move it, to another
- * time or another column of the same kind, on the tablet and the Mac
- * alike; the booking sheet's Move does the same for anybody who would
- * rather not drag. The grid scrolls inside itself, both ways, with the
+ * time or another column (the server refuses a move that does not fit),
+ * on the tablet and the Mac alike; the booking sheet's Move does the same
+ * for anybody who would rather not drag. The grid scrolls inside itself, both ways, with the
  * names and the hours held in place, so the page never scrolls sideways.
  */
 import * as React from "react"

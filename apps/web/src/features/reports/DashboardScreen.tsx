@@ -415,7 +415,7 @@ export function DashboardSection() {
                 data={chartData}
                 series={[
                   { key: "net", label: "Net sales", tone: 1 },
-                  { key: "cost", label: "Cost", tone: 2 },
+                  { key: "cost", label: "Cost", tone: 3 },
                   { key: "profit", label: "Profit", tone: 5 },
                 ]}
                 money
