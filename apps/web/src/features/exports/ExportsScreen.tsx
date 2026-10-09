@@ -136,7 +136,7 @@ function ExportRow({
           loading={excelPending}
           disabled={disabled}
           onClick={onExcel}
-          aria-label={`Download the ${def.label} file as Excel`}
+          aria-label={`Download ${def.label} as Excel`}
         >
           Excel
         </Button>

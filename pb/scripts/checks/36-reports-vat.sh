@@ -50,6 +50,27 @@ s36_list() {
     --data-urlencode "perPage=500" --data-urlencode "sort=created,id" "$BASE/api/collections/$1/records"
 }
 
+# $1 collection, $2 filter -> every matching record, a page at a time, as
+# {"items":[...]}: the whole stock book can run past one page by the time the
+# full check reaches this section.
+s36_all() {
+  node -e '
+    (async () => {
+      const [base, token, collection, filter] = process.argv.slice(1);
+      const items = [];
+      for (let page = 1; ; page++) {
+        const q = new URLSearchParams({ filter, perPage: "500", page: String(page), sort: "created,id", skipTotal: "1" });
+        const res = await fetch(`${base}/api/collections/${collection}/records?${q}`, { headers: { Authorization: token } });
+        const body = await res.json();
+        if (!res.ok || !Array.isArray(body.items)) { console.error(JSON.stringify(body)); process.exit(1); }
+        items.push(...body.items);
+        if (body.items.length < 500) break;
+      }
+      process.stdout.write(JSON.stringify({ items }));
+    })();
+  ' "$BASE" "$SUPER_TOKEN" "$1" "$2"
+}
+
 # $1 JSON body -> a new item's id (the superuser writes, so a blank scheme is allowed).
 s36_item() {
   curl -s -X POST "$BASE/api/collections/items/records" \
@@ -275,17 +296,16 @@ s36_keep stock
   || fail "the dashboard's stock at cost is not the stock report's value at cost"
 # Buy-ins are read live, as the buy-ins report's own trade-in query reads
 # them: cash, credit and part-exchange on every trade-in completed in range.
-S36_BOUGHT="$(s36_list trade_ins "status='completed' && completed_at >= '$S36_FROM 00:00:00.000Z' && completed_at <= '$S36_TO 23:59:59.999Z'" | node -e '
+S36_BOUGHT="$(s36_all trade_ins "status='completed' && completed_at >= '$S36_FROM 00:00:00.000Z' && completed_at <= '$S36_TO 23:59:59.999Z'" | node -e '
   const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
   let spend = 0;
   for (const t of d.items) spend += (t.payout_cash || 0) + (t.payout_credit || 0) + (t.part_exchange_value || 0);
-  process.stdout.write([spend, d.totalItems].join(","));
+  process.stdout.write([spend, d.items.length].join(","));
 ')"
 [ "$(s36_js "[b.buy_ins.spend, b.buy_ins.count].join(',')" "" dash1)" = "$S36_BOUGHT" ] \
   || fail "the dashboard's buy-ins read $(s36_js "[b.buy_ins.spend, b.buy_ins.count].join(',')" "" dash1), the completed trade-ins come to $S36_BOUGHT"
-S36_HELD="$(s36_list items "status='in_stock' || status='reserved' || status='listed_ebay'" | node -e '
+S36_HELD="$(s36_all items "status='in_stock' || status='reserved' || status='listed_ebay'" | node -e '
   const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
-  if (d.totalItems > d.items.length) { process.stdout.write("too many"); process.exit(0); }
   let cost = 0, retail = 0, units = 0;
   for (const i of d.items) { const q = Math.max(0, i.qty || 0); cost += (i.cost || 0) * q; retail += (i.price || 0) * q; units += q; }
   process.stdout.write([cost, retail, units].join(","));
