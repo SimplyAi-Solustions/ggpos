@@ -14,6 +14,7 @@ import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Sparkline } from "@/components/ui/sparkline"
 import { useCountUp } from "@/design/motion"
+import { ResearchHomeLine } from "@/features/research/ResearchHomeLine"
 import { getTodayStats } from "@/lib/api"
 import { useTillCurrent } from "@/lib/api/till-session"
 import { countQuotesWaiting } from "@/lib/api/quotes"
@@ -236,6 +237,8 @@ export function HomeScreen() {
           </>
         )}
       </div>
+
+      <ResearchHomeLine />
 
       <div className="mt-16">
         <MicroLabel tone="ink" className="mb-5">

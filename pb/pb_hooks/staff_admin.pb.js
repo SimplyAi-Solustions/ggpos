@@ -47,7 +47,8 @@ routerAdd(
     perms.caller(e);
     util.requireAdmin(e);
 
-    const rows = e.app.findRecordsByFilter("staff", "id != ''", "name,id", 1000, 0);
+    // People only: agents are managed in Settings, Agents (agents.pb.js).
+    const rows = e.app.findRecordsByFilter("staff", "kind != 'agent'", "name,id", 1000, 0);
     const staff = [];
     for (let i = 0; i < rows.length; i++) {
       if (rows[i]) staff.push(pins.staffEntry(rows[i]));

@@ -213,7 +213,9 @@ routerAdd("GET", "/api/vault/till/roster", (e) => {
 
   // Every active member of staff can unlock any till, so the roster is the
   // whole active staff list. rosterEntry never carries pin_hash.
-  const rows = e.app.findRecordsByFilter("staff", "active = true", "name,id", 500, 0);
+  // Agents are never on it: they have no PIN and use their own token
+  // (docs/api-contract-launch.md, section 5).
+  const rows = e.app.findRecordsByFilter("staff", "active = true && kind != 'agent'", "name,id", 500, 0);
   const staff = [];
   for (let i = 0; i < rows.length; i++) {
     if (rows[i]) staff.push(pins.rosterEntry(rows[i]));
