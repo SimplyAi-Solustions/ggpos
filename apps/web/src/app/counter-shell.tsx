@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Link, Outlet, useNavigate } from "@tanstack/react-router"
+import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import {
   ArrowLeftRightIcon,
@@ -262,6 +262,9 @@ export function CounterShell() {
   const dockRef = React.useRef<HTMLDivElement>(null)
   const demo = isDemo()
   const waiting = useQuotesWaiting()
+  const tillMode = useRouterState({
+    select: (state) => /^\/counter\/till(\/|$)/.test(state.location.pathname),
+  })
 
   const openPalette = React.useCallback(() => setPaletteOpen(true), [])
   const openShortcuts = React.useCallback(() => setShortcutsOpen(true), [])
@@ -292,12 +295,38 @@ export function CounterShell() {
       observer.disconnect()
       root.style.removeProperty("--gg-dock-h")
     }
-  }, [])
+    // The dock only exists outside the till, so measure it again on the way
+    // back from there.
+  }, [tillMode])
 
   // A production build with no PocketBase behind it: nothing else on this
   // shell can be trusted, so show only the paper state and nothing more.
   if (isServerUnreachable()) {
     return <ServerUnreachable />
+  }
+
+  // The till is the one full-bleed counter screen (DESIGN.md, "The till",
+  // "Frame"): no header, nav, footer, thumb bar or column, because it draws
+  // its own header and fills the tablet edge to edge. The wedge listener,
+  // the palette, the shortcuts and the lock stay.
+  if (tillMode) {
+    return (
+      <CounterDockContext.Provider value={null}>
+        <div className="flex min-h-svh w-full flex-col bg-background">
+          <OfflineStrip />
+          <main id="counter-main" className="flex min-h-0 w-full flex-1 flex-col">
+            <Outlet />
+          </main>
+          <CommandPalette
+            open={paletteOpen}
+            onOpenChange={setPaletteOpen}
+            onShowShortcuts={openShortcuts}
+          />
+          <ShortcutOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+          <IdleLock />
+        </div>
+      </CounterDockContext.Provider>
+    )
   }
 
   return (
