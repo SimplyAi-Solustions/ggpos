@@ -68,11 +68,18 @@ test.describe("the shortcut overlay", () => {
     await expect(page.getByRole("heading", { name: "Labels" })).toBeVisible()
 
     // A wedge scanner types a GG code with nothing focused. The S in GGS
-    // would otherwise walk off to the Scan screen mid-code.
-    for (const key of "GGS7F3K2B") {
-      await page.keyboard.press(key, { delay: 5 })
-    }
-    await page.keyboard.press("Enter")
+    // would otherwise walk off to the Scan screen mid-code. The burst is
+    // dispatched inside the page in one go, the way a scanner delivers it:
+    // a key at a time from the test runner arrives tens of milliseconds
+    // apart on a busy machine, slower than any scanner and slow enough to
+    // read as a person typing.
+    await page.evaluate(() => {
+      const target = document.activeElement ?? document.body
+      for (const key of [..."GGS7F3K2B", "Enter"]) {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+        target.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true, cancelable: true }))
+      }
+    })
     await expect(page).not.toHaveURL(/\/counter\/scan/)
   })
 

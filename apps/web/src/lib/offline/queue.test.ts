@@ -29,7 +29,6 @@ function payload(item: string, price: number): CompleteSalePayload {
     discount_source: null,
     reward_code: null,
     cash_session: null,
-    sumup_ref: "",
   }
 }
 

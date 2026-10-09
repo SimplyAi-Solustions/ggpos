@@ -169,7 +169,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   const settings = useEposSettings()
   const { data: config } = useCounterConfig()
   const setup = config?.loyalty
-  const current = useTillCurrent()
+  const current = useTillCurrent({ running: false })
 
   const totals = summarise(ticket)
   const tenderState = resolveTenders(totals.total, tenders)

@@ -466,6 +466,15 @@ done
 [ "$(s30_list sales "client_id='s30-replay-$$'" | jval totalItems)" = "1" ] || fail "a replayed client_id made a second sale"
 ok "a replayed client_id returns the first sale's body, tenders, change, VAT and receipt included, and sells nothing twice"
 
+# --- 30i2. A line's note is kept on the sale line ------------------------
+S30_N_ITEM="$(s30_item "S30 Note Box" 1 400)"
+S30_STATUS="$(s30_post "$STAFF_TOKEN" "/api/vault/sales/complete" \
+  "{\"lines\":[{\"item\":\"$S30_N_ITEM\",\"qty\":1,\"note\":\"Signed by the artist\"}],\"tenders\":[{\"method\":\"cash\",\"amount\":400}]}")"
+s30_expect "$S30_STATUS" 200 "" "a sale with a line note"
+[ "$(s30_list sale_lines "item='$S30_N_ITEM'" | jval items.0.note)" = "Signed by the artist" ] \
+  || fail "the line's note was not kept on the sale line"
+ok "a line's note from the ticket is kept on its sale line"
+
 # --- 30j. The sale lookup ------------------------------------------------
 S30_A_BARCODE="$(echo "$S30_A_NUMBER" | tr -d '-')"
 S30_STATUS="$(s30_get "$STAFF_TOKEN" "/api/vault/sales/lookup?number=$S30_A_NUMBER")"

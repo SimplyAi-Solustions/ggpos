@@ -26,7 +26,7 @@ GG Vault has three audiences, all connected to GG Entertainment's shop in Bolsov
 
 ## Product Purpose
 
-GG Vault is the shop's system of record for every individual item: what came in, from whom, what it is worth, what it sold for, and where it went. SumUp takes the payment; GG Vault is the truth for stock, trade-ins, customers and loyalty. It exists because listing thousands of individual card singles in SumUp is impractical, and because a card shop's real bottleneck is buying in stock fairly and quickly, not only selling it.
+GG Vault is the shop's system of record for every individual item: what came in, from whom, what it is worth, what it sold for, and where it went. Since October 2026 it is also the shop's only EPOS: the till, cashing up with X and Z reports, staff and PINs, receipts and the cash drawer. Card payments are keyed on a Tide card reader and recorded at the till; GG Vault is the truth for sales, stock, trade-ins, customers and loyalty. It exists because a card shop's real bottleneck is buying in stock fairly and quickly, not only selling it, and because no off-the-shelf EPOS knows a single card from a sealed box.
 
 Success looks like: stock counts that match the shelves, buy-ins priced consistently against live market data, no cash paid out without ID on file, and a loyalty programme the owner can reshape as the shop's offer changes.
 
@@ -73,7 +73,7 @@ The voice carries over from the marketing site, ggentertainment.co.uk: plain-spo
 - Every item has a provenance: what it is, who it came from, what it is worth, and where it went.
 - UK pricing first, always shown in GBP; a foreign price is supporting evidence, never the headline figure.
 - No cash paid for goods without ID on file first.
-- SumUp takes the money; GG Vault's own record is the truth for stock.
+- The Tide card reader takes card payments, keyed by hand; the till records them and the Z report checks them against Tide's own total. GG Vault's own record is the truth for everything else.
 - The loyalty programme is admin-editable. Rules, tiers and rewards change without a code change.
 
 ## Non-goals for v1
@@ -81,7 +81,7 @@ The voice carries over from the marketing site, ggentertainment.co.uk: plain-spo
 - Multiple shops or locations.
 - A receipt printer (A4 or PDF receipts only at launch).
 - Partial refunds (the data model allows it; the UI does not yet).
-- Taking card payment directly through a SumUp Solo reader (planned for a later phase).
+- Pushing the amount to the card reader: Tide has no card-acceptance API, so card amounts are keyed on the reader.
 - Stripe-billed paid memberships (recorded manually by staff for now).
 - Automated eBay UK sold-price comps (not available from eBay; staff enter UK sold comps manually).
 - pokemontcg.io as a data source (deprecated, not used).

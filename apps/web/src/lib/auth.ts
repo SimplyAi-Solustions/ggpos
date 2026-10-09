@@ -55,7 +55,8 @@ export function readLiveSession(): StaffRecord | null {
     id: record.id,
     email: String(record.email ?? ""),
     name: String(record.name ?? ""),
-    role: record.role === "admin" ? "admin" : "staff",
+    // Anything the server did not name is the least role, never more.
+    role: record.role === "admin" || record.role === "manager" ? record.role : "staff",
     active: true,
     // The flag travels on the record sign-in hands back, so a reload of a
     // still-valid session knows to lock the counter without asking the

@@ -277,3 +277,22 @@ Receipts are drawn on a canvas in the app's own fonts (Anton for the total, Spac
 ## 7. Wave 2 (after wave 1 lands): part-exchange and returns in the ticket
 
 Specified in full before wave 2 starts. In outline: `POST /api/vault/sales/complete` gains `trade_lines` (the trade-in line shape, priced by the shared offer calculator) and `trade_settlement` (`{ "surplus": "cash" | "credit", "id_check"? }`), creating the trade-in and the sale in one transaction with a `part_exchange` tender for the value applied, `sales.trade_in` and `trade_ins.sale` linking them, points earned once (EPOS-PLAN decision 5), and the ID gate and cash cap applied to a cash surplus; and `return_lines` (`[{ "sale_line", "qty", "restock" }]`) so an exchange is one ticket with negative lines.
+
+---
+
+## 8. As built (wave 1)
+
+Where the build settled something the sections above left open, or changed it on review:
+
+- **The Z count is the whole drawer.** `counts` on `POST /api/vault/till/z` is everything counted before any bank drop; `bank_drop` is taken from what was counted (400 "You cannot bank more than the £312.40 you counted." above the count). The report keeps `counts` as keyed and gives `cash.counted` and `cash.expected` both after the drop, so `variance` is the same either way.
+- **`GET /api/vault/till/current?running=0`** skips the unsaved running report; the till polls it every 30 seconds just to know whether it is open.
+- **A refund needs the register's open session whatever the tender**, not only for cash, so every refund lands on an X and a Z.
+- **A sale's tenders read back in `TENDER_METHODS` order** (cash, then card, then the rest), because rows written in one transaction share their `created` time.
+- **Line notes**: a sale line may carry `note` (200 characters), kept on `sale_lines.note`.
+- **Per-refund lines** are in the `sale_refund` audit row's `meta.lines`; the refund receipt reads them from there.
+- **A Z report cannot be changed or deleted by anybody**, a superuser included: a record hook refuses it beneath the null collection rules.
+- **Approvals are single use whatever they approve**, a read included (`GET /api/vault/till/reports` spends an override it was given).
+- **Overrides for `settings_manage` and `staff_manage` are refused at issue** (403 "That needs an admin signed in.").
+- **Unlock and the roster answer a staff member still on `must_change_password`**, as does `POST /api/vault/staff/me/password`, which is how such a member leaves the lock; deactivating somebody rotates their token key.
+- **Printers**: an encodings request is repeated until the printer answers; a job's attempts count when the printer takes it; the drawer-only `application/vnd.star.line` job is a single BEL byte.
+- Every refusal sentence the routes added beyond the ones above is in the route's own file and its `pb/scripts/checks/` section.

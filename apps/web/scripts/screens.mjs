@@ -44,34 +44,11 @@ const SCREENS = [
   { name: "stock", path: "/counter/stock" },
   { name: "login", path: "/login", signedIn: false },
 
-  // Selling, cash and labels. `prepare` drives the screen into the state a
-  // static URL cannot reach, because the demo stores live in memory for the
-  // tab: a basket has to be scanned and a drawer has to be opened.
-  { name: "sell-empty", path: "/counter/sell" },
-  {
-    name: "sell-basket",
-    path: "/counter/sell",
-    async prepare(page) {
-      const field = page.getByTestId("sell-scan-field")
-      await field.fill(DEMO_SKU)
-      await field.press("Enter")
-      await page.getByTestId("basket").waitFor()
-      await page.getByRole("button", { name: "SumUp card", exact: true }).click()
-    },
-  },
-  { name: "cash-closed", path: "/counter/cash" },
-  {
-    name: "cash-open",
-    path: "/counter/cash",
-    async prepare(page) {
-      await page.getByLabel("Float").fill("100.00")
-      await page
-        .getByRole("button", { name: "Open session", exact: true })
-        .filter({ visible: true })
-        .click()
-      await page.getByTestId("cash-expected").waitFor()
-    },
-  },
+  // The till, cashing up and the lock have their own scripts
+  // (till-screens.mjs, lock-cash-screens.mjs); here they are only the
+  // plain landing states.
+  { name: "till", path: "/counter/till" },
+  { name: "cash-up", path: "/counter/cash" },
   { name: "item", path: `/counter/stock/${DEMO_SKU}` },
   { name: "labels", path: "/counter/labels" },
   {

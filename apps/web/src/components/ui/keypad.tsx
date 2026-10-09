@@ -151,13 +151,25 @@ function Keypad({
 
 /**
  * The next value after a key press, for a string of digits.
- * - PIN: digits up to `maxLength`; Clear empties; Backspace drops one.
- * - Money (pence as a digit string): "00" appends two zeros; leading zeros
- *   are dropped, so the string is always the pence figure.
+ * - `"money"` (the default; pence as a digit string, and counts): "00"
+ *   appends two zeros and leading zeros are dropped, so the string is
+ *   always the figure itself.
+ * - `"pin"`: every digit is kept as typed, a leading 0 included, up to
+ *   `maxLength`.
+ * Either way Clear empties and Backspace drops one.
  */
-function applyKey(value: string, key: KeypadKey, maxLength: number): string {
+function applyKey(
+  value: string,
+  key: KeypadKey,
+  maxLength: number,
+  mode: "money" | "pin" = "money"
+): string {
   if (key === "clear") return ""
   if (key === "back") return value.slice(0, -1)
+  if (mode === "pin") {
+    const next = value + key
+    return next.length > maxLength ? value : next
+  }
   const next = (value + key).replace(/^0+(?=\d)/, "")
   if (next.length > maxLength) return value
   return next === "0" || next === "00" ? "" : next

@@ -14,7 +14,8 @@ import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Sparkline } from "@/components/ui/sparkline"
 import { useCountUp } from "@/design/motion"
-import { getCurrentCashSession, getTodayStats } from "@/lib/api"
+import { getTodayStats } from "@/lib/api"
+import { useTillCurrent } from "@/lib/api/till-session"
 import { countQuotesWaiting } from "@/lib/api/quotes"
 import { countHoldsEndingToday } from "@/lib/api/wants"
 import { getSparklines } from "@/lib/api/reports"
@@ -101,11 +102,9 @@ export function HomeScreen() {
     queryFn: getTodayStats,
     staleTime: 15_000,
   })
-  const { data: cash } = useQuery({
-    queryKey: ["cash-current"],
-    queryFn: getCurrentCashSession,
-    staleTime: 15_000,
-  })
+  // The till's own state, the same query the till and cashing up read, so
+  // the three can never disagree about whether the till is open.
+  const { data: till } = useTillCurrent()
   // The last thirty days under each tile. A day old at the most, so it is
   // read once and left alone for the session.
   const { data: trend } = useQuery({
@@ -126,7 +125,8 @@ export function HomeScreen() {
     staleTime: 60_000,
   })
 
-  const session = cash?.session ?? null
+  const session = till?.session ?? null
+  const registerName = till?.register.name ?? "The till"
 
   return (
     <section className="pt-16 sm:pt-24">
@@ -174,22 +174,26 @@ export function HomeScreen() {
         {session ? (
           <>
             <span className="tnum text-[15px] text-foreground">
-              Session open since {time(session.opened_at)}, float{" "}
+              {registerName} open since {time(session.opened_at)}, float{" "}
               {formatGBP(session.float ?? 0)}
             </span>
-            <Hint className="tnum">Expected {formatGBP(cash?.expected ?? 0)}</Hint>
+            {till?.running ? (
+              <Hint className="tnum">
+                Expected {formatGBP(till.running.cash.expected)}
+              </Hint>
+            ) : null}
             <Button variant="text" render={<Link to="/counter/cash" />}>
-              Cash
+              Cash up
             </Button>
           </>
         ) : (
           <>
             <span className="text-[15px] text-muted-foreground">
-              No cash session open, so no cash sale and no cash payout can go
-              through.
+              {registerName} is closed, so nothing can be sold until it is
+              opened.
             </span>
-            <Button variant="text" render={<Link to="/counter/cash" />}>
-              Open
+            <Button variant="text" render={<Link to="/counter/cash" search={{ action: "open" }} />}>
+              Open the till
             </Button>
           </>
         )}

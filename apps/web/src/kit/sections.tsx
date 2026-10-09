@@ -850,7 +850,7 @@ function TillSpecimens() {
             <Keypad
               mode="pin"
               aria-label="PIN"
-              onKey={(key) => setPin((value) => applyKey(value, key, 4))}
+              onKey={(key) => setPin((value) => applyKey(value, key, 4, "pin"))}
             />
           </div>
         </div>

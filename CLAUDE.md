@@ -4,7 +4,7 @@ Guidance for coding sessions working in this repository. Read `docs/PLAN.md` in 
 
 ## What this is
 
-GG Vault is the inventory, trade-in, loyalty and customer system for GG Entertainment, a games shop in Bolsover, Chesterfield. It runs alongside SumUp: SumUp takes payment, GG Vault is the record of truth for stock, trade-ins, customers and the GG Guild loyalty programme. See `PRODUCT.md` for who uses it and why, `docs/PLAN.md` for the full build plan.
+GG Vault is the inventory, trade-in, loyalty, customer and EPOS system for GG Entertainment, a games shop in Bolsover, Chesterfield. It is the shop's only till: card payments are keyed on a Tide card reader and recorded at the till, and GG Vault is the record of truth for sales, stock, trade-ins, customers and the GG Guild loyalty programme. See `PRODUCT.md` for who uses it and why, `docs/PLAN.md` for the full build plan and `docs/EPOS-PLAN.md` for the EPOS phases, which win where the two disagree.
 
 ## Monorepo layout
 

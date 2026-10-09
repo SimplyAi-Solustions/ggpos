@@ -1,6 +1,6 @@
 # GG Vault
 
-Inventory, trade-in, loyalty and customer system for GG Entertainment, a games shop in Bolsover, Chesterfield. SumUp takes payment; GG Vault is the record of truth for stock, trade-ins, customers and the GG Guild loyalty programme.
+Inventory, trade-in, loyalty and customer system for GG Entertainment, a games shop in Bolsover, Chesterfield. It is the shop's EPOS too: the till, cashing up, staff and receipts, with card payments keyed on a Tide card reader. GG Vault is the record of truth for sales, stock, trade-ins, customers and the GG Guild loyalty programme.
 
 See `PRODUCT.md` for who uses it and why, `docs/PLAN.md` for the full build plan, and `DESIGN.md` for the design system.
 

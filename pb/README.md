@@ -67,6 +67,10 @@ concern per file:
 | `..._csv_imports_review_link.js` | `csv_imports.resolved_rows` (json) and `.rows_skipped` (number), for `POST /api/vault/imports/:id/link` (`imports.pb.js`) |
 | `..._csv_imports_sumup_write_rules.js` | `csv_imports.updateRule` becomes admin-only (every staff write now goes through the import routes); `sumup_transactions.updateRule` lets a staff member set `matched_sale` only (`@request.body.<field>:isset = false` on every other field), admin unrestricted |
 | `..._phase5_portal_quotes_wants.js` | `quote_messages` (new); `quotes.closed_at`; `quotes.createRule` tightened to staff-only (a forged customer-created row could otherwise be paid out - fix round, finding 1); `customers.notify_email`/`.notify_push` (default `true`, backfilled onto every existing row); `settings.push` (`{ vapid_public_key: "" }`) and `.holds` (`{ hours: 48 }`); `customers.otp.emailTemplate` becomes a GG-branded subject and plain body; `app.settings().rateLimits` set explicitly to four rules (`customers:requestOTP`, the two public estimate routes, a per-IP `*:auth` guard - not merely turned on, which would also activate PocketBase's own tighter bundled defaults) and `.trustedProxy` (so a limit reads the real client address behind this deploy's Caddy); removes the unused Phase 1 `settings.push_vapid_public_key`/`.push_vapid_private_key` text fields. See `docs/api-contract.md`'s Phase 5 section |
+| `..._epos_foundation.js` | Phase 8 (`docs/EPOS-PLAN.md`): `staff.role` gains `manager`, `staff.pin_hash` becomes hidden, `staff.pin_failures`/`.pin_locked`/`.pin_set_at`; `registers` (seeded "Counter") and `register_devices`; `settings.epos` (with its defaults) and `.vat_number` |
+| `..._epos_schema.js` | Phase 8: every other collection and field the till needs, laid before the routes so the packages could be built side by side - `till_events`, `till_reports`, `sale_tenders`, `parked_tickets`, `till_categories`/`till_products`/`till_keys` (seeded), `printers`, `print_jobs`, `till_overrides`, `staff.pin_length`, and the till fields on `cash_sessions` (one open session per register), `cash_movements`, `sales`, `sale_lines` (`item` optional) and `trade_ins` |
+| `..._epos_rate_limits.js` | Phase 8: three more `rateLimits` rules, appended - PIN unlock and manager approval at 30 a minute, the CloudPRNT printer path at 120 |
+| `..._epos_lockdown.js` | Phase 8: `sales`, `sale_lines`, `sale_tenders`, `cash_sessions` and `cash_movements` lose every staff write rule, so money only moves through the audited routes |
 
 `trade_ins.number` starts life empty. Drafts and their lines are created
 through the collection API and the number is only assigned from
@@ -226,11 +230,15 @@ retrying `e.next()` on a unique-constraint failure.
 | `lib/perks.js` | Phase 6: the monthly perks wallet. `currentPeriod`/`nextPeriodStart` (`YYYY-MM` and "1 Oct" in Europe/London civil time, through `lib/reports/dates.js`'s own `toLondon`), `usageRow`/`usedCount`, `walletFor` (the tier's two counted perks with this month's figures, then its informational ones), `check` (a refusal or null, so a route can refuse before opening a transaction; it says how many are left when some are, and only claims the allowance is spent when it is) and `use` (the `perk_usage` upsert, re-checked inside the caller's). Allowances come from the shared `perkAllowance`, so the counter, the portal and the admin preview cannot disagree. |
 | `lib/display.js` | Phase 6: what may go on the customer-facing screen. `sanitise` rebuilds a payload field by field from the shapes the contract names and refuses one carrying an identifier, an email or a phone number at any depth (`forbiddenIn`); `stateRow`, `isStale`, `reset`, `clearIfStale` (a publish older than `TTL_MINUTES`, 15, resets itself) and `shape`. |
 | `lib/loyaltyconfig.js` | Phase 6: the shape checks behind the four admin-editable loyalty collections, registered as `*Request` hooks in `loyalty.pb.js`. `checkRule` (the `conditions` keys and types the shared evaluator actually reads, and the `value`/multiplier bounds), `checkTier` (every perk parses through the shared `parseTierPerk`; thresholds distinct among tiers that are not paid plans), `checkTierDelete` (409 while a customer is on it or an active membership carries it), `checkReward` and `checkProgramme`. Each reports `{status, message}` rather than throwing, so the calling hook raises it with its own event and the wording lives in one place. |
-| `lib/readers.js` | Phase 7: the SumUp Solo card reader at the counter. `config`/`isConfigured`/`saveSumupSettings` (the merchant key, code and default reader off `settings`), `returnUrlFor` (the callback URL, refused unless this instance has an https address, or is on 127.0.0.1/localhost for development), `hashToken`/`newToken`/`findByToken` (only the sha256 of a callback token is ever stored), `openForClientId` (the payment this basket already has, open or paid and unused), `createCheckout` (idempotent per `sale_client_id`, behind a partial unique index rather than a read-then-write, refusing a checkout SumUp gives no reference to and terminating the reader on any failure after the amount is live on it), `decide` (pure: what a fetched transaction means for a pending checkout - the reference, the currency, the amount, in that order), `applyOutcome` (the write, inside its own transaction, and only while the row is still `pending`), `notePaymentAfterClose` (a payment that lands after a cancel or an expiry: audited once, never re-opened), `verify` (the transactions lookup, then the reader's own status as a fallback that can only ever fail a payment, never pay one) with `verifiedRecently`/`markVerified` (one outbound call per checkout per ten seconds, however often the counter polls), `isReadersLiveCheckout`/`stopReader` (terminate is reader-scoped at SumUp, so a cancel only reaches for a reader still showing this payment), `cancel`, `expirePending` (the cron) and `saleRefusal` (the one wording for every way a card payment cannot pay for a sale, used by `sales.complete` before and inside its transaction). |
 | `lib/reservations.js` | Phase 7: `releaseExpired(app, now)` - the staff reservation's own expiry, the exact inverse of the set `lib/wants.js`'s `releaseExpiredHolds` takes. An `items` row that is `reserved` past its `reserved_until` with no `matched` `want_list` row behind it goes back to `in_stock` with a `notes` row and an `audit_log` row, and nobody is notified: that hold was a person's promise, not the system's. |
 | `lib/snapshots.js` | Phase 7: `rollup(app, now)` - one `price_snapshots` row per (card or retro title, finish, source, ISO week) once a row is over 90 days old, deleted in batches of 500. Streams: keyset paged on `(fetched_at, id)`, one row per target per week held in hand, and capped at `MAX_SCAN` rows a run (reported as `capped`), so a first pass over a year of nightly prices converges over a few weekly runs rather than reading a million rows into memory. Nothing inside the 90 days is touched, and the newest row of any target is never deleted whatever its age. Also `isoWeekKey` and `targetKey`, the two pure functions that decide the grouping. |
 | `lib/labels.js` | Phase 7: the bulk reprint and the cross-device print queue. `resolveItems` (the seven selectors, always bounded to stock the shop still holds), `queue` (the 500 label cap, the skip rule, the per-kind template the buy-in wizard would have used, the audit row), `claim` (up to `limit` of the oldest `queued` jobs flipped to `printing` inside one transaction that re-reads each row's status first), `jobShape` (the one job object every route here returns, `qr_text` included), `markPrinted` (a `printing` job only, refusing one the device no longer holds) with `renewClaim` (each print report is the claim's heartbeat, so a long batch is never taken back mid-print), `markFailed`/`requeue` and `unstick` (the cron, three strikes and the job stops asking). `templateKeyFor` lives here and `tradeins.pb.js` requires it, so a buy-in and a reprint of the same item can never come out on different sizes. |
-| `lib/sumup.js` | PocketBase-specific glue behind `sumup.pb.js` and `crons_sumup.pb.js`: `pull(app, actorId, ip)` upserts `sumup_transactions` from `adapters/sumup.js` and matches each to a sale (since Phase 7 by a `sumup_checkouts.transaction_id` this app's own reader payment recorded, then by a SKU-prefixed product name, then by amount and a three-minute time window), and `reconcile(app, date)` builds the Cash screen's day-by-day comparison. See `docs/api-contract.md`'s Phase 4 section for the matching rules and response shapes. |
+| `lib/permissions.js` | Phase 8: capabilities and manager overrides. `check`/`checkAll` (the caller's role against `settings.epos.permissions`, or a live single-use override in `X-GG-Override`), `refuse` (the 403 with `needs_override`), `consume` (marks the override used inside the action's own transaction), `logOverrides` (an `override` till event) and `auditMeta`. |
+| `lib/registers.js` | Phase 8: the default register (the active one with the lowest `sort`), `resolve` for a route's optional `register`, and `openSession`, which also treats a session written before registers existed as the default register's. |
+| `lib/pins.js`, `lib/devices.js` | Phase 8: the PIN hash (peppered from `GG_ID_PHOTO_KEY`; 500 without it), the one `verify` that unlock and approval share (failures counted in a transaction, locked on the fifth), and the `X-GG-Device` check with its sha256-only secret. |
+| `lib/till.js` | Phase 8: loads a session's sales, tenders, movements, trade-ins and events for `buildTillReport`, shapes `TillSession`, and numbers and saves X and Z reports (`counters.nextValue`). |
+| `lib/tenders.js`, `lib/salereceipt.js`, `lib/tillcatalogue.js` | Phase 8: writing `sale_tenders` rows and the cash movement for a sale or refund (read back in a fixed method order), building `ReceiptData`, and the till catalogue's shapes. |
+| `lib/printing.js` | Phase 8: the CloudPRNT protocol notes, printer tokens (sha256 only), `queueJob`, `queueDrawerKick` (the till routes call it after their own transaction; null when a register has no printer) and the job life cycle. |
 | `lib/reports/{dates,query,daily,csv,registry,scheduled,digest,sales,buyins,margin,stock,channels,customers,loyalty,cash,compliance}.js` | Every real handler behind `reports.pb.js`, `stats.pb.js` and `crons.pb.js`'s three reporting crons, kept out of the `.pb.js` files themselves per CLAUDE.md's "keep hooks small". `dates.js` is the pure UTC day/range/week/month math (no PocketBase calls of its own) plus `toLondon`/`isBst`/`lastSundayUtc`, a hand-rolled Europe/London civil-clock conversion for the sales heatmap only (goja has no reliable timezone database); `query.js` a memoising `findRecordById` lookup, the finish-aware "what is this stock item currently worth" figure `daily.js` and `stock.js` both read, `roundPct`/`roundRatio` (the one shared half-up rounding to 1dp/3dp every percentage/ratio in this package goes through), `queryByIds`/`findAllByFilter` (a batched-by-id query and a paged unbounded-list read, replacing what used to be one query per parent id or one single unbounded read), `saleBreakdownsByLine` (every sale referenced by a batch of `sale_lines`, fetched once and broken down with the shared `saleline` evaluator), and a small `by=<dimension>` table accumulator; `daily.js` is `daily_stats`'s pure builder (`buildDayRow`), its stock-valuation half (`currentStockValuation`, computed once and shared across a whole batch rather than once per day), its find-or-create upserts (`upsertDayRow` / `upsertDayRows`, the latter tolerating one bad day without failing the rest) and the read-through the reports use (`rowForDate` / `rowsForEachDay`, live for any day the nightly cron has not reached yet, `rowsForEachDay` batching a whole range in one query); `csv.js` renders a report's `table` through `lib/vaultutil.js`'s own `csvRow`/`csvCell`; `registry.js` is the one place all nine report keys (and which are admin-only) are named; `sales.js` through `compliance.js` are the nine reports themselves, one file each, each declaring its own `MONEY_FIELDS` (which `totals` keys are pence, for `scheduled.js`'s emailed totals) and `PERIOD_SCOPED_TOTALS` (which `totals` keys `compare=previous` may show); `scheduled.js` sends due `saved_reports` rows - re-checking at send time that an admin-only report's owner is still a current admin, and re-validating `recipients` (shape, dedup, capped at 10) rather than trusting what was saved - `digest.js` the Monday admin digest. See `docs/api-contract.md`'s Phase 4 section. |
 | `items.pb.js` | On create: assigns `sku` when empty (kind to letter, then a 5-character body drawn uniformly with `$security.randomStringWithAlphabet` and turned into a code with `sku.buildCode`, retried on collision - see above); derives `title` from the linked `card` or `retro_title` when empty; after the item is saved, opportunistically re-hosts its card's image through `adapters/images.js` if it is still a bare third-party URL - never blocks the create on a failure. A separate `onRecordUpdate` hook sets `listed_at` to now the moment `status` most recently became `listed_ebay`, and clears it the moment `status` leaves `listed_ebay` again - the channels report's listing-age figure reads this (falling back to `acquired_at` when blank), `docs/api-contract.md`'s Phase 4 section. |
 | `customers.pb.js` | `onRecordCreateRequest`: sets a random password (customers are OTP-only, but the field still exists - `docs/PLAN.md`'s Auth section). `onRecordCreate`: assigns `code` (`GGC…`, same uniform body generation as `items.pb.js`) and `qr_token` when empty. `onRecordAfterCreateSuccess`: creates the paired `customer_private` row. |
@@ -247,11 +255,9 @@ retrying `e.next()` on a unique-constraint failure.
 | `customerops.pb.js` | The latest ID document lookup, the duplicate-customer merge and the GDPR erasure. Since Phase 6 the merge also deletes a `referrals` row whose two ends would fold into the same customer (rather than re-pointing it into a self-referral that pays both bonuses to one person), takes the duplicate's own welcome bonus back off with an `adjust` row and a note, and re-evaluates the kept record's tier silently. |
 | `sales.pb.js` | Sale completion and refunds, and the `onRecordCreate` hook that defaults a new sale's `channel` to `"counter"` and `occurred_at` to now. |
 | `cash.pb.js` | Cash sessions. |
-| `exports.pb.js` | The stock book CSV (Phase 2), plus Phase 4's SumUp, eBay listing, inventory, sales, buy-in register and end-listings CSVs, and `POST /api/vault/items/end-listings`. |
+| `exports.pb.js` | The stock book CSV (Phase 2), plus Phase 4's eBay listing, inventory, sales, buy-in register and end-listings CSVs, and `POST /api/vault/items/end-listings`. |
 | `imports.pb.js` | Phase 4: `POST /api/vault/imports/card-uploader`, `POST /api/vault/imports/ebay-orders`, `GET /api/vault/imports/:id`, `POST /api/vault/imports/:id/link`. |
-| `sumup.pb.js` | Phase 4: `POST /api/vault/sumup/pull` (admin) and `GET /api/vault/sumup/reconcile` (staff), both thin wrappers over `lib/sumup.js`. |
 | `crons.pb.js` | Registers `fx`, `prices`, `retention`, `stats`, `scheduled_reports_weekly`, `scheduled_reports_monthly` and `weekly_digest`. `fx` (daily 07:00) fetches today's GBP rate from Frankfurter and writes it to `fx_rates` - `GET /api/vault/fx` only ever reads that row. `prices` (weekly, Sunday 03:00, despite its name) syncs `card_sets` from TCGdex, Scryfall, Lorcast and OPTCG's own set listings; day-to-day *price* ingestion still runs in `services/pricesync`, not here (hooks cannot stream the 15-26 MB Cardmarket files). `retention` does real work (see below). `stats` (00:30 UTC) rebuilds the last 7 UTC days' `daily_stats` rows (never today) through `lib/reports/daily.js`'s `upsertDayRows`, sharing one stock valuation across the whole batch and tolerating one bad day without failing the rest - not just yesterday, so a day's row self-heals once data that arrived late (an eBay import after 00:30, a next-morning refund) is on file. `scheduled_reports_weekly` (`0 8 * * 1`) and `scheduled_reports_monthly` (`0 8 1 * *`) send every due `saved_reports` row through `lib/reports/scheduled.js`; `weekly_digest` (`0 8 * * 1`) emails the admin digest through `lib/reports/digest.js` - see `docs/api-contract.md`'s Phase 4 section. |
-| `crons_sumup.pb.js` | Registers `sumup_pull` (`:15` past every hour, 08:00-22:00 UTC): `lib/sumup.js`'s `pull($app, "system", "")`. Kept separate from `crons.pb.js` (another package's file this round) - see `docs/api-contract.md`'s Phase 4 section. |
 | `lookup.pb.js` | `GET /api/vault/lookup`, `GET /api/vault/lookup/:game/:set/:number`, `GET /api/vault/retro/lookup` - see "Card and price adapters" below and `docs/api-contract.md`'s Phase 3 section. |
 | `prices.pb.js` | `GET`/`POST /api/vault/cards/:id/prices` and `:id/refresh-prices` and `:id/uk-comp`, `GET /api/vault/retro/:id/prices`. |
 | `fx.pb.js` | `GET /api/vault/fx` - reads the latest `fx_rates` row; never calls Frankfurter itself. |
@@ -269,12 +275,22 @@ retrying `e.next()` on a unique-constraint failure.
 | `memberships.pb.js` | Phase 6: `POST /api/vault/memberships`, `:id/renew` and `:id/cancel` (staff), and the nightly `memberships_lapse` cron (04:00). Never writes a tier itself - `loyalty.pb.js`'s `memberships` hooks do, so every route and cron reaches it by the same path. |
 | `display.pb.js` | Phase 6: `POST /api/vault/display`, `/display/accept` and `/display/clear` (staff), plus an `onRecordUpdateRequest` hook that puts a `display_state` write through the collection API through the same payload strip and refuses any attempt to set `customer_accepted_at` or `token` there (staff can update that row directly, so the three routes would otherwise be optional). What may reach the screen is decided in `lib/display.js`, not here. |
 | `guild.pb.js` | Phase 6: `GET /api/vault/me/guild` and `GET /api/vault/me/points` (customer) - My Vault's Guild pages. Read-only, and about the caller alone: every query filters on `e.auth.id`, so there is no id in either path to get wrong. |
-| `sumup_readers.pb.js` | Phase 7: the Solo card reader - `GET`/`POST /api/vault/sumup/readers`, `DELETE /api/vault/sumup/readers/:id`, `POST /api/vault/sumup/checkouts`, `GET /api/vault/sumup/checkouts/:id`, `POST /api/vault/sumup/checkouts/:id/cancel`, the public `POST /api/vault/sumup/callback/:token`, the `checkouts_expire` cron and the one `settings` write hook that keeps the default reader to text. Logic in `lib/readers.js`. Kept out of `sumup.pb.js`: that file is the merchant account's own transaction history, this one is the terminal on the counter. |
 | `labels.pb.js` | Phase 7: `POST /api/vault/labels/queue`, `/claim`, `/:id/printed`, `/:id/failed`, `/:id/requeue` (staff) and the `labels_unstick` cron. Logic in `lib/labels.js`. The queue screen still lists `label_jobs` through the collection API, and the print page still marks a row printed there. |
 | `reservations.pb.js` | Phase 7: the `reservations_expire` cron alone (`5-59/15 * * * *`, offset from `holds_release`), over `lib/reservations.js`. |
 | `snapshots.pb.js` | Phase 7: `POST /api/vault/prices/rollup` (admin) and the `snapshots_rollup` cron (Sunday 02:30, half an hour clear of the weekly `prices` set sync), both thin wrappers over `lib/snapshots.js`. |
+| `till_auth.pb.js` | Phase 8: registered till devices, the lock screen's roster, PIN unlock (answering as a password sign-in does, through `$apis.recordAuthResponse` with the method `"pin"`) and manager approval tokens. Logic in `lib/pins.js` and `lib/devices.js`. See `docs/api-contract-epos.md`, section 2. |
+| `staff_admin.pb.js` | Phase 8: staff management for admins, PINs (your own and, for an admin, anybody's) and your own password for every role. |
+| `till.pb.js` | Phase 8: opening the till, the running report, X and Z reports, paid in and out, bank drops, no sale and voids, per register. Every figure comes from the shared `buildTillReport` (`packages/shared/src/till.ts`) through `lib/till.js`; a Z report is refused any change or delete at the record level. Section 3 of the EPOS contract. |
+| `till_catalogue.pb.js` | Phase 8: the till's category tiles and the dynamic category items (`lib/tillcatalogue.js`). |
+| `sale_receipts.pb.js` | Phase 8: a sale's or a refund's `ReceiptData` (`lib/salereceipt.js`) and the emailed receipt. |
+| `printing.pb.js` | Phase 8: receipt printers, print jobs, the drawer kick and the three Star CloudPRNT methods a printer calls, plus the `print_jobs_tidy` cron. Protocol notes in `lib/printing.js`. |
 
 ## Custom API routes (`/api/vault/*`)
+
+The till's routes (Phase 8: staff and PINs, till sessions and X/Z,
+selling with tenders and refunds, the catalogue, receipts, printers and
+CloudPRNT) are specified in `docs/api-contract-epos.md` and not repeated
+here. SumUp's routes, cron and export were removed in Phase 8.
 
 `docs/api-contract.md` is the contract these implement and is the source
 of truth for the request and response shapes; this section is the
@@ -295,7 +311,6 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `GET /api/vault/cash-sessions/current` | `{ session, expected, movements }`, `null` session when none is open. |
 | `POST /api/vault/cash-sessions/{id}/close` | Expected, counted, variance; audited as `cash_session_variance` when the variance is over `settings.cash_variance_alert`. |
 | `GET /api/vault/exports/stock-book?from&to` | **admin**. The margin scheme CSV, as an attachment. One row per sale line for what is still sold, plus one for what is still on the shelf. |
-| `GET /api/vault/exports/sumup.csv?since&dry_run` | SumUp's own item-import layout for `retro`/`sealed`/`accessory`/`other` stock, and sets `items.sumup_synced_at` unless `dry_run=1`. |
 | `GET /api/vault/exports/ebay-listings.csv?ids` | A listing file for the given in-stock items; marks nothing. |
 | `GET /api/vault/exports/inventory.csv?status&game&kind`, `/sales.csv?from&to` | Plain CSV listings of `items` and of `sales`/`sale_lines`. |
 | `GET /api/vault/exports/buy-in-register.csv?from&to` | **admin**. Seller snapshots included. |
@@ -304,15 +319,8 @@ server-side notes that go with them. Every route needs a `staff` token;
 | `POST /api/vault/imports/card-uploader`, `/imports/ebay-orders` | Multipart CSV imports; one `$app.runInTransaction` per file. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
 | `GET /api/vault/imports/:id` | The `csv_imports` row with its `errors`, for the review screen. A staff token can no longer `PATCH` a `csv_imports` row directly (admin only); every write goes through this file's routes. |
 | `POST /api/vault/imports/:id/link` | `{ row, card }` links one "needs match" row by hand through the same three-path rule the import itself uses; `{ row, skip: true }` dismisses it. See `imports.pb.js`, `docs/api-contract.md`'s Phase 4 section. |
-| `POST /api/vault/sumup/pull` | **admin**. Also runs hourly - see `crons_sumup.pb.js`. |
-| `GET`/`POST /api/vault/sumup/readers`, `DELETE /api/vault/sumup/readers/:id` | The paired Solo terminals. `GET` is staff; pairing and unpairing are **admin** and audited. With no merchant code yet, `GET` answers 200 with `not_configured: true` rather than failing. |
-| `POST /api/vault/sumup/checkouts` | Puts an amount on the reader. Idempotent per `sale_client_id`, including one already paid and unused, behind a partial unique index. Rate limited to 30 a minute per calling address. |
-| `GET /api/vault/sumup/checkouts/:id` | The row, verified against SumUp first when it is still pending and over five seconds old - the counter polls this every three seconds while it waits. |
-| `POST /api/vault/sumup/checkouts/:id/cancel` | The till that started it, or an admin. 409 with the checkout in the body when the customer had already paid. |
-| `POST /api/vault/sumup/callback/:token` | **public** (SumUp's own callback), rate limited to 60 a minute. An unknown token is a bare 404 with no body; the token is never logged, and only its sha256 is stored. |
 | `POST /api/vault/prices/rollup` | **admin**. Thins `price_snapshots` older than 90 days to one row per target per ISO week. Audited. |
 | `POST /api/vault/labels/queue`, `/claim`, `/:id/printed`, `/:id/failed`, `/:id/requeue` | The bulk reprint and the cross-device print queue. A claim is atomic: two devices claiming at once take different batches. `/printed` doubles as the claim's heartbeat and refuses a job the device no longer holds. |
-| `GET /api/vault/sumup/reconcile?date` | The day's SumUp transactions beside the day's card sales, for the Cash screen. A manual match off this list is a plain `PATCH /api/collections/sumup_transactions/:id { matched_sale }` - the only field a staff token may set there; every other field needs `role = "admin"`. |
 | `GET /api/vault/lookup`, `/lookup/:game/:set/:number`, `/retro/lookup` | Catalogue and retro-title search, writing through to `cards`/`card_sets`/`retro_titles`. See "Card and price adapters" below. |
 | `GET`/`POST /api/vault/cards/:id/prices`, `/refresh-prices`, `/uk-comp`; `GET /api/vault/retro/:id/prices` | Valuation, reading (GET) or writing (POST) `price_snapshots`. See "Card and price adapters" below. |
 | `GET /api/vault/fx` | The latest `fx_rates` row. |
@@ -487,7 +495,6 @@ files: `lookup.pb.js`, `prices.pb.js`, `fx.pb.js`, `items.pb.js` and
 | `pricecharting.js` | Retro prices: PriceCharting, a paid API ($49/month). PAL category searched first, NTSC only when PAL has no entry; prices are integer US cents, never a string. Behind `settings.api_keys.pricecharting` being set. |
 | `ebay.js` | UK asking prices: the Browse API, application (client-credentials) auth. UK-located, GBP, fixed-price listings only; median of the five lowest, then a haircut off (`haircutPctFromSettings(app)` reads `settings.offer.ebayHaircutPct`, default 15 - the one home for this figure). Behind `settings.api_keys.ebay` being set. |
 | `frankfurter.js` | FX: the ECB reference rate, base GBP. No key. Inverts Frankfurter's own "units of X per GBP" into "GBP per unit of X" once, here - see `docs/api-contract.md`'s Phase 3 section. |
-| `sumup.js` | SumUp Transactions API: `GET .../transactions/history` (paged via the response's own `links`) then `GET .../transactions?id=` per transaction for `products[]`. A plain `Authorization: Bearer <key>` - a merchant API key, not OAuth, so unlike `ebay.js`/`igdb.js` there is no token to cache. Behind `settings.api_keys.sumup` and `settings.sumup.merchant_code` both being set; used by `lib/sumup.js`, not called directly from any route. Phase 7 adds the Readers API on `/v0.1` (list, pair, unpair, put an amount on a reader, that checkout's status, terminate) and a transactions lookup by `client_transaction_id`; every one of those answers `{ ok, status, message, data }` instead of throwing, because a reader that is off or no longer paired is an ordinary thing to happen at a counter and each case needs its own sentence. |
 | `http.js` | The shared `request(req, transport)` every adapter above calls out through, plus a small `pause(ms)` for a source's rate limit, a `qs(params)` query-string builder and `stripQuery(url)` (never let a key or a token reach a log line or an error message). Overridable for tests two ways: an explicit `transport` argument, or `globalThis.__adapterTransport` when no argument is given (a real request, inside PocketBase, always falls through to `$http.send` - see `pb/scripts/check-adapters.mjs`). `GG_ADAPTER_TRANSPORT_MODE` (see "Environment variables" above) changes this: `offline_fail` throws immediately, naming the call; `fixture` hands the call to `fixture_transport.js` instead. |
 | `fixture_transport.js` | Answers a fixed set of known adapter calls from `pb_hooks/adapters/fixtures/` - the same files `pb/scripts/check-adapters.mjs` unit-tests each adapter against - and throws for anything it has no mapping for, same as `offline_fail`. This is what `pb/scripts/check.sh` runs its whole throwaway server under, so its route-level checks exercise a real search, an exact lookup, `refresh-prices` and the image queue end to end with no live network call. Goja-only (`$os.readFile` to load a fixture's JSON off disk) - never required under plain Node. |
 | `statestore.js` | A tiny key/value store with an optional expiry, backed by `adapter_state` - `igdb.js` and `ebay.js`'s own OAuth tokens, eBay's 24-hour price cache, and `images.js`'s image queue. `forApp(app)` for PocketBase, `memory()` for tests. |
@@ -747,9 +754,7 @@ Section 21 is reserved for another package this round (`daily_stats` and
 the reports suite); its own agent adds it in place of the placeholder
 comment.
 
-Section 22 is Phase 4's: the SumUp export's header row, its SKU-prefixed
-item name, 0% tax on a margin-scheme item, and `sumup_synced_at` set on
-export but not under `dry_run=1`; the eBay listing CSV for two ids; the
+Section 22 is Phase 4's: the eBay listing CSV for two ids; the
 inventory, sales and buy-in register exports' header rows, the last being
 admin only; `end-listings.csv` listing a sold, still-listed item and
 `POST /api/vault/items/end-listings` clearing it with an audit row; a
@@ -759,23 +764,14 @@ item) and one name-only row (one review entry), read back through
 `type` both refused with 400; an eBay orders file selling a listed item
 into a `channel: "ebay"` sale with `external_ref` set, a second run of
 the same file reporting `"already sold"` rather than selling it twice, and
-an ordinary counter sale still defaulting `channel` to `"counter"`; and
-the SumUp pull (still under `GG_ADAPTER_TRANSPORT_MODE=fixture`, against
-hand-written `sumup_HANDWRITTEN_*.json` fixtures) matching one transaction
-by a SKU-prefixed product name and another by amount and a three-minute
-time window, a second pull (run as the `sumup_pull` cron,
-`POST /api/crons/sumup_pull`) upserting in place rather than duplicating
-either, `GET /api/vault/sumup/reconcile` returning matched and unmatched
-lists with totals, and a non-admin refused the pull but not the reconcile.
+an ordinary counter sale still defaulting `channel` to `"counter"`.
 Then `POST /api/vault/imports/:id/link`: linking a review row to a card
 already in stock (no duplicate item, cost untouched), linking one to a
 card with nothing in stock (a new item, with the same zero-cost review
 note the automatic import itself would leave), skipping a row, a second
 link of an already-resolved row refused with 409, and an unknown row
 refused with 404. Last, the tightened write rules: a staff `PATCH` of
-`csv_imports.errors` refused (404), a staff `PATCH` of
-`sumup_transactions.matched_sale` accepted (the counter screen's manual
-match), and a staff `PATCH` of `sumup_transactions.amount` refused.
+`csv_imports.errors` refused (404).
 
 Section 24 is the Phase 6 round: the welcome bonus landing once and
 putting the customer on the first tier; a referral resolved from a code at
@@ -820,58 +816,30 @@ and stops it again at the end of the section. Nothing in `pb_hooks/` gains
 a test-only route, and the server under test keeps serving this repo's own
 hooks throughout.
 
-Section 25 is Phase 7's: the Solo card reader, reservation expiry, the
-price snapshot roll-up and the label queue. It opens on the two rate
-limits this phase added, bursting each against exactly the rules the
-migration installed before a reader is paired (so every refused request is
-cheap), then raises them for the body of the section, which takes far more
-payments a minute than a counter ever would, and puts the shipped figures
-back at the end. It pairs a reader (and refuses
-a code SumUp will not take), makes the first one the default and unpairs a
-second without moving it; puts an amount on it and gets the same row back
-for a second request carrying the same `sale_client_id`; posts the
-callback SumUp would - an unknown token answering a bare 404 with no body,
-a still-`PENDING` transaction leaving the payment open, a `SUCCESSFUL` one
-marking it paid with its code and last four, a transaction for a different
-amount failing it with the sentence that says to refund it in the SumUp
-app; completes a sale against a paid payment (the card part matching, a
-second sale on the same payment refused, the replayed `client_id` still
-returning the first sale), cancels a pending one and finds a cancel that
-came too late has been paid instead (409); runs the expiry cron over a
-backdated row and again to prove it changes nothing; releases an expired
-staff reservation while leaving a want-list hold and a live one alone;
-rolls up backdated `price_snapshots` and checks the newest of each week,
-and the last price a card has, both survive; and walks the label queue
-end to end - each selector, the 500 cap, the skip rule, a claim two
-devices cannot both take, printed, three failures, a requeue and the
-unstick cron. A fix-round block then covers what a review of this package
-asked for: a checkout SumUp gives no reference to being refused and taken
-off the reader, a transaction that names another payment being ignored, a
-busy reader and a payment in euros each refused in their own words, the
-reader-status fallback, a refunded and an unreadable amount, two tills
-asking for one basket at once, two tills completing one sale at once, two
-devices claiming labels at once, a payment that lands after a cancel or an
-expiry, a reservation with no end date, the roll-up splitting a group by
-finish, by source and on a retro title, a device keeping its claim while
-it prints, and three abandoned claims stopping a job. It finishes on the
-API rules: a customer token reaches none of the new routes, a staff PATCH
-cannot point a sale at a card payment, and a staff token can read a
-`sumup_checkouts` row but never write one.
+Section 25 is Phase 7's: reservation expiry, the price snapshot roll-up
+and the label queue (its Solo card reader checks went with SumUp in
+Phase 8). It releases an expired staff reservation while leaving a
+want-list hold and a live one alone; rolls up backdated `price_snapshots`
+and checks the newest of each week, and the last price a card has, both
+survive, splitting a group by finish, by source and on a retro title; and
+walks the label queue end to end - each selector, the 500 cap, the skip
+rule, a claim two devices cannot both take, printed, three failures, a
+requeue, the unstick cron, a device keeping its claim while it prints and
+three abandoned claims stopping a job.
 
-That section needs three things the API cannot set:
-`sumup_checkouts.created` (an autodate, which the expiry cron measures
-from), `callback_secret`, which holds the sha256 of a token the server
-generates and never hands out - so posting a callback the way SumUp does
-means putting a known token's own hash there first - and
-`client_transaction_id`, which the fixture reads the outcome out of, so a
-payment can be made to land after the row was closed. It starts its own short-lived PocketBase for
-both, exactly as section 24 does, and stops it again at the end. The
-Readers API itself is answered by `pb_hooks/adapters/fixture_transport.js`
-from the request in front of it: the outcome a check wants (paid, pending,
-failed, a mismatched amount) travels in the checkout's own `description`
-and comes back inside the `client_transaction_id`, which is the id the
-transactions lookup is then asked about, so a poll, a callback and the
-cron all get the same answer with nothing remembered between calls.
+From section 27 the EPOS checks live one file each in `pb/scripts/checks/`,
+sourced in name order into the same shell at the end of `check.sh`, so they
+share the main server, `$SUPER_TOKEN`, `$STAFF_TOKEN`, `$TMP_DIR` and the
+helpers: `27-staff-pin.sh` (devices, the roster, PIN unlock and its lock,
+manager approval, staff management, the keyless server), `28-till.sh`
+(opening the till, X and Z with exact variance arithmetic, movements, no
+sale, voids, an override used once, a Z that cannot be changed),
+`29-printing.sh` (printers, jobs, every CloudPRNT method, both drawer
+encodings, the tidy cron) and `30-sales.sh` (split tenders with change,
+every tender refusal, till products and memberships, discounts and price
+overrides with an approval, VAT, voids, replay, lookup, refunds to each
+tender, the catalogue, receipts, the display stages, the lockdown, and
+that no SumUp route answers).
 
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),

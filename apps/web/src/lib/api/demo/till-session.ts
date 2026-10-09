@@ -311,6 +311,18 @@ export function noteDemoTillSale(input: Omit<DemoTillSale, "session" | "at"> & {
   ensureBook().sales.push({ ...input, session: session.id, at: input.at ?? new Date().toISOString() })
 }
 
+/** A refund the demo till has just given, so the next X report counts it. */
+export function noteDemoTillRefund(input: { ref: string; tenders: DemoTender[]; at?: string }) {
+  const session = demoTill.session
+  if (!session) return
+  ensureBook().refunds.push({
+    session: session.id,
+    ref: input.ref,
+    at: input.at ?? new Date().toISOString(),
+    tenders: input.tenders,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // The report
 // ---------------------------------------------------------------------------

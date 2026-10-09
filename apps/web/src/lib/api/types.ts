@@ -640,19 +640,10 @@ export interface CompleteSalePayload {
   discount_source: DiscountSource | null
   reward_code: string | null
   cash_session: string | null
-  sumup_ref: string
-  /**
-   * A `sumup_checkouts` id the reader has already taken the card part on.
-   * The server checks it is paid, unused and for exactly the card part of
-   * this sale before it writes anything (Phase 7 contract, "Solo reader
-   * checkouts").
-   */
-  sumup_checkout?: string
 }
 
 export interface CompleteSaleResult {
   sale: { id: string; number: string; total: number; status: SaleStatus }
-  sumup_amount: number
   points_earned: number
   credit_balance: number
   points_balance: number
@@ -1138,17 +1129,6 @@ export interface VaultSettingsRow {
   epos?: EposSettingsRow
   /** Printed on receipts while the shop is VAT registered. */
   vat_number?: string
-  /**
-   * SumUp's old merchant code and reader choice. SumUp is gone
-   * (docs/api-contract-epos.md, section 5) and nothing reads or writes this
-   * any more except the demo Solo reader in `lib/api/demo/checkouts.ts`,
-   * which the till package deletes; this goes with it.
-   */
-  sumup?: {
-    merchant_code?: string
-    default_reader_id?: string
-    default_reader_name?: string
-  }
   /**
    * How customer email is addressed and whether it is sent at all. The mail
    * API key is `email_api_key`, a column of its own that never leaves the
@@ -1664,96 +1644,6 @@ export interface EndListingRow {
   ebay_listing_id?: string
   sale_number?: string
   sold_at?: string
-}
-
-// --- The Solo reader (Phase 7) ---------------------------------------------
-//
-// SumUp is gone (docs/api-contract-epos.md, section 5). These shapes stay
-// only while the old Sell screen and lib/api/checkouts.ts still import them;
-// the till package removes both, and these go with them.
-
-/** SumUp's own words for where a pairing has got to. */
-export type SumUpReaderStatus = "unknown" | "processing" | "paired" | "expired"
-
-/** One paired card reader, as `GET /api/vault/sumup/readers` lists it. */
-export interface SumUpReader {
-  id: string
-  name: string
-  status: SumUpReaderStatus
-  /** "Solo", or whatever SumUp calls the device. */
-  model: string
-}
-
-export interface SumUpReaderList {
-  readers: SumUpReader[]
-  default_reader_id: string
-  /**
-   * No merchant code or no key on the server. The Sell screen says nothing
-   * at all in that case: a shop that has not set SumUp up does not need
-   * telling on every sale.
-   */
-  not_configured: boolean
-}
-
-export type SumUpCheckoutStatus =
-  | "pending"
-  | "paid"
-  | "failed"
-  | "cancelled"
-  | "expired"
-
-/** What the Sell screen sends to open one. */
-export interface CreateCheckoutInput {
-  /** Integer GBP pence: the card part of the sale, never the whole total. */
-  amount: number
-  /** The sale's own idempotency key, so a second press finds the first checkout. */
-  saleClientId: string
-  /** What shows on the reader and the customer's slip. */
-  description?: string
-  readerId?: string
-}
-
-/**
- * A `sumup_checkouts` row, in the shape the create route, the poll and the
- * cancel all answer with (docs/api-contract.md, "Phase 7").
- *
- * `sale_client_id` is the basket's own idempotency key. It is what binds a
- * payment to the sale it was taken for, so money taken for one customer can
- * never be attached to the next customer's sale.
- */
-export interface SumUpCheckout {
-  id: string
-  status: SumUpCheckoutStatus
-  /** Integer GBP pence. */
-  amount: number
-  /** The basket this payment belongs to, and no other. */
-  sale_client_id?: string
-  description?: string
-  reader_id?: string
-  reader_name?: string
-  /** SumUp's own id for the checkout on the reader. */
-  checkout_id?: string
-  /** What the payment is verified by: SumUp's transactions lookup uses it. */
-  client_transaction_id?: string
-  transaction_id?: string
-  /** SumUp's receipt code, the one printed on the customer's slip. */
-  transaction_code?: string
-  card_last4?: string
-  error?: string
-  paid_at?: string
-  /** The sale that has used this payment, once one has. */
-  sale?: string
-  created?: string
-}
-
-/**
- * `POST /api/vault/sumup/checkouts`. `reused` is true when this is the
- * amount already on the reader for this basket, or a payment already made
- * for it that no sale has used, rather than a new one.
- */
-export interface CreateCheckoutResult {
-  checkout: SumUpCheckout
-  reused: boolean
 }
 
 // ---------------------------------------------------------------------------

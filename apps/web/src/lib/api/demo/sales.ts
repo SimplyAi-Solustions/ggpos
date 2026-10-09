@@ -13,6 +13,7 @@ import { ClientResponseError } from "pocketbase"
 import {
   TENDER_LABELS,
   breakdown,
+  categoryForKind,
   checkPointsRedemption,
   evaluateSalePoints,
   formatGBP,
@@ -29,7 +30,12 @@ import {
 
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import { addMovement } from "@/lib/api/demo/cash"
-import { demoTill, DEMO_REGISTER } from "@/lib/api/demo/till-session"
+import {
+  demoTill,
+  DEMO_REGISTER,
+  noteDemoTillRefund,
+  noteDemoTillSale,
+} from "@/lib/api/demo/till-session"
 import { demoProduct, demoRecordVoids } from "@/lib/api/demo/till"
 import {
   DEMO_PROGRAMME,
@@ -487,6 +493,15 @@ export function completeSale(payload: TillSalePayload): TillSaleResult {
   if (payload.voided?.length) demoRecordVoids("void_line", payload.voided, saleId)
 
   demoSales.unshift(sale)
+  // The demo X and Z read their own book of the session's sales.
+  noteDemoTillSale({
+    number,
+    staff: { id: DEMO_STAFF.id, name: DEMO_STAFF.name },
+    category: categoryForKind(lines[0]?.kind),
+    gross: subtotal,
+    discount,
+    tenders: paid.rows.map((row) => ({ method: row.method, amount: row.amount })),
+  })
 
   const result: TillSaleResult = {
     sale: { id: sale.id, number, total, status: "complete" },
@@ -664,6 +679,10 @@ export function refundSale(id: string, payload: TillRefundPayload): TillRefundRe
     tenderRow(tender.method, -Math.round(tender.amount), { card_last4: tender.card_last4 })
   )
   sale.refunds = [...(sale.refunds ?? []), { ref, amount, reason: payload.reason.trim(), tenders }]
+  noteDemoTillRefund({
+    ref,
+    tenders: tenders.map((row) => ({ method: row.method, amount: Math.abs(row.amount) })),
+  })
 
   return { sale: { id: sale.id, status: sale.status }, refund: { ref, amount, tenders } }
 }

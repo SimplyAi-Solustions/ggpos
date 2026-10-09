@@ -82,7 +82,7 @@ export function DonePane({
         )}
         {done.pointsEarned > 0 ? (
           <p data-testid="till-points-earned" className="mt-2 text-[16px] text-foreground">
-            Earns {done.pointsEarned.toLocaleString("en-GB")} points
+            Earned {done.pointsEarned.toLocaleString("en-GB")} points
           </p>
         ) : null}
         {waiting ? (

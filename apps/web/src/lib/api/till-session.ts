@@ -25,19 +25,34 @@ export function currentRegisterId(): string | undefined {
   return getTillDevice()?.register || undefined
 }
 
-export async function getTillCurrent(register = currentRegisterId()): Promise<TillCurrent> {
-  if (isDemo()) return getDemoTillCurrent()
-  return pb.send<TillCurrent>("/api/vault/till/current", {
-    method: "GET",
-    query: register ? { register } : {},
-  })
+/**
+ * `running: false` skips the unsaved X report the server would otherwise
+ * build on every call; the till only needs to know whether it is open.
+ */
+export async function getTillCurrent(
+  register = currentRegisterId(),
+  options: { running?: boolean } = {}
+): Promise<TillCurrent> {
+  if (isDemo()) {
+    const current = getDemoTillCurrent()
+    return options.running === false ? { ...current, running: null } : current
+  }
+  const query: Record<string, string> = {}
+  if (register) query.register = register
+  if (options.running === false) query.running = "0"
+  return pb.send<TillCurrent>("/api/vault/till/current", { method: "GET", query })
 }
 
-/** The till's state for this browser's register, refreshed every half minute. */
-export function useTillCurrent() {
+/**
+ * The till's state for this browser's register, refreshed every half minute.
+ * Both forms share the `TILL_CURRENT_KEY` prefix, so invalidating it after
+ * opening or closing the till refreshes the till and cashing up alike.
+ */
+export function useTillCurrent(options: { running?: boolean } = {}) {
+  const running = options.running !== false
   return useQuery({
-    queryKey: [...TILL_CURRENT_KEY, currentRegisterId() ?? "default"],
-    queryFn: () => getTillCurrent(),
+    queryKey: [...TILL_CURRENT_KEY, currentRegisterId() ?? "default", running ? "running" : "state"],
+    queryFn: () => getTillCurrent(undefined, { running }),
     staleTime: 15_000,
     refetchInterval: 30_000,
   })

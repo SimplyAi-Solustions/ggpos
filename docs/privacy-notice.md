@@ -32,7 +32,7 @@ We keep different kinds of record for different lengths of time, generally set b
 
 Your data is seen by GG Entertainment staff who need it to do their job, for example to complete a sale or a trade-in, or to check your ID. We share data with:
 
-- our payment provider, SumUp, to take card payments;
+- Tide, whose card reader takes card payments in the shop (we keep only the last four digits of the card), and Stripe, if you pay for a booking or a membership online;
 - our email and text message provider, to send receipts, offers you have asked for, and account messages;
 - the Information Commissioner's Office, if we are required to report to them.
 

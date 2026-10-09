@@ -5,8 +5,9 @@
 # minutes, under flock, so two runs never overlap. A commit reaches the shop
 # only when all of these hold:
 #
-#   1. It is the newest commit on the deploy branch (named in
-#      /etc/ggvault/deploy-branch) whose subject does not start with "WIP".
+#   1. It is the newest commit on the deploy branch's own line (named in
+#      /etc/ggvault/deploy-branch; first parents only, so nothing that came
+#      in through a merge) whose subject does not start with "WIP".
 #      Work-in-progress snapshots are pushed while a feature is being built;
 #      they never reach the till.
 #   2. GitHub CI passed on that exact commit: every check named in
@@ -48,7 +49,11 @@ cd "$DEST"
 git fetch -q origin "$BRANCH"
 
 # --- 1. The newest finished commit ------------------------------------------
-TARGET="$(git log -n 300 --format='%H%x09%s' "origin/$BRANCH" | awk -F'\t' '$2 !~ /^WIP/ { print $1; exit }')"
+# --first-parent: only the branch's own commits are candidates. A commit
+# that came in through a merge (a package built on its own branch) holds
+# that package alone, never the whole app, so it is never deployed by
+# itself; the merge commit that brings it in is.
+TARGET="$(git log --first-parent -n 300 --format='%H%x09%s' "origin/$BRANCH" | awk -F'\t' '$2 !~ /^WIP/ { print $1; exit }')"
 if [ -z "$TARGET" ]; then exit 0; fi
 LOCAL="$(git rev-parse HEAD)"
 if [ "$LOCAL" = "$TARGET" ]; then exit 0; fi

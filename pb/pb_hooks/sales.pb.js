@@ -796,6 +796,10 @@ routerAdd(
             title: plan.title,
             status: "sold",
           });
+          // A line's own note from the ticket ("Signed by the artist").
+          const sentLine = rawLines[plan.index];
+          const note = sentLine && typeof sentLine === "object" ? util.asStr(sentLine.note).slice(0, 200) : "";
+          if (note) line.set("note", note);
           if (plan.item) line.set("item", plan.item.id);
           if (plan.product) line.set("product", plan.product.id);
           txApp.save(line);

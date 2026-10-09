@@ -563,61 +563,47 @@ that supports "install as app":
   the same automatic install prompt Chrome does, so this manual step is
   the normal way to install any PWA on iOS.
 
-## 14. SumUp
+## 14. The till: devices, PINs, the Tide reader and the receipt printer
 
-SumUp takes the money; GG Vault is the record of what was sold. Two
-things connect them, and both are set from inside the app rather than
-from the command line:
+GG Vault is the shop's EPOS (`docs/EPOS-PLAN.md`). Setting up a counter:
 
-- **the merchant API key**, a long-lived personal access token from the
-  SumUp dashboard (Profile > Developers), stored in `settings.api_keys`
-  under `sumup`;
-- **the merchant code**, the `M...` identifier on the same page, stored
-  in `settings.sumup.merchant_code`.
+1. **Staff.** Sign in as an admin and open **Staff** (avatar menu). Add
+   everybody with a role (Staff, Manager or Admin) and a temporary
+   password; each person changes it at their first sign-in and sets a 4 or
+   6 digit PIN from their own avatar menu (Set PIN). What each role may do
+   is under **Settings, Permissions**; settings and staff stay admin-only
+   whatever that table says.
+2. **Register each device.** On the Mac and on the tablet, sign in with a
+   manager's or an admin's password, open **Settings, Tills** and choose
+   **Register this device** (a name such as "Counter Mac", and the till,
+   "Counter"). From then on that browser locks to the PIN screen after the
+   minutes set under Settings, Till, and staff switch with their PIN. A PIN
+   opens nothing on a browser that is not registered. A lost or replaced
+   device is revoked from the same section.
+3. **Open the till** each morning from **Cash up** (or the till itself):
+   count the float by denomination or accept the suggested one.
+4. **Card payments: Tide.** The Tide Card Reader is not connected to the
+   till. Key the amount the till shows into the reader, then tap Approved
+   and key the last four digits off the reader's screen or slip. At the
+   end of the day the Z report asks for the Tide app's card total for the
+   day (Tide app, Payments) and shows any difference.
+5. **The receipt printer and cash drawer** (Star TSP143IV LAN or
+   mC-Print3, with the drawer plugged into the printer's drawer port):
+   plug the printer into the shop's network, then in GG Vault open
+   **Settings, Printers, Add printer** with its MAC address (on the
+   printer's self-test slip: hold FEED while switching it on) and the till
+   it serves. GG Vault shows a URL once: in the printer's own web settings
+   (type its IP address into a browser) open **CloudPRNT**, switch it on,
+   paste the URL as the Server URL and set the polling time to 2 seconds.
+   Test print from Settings. Receipts, X and Z reports and the drawer then
+   work from the Mac and the tablet alike. With no printer, receipts open
+   in the browser's own print dialog, and the drawer key opens the drawer.
+6. **Close the day** with the Z report under **Cash up**: count the whole
+   drawer, key the Tide total, take out the bank drop, add a note.
 
-Both are saved through the app's own Settings screen as an admin, or in
-`/_/` on the `settings` record. They never leave the server: the staff
-config route drops `api_keys` wholesale, and no route ever returns the
-key. With both set, the hourly pull brings each day's transactions in for
-the Cash screen's reconciliation.
-
-### Solo card reader
-
-A SumUp Solo can take the card payment straight from the Sell screen, so
-nobody types the amount into the SumUp app twice. The key and merchant
-code above are all it needs; there is nothing else to buy or configure.
-
-Before pairing, check **Settings > Application** in `/_/`: the
-application URL has to be the real public address
-(`https://ggpos.ggentertainment.co.uk`), not `localhost`. The reader
-reports the result of every payment back to that address, so a wrong or
-empty one means the counter never hears whether the card went through -
-the app refuses to start a payment at all until it is set.
-
-To pair:
-
-1. On the Solo, open **Connections > API > Connect**. It shows an 8 or 9
-   character pairing code that lasts five minutes and changes every time.
-2. In GG Vault, as an admin, open **Settings > Card reader** and enter
-   that code (a name such as "Counter Solo" is optional and only used on
-   screen).
-3. The first reader paired becomes the counter's default. Pair a second
-   one the same way if the shop ever has two; unpairing one from the same
-   screen clears it from SumUp as well.
-
-Day to day: Sell puts the amount on the reader, the customer taps, and
-the sale completes against that payment with the reader's own transaction
-code on it. If the reader is off, offline or already taking somebody
-else's payment the app says which, and the sale can still be taken another
-way. Asking for the same sale's payment twice hands back the one already
-on the reader rather than charging twice. A payment nobody completes is
-closed automatically after fifteen minutes; if the money did arrive after
-that, the app records it and the transaction shows on the Cash screen with
-no sale against it, which is the one to refund or match by hand.
-
-**Refunds stay in the SumUp app.** Nothing in GG Vault sends money back
-to a card: refund the transaction in SumUp, then record the refund in the
-app so stock and the ledgers agree.
+SumUp is no longer used. Its old transactions stay in the database and in
+the reports, labelled "Card (SumUp)", and nothing else of it remains: no
+key, merchant code or reader needs setting up.
 
 ## Before go-live checklist
 
