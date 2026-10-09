@@ -25,6 +25,7 @@ Design decisions made in this plan (each can be changed):
 4. **PIN unlock needs a registered device.** A manager or admin signs in with a password once on each device and registers it to a till. After that, staff on that device unlock and switch with their PIN. A PIN on its own, from an unregistered browser, opens nothing.
 5. **Part-exchange earns points once.** The sale earns points on its whole value. The part of the trade-in that pays for the sale earns no trade-in points; only a surplus taken as store credit earns them, as today.
 6. **SumUp is removed from the app** (routes, crons, settings, screens, exports, tests), but its collections and historical data stay. Historic sales keep `sumup_card` as their tender and reports label it "Card (SumUp)".
+7. **Stock lives in a category tree of any depth, brand before type.** Every product and every stock item has one home branch (Trading cards > Pokémon > Singles; Retro > Sega > Mega Drive > Games), so a report by category adds up at every level. A starter tree covering the shop's ranges is seeded and staff reshape it in Settings. Browsing the tree is how staff find anything without a barcode.
 
 ## What already exists and is reused
 
@@ -85,7 +86,13 @@ Each phase ends deployed. The server deploys only finished commits that passed C
 ### Phase 9: inventory
 
 - A product catalogue for everything that is not a serialised single: sealed product, accessories, drinks and snacks, services. Products have an EAN, SKU, category, price, cost, VAT treatment, stock tracking on or off, a reorder point and quantity, a preferred supplier and images. The existing stock lines move under it; serialised singles stay as they are.
-- Category and quick-key editor with drag to reorder (touch friendly).
+- **The category tree** (decision 7), built first in this phase:
+  - `categories`: name, `parent` (empty for a top-level branch), sort, active, an optional image, and defaults a new item in the branch inherits (kind, game, platform, VAT treatment). Any depth. `path` ("Trading cards / Pokémon / Singles") and `depth` are kept by a hook so a branch's whole subtree is one indexed query.
+  - `items.category` and the product catalogue's `category`: one home branch each. Moving a branch moves everything under it; a branch with stock or products under it is switched off rather than deleted.
+  - A seeded starter tree, brand before type: Trading cards (Pokémon, Magic: The Gathering, Yu-Gi-Oh!, One Piece, Lorcana, each with Singles, Graded, Booster packs, Booster boxes, ETBs and collections, Tins, Accessories), Retro (Sega, Nintendo, Sony, Microsoft, Atari and others, each maker split by console, each console into Games, Consoles, Accessories), Board games, Miniatures and paints, PC parts, Accessories (sleeves, top loaders, binders, deck boxes, playmats), Drinks and snacks, Services (table time, events, repairs).
+  - Existing stock is placed in the tree by its kind, game and platform when the migration runs; anything it cannot place goes to an "Unsorted" branch for staff to file.
+  - Where it is used: the till's catalogue pane drills down the tree with a breadcrumb and a back step (the quick-key pages stay alongside); Stock filters by any branch and everything under it; Add stock, goods in and the buy-in pick a branch, which fills in its defaults; reports and the X and Z group sales by category at any level, rolling up; the EPOS Now import maps its categories into the tree.
+- Category and quick-key editor with drag to reorder and to move a branch under another (touch friendly).
 - Suppliers; purchase orders; goods in against a purchase order or without one, updating cost, quantity and queueing labels.
 - Stock adjustments with a reason (damaged, lost, used in store, correction, found), audited; stock counts that update quantities when closed; transfers between locations.
 - Low stock alerts on Home and a reorder list built from reorder points and sales velocity.
