@@ -320,6 +320,58 @@ describe("scrubPayload", () => {
   })
 })
 
+describe("the till's stages", () => {
+  const BASE = {
+    lines: [{ title: "Booster", qty: 2, unitPrice: 549 }],
+    subtotal: 1098,
+    discount: 0,
+    total: 1098,
+    pointsToEarn: 110,
+  }
+
+  it("carries what is due on the card reader or in cash, and nothing else", () => {
+    expect(salePayload({ ...BASE, stage: "card", amountDue: 1098, change: 500 })).toMatchObject({
+      stage: "card",
+      amount_due: 1098,
+    })
+    const cash = salePayload({ ...BASE, stage: "cash", amountDue: 598.4 })
+    expect(cash.amount_due).toBe(598)
+    expect("change" in cash).toBe(false)
+  })
+
+  it("carries the change and the points once the sale is done", () => {
+    const done = salePayload({ ...BASE, stage: "done", change: 902, pointsEarned: 110, amountDue: 40 })
+    expect(done).toMatchObject({ stage: "done", change: 902, points_earned: 110 })
+    expect("amount_due" in done).toBe(false)
+  })
+
+  it("lets exactly the stage fields through the scrub, as numbers or the one enum", () => {
+    const scrubbed = scrubPayload("sale", {
+      ...EVERYTHING,
+      lines: [EVERYTHING],
+      subtotal: 1098,
+      discount: 0,
+      total: 1098,
+      points_to_earn: 0,
+      stage: "done",
+      change: 902,
+      points_earned: 110,
+      amount_due: 1098,
+    })
+    expect(Object.keys(scrubbed).sort()).toEqual([
+      "change",
+      "discount",
+      "lines",
+      "points_earned",
+      "points_to_earn",
+      "stage",
+      "subtotal",
+      "total",
+    ])
+    expect(scrubPayload("sale", { ...BASE, stage: "refund" })).not.toHaveProperty("stage")
+  })
+})
+
 describe("samePayload", () => {
   it("is true only while nothing has changed", () => {
     const one = salePayload({

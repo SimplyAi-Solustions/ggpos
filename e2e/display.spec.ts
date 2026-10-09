@@ -49,6 +49,25 @@ async function go(page: Page, action: string) {
   await expect(palette).toBeHidden()
 }
 
+/** The till, whatever the palette calls it. */
+async function goTill(page: Page) {
+  await page.keyboard.press("ControlOrMeta+k")
+  const palette = page.getByRole("dialog", { name: "Commands and catalogue search" })
+  await expect(palette).toBeVisible()
+  await palette.getByText(/^(Sell|Till)$/).first().click()
+  await expect(palette).toBeHidden()
+  await expect(page.getByTestId("till")).toBeVisible()
+}
+
+/** A scan into the till's field, from whichever tab it is on. */
+async function tillScan(page: Page, code: string) {
+  const items = page.getByRole("tab", { name: /^(Items|Pay|Done)$/ })
+  if (await items.isVisible()) await items.click()
+  const field = page.getByTestId("till-scan-field")
+  await field.fill(code)
+  await field.press("Enter")
+}
+
 /** Switches the display on in Settings, which is what gates every publish. */
 async function switchDisplayOn(page: Page) {
   await go(page, "Settings")
@@ -91,7 +110,7 @@ test.describe("the customer display", () => {
     await expect(tablet.getByRole("navigation")).toHaveCount(0)
   })
 
-  test("follows the basket at the till", async ({ context }) => {
+  test("follows the ticket at the till, through paying to the change", async ({ context }) => {
     const counter = await context.newPage()
     await signIn(counter)
     await switchDisplayOn(counter)
@@ -99,39 +118,66 @@ test.describe("the customer display", () => {
     const tablet = await openTablet(context)
     await expect(tablet.getByTestId("display-idle")).toBeVisible()
 
-    await go(counter, "Sell")
-    const field = counter.getByTestId("sell-scan-field")
-    await field.fill(DEMO_SKU.display)
-    await field.press("Enter")
-    await expect(counter.getByTestId("basket")).toContainText("Charizard ex")
+    await goTill(counter)
+    await tillScan(counter, DEMO_SKU.display)
+    await expect(counter.getByText("Charizard ex added")).toBeVisible()
 
     // The publish is debounced, so the tablet catches up a moment later.
     await expect(tablet.getByTestId("display-sale")).toBeVisible()
+    await expect(tablet.getByTestId("display-sale")).toHaveAttribute("data-stage", "basket")
     await expect(tablet.getByText("Charizard ex")).toBeVisible()
     await expect(tablet.getByTestId("display-total")).toHaveText("£324.99")
     // No customer on the sale yet, so no name and no points.
     await expect(tablet.getByTestId("display-customer")).toHaveCount(0)
 
     // Her card, and the tablet says what the sale earns her.
-    await field.fill(JASMINE)
-    await field.press("Enter")
-    await expect(counter.getByTestId("basket-customer")).toContainText("Jasmine")
+    await tillScan(counter, JASMINE)
+    await expect(counter.getByText("Jasmine Okafor attached")).toBeVisible()
     await expect(tablet.getByTestId("display-customer")).toHaveText("Jasmine O.")
     await expect(tablet.getByTestId("display-points")).toContainText("Earns")
     // A first name and a last initial: the tablet faces the shop.
     await expect(tablet.getByText("Okafor")).toHaveCount(0)
 
-    // Her reward comes off the basket, and the customer can read what came
+    // Her reward comes off the ticket, and the customer can read what came
     // off and what it was called.
-    await field.fill(MONEY_OFF.display)
-    await field.press("Enter")
+    await tillScan(counter, MONEY_OFF.display)
     await expect(counter.getByText("£5 off a single applied")).toBeVisible()
     await expect(tablet.getByTestId("display-discount")).toHaveText("-£5.00")
     await expect(tablet.getByTestId("display-sale")).toContainText("£5 off a single")
     await expect(tablet.getByTestId("display-total")).toHaveText("£319.99")
 
-    // Emptying the basket puts the shop's own screen back.
-    await counter.getByRole("button", { name: "Remove Charizard ex" }).click()
+    // The card step: the tablet asks for the amount on the reader.
+    await counter.getByTestId("till-pay").filter({ visible: true }).click()
+    await counter.getByRole("button", { name: "Card", exact: true }).click()
+    await expect(tablet.getByTestId("display-sale")).toHaveAttribute("data-stage", "card")
+    await expect(tablet.getByText("Pay on the card reader")).toBeVisible()
+    await expect(tablet.getByTestId("display-amount-due")).toHaveText("£319.99")
+
+    // Cash instead, £350.00 handed over: the change and a thank you.
+    await counter.getByRole("button", { name: "Cash", exact: true }).click()
+    await expect(tablet.getByTestId("display-sale")).toHaveAttribute("data-stage", "cash")
+    await counter.keyboard.type("35000")
+    await counter.getByTestId("till-take-cash").click()
+    await expect(counter.getByTestId("till-change")).toHaveText("£30.01")
+    await expect(tablet.getByTestId("display-thanks")).toBeVisible()
+    await expect(tablet.getByTestId("display-change")).toHaveText("£30.01")
+    await expect(tablet.getByTestId("display-points-earned")).toContainText("You earned")
+  })
+
+  test("goes back to the shop's own screen when the ticket empties", async ({ context }) => {
+    const counter = await context.newPage()
+    await signIn(counter)
+    await switchDisplayOn(counter)
+    const tablet = await openTablet(context)
+
+    await goTill(counter)
+    await tillScan(counter, DEMO_SKU.display)
+    await expect(tablet.getByTestId("display-sale")).toBeVisible()
+
+    const ticketTab = counter.getByTestId("till-ticket-tab")
+    if (await ticketTab.isVisible()) await ticketTab.click()
+    await counter.getByRole("button", { name: "Clear ticket" }).click()
+    await counter.getByTestId("till-clear-confirm").click()
     await expect(tablet.getByTestId("display-idle")).toBeVisible()
   })
 

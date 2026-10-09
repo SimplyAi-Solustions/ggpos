@@ -19,7 +19,13 @@ import { OfflineQueuedError } from "@/lib/offline/errors"
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { itemStore } from "@/lib/api/demo/store"
-import { completeSale, getSale } from "@/lib/api/sales"
+import { demoProduct } from "@/lib/api/demo/till"
+import {
+  completeSale,
+  getSale,
+  type TillSalePayload,
+  type TillSaleResult,
+} from "@/lib/api/sales"
 import { queueLabels } from "@/lib/api/labels"
 import {
   isOffline,
@@ -39,7 +45,6 @@ import {
 } from "@/lib/offline/queue"
 import type {
   CompleteSalePayload,
-  CompleteSaleResult,
   LabelJobDetail,
   LabelTemplateKey,
   SaleDetail,
@@ -70,7 +75,7 @@ function noAnswer(error: unknown): boolean {
   return error instanceof TypeError
 }
 
-function saleTotal(payload: CompleteSalePayload): number {
+function saleTotal(payload: TillSalePayload): number {
   const lines = payload.lines.reduce(
     (total, line) => total + line.unit_price * line.qty - line.discount,
     0
@@ -78,9 +83,12 @@ function saleTotal(payload: CompleteSalePayload): number {
   return lines - payload.discount
 }
 
-function saleLines(payload: CompleteSalePayload): QueuedLine[] {
+/** Where a queued line's title is looked up again: an item, or a till product. */
+const PRODUCT_LINE = "product:"
+
+function saleLines(payload: TillSalePayload): QueuedLine[] {
   return payload.lines.map((line) => ({
-    itemId: line.item,
+    itemId: "item" in line ? line.item : `${PRODUCT_LINE}${line.product}`,
     qty: line.qty,
     unitPrice: line.unit_price,
   }))
@@ -91,30 +99,51 @@ function itemWord(count: number): string {
 }
 
 /** A sale payload that is certainly carrying its client id. */
-type IdentifiedSale = CompleteSalePayload & { client_id: string }
+type IdentifiedSale = TillSalePayload & { client_id: string }
 
 /**
  * The payload with a client id on it. The same id is the queue's key, so a
  * sale that goes straight out, a sale that is retried and a sale that waits
  * in the queue are all the one sale as far as the server is concerned.
  */
-function identified(payload: CompleteSalePayload): IdentifiedSale {
+function identified(payload: TillSalePayload): IdentifiedSale {
   return payload.client_id
     ? (payload as IdentifiedSale)
     : { ...payload, client_id: newClientId() }
 }
 
-async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResult> {
+/**
+ * The queue's record of a sale is typed by `lib/offline/queue.ts` as the
+ * old Sell payload. The till's carries tenders, product lines and voids
+ * instead, and the queue only ever stores it and hands it back to
+ * `completeSale` untouched, so the body crosses that boundary as-is.
+ */
+function asQueued(body: IdentifiedSale): CompleteSalePayload {
+  return body as unknown as CompleteSalePayload
+}
+
+function fromQueued(body: CompleteSalePayload): TillSalePayload {
+  return body as unknown as TillSalePayload
+}
+
+async function queueSale(payload: TillSalePayload): Promise<TillSaleResult> {
   const body = identified(payload)
   const total = saleTotal(body)
   const count = body.lines.reduce((sum, line) => sum + line.qty, 0)
   const entry = await enqueue({
     id: body.client_id,
-    work: { kind: "mark_sold", body },
+    // The tenders travel in the body, so the sale lands paid the way it
+    // was paid at the counter.
+    work: { kind: "mark_sold", body: asQueued(body) },
     summary: `Sale, ${count} ${itemWord(count)}, ${formatGBP(total)}`,
     total,
     lines: saleLines(body),
   })
+  const change = body.tenders.reduce(
+    (sum, tender) =>
+      sum + (tender.method === "cash" ? Math.max(0, (tender.tendered ?? tender.amount) - tender.amount) : 0),
+    0
+  )
   return {
     sale: {
       id: `${QUEUED_ID}${entry.id}`,
@@ -122,7 +151,11 @@ async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResu
       total,
       status: "complete",
     },
-    sumup_amount: total,
+    // The change was counted out at the counter whatever the line did.
+    change,
+    tenders: [],
+    vat_total: 0,
+    receipt: { number: QUEUED_SALE_NUMBER },
     // Points, credit and the balances are the server's arithmetic. Nothing
     // here guesses at them: the ledger rows are written when the sale lands.
     points_earned: 0,
@@ -134,19 +167,22 @@ async function queueSale(payload: CompleteSalePayload): Promise<CompleteSaleResu
 /**
  * Complete a sale, or hold it until there is somewhere to send it.
  *
- * Exported as `completeSale` from `lib/api`, so the Sell screen's call is
- * unchanged and offline is not a branch any screen has to know about.
+ * Exported as `completeSale` from `lib/api`, so offline is not a branch any
+ * screen has to know about. `headers` carries a manager's approval on a
+ * retry; a sale that has to wait in the queue goes without one, and the
+ * server's refusal of it, if it needs one, lands in the conflicts sheet.
  */
 export async function completeSaleQueued(
-  payload: CompleteSalePayload
-): Promise<CompleteSaleResult> {
+  payload: TillSalePayload,
+  headers: Record<string, string> = {}
+): Promise<TillSaleResult> {
   // The id is minted before the first attempt, not when the sale is queued:
   // a request that the server took but whose reply never arrived is sent
-  // again under the same id rather than ringing the basket up twice.
+  // again under the same id rather than ringing the ticket up twice.
   const body = identified(payload)
   if (isOffline()) return queueSale(body)
   try {
-    const result = await completeSale(body)
+    const result = await completeSale(body, headers)
     noteNetworkSuccess()
     // Something may have been waiting behind this; send it now the line is up.
     void replayQueue()
@@ -159,9 +195,8 @@ export async function completeSaleQueued(
 }
 
 /**
- * The sale behind an id, with a straight answer for one that has not gone yet.
- * The undo on the Sell screen reads the sale back before refunding it, and a
- * queued sale has nothing to refund.
+ * The sale behind an id, with a straight answer for one that has not gone
+ * yet: a queued sale has no record to read back or refund.
  */
 export async function getSaleQueued(id: string): Promise<SaleDetail | null> {
   if (isQueuedSaleId(id)) {
@@ -220,7 +255,7 @@ async function holdLabels(
 
 registerSender(async (entry: QueuedEntry) => {
   if (entry.work.kind === "mark_sold") {
-    await completeSale(entry.work.body)
+    await completeSale(fromQueued(entry.work.body))
     return
   }
   await queueLabels(entry.work.itemIds, entry.work.template)
@@ -272,12 +307,23 @@ export async function resolveQueuedLines(
   if (isDemo()) {
     const items = itemStore()
     return lines.map((line) => {
+      if (line.itemId.startsWith(PRODUCT_LINE)) {
+        const product = demoProduct(line.itemId.slice(PRODUCT_LINE.length))
+        return { ...line, title: product?.name || "Till product", sku: "" }
+      }
       const item = items.find((row) => row.id === line.itemId)
       return { ...line, title: item?.title || "Item", sku: item?.sku ?? "" }
     })
   }
   const resolved = await Promise.all(
     lines.map(async (line) => {
+      if (line.itemId.startsWith(PRODUCT_LINE)) {
+        const product = await pb
+          .collection("till_products")
+          .getOne<{ name?: string }>(line.itemId.slice(PRODUCT_LINE.length))
+          .catch(() => null)
+        return { ...line, title: product?.name || "Till product", sku: "" }
+      }
       const item = await pb
         .collection("items")
         .getOne<StockItemRecord>(line.itemId)

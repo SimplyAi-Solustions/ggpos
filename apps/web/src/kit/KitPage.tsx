@@ -18,6 +18,7 @@ import {
   KitSection,
   MotionSection,
   ProductImageSection,
+  TillSection,
   TypeSection,
 } from "@/kit/sections"
 
@@ -142,6 +143,7 @@ const CONTENTS = [
   ["data", "Data"],
   ["product-images", "Product imagery"],
   ["brand", "Brand"],
+  ["till", "Till"],
   ["motion", "Motion"],
   ["reference-match", "Reference match"],
 ] as const
@@ -188,6 +190,7 @@ export function KitPage() {
           <DataSection />
           <ProductImageSection />
           <BrandSection />
+          <TillSection />
           <MotionSection />
           <ReferenceMatch />
         </main>

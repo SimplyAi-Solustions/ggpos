@@ -4,10 +4,13 @@ import { buildCode } from "../packages/shared/src/sku"
 
 /**
  * The offline queue, driven through the demo menu's "Simulate offline"
- * switch: a sale taken with nothing listening waits in IndexedDB, the strip
- * under the nav says how many are waiting, reconnecting sends them in order,
- * and anything the server refuses on the way back lands in the conflicts
- * sheet with the server's own sentence.
+ * switch: a till sale taken with nothing listening waits in IndexedDB with
+ * its tenders and its client id, the strip says how many are waiting,
+ * reconnecting sends them in order, and anything the server refuses on the
+ * way back lands in the conflicts sheet with the server's own sentence.
+ *
+ * The switch lives in the counter's account menu, which the full-bleed till
+ * does not draw, so it is thrown on Home and the till reached from there.
  */
 
 const DEMO_EMAIL = "demo@ggentertainment.co.uk"
@@ -28,12 +31,25 @@ function primary(page: Page, name: string) {
   return page.getByRole("button", { name, exact: true }).filter({ visible: true })
 }
 
-async function go(page: Page, action: string) {
+async function go(page: Page, action: string | RegExp) {
   await page.keyboard.press("ControlOrMeta+k")
-  const palette = page.getByRole("dialog")
+  const palette = page.getByRole("dialog", { name: "Commands and catalogue search" })
   await expect(palette).toBeVisible()
-  await palette.getByText(action, { exact: true }).click()
+  await palette
+    .getByText(action, typeof action === "string" ? { exact: true } : undefined)
+    .first()
+    .click()
   await expect(palette).toBeHidden()
+}
+
+async function goTill(page: Page) {
+  await go(page, /^(Sell|Till)$/)
+  await expect(page.getByTestId("till")).toBeVisible()
+}
+
+async function leaveTill(page: Page) {
+  await page.getByRole("link", { name: "Back to the counter" }).click()
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
 }
 
 /** The demo menu's switch, which stands in for pulling the network out. */
@@ -42,50 +58,40 @@ async function toggleOffline(page: Page) {
   await page.getByRole("menuitem", { name: /Simulate offline/ }).click()
 }
 
-async function openDrawer(page: Page) {
-  await go(page, "Cash session")
-  await page.getByLabel("Float").fill("100.00")
-  await primary(page, "Open session").click()
-  await expect(page.getByTestId("cash-expected")).toHaveText("£100.00")
-}
-
 async function sellForCash(page: Page) {
-  const field = page.getByTestId("sell-scan-field")
+  const items = page.getByRole("tab", { name: /^(Items|Pay|Done)$/ })
+  if (await items.isVisible()) await items.click()
+  const field = page.getByTestId("till-scan-field")
   await field.fill(DEMO_SKU.display)
   await field.press("Enter")
-  await expect(page.getByTestId("basket")).toContainText("Charizard ex")
+  await expect(page.getByText("Charizard ex added")).toBeVisible()
+  await page.getByTestId("till-pay").filter({ visible: true }).click()
   await page.getByRole("button", { name: "Cash", exact: true }).click()
-  await primary(page, "Mark sold").click()
+  await page.getByRole("button", { name: "Exact" }).click()
+  await expect(page.getByTestId("till-done")).toBeVisible()
 }
 
 test.describe("the offline queue", () => {
-  test("holds a sale taken offline and sends it when the line is back", async ({
+  test("holds a till sale taken offline and sends it when the line is back", async ({
     page,
   }) => {
     await signIn(page)
-    await openDrawer(page)
     await toggleOffline(page)
-
     await expect(page.getByTestId("offline-strip")).toContainText("Offline.")
 
-    await go(page, "Sell")
+    await goTill(page)
     await sellForCash(page)
 
     // The sale stands at the counter, and says plainly that it has not gone.
-    const done = page.getByTestId("sale-done")
-    await expect(done).toContainText("Not sent yet")
-    await expect(done).toContainText("£324.99")
-    await expect(page.getByTestId("offline-strip")).toContainText(
-      "Offline, 1 sale waiting."
-    )
+    const done = page.getByTestId("till-done")
+    await expect(page.getByTestId("till-sale-number")).toHaveText("Not sent yet")
+    await expect(done).toContainText("Waiting to send.")
+    // A receipt needs the record, so only "No receipt" and "New sale" work.
+    await expect(done.getByRole("button", { name: "Print", exact: true })).toBeDisabled()
+    await expect(page.getByTestId("offline-strip")).toContainText("Offline, 1 sale waiting.")
 
-    // Undoing something that has not been sent is refused in so many words.
-    await page.getByTestId("undo-toast").getByRole("button", { name: "Undo" }).click()
-    await expect(
-      page.getByText(
-        "That sale is still waiting to send, so it cannot be undone yet. Send it first, then refund it."
-      )
-    ).toBeVisible()
+    await page.getByTestId("till-new-sale").click()
+    await leaveTill(page)
 
     // Back on the network, the queue empties itself.
     await toggleOffline(page)
@@ -103,19 +109,19 @@ test.describe("the offline queue", () => {
     page,
   }) => {
     await signIn(page)
-    await openDrawer(page)
     await toggleOffline(page)
 
     // The same card sold twice while nothing was listening: the second sale
     // cannot stand, and only the server can say so.
-    await go(page, "Sell")
+    await goTill(page)
     await sellForCash(page)
-    await expect(page.getByTestId("sale-done")).toBeVisible()
-    await page.getByRole("button", { name: "New sale" }).click()
+    await page.getByTestId("till-new-sale").click()
     await sellForCash(page)
     await expect(page.getByTestId("offline-strip")).toContainText(
       "Offline, 2 sales waiting."
     )
+    await page.getByTestId("till-new-sale").click()
+    await leaveTill(page)
 
     await toggleOffline(page)
 

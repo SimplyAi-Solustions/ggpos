@@ -3,10 +3,14 @@ import {
   ArrowRightIcon,
   BoxIcon,
   CameraIcon,
+  ClockIcon,
+  LayersIcon,
+  PackageIcon,
   SearchIcon,
   TagIcon,
 } from "lucide-react"
 import { cn } from "cn"
+import { formatGBP } from "@gg/shared"
 
 import { Avatar, AvatarFallback, AvatarGroup } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -63,10 +67,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { GGLogo, GMark, Wordmark } from "@/components/ui/wordmark"
+import { Keypad, PinDots, applyKey } from "@/components/ui/keypad"
 import { ProductImage } from "@/components/product-image"
 import { PLATFORM_KEYS, PLATFORMS } from "@/design/platforms"
 import { useCountUp } from "@/design/motion"
 import { boxArt, cardArt } from "@/kit/placeholder-art"
+import { LineRow } from "@/features/till/TicketPane"
+import { Tile } from "@/features/till/Tile"
+import { digitsToPence } from "@/features/till/icons"
+import type { TicketLine } from "@/features/till/ticket"
 
 /* ------------------------------------------------------------------ layout */
 
@@ -768,6 +777,162 @@ export function ProductImageSection() {
             />
           </div>
         </KitDemo>
+      </div>
+    </KitSection>
+  )
+}
+
+/* -------------------------------------------------------------------- till */
+
+const KIT_LINE: TicketLine = {
+  key: "kit_line",
+  itemId: "kit_item",
+  productId: null,
+  productKind: null,
+  sku: "GGP5N2W8H",
+  title: "Prismatic Evolutions Booster Pack",
+  detail: "",
+  kind: "sealed",
+  condition: "",
+  platform: "etb",
+  unitPrice: 549,
+  listPrice: 549,
+  openPrice: false,
+  qty: 2,
+  maxQty: 36,
+  game: null,
+  taxScheme: "standard",
+  vatRate: 20,
+  discount: { kind: "none" },
+  note: "",
+}
+
+const KIT_DISCOUNTED: TicketLine = {
+  ...KIT_LINE,
+  key: "kit_line_2",
+  itemId: "kit_item_2",
+  sku: "GGS7F3K2Q",
+  title: "Charizard ex",
+  kind: "single",
+  unitPrice: 30000,
+  listPrice: 32499,
+  qty: 1,
+  maxQty: 1,
+  note: "Corner ding",
+}
+
+/**
+ * The till's parts in one place: the keypads, the 72px keys and block, a
+ * tile, a ticket line and the Anton total. Drawn twice, the second time in
+ * night mode whatever the page is in, because the till is used in both.
+ */
+function TillSpecimens() {
+  const [pin, setPin] = React.useState("25")
+  const [money, setMoney] = React.useState("2000")
+  const [tender, setTender] = React.useState("card")
+
+  return (
+    <div className="flex flex-col gap-10">
+      <KitDemo label="Keypad" note="Money mode puts 00 and Backspace beside 0; PIN mode puts Clear and Backspace there. Twelve 72px keys drawn as hairlines.">
+        <div className="grid gap-8 md:grid-cols-2">
+          <div className="flex flex-col gap-4">
+            <span className="tnum text-[28px] leading-[1.25] font-light text-foreground">
+              {formatGBP(digitsToPence(money))}
+            </span>
+            <Keypad
+              mode="money"
+              aria-label="Cash handed over"
+              onKey={(key) => setMoney((value) => applyKey(value, key, 7))}
+            />
+          </div>
+          <div className="flex flex-col gap-4">
+            <PinDots length={4} filled={pin.length} className="h-[35px] justify-start" />
+            <Keypad
+              mode="pin"
+              aria-label="PIN"
+              onKey={(key) => setPin((value) => applyKey(value, key, 4))}
+            />
+          </div>
+        </div>
+      </KitDemo>
+
+      <KitDemo label="Keys and the block at till size" note="Tenders, quick notes and receipt choices are keys; ink fill when chosen. The block is the one primary action.">
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {["cash", "card", "store credit"].map((name) => (
+              <Button
+                key={name}
+                variant="key"
+                size="till"
+                aria-pressed={tender === name}
+                onClick={() => setTender(name)}
+              >
+                {name}
+              </Button>
+            ))}
+          </div>
+          <Button size="till" trailingArrow className="w-full sm:w-auto sm:min-w-64">
+            Pay
+          </Button>
+        </div>
+      </KitDemo>
+
+      <KitDemo label="Tiles" note="A till product with no picture shows its icon; a stock line shows its art; an empty stock line cannot be pressed.">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(136px,1fr))] gap-3">
+          <Tile title="Single card" price="Key price" Icon={LayersIcon} onPress={() => {}} />
+          <Tile title="Table time, 1 hour" price="£5.00" Icon={ClockIcon} onPress={() => {}} />
+          <Tile
+            title="Prismatic booster"
+            price="£5.49"
+            image={boxArt(PLATFORMS.etb.ratio)}
+            platform="etb"
+            Icon={PackageIcon}
+            onPress={() => {}}
+          />
+          <Tile
+            title="Surging Sparks Elite Trainer Box"
+            price=""
+            status="Out of stock"
+            disabled
+            Icon={BoxIcon}
+            onPress={() => {}}
+          />
+        </div>
+      </KitDemo>
+
+      <KitDemo label="Ticket lines and the total" note="The total is the screen's one Anton line: 40px on the tablet and the Mac, 32px on a phone.">
+        <div className="max-w-[440px]">
+          <ul className="border-t border-hairline-soft">
+            <LineRow line={KIT_LINE} readOnly={false} flashing={null} onOpen={() => {}} onQty={() => {}} />
+            <LineRow line={KIT_DISCOUNTED} readOnly={false} flashing={null} onOpen={() => {}} onQty={() => {}} />
+          </ul>
+          <div className="flex items-end justify-between gap-6 pt-5">
+            <MicroLabel tone="ink" className="pb-1">
+              Total
+            </MicroLabel>
+            <span className="tnum font-display text-[32px] leading-none tracking-[0.01em] text-foreground min-[900px]:text-[40px]">
+              £310.98
+            </span>
+          </div>
+        </div>
+      </KitDemo>
+    </div>
+  )
+}
+
+export function TillSection() {
+  return (
+    <KitSection
+      id="till"
+      title="Till"
+      note="The till's own scale: 72px keys, a keypad drawn in hairlines, tiles with an edge because a thumb needs one, and the total read from across the counter."
+    >
+      <div className="flex flex-col gap-16">
+        <TillSpecimens />
+        <div className="dark rounded-[var(--radius)] border border-hairline-soft bg-background p-5 text-foreground sm:p-8">
+          <Hint className="mb-6">Night mode</Hint>
+          <TillSpecimens />
+        </div>
       </div>
     </KitSection>
   )

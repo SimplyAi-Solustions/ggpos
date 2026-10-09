@@ -4,29 +4,29 @@
  * and the numbers Home counts.
  *
  * Live mode uses the transactional routes in docs/api-contract.md ("Sales",
- * "Step-up"); demo mode answers the same shapes from memory.
+ * "Step-up") as Phase 8 extends them (docs/api-contract-epos.md, section 4:
+ * tenders, till products, voids, the register); demo mode answers the same
+ * shapes from memory.
  */
 import { ClientResponseError } from "pocketbase"
-import { parseTierPerk, type TierPerk } from "@gg/shared"
+import { parseTierPerk, type Tender, type TenderInput, type TierPerk } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
 import { getCounterConfig } from "@/lib/api/config"
 import * as demo from "@/lib/api/demo/sales"
 import type {
-  CompleteSalePayload,
-  CompleteSaleResult,
   CustomerPrivateRecord,
   CustomerRecord,
+  DiscountSource,
   ItemRecord,
   LoyaltySetup,
-  RefundSalePayload,
-  RefundSaleResult,
   RewardVoucher,
   SaleCustomer,
   SaleDetail,
   SaleLineRecord,
   SaleRecord,
+  SaleStatus,
   SaleSummary,
   StepUpToken,
   TodayStats,
@@ -34,7 +34,75 @@ import type {
 
 export { DEMO_STEP_UP_PASSWORD } from "@/lib/api/demo/sales"
 
-const STEP_UP_HEADER = "X-Step-Up"
+// ---------------------------------------------------------------------------
+// The till's sale and refund shapes (docs/api-contract-epos.md, section 4)
+// ---------------------------------------------------------------------------
+
+/** A stock line or a till product line on a sale. */
+export type TillSaleLine =
+  | { item: string; qty: number; unit_price: number; discount: number; note?: string }
+  | {
+      product: string
+      qty: number
+      unit_price: number
+      discount: number
+      /** An open-price product's own words: "Single card: Charizard ex". */
+      title?: string
+      note?: string
+    }
+
+/** A line taken off the ticket before payment, written as a void. */
+export interface TillVoidedLine {
+  title: string
+  qty: number
+  amount: number
+}
+
+/** `POST /api/vault/sales/complete` as the till sends it. */
+export interface TillSalePayload {
+  /** The till's id for this sale: the idempotency key and the queue's key. */
+  client_id?: string
+  /** Omitted for the default register. */
+  register?: string
+  lines: TillSaleLine[]
+  discount: number
+  discount_source: DiscountSource | null
+  reward_code: string | null
+  customer: string | null
+  tenders: TenderInput[]
+  voided?: TillVoidedLine[]
+}
+
+export interface TillSaleResult {
+  sale: { id: string; number: string; total: number; status: SaleStatus }
+  tenders: Tender[]
+  change: number
+  vat_total: number
+  receipt: { number: string }
+  points_earned: number
+  credit_balance: number
+  points_balance: number
+}
+
+/** A refund tender: to the card on the Tide reader, in cash, or as store credit. */
+export interface TillRefundTender {
+  method: "cash" | "card_tide" | "store_credit"
+  amount: number
+  card_last4?: string
+}
+
+/** `POST /api/vault/sales/{id}/refund`, extended. */
+export interface TillRefundPayload {
+  register?: string
+  lines: { sale_line: string; qty: number; restock?: boolean }[]
+  reason: string
+  tenders: TillRefundTender[]
+}
+
+export interface TillRefundResult {
+  sale: { id: string; status: SaleStatus }
+  refund: { ref: string; amount: number; tenders: Tender[] }
+}
 
 function quote(value: string): string {
   return value.replace(/["\\]/g, "\\$&")
@@ -185,28 +253,39 @@ export async function getVoucher(code: string): Promise<RewardVoucher | null> {
 // Sales
 // ---------------------------------------------------------------------------
 
-/** One transaction on the server: stock, ledgers, cash and points together. */
+/**
+ * One transaction on the server: stock, ledgers, tenders, the drawer and
+ * points together. `headers` carries a manager's approval
+ * (`X-GG-Override`) when a retry has one; `lib/api/till.ts` is the caller
+ * that asks for it.
+ */
 export async function completeSale(
-  payload: CompleteSalePayload
-): Promise<CompleteSaleResult> {
+  payload: TillSalePayload,
+  headers: Record<string, string> = {}
+): Promise<TillSaleResult> {
   if (isDemo()) return demo.completeSale(payload)
-  return pb.send<CompleteSaleResult>("/api/vault/sales/complete", {
+  return pb.send<TillSaleResult>("/api/vault/sales/complete", {
     method: "POST",
     body: payload,
+    headers,
   })
 }
 
-/** Per line, with a reason, behind a step-up token. */
+/**
+ * Per line, with a reason and the tenders it goes back on. No step-up any
+ * more: the route needs the `refund` capability, or a manager's approval in
+ * `headers` (docs/api-contract-epos.md, section 4).
+ */
 export async function refundSale(
   id: string,
-  payload: RefundSalePayload,
-  stepUpToken: string
-): Promise<RefundSaleResult> {
+  payload: TillRefundPayload,
+  headers: Record<string, string> = {}
+): Promise<TillRefundResult> {
   if (isDemo()) return demo.refundSale(id, payload)
-  return pb.send<RefundSaleResult>(`/api/vault/sales/${id}/refund`, {
+  return pb.send<TillRefundResult>(`/api/vault/sales/${id}/refund`, {
     method: "POST",
     body: payload,
-    headers: { [STEP_UP_HEADER]: stepUpToken },
+    headers,
   })
 }
 
