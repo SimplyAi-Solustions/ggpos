@@ -79,3 +79,15 @@ A second migration, `1789821060_till_pages.js`, switches off the seeded pages th
 **F4** (web) owns: the picker, `apps/web/src/features/settings/` (the Categories section), `apps/web/src/features/till/` (the rail and the branch view), `apps/web/src/features/stock/`, `apps/web/src/features/intake/` (Add stock), the item page, `apps/web/src/features/reports/` (the category dimension), new `apps/web/src/lib/api/categories.ts` and its demo, the till catalogue's demo, new `e2e/categories.spec.ts` and changes to the specs its screens reach.
 
 Everything else: ask in the report.
+
+### 1.8 As built
+
+- **Sales report rows by category** carry `net` and also `revenue` (the same figure, which the Sales table and CSV already read), plus `path`. The "itself" row's `has_children` is false and its `path` ends " (itself)". Rows are largest first, only branches with sales; at the top level, lines with no branch are a `(none)` row with key `""`. A `branch` that no longer exists reads as the top level.
+- **Further sentences**: 400 "Branch names are 60 characters at most. Shorten it."; 400 "Choose the stock rows or till products to file." (`assign` with nothing); 400 "That branch was not found." (`assign` to an unknown branch; 404 for `move` of one); 400 "That parent branch was not found." (`move` without a `parent`, `reorder` under an unknown one).
+- **Delete counts** count every stock row whatever its status and every till product, active or not, so a delete cannot unfile history. Unsorted's protection also covers switching off a branch it sits inside.
+- **Requests may send** `key`, `path`, `lineage` and `depth`; they are ignored, not refused. A branch created without `active` is on, and without `sort` goes last.
+- **The branch route** searches only the visible part of the subtree; products come on page 1 without `q`, and 40 a page with it; `total` counts stock rows only. The catalogue's `branches` falls back to `[]` if the tree cannot be read, so the quick keys still load.
+- **Audit**: `move` and `reorder` are audited too (`category_move`, `category_reorder`, with any approval). `assign` writes without validation, so an old row that fails today's rules can still be filed, and the item page moves an item through `assign` so it is audited and approval-checked.
+- **Clearing** `category` on an existing item or product is allowed; only a create files.
+- **Add stock** applies a branch's kind, game and VAT treatment; the platform default applies to retro titles, since items carry no platform.
+- **Branch edits** (add, rename, switch off, defaults, delete) go through the collection API, which allows managers and admins; the capability table's `stock_manage` governs the routes (move, reorder, assign).

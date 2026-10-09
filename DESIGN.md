@@ -427,6 +427,30 @@ landscape and the Mac at 1440 x 900; a phone at 390 x 844 must still work.
   hairline `Table` rows when the search is for serialised stock (singles,
   graded, retro), where the SKU and condition matter more than the picture.
 
+### Browsing the category tree
+
+- The rail shows the quick-key pages, then the tree's top-level branches,
+  as the same chips. A branch opens its view in the catalogue pane: a
+  "Back" `text` button (56px) and beside it the **breadcrumb**, Space Mono
+  micro-labels separated by a 12px chevron, earlier steps as buttons and the
+  last one ink with `aria-current`.
+- **Folder tiles** come first: the till's tile with the branch's picture, or
+  a Lucide folder at 28px and 1.25 stroke, the name, and "N in stock" in
+  `Hint` (nothing when there are none). Then the branch's products and stock
+  as the usual tiles, then "Load more".
+- The **category picker** is a sheet (a bottom sheet on a phone): the
+  breadcrumb, the level's branches as 56px hairline rows with the shelf count
+  in Jost 13px `tnum` and a chevron where there is more beneath, a search
+  across every path that shows each result's path with the matching levels in
+  ink, the chosen branch's path in one line above the block, and "Choose this
+  branch" as the block.
+- The **Categories editor** (Settings) is an indented list, 16px a level below
+  640px and 28px above, a chevron that turns 90 degrees to open a branch, an
+  ellipsis menu per row, and a 40px drag grip in 56px rows. While dragging,
+  the dragged row is at 60% opacity, a 2px ink line marks a drop beside a row
+  and `row-hover` with an inset 1px ink ring marks a drop inside it, and one
+  live sentence pinned at the top says what the drop will do.
+
 ### Ticket pane
 
 - At the top, the customer: "Add customer" as a `text` button with the
