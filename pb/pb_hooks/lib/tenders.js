@@ -268,6 +268,26 @@ function tendersFor(app, sale, refundRef) {
   } catch (err) {
     rows = [];
   }
+  // Rows written in one transaction share their `created` millisecond, so
+  // the read order alone is not stable: put them in TENDER_METHODS order
+  // (cash, then card, then the rest), keeping the read order within a
+  // method, so a receipt and a lookup always list one sale's payments the
+  // same way.
+  var methods = require(__hooks + "/lib/shared/epos-types.js").TENDER_METHODS;
+  rows = rows
+    .filter(function (row) {
+      return !!row;
+    })
+    .map(function (row, index) {
+      var rank = methods.indexOf(row.getString("method"));
+      return { row: row, rank: rank < 0 ? methods.length : rank, index: index };
+    })
+    .sort(function (a, b) {
+      return a.rank - b.rank || a.index - b.index;
+    })
+    .map(function (entry) {
+      return entry.row;
+    });
   var out = [];
   for (var i = 0; i < rows.length; i++) {
     if (!rows[i]) continue;

@@ -2225,8 +2225,14 @@ ok "an MTG name search ('lightning bolt') reaches Scryfall's search fixture and 
 FX_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/fx" -H "Authorization: $SUPER_TOKEN")"
 [ "$FX_CRON_STATUS" = "204" ] || fail "POST /api/crons/fx returned $FX_CRON_STATUS, expected 204"
 
-FX_ROW_JSON="$(curl -s "$BASE/api/collections/fx_rates/records?perPage=1&sort=-fetched_at" -H "Authorization: $STAFF_TOKEN")"
-FX_ROW_DATE="$(echo "$FX_ROW_JSON" | jval "items.0.date")"
+# PocketBase runs a cron triggered through /api/crons in the background and
+# answers 204 straight away, so wait for its row rather than reading once.
+for _ in $(seq 1 50); do
+  FX_ROW_JSON="$(curl -s "$BASE/api/collections/fx_rates/records?perPage=1&sort=-fetched_at" -H "Authorization: $STAFF_TOKEN")"
+  FX_ROW_DATE="$(echo "$FX_ROW_JSON" | jval "items.0.date")"
+  [ "$FX_ROW_DATE" = "2026-09-18" ] && break
+  sleep 0.2
+done
 [ "$FX_ROW_DATE" = "2026-09-18" ] || fail "the fx cron's stored row has date '$FX_ROW_DATE', expected the fixture's own 2026-09-18 (frankfurter_gbp_latest.json)"
 FX_ROW_BASE="$(echo "$FX_ROW_JSON" | jval "items.0.base")"
 [ "$FX_ROW_BASE" = "GBP" ] || fail "the fx cron's stored row has base '$FX_ROW_BASE', expected GBP"
@@ -2382,7 +2388,13 @@ done
 IMAGE_QUEUE_CRON_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/crons/image_queue" -H "Authorization: $SUPER_TOKEN")"
 [ "$IMAGE_QUEUE_CRON_STATUS" = "204" ] || fail "POST /api/crons/image_queue returned $IMAGE_QUEUE_CRON_STATUS, expected 204"
 
-IMG_GOOD_LARGE="$(curl -s "$BASE/api/collections/cards/records/$IMG_GOOD_CARD_ID" -H "Authorization: $STAFF_TOKEN" | jval image_large)"
+# The cron runs in the background after the 204 (as 20b), so wait for the
+# good image to land before reading all three.
+for _ in $(seq 1 50); do
+  IMG_GOOD_LARGE="$(curl -s "$BASE/api/collections/cards/records/$IMG_GOOD_CARD_ID" -H "Authorization: $STAFF_TOKEN" | jval image_large)"
+  echo "$IMG_GOOD_LARGE" | grep -qF "/api/files/" && break
+  sleep 0.2
+done
 echo "$IMG_GOOD_LARGE" | grep -qF "img.fixtures.test" && fail "a good fixture image was not cached locally: still '$IMG_GOOD_LARGE'"
 echo "$IMG_GOOD_LARGE" | grep -qF "/api/files/" || fail "a good fixture image's image_large does not point at a local file: '$IMG_GOOD_LARGE'"
 ok "the image queue caches a real fixture image locally and rewrites image_large to the local file"
@@ -3334,7 +3346,7 @@ EBAY_LIST_B="$(make_item "Ebay List Item B" 1 200 1499)"
 [ -n "$EBAY_LIST_A" ] && [ -n "$EBAY_LIST_B" ] || fail "could not create the eBay listing check's items"
 
 EBAY_LISTING_CSV="$(curl -s "$BASE/api/vault/exports/ebay-listings.csv?ids=$EBAY_LIST_A,$EBAY_LIST_B" -H "Authorization: $STAFF_TOKEN")"
-echo "$EBAY_LISTING_CSV" | head -n1 | grep -qF "Action(SiteID=UK|Country=GB|Currency=GBP|Version=1193),Custom label (SKU),Title,Description,Category,ConditionID,Format,Duration,StartPrice,Quantity,ImageURL,Location,PostalCode" \
+sed -n 1p <<< "$EBAY_LISTING_CSV" | grep -qF "Action(SiteID=UK|Country=GB|Currency=GBP|Version=1193),Custom label (SKU),Title,Description,Category,ConditionID,Format,Duration,StartPrice,Quantity,ImageURL,Location,PostalCode" \
   || fail "the eBay listing CSV header row is wrong: $(echo "$EBAY_LISTING_CSV" | head -n1)"
 EBAY_LISTING_ROWS="$(echo "$EBAY_LISTING_CSV" | tail -n +2 | grep -c 'Ebay List Item')"
 [ "$EBAY_LISTING_ROWS" = "2" ] || fail "the eBay listing CSV for two ids produced $EBAY_LISTING_ROWS matching rows, expected 2: $EBAY_LISTING_CSV"
@@ -3348,12 +3360,12 @@ INV_MONEY_ITEM_ID="$(make_item "Inventory Money Item" 1 500 1999)"
 INV_MONEY_ITEM_SKU="$(curl -s "$BASE/api/collections/items/records/$INV_MONEY_ITEM_ID" -H "Authorization: $STAFF_TOKEN" | jval sku)"
 [ -n "$INV_MONEY_ITEM_SKU" ] || fail "could not create the inventory export's money-cell item"
 INVENTORY_CSV="$(curl -s "$BASE/api/vault/exports/inventory.csv" -H "Authorization: $STAFF_TOKEN")"
-echo "$INVENTORY_CSV" | head -n1 | grep -qF "SKU,Kind,Game,Title,Set code,Number,Finish,Language,Condition,Completeness,Cosmetic grade,Tested,Region,Grade company,Grade,Certificate number,EAN,Quantity,Cost,Market value at intake,Sell price,Tax scheme,Status,Location,Source,Acquired date,Supplier reference" \
+sed -n 1p <<< "$INVENTORY_CSV" | grep -qF "SKU,Kind,Game,Title,Set code,Number,Finish,Language,Condition,Completeness,Cosmetic grade,Tested,Region,Grade company,Grade,Certificate number,EAN,Quantity,Cost,Market value at intake,Sell price,Tax scheme,Status,Location,Source,Acquired date,Supplier reference" \
   || fail "the inventory export CSV header row is wrong: $(echo "$INVENTORY_CSV" | head -n1)"
 ok "the inventory export has the documented header row"
 
 SALES_CSV="$(curl -s "$BASE/api/vault/exports/sales.csv?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
-echo "$SALES_CSV" | head -n1 | grep -qF "Sale number,Date,Staff,Customer,SKU,Item title,Quantity,Unit price,Discount,VAT rate,Tax scheme,Payment method,Sale total,Line status" \
+sed -n 1p <<< "$SALES_CSV" | grep -qF "Sale number,Date,Staff,Customer,SKU,Item title,Quantity,Unit price,Discount,VAT rate,Tax scheme,Payment method,Sale total,Line status" \
   || fail "the sales export CSV header row is wrong: $(echo "$SALES_CSV" | head -n1)"
 ok "the sales export has the documented header row"
 
@@ -3362,7 +3374,7 @@ REGISTER_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$REGISTER_NONADMIN_STATUS" = "403" ] || fail "a non-admin fetching the buy-in register returned $REGISTER_NONADMIN_STATUS, expected 403"
 
 REGISTER_CSV="$(curl -s "$BASE/api/vault/exports/buy-in-register.csv?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
-echo "$REGISTER_CSV" | head -n1 | grep -qF "Trade-in number,Date,Staff,Customer,Seller name,Seller address,ID type,ID last four digits,ID expiry,Item description,Condition,Quantity,Market price,Offer price,Payout type,Cash amount,Credit amount,Signature reference" \
+sed -n 1p <<< "$REGISTER_CSV" | grep -qF "Trade-in number,Date,Staff,Customer,Seller name,Seller address,ID type,ID last four digits,ID expiry,Item description,Condition,Quantity,Market price,Offer price,Payout type,Cash amount,Credit amount,Signature reference" \
   || fail "the buy-in register export CSV header row is wrong: $(echo "$REGISTER_CSV" | head -n1)"
 ok "the inventory, sales and buy-in register exports have header rows, and the register is admin only"
 
