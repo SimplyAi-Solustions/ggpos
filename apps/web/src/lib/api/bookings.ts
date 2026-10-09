@@ -469,6 +469,9 @@ export async function getPublicAvailability(
   if (isDemo()) return demo.demoAvailability(date, { ...options, audience: "public" })
   return pbCustomer.send<Availability>("/api/public/availability", {
     method: "GET",
+    // The public routes say a minute of caching for the website; My Vault
+    // reads this again straight after a booking and must see it taken.
+    cache: "no-store",
     query: {
       date,
       ...(options.kind ? { kind: options.kind } : {}),
@@ -482,6 +485,8 @@ export async function listPublicEvents(from: string): Promise<EventView[]> {
   if (isDemo()) return demo.demoPublicEvents(from)
   const result = await pbCustomer.send<{ events?: EventView[] }>("/api/public/events", {
     method: "GET",
+    // Places left must be current straight after an entry (see above).
+    cache: "no-store",
     query: { from },
   })
   return result.events ?? []

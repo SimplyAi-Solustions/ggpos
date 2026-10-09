@@ -356,7 +356,7 @@ The per-card CSV headers are only visible inside a logged-in account, so one rea
 - Symbology: **QR everywhere** (phone cameras and every 2D scanner read it; Data Matrix is not read by native camera apps). 40 × 20 at 203 dpi is 320 × 160 px: QR about 110 px on the left; title, set + number + finish in mono, condition badge and price on the right; a small "GG" mark. The 25 × 15 label carries an 11 mm QR for the in-app scanner or a USB 2D scanner at close range.
 - Printing path 1 (day one): `/labels/print?job=…` renders `@page { size: 40mm 20mm; margin: 0 }`, one label per page; the counter PC has the T003 driver and Chrome runs with `--kiosk-printing`, so a print is one click with no dialog.
 - Printing path 2 (later): WebUSB TSPL2 sender in the counter PC's Chrome (`SIZE`, `GAP`, `DENSITY`, `CLS`, `QRCODE`, `TEXT`, `PRINT`) driven by `label_jobs`, so phones print to the counter printer. Windows needs the WinUSB binding through Zadig (runbook); macOS, Linux and ChromeOS work as is. Bluetooth from the browser is not viable.
-- Scanners: a USB 2D keyboard-wedge scanner (Zebra DS2208 at about £80, or a £30 to £45 Eyoyo / NETUM 2D) with a prefix character and Enter suffix. No 1D-only laser scanners.
+- Scanners: a USB 2D keyboard-wedge scanner (Zebra DS2208 at about £80, or a £30 to £45 Eyoyo / NETUM 2D) with an Enter suffix and no prefix (the app tells a scan from typing by its speed). No 1D-only laser scanners.
 - Library: `bwip-js` for on-screen, print and TSPL rendering.
 
 ## Security, GDPR and record keeping
@@ -383,7 +383,7 @@ Email (Resend, Postmark or Brevo) and Web Push: OTP codes, quote received, offer
 4. First run: superuser with MFA, migrations apply, seeds for `games`, `pricing_rules`, `loyalty_programme`, default tiers and rewards, `label_templates`, `settings`, first admin.
 5. Backups: `backup.sh` (restic to R2 or B2, encrypted, key off-box) at 03:00, keep 30 daily and 12 monthly; rehearse `restore.md` before go-live.
 6. GitHub Actions: on push to `main`, build the PWA, rsync `pb_public`, `pb_hooks`, `pb_migrations`, restart the container.
-7. Counter PC: T003 driver, Chrome shortcut with `--kiosk-printing`, USB scanner with prefix + Enter, PWA installed; optional tablet in `/display` kiosk mode. Phones: PWA installed from the address bar.
+7. Counter PC: T003 driver, Chrome shortcut with `--kiosk-printing`, USB scanner with an Enter suffix, PWA installed; optional tablet in `/display` kiosk mode. Phones: PWA installed from the address bar.
 
 ## Phases
 

@@ -127,7 +127,7 @@ Binding WinUSB replaces the Windows driver for that device, so printing path 1 (
 
 ## Scanner configuration
 
-A USB 2D keyboard-wedge scanner, for example a Zebra DS2208 at about £80, or an Eyoyo or NETUM 2D model at about £30 to £45. Configure it to send a prefix character before the scanned data and an Enter (CR) suffix after it, so the app's global scan listener can tell a scan apart from a staff member typing in a field, and submit automatically on the Enter. Check the scanner's own configuration manual for its prefix-character barcode; a rarely-typed character such as Tab is a reasonable choice if the model allows one to be set. A 1D-only laser scanner will not read the QR codes this system uses and should not be ordered.
+A USB 2D keyboard-wedge scanner, for example a Zebra DS2208 at about £80, or an Eyoyo or NETUM 2D model at about £30 to £45. Configure it for keyboard (HID) mode with an Enter (CR) suffix and no prefix. The app's global scan listener tells a scan apart from a staff member typing by how fast the keys arrive, and submits on the Enter; deploy/README.md has the setup steps. A 1D-only laser scanner will not read the QR codes this system uses and should not be ordered.
 
 ## Recommended label stock
 

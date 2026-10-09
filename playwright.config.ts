@@ -58,6 +58,8 @@ export default defineConfig({
     command: `${build}pnpm --filter web exec vite preview --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    // The build runs inside this command, and on a busy machine it takes
+    // well over a minute before the preview answers.
+    timeout: 240_000,
   },
 })
