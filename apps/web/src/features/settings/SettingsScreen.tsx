@@ -36,6 +36,7 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useCounterDock } from "@/app/counter-dock"
 import { isManagerUp, useStaffRole } from "@/features/lock/role"
+import { AgentsSection } from "@/features/settings/AgentsSection"
 import { PermissionsTable } from "@/features/settings/PermissionsTable"
 import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
@@ -916,6 +917,8 @@ function Editor({
         <SectionHeading id="printers-heading">Printers</SectionHeading>
         <PrintersSection />
       </section>
+
+      <AgentsSection />
 
       {dock
         ? createPortal(

@@ -170,6 +170,7 @@ export function CommandPalette({
       // --- Quotes (Phase 5) ---
       { id: "quotes", label: "Quotes", run: () => go("/counter/quotes") },
       // --- end Quotes ---
+      { id: "research", label: "Research", run: () => go("/counter/research") },
       { id: "find-customer", label: "Find a customer", run: () => go("/counter/customers") },
       { id: "new-customer", label: "New customer", run: () => go("/counter/customers/new") },
     ],

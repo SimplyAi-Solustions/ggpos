@@ -48,6 +48,8 @@ import { MoneyInput } from "@/features/sell/money-input"
 import { penceToField } from "@/features/sell/money"
 import { addItemToBasket } from "@/features/sell/basket-store"
 import { PriceSources } from "@/features/pricing"
+import { ResearchActions } from "@/features/research/ResearchActions"
+import { itemTarget } from "@/features/research/targets"
 // One date shape on this page, and the same one the want-list notification
 // uses ("Held for you until 22 Sep, 14:00"), so the counter and the
 // customer's email cannot read differently.
@@ -605,6 +607,8 @@ export function ItemPage({ sku }: { sku: string }) {
                   }
             }
           />
+          {/* Search eBay sold and Ask an agent (docs/api-contract-launch.md, section 5). */}
+          <ResearchActions className="mt-4" target={itemTarget(item)} />
           {suggested !== null ? (
             <div className="mt-8 flex flex-wrap items-baseline gap-x-10 gap-y-4">
               <span className="flex items-baseline gap-3">

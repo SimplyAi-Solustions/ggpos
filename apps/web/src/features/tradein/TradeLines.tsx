@@ -25,6 +25,8 @@ import { CardSearchField } from "@/features/stock/CardSearchField"
 import { PriceSources } from "@/features/pricing"
 import { RetroSearchField } from "@/features/pricing/RetroSearchField"
 import { marketLine } from "@/features/pricing/sources"
+import { ResearchActions } from "@/features/research/ResearchActions"
+import { lineTarget } from "@/features/research/targets"
 import { MoneyField } from "@/features/tradein/MoneyField"
 import { OverrideSheet } from "@/features/tradein/OverrideSheet"
 import {
@@ -395,7 +397,12 @@ export function TradeLineRow({
               })
             }
           />
+          {/* Search eBay sold and Ask an agent (docs/api-contract-launch.md, section 5). */}
+          <ResearchActions className="mt-4" target={lineTarget(line)} />
         </div>
+      ) : null}
+      {!priced && !isBulk && line.title ? (
+        <ResearchActions className="mt-5" target={lineTarget(line)} />
       ) : null}
 
       {line.overrideReason ? (

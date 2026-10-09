@@ -24,6 +24,8 @@ import {
 import { ProductImage } from "@/components/product-image"
 import { PriceSources } from "@/features/pricing"
 import { finishWords } from "@/features/pricing/sources"
+import { ResearchActions } from "@/features/research/ResearchActions"
+import { cardTarget } from "@/features/research/targets"
 import { offerSettingsFrom, rulesFrom, type CardHit } from "@/lib/api"
 import { useVaultConfig } from "@/lib/api/config"
 import { stockForCard } from "@/lib/api/lookup"
@@ -115,6 +117,8 @@ export function PriceCheck({ card }: { card: CardHit }) {
             title: card.name,
           }}
         />
+        {/* Search eBay sold and Ask an agent (docs/api-contract-launch.md, section 5). */}
+        <ResearchActions className="mt-4" target={cardTarget(card, finish)} />
       </div>
 
       <div className="mt-16">
