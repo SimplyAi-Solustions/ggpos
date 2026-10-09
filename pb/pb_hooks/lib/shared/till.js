@@ -2,7 +2,7 @@
 // Source: packages/shared/src. Regenerate with: pnpm --filter @gg/shared build:hooks
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TILL_MOVEMENT_TYPES = exports.MAX_DENOMINATION_COUNT = void 0;
+exports.NO_BRANCH_LABEL = exports.TILL_MOVEMENT_TYPES = exports.MAX_DENOMINATION_COUNT = void 0;
 exports.hasCounts = hasCounts;
 exports.parseDenominationCounts = parseDenominationCounts;
 exports.denominationTotal = denominationTotal;
@@ -14,6 +14,7 @@ exports.expectedCash = expectedCash;
 exports.cashVariance = cashVariance;
 exports.cardVariance = cardVariance;
 exports.categoryForKind = categoryForKind;
+exports.branchLabel = branchLabel;
 exports.parkedTicketsMessage = parkedTicketsMessage;
 exports.countedAfterDrop = countedAfterDrop;
 exports.summariseTenders = summariseTenders;
@@ -49,6 +50,7 @@ exports.buildTillReport = buildTillReport;
  * back on a refund. A cash tender's amount is the cash kept, not what was
  * handed over, so change given never reaches the report.
  */
+const categories_1 = require("./categories");
 const money_1 = require("./money");
 const saleline_1 = require("./saleline");
 const epos_types_1 = require("./epos-types");
@@ -209,9 +211,10 @@ const KIND_CATEGORIES = {
     other: "Other",
 };
 /**
- * The category a stock line sells under on the report: its item kind, named
- * the way the shop says it. A till product sells under its own category's name
- * instead (the server looks that up).
+ * An item kind named the way the shop says it ("Singles"). Since the category
+ * tree a line sells under its branch (`branchLabel`), so the server no longer
+ * labels a report line with this; it stays for the demo's X report and for
+ * anything that only knows a kind.
  */
 function categoryForKind(kind) {
     // An own-property check, so "constructor" and friends are not read off the prototype.
@@ -219,6 +222,25 @@ function categoryForKind(kind) {
         return KIND_CATEGORIES[kind];
     }
     return "Other";
+}
+/** The label of a line with no branch on an X or a Z. */
+exports.NO_BRANCH_LABEL = "Other";
+/**
+ * The category a line sells under on an X or a Z
+ * (docs/api-contract-inventory.md, section 1.4): the first two levels of its
+ * home branch's path ("Trading cards / Pokémon", "Retro / Sega", "Services /
+ * Table time"), a top-level branch alone when it has no second level
+ * ("Trading cards"), and "Other" when the line has no branch at all.
+ * `path` is the branch's stored path, "Trading cards / Pokémon / Singles".
+ */
+function branchLabel(path) {
+    const names = (path !== null && path !== void 0 ? path : "")
+        .split(categories_1.CATEGORY_PATH_SEPARATOR)
+        .map((name) => name.trim())
+        .filter((name) => name !== "");
+    if (names.length === 0)
+        return exports.NO_BRANCH_LABEL;
+    return names.slice(0, 2).join(categories_1.CATEGORY_PATH_SEPARATOR);
 }
 const SMALL_NUMBERS = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
 /** The Z report's refusal while tickets are parked on the register. */

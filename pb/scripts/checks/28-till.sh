@@ -399,6 +399,9 @@ curl -s -o /dev/null -X PATCH "$BASE/api/collections/settings/records/$T28_SETTI
 # Expected: 8503 + 1500 - 640 - 5000 - 15 - 100 (the approved paid out)
 # + 1500 (cash sale) - 900 (refund) - 2500 (buy-in) = 2348.
 # Net: 9700 gross - 250 discount - 900 refunded = 8550, over 3 sales 2850.
+# Categories are the first two levels of each line's branch: the singles and the
+# booster boxes are Pokémon (Singles and Sealed), so they share one label, worth
+# 3000 + 1200 + 4750 = 8950 over 4 units; the table time is Services / Table time.
 T28_WANT_RUNNING="{
   \"type\":\"x\",\"number\":0,\"id\":\"\",
   \"register\":{\"id\":\"$T28_R1\",\"name\":\"Check Till 28\"},
@@ -418,7 +421,7 @@ T28_WANT_RUNNING="{
   \"overrides\":{\"count\":1},
   \"discounts\":{\"count\":1,\"total\":250},
   \"trade_ins\":{\"count\":1,\"cash_paid\":2500,\"credit_issued\":0,\"part_exchange_value\":0},
-  \"by_category\":[{\"category\":\"Sealed\",\"net\":4750,\"count\":2},{\"category\":\"Singles\",\"net\":4200,\"count\":2},{\"category\":\"Services\",\"net\":500,\"count\":1}],
+  \"by_category\":[{\"category\":\"Trading cards / Pokémon\",\"net\":8950,\"count\":4},{\"category\":\"Services / Table time\",\"net\":500,\"count\":1}],
   \"by_staff\":[{\"staff_id\":\"$T28_MANAGER_ID\",\"name\":\"Till Manager 28\",\"net\":4750,\"count\":1},{\"staff_id\":\"$T28_STAFF_ID\",\"name\":\"Till Staff 28\",\"net\":4700,\"count\":2}],
   \"counts\":null,\"notes\":\"\"
 }"

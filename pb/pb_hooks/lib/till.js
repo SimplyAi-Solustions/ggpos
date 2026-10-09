@@ -184,10 +184,12 @@ function byIds(app, collection, ids) {
 }
 
 /**
- * The category label for every line: a till product's top-level branch in
- * the category tree ("Services"), or the stock line's kind as the shared
- * `categoryForKind` names it. A product with no branch, a deleted item and a
- * line with neither sell as "Other".
+ * The category label for every line (docs/api-contract-inventory.md,
+ * section 1.4): the first two levels of its home branch's path in the
+ * category tree ("Trading cards / Pokémon", "Retro / Sega", "Services / Table
+ * time"), through the shared `branchLabel`. A line's home is its till
+ * product's branch or its stock line's. A line with no branch, a deleted item
+ * and a line with neither sell as "Other".
  */
 function lineCategories(app, lines) {
   var till = sharedTill();
@@ -199,36 +201,17 @@ function lineCategories(app, lines) {
   }
   var products = byIds(app, "till_products", productIds);
   var items = byIds(app, "items", itemIds);
-  var categoryIds = [];
-  for (var id in products) categoryIds.push(products[id].getString("category"));
-  var branches = byIds(app, "categories", categoryIds);
-  // Each branch's top level is the first id in its lineage ("|root|...|").
-  var rootOf = {};
-  var rootIds = [];
-  for (var b in branches) {
-    var root = branches[b].getString("lineage").split("|")[1] || "";
-    rootOf[b] = root;
-    rootIds.push(root);
-  }
-  var roots = byIds(app, "categories", rootIds);
-  var categories = {};
-  for (var c in rootOf) {
-    if (roots[rootOf[c]]) categories[c] = roots[rootOf[c]];
-  }
+  var branchIds = [];
+  for (var p in products) branchIds.push(products[p].getString("category"));
+  for (var n in items) branchIds.push(items[n].getString("category"));
+  var branches = byIds(app, "categories", branchIds);
 
   var out = {};
   for (var k = 0; k < lines.length; k++) {
     var line = lines[k];
-    var product = products[line.getString("product")];
-    var item = items[line.getString("item")];
-    var label = "Other";
-    if (product) {
-      var category = categories[product.getString("category")];
-      if (category && category.getString("name")) label = category.getString("name");
-    } else if (item) {
-      label = till.categoryForKind(item.getString("kind"));
-    }
-    out[line.id] = label;
+    var home = products[line.getString("product")] || items[line.getString("item")];
+    var branch = home ? branches[home.getString("category")] : null;
+    out[line.id] = till.branchLabel(branch ? branch.getString("path") : "");
   }
   return out;
 }
