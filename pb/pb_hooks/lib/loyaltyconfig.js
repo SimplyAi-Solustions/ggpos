@@ -19,8 +19,16 @@
  * pb/README.md on pb_hooks isolation.
  */
 
-/** Keys the shared LoyaltyRuleConditions actually has. */
-var CONDITION_KEYS = ["games", "kinds", "minSpend", "weekdays"];
+/**
+ * Keys the shared LoyaltyRuleConditions actually has. The launch's offers
+ * (docs/api-contract-launch.md, section 2) add `categories`, `items`,
+ * `products` and `paidMembersOnly`; the list itself is the shared one, so
+ * the evaluator and this check cannot drift.
+ */
+function conditionKeys() {
+  var loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
+  return loyalty.LOYALTY_CONDITION_KEYS;
+}
 
 /** Rule types whose `value` is a multiplier rather than a points figure. */
 var MULTIPLIER_TYPES = ["multiplier", "day_of_week"];
@@ -50,13 +58,32 @@ function checkRule(app, record) {
   }
 
   var keys = Object.keys(conditions);
+  var known = conditionKeys();
   for (var i = 0; i < keys.length; i++) {
-    if (CONDITION_KEYS.indexOf(keys[i]) < 0) {
+    if (known.indexOf(keys[i]) < 0) {
       return {
         status: 400,
-        message: `Conditions has no "${keys[i]}" setting. Use games, kinds, minSpend or weekdays.`,
+        message: `Conditions has no "${keys[i]}" setting. Use games, kinds, categories, items, products, minSpend, weekdays or paidMembersOnly.`,
       };
     }
+  }
+  // An offer's branches, stock items and till products (the launch).
+  var lists = [
+    ["categories", "branch ids from the category tree"],
+    ["items", "stock item ids"],
+    ["products", "till product ids"],
+  ];
+  for (var l = 0; l < lists.length; l++) {
+    var listKey = lists[l][0];
+    if (conditions[listKey] !== undefined && !isStringArray(conditions[listKey])) {
+      return { status: 400, message: `Conditions.${listKey} must be a list of ${lists[l][1]}.` };
+    }
+    if (conditions[listKey] !== undefined && conditions[listKey].length > 200) {
+      return { status: 400, message: `Conditions.${listKey} can name up to 200. Split the offer in two.` };
+    }
+  }
+  if (conditions.paidMembersOnly !== undefined && typeof conditions.paidMembersOnly !== "boolean") {
+    return { status: 400, message: "Conditions.paidMembersOnly is true or false." };
   }
   if (conditions.games !== undefined && !isStringArray(conditions.games)) {
     return { status: 400, message: "Conditions.games must be a list of game keys, for example [\"pokemon\"]." };
@@ -228,7 +255,7 @@ function checkProgramme(app, record) {
 }
 
 module.exports = {
-  CONDITION_KEYS: CONDITION_KEYS,
+  conditionKeys: conditionKeys,
   MAX_MULTIPLIER: MAX_MULTIPLIER,
   checkRule: checkRule,
   checkTier: checkTier,

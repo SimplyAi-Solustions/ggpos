@@ -220,6 +220,8 @@ export interface CustomerRecord extends BaseRecord {
   birthday_month?: number
   source?: "counter" | "portal"
   referred_by?: string
+  /** When they joined the GG Guild; empty for a customer who has not. */
+  guild_joined_at?: string
 }
 
 /** `customer_private`: the staff-only half. Balances are pence. */
@@ -756,6 +758,10 @@ export interface SaleCustomer {
   /** Integer GBP pence. */
   creditBalance: number
   pointsBalance: number
+  /** In the GG Guild: only members earn points (docs/api-contract-launch.md, section 2). */
+  member: boolean
+  /** Holds an active paid plan, for an offer kept for paid-plan members. */
+  paidMember: boolean
 }
 
 /** The live loyalty programme, its rules and its tiers, for the preview. */

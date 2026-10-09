@@ -1,9 +1,9 @@
 /**
- * The live points preview: what one sale would earn under the rules exactly
- * as they are being edited, unsaved changes included.
+ * The live points preview: what one sale would earn under the offers as they
+ * stand and the programme as it is being edited.
  *
- * It is the first thing in the Rules section because it is the question an
- * admin actually has ("if I turn this on, what does a Saturday sealed sale
+ * It sits under the Offers as "Try a sale" because it is the question an
+ * admin actually has ("with these on, what does a Saturday sealed sale
  * pay?"), and it runs through the same `evaluateSalePoints` the sale route
  * runs, so the figure on screen is the figure the till will post.
  */

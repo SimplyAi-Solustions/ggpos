@@ -469,6 +469,8 @@ const TOM: SaleCustomer = {
   perks: [],
   creditBalance: 0,
   pointsBalance: 0,
+  member: true,
+  paidMember: false,
 }
 
 function withTrade(): Ticket {

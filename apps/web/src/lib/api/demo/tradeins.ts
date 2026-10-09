@@ -1,4 +1,4 @@
-import { buildCode, formatGBP } from "@gg/shared"
+import { buildCode, formatGBP, isGuildMember } from "@gg/shared"
 // `packages/shared/src/index.ts` re-exports money, sku and pb-types only, so
 // the pricing and loyalty evaluators come in through their own subpaths.
 import { DEFAULT_OFFER_SETTINGS, type OfferSettings, type PricingRule } from "@gg/shared/pricing"
@@ -568,12 +568,10 @@ export function demoCompleteTradeIn(
       number
     )
   }
-  const pointsEarned = evaluateTradeInPoints(
-    DEMO_PROGRAMME,
-    [],
-    payload.payout_credit,
-    now
-  )
+  // Points belong to Guild members (docs/api-contract-launch.md, section 2).
+  const pointsEarned = isGuildMember(customer?.customer.guild_joined_at)
+    ? evaluateTradeInPoints(DEMO_PROGRAMME, [], payload.payout_credit, now)
+    : 0
   if (pointsEarned > 0) demoAddPoints(entry.record.customer, pointsEarned)
   demoRecordVisit(entry.record.customer, now.toISOString())
 

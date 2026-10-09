@@ -157,7 +157,11 @@ export function OfferStep({
           label="Store credit"
           amount={sums.credit}
           selected={payoutType === "credit"}
-          note={`Earns ${creditPoints.toLocaleString("en-GB")} GG Points, and no ID is needed.`}
+          note={
+            creditPoints > 0
+              ? `Earns ${creditPoints.toLocaleString("en-GB")} GG Points, and no ID is needed.`
+              : "No ID is needed."
+          }
           onSelect={() => onPayoutType("credit")}
         />
       </div>

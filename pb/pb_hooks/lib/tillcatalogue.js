@@ -97,6 +97,9 @@ function productShape(app, product) {
     open_price: openPrice,
     image_url: fileUrl(product, product.getString("image")),
     tax_scheme: product.getString("tax_scheme") || "standard",
+    // Its home branch, so the till's points preview can match an offer on
+    // a branch (docs/api-contract-launch.md, section 2).
+    category: product.getString("category"),
   };
 }
 
@@ -112,6 +115,8 @@ function itemShape(app, item, images) {
     image_url: photo ? fileUrl(item, photo) : (images && images[item.getString("card")]) || "",
     kind: item.getString("kind"),
     status: item.getString("status"),
+    // Its home branch, for an offer on a branch (the launch, section 2).
+    category: item.getString("category"),
   };
 }
 

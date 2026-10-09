@@ -508,6 +508,12 @@ export interface WizardCustomer {
   phone: string
   facts: CustomerGateFacts
   creditBalance: number
+  /**
+   * In the GG Guild. Points belong to members, so a seller who has not
+   * joined earns none on store credit (docs/api-contract-launch.md, section
+   * 2). Absent means a member, as every customer was before the launch.
+   */
+  member?: boolean
 }
 
 export interface WizardState {

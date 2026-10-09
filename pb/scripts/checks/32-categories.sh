@@ -745,7 +745,7 @@ echo "$(echo "$S32_SKU_ROW" | jval sku)" | grep -Eq '^GGS[0-9A-HJKMNP-TV-Z]{6}$'
 
 # A buy-in completed: a Pokémon single, a Mega Drive game and two Magic boxes.
 S32_SELLER="$(curl -s -X POST "$BASE/api/collections/customers/records" -H "Authorization: $STAFF_TOKEN" \
-  -H "Content-Type: application/json" -d '{"name":"Sid Seller","source":"counter"}' | jval id)"
+  -H "Content-Type: application/json" -d '{"name":"Sid Seller","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 S32_TRADE="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" -H "Authorization: $STAFF_TOKEN" \
   -H "Content-Type: application/json" -d "{\"customer\":\"$S32_SELLER\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
 # $1 trade-in id, $2 line JSON fields -> adds an accepted line.

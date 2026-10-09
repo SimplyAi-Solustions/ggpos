@@ -1,4 +1,5 @@
-import { buildCode, pointsToNextTier, resolveTier } from "@gg/shared"
+import { ClientResponseError } from "pocketbase"
+import { buildCode, isGuildMember, pointsToNextTier, resolveTier } from "@gg/shared"
 
 import { boxArt } from "@/kit/placeholder-art"
 import {
@@ -11,9 +12,11 @@ import {
   demoPortalCustomerId,
 } from "@/lib/api/demo/portal-seed"
 import { programme as demoProgramme } from "@/lib/api/demo/loyalty"
+import { demoJoinGuild } from "@/lib/api/demo/guild-join"
 import { DEMO_TIERS } from "@/lib/api/demo/store"
 import { PROGRAMME_OFF } from "@/features/portal/guild"
 import type {
+  GuildJoined,
   GuildSummary,
   PortalReward,
   PortalVoucher,
@@ -544,6 +547,10 @@ export function demoGuild(): GuildSummary {
   const headline = customerId === DEMO_PORTAL_CUSTOMER_ID
 
   return {
+    member: isGuildMember(entry.customer.guild_joined_at),
+    joined_at: entry.customer.guild_joined_at || null,
+    terms: demoProgramme.terms ?? "",
+    welcome_bonus: demoProgramme.enabled === false ? 0 : (demoProgramme.welcome_bonus ?? 0),
     points_name: POINTS_NAME,
     tier: tier ? { id: tier.id, name: tier.name } : null,
     window_points: windowPoints,
@@ -560,6 +567,26 @@ export function demoGuild(): GuildSummary {
       pending: headline ? 1 : 0,
     },
     vouchers_open: liveVouchersFor(customerId).length,
+  }
+}
+
+/**
+ * Joining from My Vault, as `POST /api/vault/me/guild/join` does: refused
+ * for a member, otherwise the counter's own demo join, bonus and all.
+ */
+export function demoJoinMyGuild(input: { marketing_consent: boolean }): GuildJoined {
+  const entry = me()
+  if (isGuildMember(entry.customer.guild_joined_at)) {
+    throw new ClientResponseError({
+      status: 409,
+      response: { code: 409, message: "You are already in the Guild.", data: {} },
+    })
+  }
+  const joined = demoJoinGuild({ customer: entry.customer.id, marketing_consent: input.marketing_consent })
+  return {
+    joined_at: entry.customer.guild_joined_at ?? new Date().toISOString(),
+    points_balance: joined.points_balance,
+    welcome_points: joined.welcome_points,
   }
 }
 

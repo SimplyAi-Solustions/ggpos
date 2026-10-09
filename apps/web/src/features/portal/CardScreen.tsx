@@ -11,6 +11,7 @@ import { SkeletonText } from "@/components/ui/skeleton"
 import { StickerRing } from "@/components/ui/sticker"
 import { GuildCardFront } from "@/features/customers/GuildCard"
 import { getMe } from "@/lib/api/portal"
+import { getGuild } from "@/lib/api/guild"
 import { LoadFailed } from "@/features/portal/LoadFailed"
 
 /**
@@ -110,6 +111,10 @@ export function CardScreen() {
     queryKey: ["portal", "me"],
     queryFn: getMe,
   })
+  // Whether they have joined the Guild (docs/api-contract-launch.md,
+  // section 2): somebody who signed in but has not is sent to join.
+  const guild = useQuery({ queryKey: ["portal", "guild"], queryFn: getGuild })
+  const notMember = guild.data?.member === false
 
   if (isPending) {
     return (
@@ -130,7 +135,7 @@ export function CardScreen() {
     )
   }
 
-  const tier = me.tier?.name ?? "Member"
+  const tier = notMember ? "Not joined yet" : (me.tier?.name ?? "Member")
 
   return (
     <section className="pt-12 sm:pt-20">
@@ -153,9 +158,11 @@ export function CardScreen() {
 
       {/* The card already prints the name and the code; the badge is the
           one thing on this screen that has to be readable across a counter. */}
-      <div className="mt-10">
-        <Badge variant="volt">{tier}</Badge>
-      </div>
+      {notMember ? null : (
+        <div className="mt-10">
+          <Badge variant="volt">{tier}</Badge>
+        </div>
+      )}
 
       <div className="mt-12 grid grid-cols-2 gap-x-6 gap-y-8">
         <Figure
@@ -170,10 +177,16 @@ export function CardScreen() {
         />
       </div>
 
+      {notMember ? (
+        <p data-testid="portal-not-member" className="mt-8 max-w-[48ch] text-[15px] leading-[1.5] text-foreground">
+          You are not in the GG Guild yet, so what you buy earns no points. Joining takes a minute.
+        </p>
+      ) : null}
+
       {/* What the points are for, one tap from the figure itself. */}
       <div className="mt-8 flex flex-wrap items-center gap-x-10 gap-y-6">
         <Button variant="text" render={<Link to="/account/guild" />}>
-          Guild
+          {notMember ? "Join the Guild" : "Guild"}
         </Button>
         <Button variant="text" render={<Link to="/account/rewards" />}>
           Rewards

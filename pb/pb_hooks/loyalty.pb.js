@@ -11,8 +11,9 @@
  * Hooks registered here:
  *  - `customers` on create: resolve a `referred_by` **code** into the
  *    customer it names, refusing one nobody holds or the customer's own,
- *    then write the welcome bonus, its own notification and the `pending`
- *    referrals row.
+ *    then, for a customer created in the Guild, the welcome bonus and the
+ *    Guild card notification (lib/guild.js), and the `pending` referrals
+ *    row.
  *  - `points_ledger` after create: re-evaluate the tier from the rolling
  *    window, and clear the points-expiry warning whenever points come in.
  *  - `memberships` after create, update and delete: re-evaluate the tier,
@@ -89,60 +90,34 @@ onRecordCreateRequest((e) => {
     e.record.set("referred_by", referrer.id);
   }
 
+  // The launch (docs/api-contract-launch.md, section 2): a customer
+  // created through the collection API is in the Guild only when the
+  // create says so, and then from now, whatever date was sent. One created
+  // without it (a seller at a cash buy-in) joins later through
+  // POST /api/vault/guild/join.
+  if (e.record.getString("guild_joined_at")) {
+    e.record.set("guild_joined_at", new Date().toISOString());
+  }
+
   e.next();
 
   const customerId = e.record.id;
   const referrerId = e.record.getString("referred_by");
-  const programme = util.programme(e.app);
-
-  // Never twice for the same customer: a merge keeps the record it is
-  // folding into, welcome row and all, and never asks for a second one.
-  let alreadyWelcomed = false;
-  try {
-    alreadyWelcomed =
-      e.app.findRecordsByFilter(
-        "points_ledger",
-        'customer = {:customer} && reason = "welcome"',
-        "",
-        1,
-        0,
-        { customer: customerId }
-      ).length > 0;
-  } catch (err) {
-    alreadyWelcomed = false;
-  }
+  const guildLib = require(`${__hooks}/lib/guild.js`);
 
   const notifyLib = require(`${__hooks}/lib/notify.js`);
   let pending = [];
   try {
-    if (programme.enabled && programme.welcomeBonus > 0 && !alreadyWelcomed) {
-      e.app.save(
-        new Record(e.app.findCollectionByNameOrId("points_ledger"), {
-          customer: customerId,
-          delta: programme.welcomeBonus,
-          reason: "welcome",
-          ref: customerId,
-        })
-      );
-
-      // One notification for joining, naming the bonus, in place of the
-      // "you are now a Member" a first tier would otherwise produce
-      // (lib/tiers.js's isJoiningTier). Only when there is an address to
-      // send it to: a customer created at the counter without one has
-      // nowhere to read it, and the row would just be noise in the list
-      // they find when they do claim the account.
-      if (e.record.getString("email")) {
-        const tiers = require(`${__hooks}/lib/tiers.js`);
-        const n = notifyLib.notify(e.app, {
-          customer: customerId,
-          type: "welcome",
-          title: "Welcome to GG Guild",
-          body: `${tiers.formatPoints(programme.welcomeBonus)} points are on your card. Sign in to My Vault with this email address to see them.`,
-          link: "/account",
-          email: true,
-        });
-        pending = n.pending || [];
-      }
+    // The welcome bonus and the Guild card belong to joining, so only a
+    // customer created as a member gets them here; lib/guild.js looks for
+    // an earlier welcome row first, so a merge never pays a second one.
+    // The notification it writes replaces the "you are now a Member" a
+    // first tier would otherwise produce (lib/tiers.js's isJoiningTier),
+    // and only goes to a customer with an address to read it at.
+    if (guildLib.isMember(e.record)) {
+      e.app.runInTransaction((txApp) => {
+        pending = guildLib.welcome(txApp, e.record, {}).pending;
+      });
     }
     if (referrerId) referrals.createPending(e.app, referrerId, customerId);
   } catch (err) {

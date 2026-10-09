@@ -6,6 +6,7 @@ import { displayCode } from "@gg/shared"
 
 import { DEMO_GAMES, DEMO_LOCATIONS } from "@/lib/api/fixtures"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
+import { demoBranchForItem } from "@/lib/api/demo/branches"
 import { demoCategoryPaths, demoSubtreeIds } from "@/lib/api/demo/categories"
 import {
   DEMO_SALE_CUSTOMERS,
@@ -140,6 +141,9 @@ export function getItem(sku: string): ItemDetail | null {
     reservedUntil: item.reserved_until ?? null,
     history: historyFor(item),
     categoryPath: item.category ? (paths.get(item.category) ?? "") : "",
+    // Filed by the shared rule, as the server files stock, so the till
+    // prices an offer on a branch the way the sale does.
+    category: item.category ?? demoBranchForItem(item),
   }
 }
 

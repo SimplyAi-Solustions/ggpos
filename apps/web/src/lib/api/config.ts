@@ -25,11 +25,8 @@ import {
   loyaltyRulesFrom,
   programmeFrom,
 } from "@/lib/api/tradeins"
-import {
-  DEMO_RULES,
-  DEMO_SETTINGS,
-  DEMO_TIER_ROWS,
-} from "@/lib/api/demo/store"
+import { DEMO_SETTINGS, DEMO_TIER_ROWS } from "@/lib/api/demo/store"
+import { programme as demoProgrammeRow, rules as demoRuleRows } from "@/lib/api/demo/loyalty"
 import { demoSettings } from "@/lib/api/demo/settings"
 import type {
   CounterConfig,
@@ -87,16 +84,21 @@ async function wireConfig(): Promise<VaultConfig> {
     },
     loyalty: {
       ...config.loyalty,
-      rules: DEMO_RULES.map((rule) => ({
+      // The Loyalty screen's own demo programme and offers, so an offer
+      // saved there changes the till's "Earns N points" straight away, as
+      // the config route does on the server (docs/api-contract-launch.md,
+      // section 2).
+      programme: { ...demoProgrammeRow },
+      rules: demoRuleRows.map((rule) => ({
         id: rule.id,
         name: rule.name,
         type: rule.type,
-        conditions: rule.conditions as Record<string, unknown>,
+        conditions: (rule.conditions ?? {}) as Record<string, unknown>,
         value: rule.value,
         active: rule.active,
         priority: rule.priority,
-        starts_at: rule.startsAt ?? undefined,
-        ends_at: rule.endsAt ?? undefined,
+        starts_at: rule.starts_at || undefined,
+        ends_at: rule.ends_at || undefined,
       })),
       tiers: DEMO_TIER_ROWS,
     },

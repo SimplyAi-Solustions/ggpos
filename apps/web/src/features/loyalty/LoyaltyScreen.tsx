@@ -1,10 +1,12 @@
 /**
  * Loyalty: the GG Guild as the owner shapes it.
  *
- * Admin only. The programme, its rules and its tiers are edited here and
- * saved together with the screen's one block button, which is what lets the
- * live preview answer for rules that have not been written yet: an admin
- * sees what a change pays before it reaches a till.
+ * Admin only. The programme and its tiers are edited here and saved
+ * together with the screen's one block button. Offers
+ * (docs/api-contract-launch.md, section 2) are sentences with blanks that
+ * each save on their own, with a live example beside every one, so the
+ * list is always what the till prices with; the preview under them tries
+ * any sale against them.
  *
  * Rewards carry a picture, and memberships, adjustments and the stats are
  * routes rather than collection writes, so each of those saves on its own.
@@ -30,29 +32,32 @@ import { listGames } from "@/lib/api"
 import { CountField, TextField } from "@/features/settings/fields"
 import { AdjustSheet } from "@/features/loyalty/AdjustSheet"
 import { MembershipsSection } from "@/features/loyalty/MembershipsSection"
+import { OffersSection } from "@/features/loyalty/OffersSection"
 import { PreviewPanel } from "@/features/loyalty/PreviewPanel"
 import { RewardsSection } from "@/features/loyalty/RewardsSection"
-import { RulesSection } from "@/features/loyalty/RulesSection"
 import { StatsSection } from "@/features/loyalty/StatsSection"
 import { TiersSection } from "@/features/loyalty/TiersSection"
 import { EMPTY_PREVIEW, type PreviewInput } from "@/features/loyalty/preview"
 import {
-  formToEvaluatorRule,
   formToEvaluatorTier,
   formToProgramme,
   formToReward,
-  formToRule,
   formToTier,
   programmeToForm,
-  ruleToForm,
   tierToForm,
   validateProgramme,
   type ProgrammeForm,
   type MembershipForm,
   type RewardForm,
-  type RuleForm,
   type TierForm,
 } from "@/features/loyalty/mapping"
+import {
+  offerFromRule,
+  offerToEvaluatorRule,
+  offerToRule,
+  type OfferForm,
+  type OfferNames,
+} from "@/features/loyalty/offers"
 import { poundsToPence, parseCount } from "@/features/settings/mapping"
 import {
   cancelMembership,
@@ -117,11 +122,8 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
   const [baseline, setBaseline] = React.useState<ProgrammeForm>(() =>
     programmeToForm(admin.programme)
   )
-  const [rules, setRules] = React.useState<RuleForm[]>(() =>
-    admin.rules.map((rule, index) => ruleToForm(rule, index))
-  )
-  const [ruleBaseline, setRuleBaseline] = React.useState<RuleForm[]>(() =>
-    admin.rules.map((rule, index) => ruleToForm(rule, index))
+  const [offers, setOffers] = React.useState<OfferForm[]>(() =>
+    admin.rules.map((rule, index) => offerFromRule(rule, index))
   )
   const [tiers, setTiers] = React.useState<TierForm[]>(() =>
     admin.tiers.map((tier, index) => tierToForm(tier, index))
@@ -150,18 +152,12 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
     staleTime: 30_000,
   })
 
-  const changedRules = rules.filter((rule) => {
-    const original = ruleBaseline.find((row) => row.key === rule.key)
-    return !original || JSON.stringify(original) !== JSON.stringify(rule)
-  })
   const changedTiers = tiers.filter((tier) => {
     const original = tierBaseline.find((row) => row.key === tier.key)
     return !original || JSON.stringify(original) !== JSON.stringify(tier)
   })
   const dirty =
-    JSON.stringify(programme) !== JSON.stringify(baseline) ||
-    changedRules.length > 0 ||
-    changedTiers.length > 0
+    JSON.stringify(programme) !== JSON.stringify(baseline) || changedTiers.length > 0
 
   const errors = validateProgramme(programme)
   const shown = showErrors ? errors : {}
@@ -175,29 +171,17 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
   const save = useMutation({
     mutationFn: async () => {
       const record = await saveProgramme(programme.id, formToProgramme(programme))
-      const written = {
-        rules: changedRules.length
-          ? await saveRules(changedRules.map(formToRule))
-          : null,
-        tiers: changedTiers.length
-          ? await saveTiers(changedTiers.map(formToTier))
-          : null,
-      }
-      return { record, ...written }
+      const tiers = changedTiers.length ? await saveTiers(changedTiers.map(formToTier)) : null
+      return { record, tiers }
     },
     onMutate: () => {
       setError(null)
       setRefusedRow(null)
     },
-    onSuccess: ({ record, rules: writtenRules, tiers: writtenTiers }) => {
+    onSuccess: ({ record, tiers: writtenTiers }) => {
       const nextProgramme = programmeToForm(record)
       setProgramme(nextProgramme)
       setBaseline(nextProgramme)
-      if (writtenRules) {
-        const next = writtenRules.map((rule, index) => ruleToForm(rule, index))
-        setRules(next)
-        setRuleBaseline(next)
-      }
       if (writtenTiers) {
         const next = writtenTiers.map((tier, index) => tierToForm(tier, index))
         setTiers(next)
@@ -217,11 +201,7 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
       // showing a state the server never agreed to, and put the sentence on
       // the row it came from.
       const row = problem instanceof RowWriteError ? problem : null
-      const refused = row
-        ? (row.collection === "loyalty_rules"
-            ? changedRules[row.index]
-            : changedTiers[row.index])
-        : null
+      const refused = row ? changedTiers[row.index] : null
       setError(
         refusalOrFallback(row ? row.cause : problem, "That did not save. Try it again.")
       )
@@ -327,8 +307,35 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
   )
 
   const previewProgramme = programmeForPreview(programme)
-  const previewRules = rules.map(formToEvaluatorRule)
+  const previewRules = offers.map((offer) => offerToEvaluatorRule(offer))
   const previewTiers = tiers.map(formToEvaluatorTier)
+  const paidTier = admin.tiers.find((tier) => tier.paid_plan)?.name ?? ""
+
+  /** Every counter screen prices points through GET /api/vault/config. */
+  function refreshCounter() {
+    for (const key of [["vault-config"], ["counter-config"], ["loyalty-admin"]]) {
+      void queryClient.invalidateQueries({ queryKey: key })
+    }
+  }
+
+  /** One offer, written on its own; the list is re-read from what landed. */
+  async function saveOffer(form: OfferForm, names: OfferNames) {
+    try {
+      const written = await saveRules([offerToRule(form, names)])
+      setOffers(written.map((rule, index) => offerFromRule(rule, index)))
+      refreshCounter()
+    } catch (problem) {
+      throw problem instanceof RowWriteError ? problem.cause : problem
+    }
+  }
+
+  /** The programme's rate, written on its own and kept in the form beside it. */
+  async function saveRate(rate: number) {
+    await saveProgramme(programme.id, { earn_per_pound_sales: rate })
+    setProgramme((current) => ({ ...current, earnPerPoundSales: String(rate) }))
+    setBaseline((current) => ({ ...current, earnPerPoundSales: String(rate) }))
+    refreshCounter()
+  }
 
   return (
     <section className="pt-16 sm:pt-24">
@@ -371,14 +378,6 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
             onChange={(next) => set({ pointsName: next })}
             error={shown.pointsName}
             note="What the customer sees on their card and in My Vault."
-          />
-          <CountField
-            id="earn-sales"
-            label="Earn on sales"
-            hint="per £1"
-            value={programme.earnPerPoundSales}
-            onChange={(next) => set({ earnPerPoundSales: next })}
-            error={shown.earnPerPoundSales}
           />
           <CountField
             id="earn-credit"
@@ -474,30 +473,25 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
         </div>
       </Section>
 
-      {/* ---- Rules, with the live preview above them ---- */}
-      <Section title="Rules">
-        <RulesSection
-          rules={rules}
+      {/* ---- Offers, each saved on its own, then a sale to try them on ---- */}
+      <Section title="Offers">
+        <OffersSection
+          offers={offers}
+          programme={previewProgramme}
+          paidTier={paidTier}
           games={games}
-          refused={refusedRow}
-          onSave={(rule) => {
-            setSaved(false)
-            setRules((current) =>
-              current.some((row) => row.key === rule.key)
-                ? current.map((row) => (row.key === rule.key ? rule : row))
-                : [...current, rule]
-            )
-          }}
-        >
-          <PreviewPanel
-            input={preview}
-            onChange={(patch) => setPreview((current) => ({ ...current, ...patch }))}
-            programme={previewProgramme}
-            rules={previewRules}
-            tiers={previewTiers}
-            games={games}
-          />
-        </RulesSection>
+          onSaveOffer={saveOffer}
+          onSaveRate={saveRate}
+        />
+        <SectionHeading className="mt-16 mb-6">Try a sale</SectionHeading>
+        <PreviewPanel
+          input={preview}
+          onChange={(patch) => setPreview((current) => ({ ...current, ...patch }))}
+          programme={previewProgramme}
+          rules={previewRules}
+          tiers={previewTiers}
+          games={games}
+        />
       </Section>
 
       {/* ---- Tiers ---- */}
@@ -582,7 +576,6 @@ function Editor({ admin, games }: { admin: LoyaltyAdmin; games: GameRecord[] }) 
                 variant="text"
                 onClick={() => {
                   setProgramme(baseline)
-                  setRules(ruleBaseline)
                   setTiers(tierBaseline)
                   setShowErrors(false)
                   setError(null)

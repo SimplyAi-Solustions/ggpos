@@ -1,3 +1,5 @@
+import { isGuildMember } from "@gg/shared"
+
 import type { WizardCustomer } from "@/features/tradein/machine"
 import type { CustomerProfile, IdStatus } from "@/lib/api"
 
@@ -15,6 +17,7 @@ export function toWizardCustomer(profile: CustomerProfile): WizardCustomer {
     email: profile.customer.email ?? "",
     phone: profile.customer.phone ?? "",
     creditBalance: profile.private?.credit_balance ?? 0,
+    member: isGuildMember(profile.customer.guild_joined_at),
     facts: {
       flags: profile.private?.flags ?? [],
       idStatus: (profile.private?.id_status ?? "none") as IdStatus,

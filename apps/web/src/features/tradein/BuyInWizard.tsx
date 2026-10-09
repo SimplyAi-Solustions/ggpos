@@ -126,7 +126,9 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   const payout = payoutFor(state.payoutType, sums, state.mixedCash)
   const cashRequired = payout.cash > 0
   const steps = visibleSteps({ cashRequired })
-  const creditPoints = config
+  // Points belong to Guild members (docs/api-contract-launch.md, section 2).
+  const sellerEarns = state.customer?.member !== false
+  const creditPoints = config && sellerEarns
     ? evaluateTradeInPoints(
         programmeFrom(config),
         loyaltyRulesFrom(config),
@@ -139,7 +141,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
   // choosing credit would pay; the display shows this one, because it is
   // what this offer pays.
   const displayCreditPoints =
-    config && payout.credit > 0
+    config && sellerEarns && payout.credit > 0
       ? evaluateTradeInPoints(
           programmeFrom(config),
           loyaltyRulesFrom(config),

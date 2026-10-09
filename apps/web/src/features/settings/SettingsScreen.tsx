@@ -41,6 +41,7 @@ import { CategoriesSection } from "@/features/settings/CategoriesSection"
 import { PermissionsTable } from "@/features/settings/PermissionsTable"
 import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
+import { GuildSettingsSection } from "@/features/settings/GuildSettingsSection"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   getSettings,
@@ -913,6 +914,7 @@ function Editor({
 
       {/* ---- Acting straight away, outside the Save ---- */}
       <TillsSection admin />
+      <GuildSettingsSection />
 
       <section className="mt-24" aria-labelledby="printers-heading">
         <SectionHeading id="printers-heading">Printers</SectionHeading>

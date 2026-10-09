@@ -24,6 +24,7 @@ import {
   checkPointsRedemption,
   evaluateSalePoints,
   formatGBP,
+  isGuildMember,
   penceToPoints,
   pointsCum,
   refundAmount,
@@ -37,6 +38,9 @@ import {
   type TenderMethod,
 } from "@gg/shared"
 import { evaluateTradeInPoints } from "@gg/shared/loyalty"
+import { demoBranchForItem, demoBranchForProduct, demoLineageOf } from "@/lib/api/demo/branches"
+import { demoJoinGuild } from "@/lib/api/demo/guild-join"
+import { demoLiveProgramme, demoLiveRules } from "@/lib/api/demo/loyalty"
 
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import { addMovement } from "@/lib/api/demo/cash"
@@ -58,7 +62,6 @@ import {
 import { demoProduct, demoRecordVoids } from "@/lib/api/demo/till"
 import {
   DEMO_PROGRAMME,
-  DEMO_RULES,
   DEMO_SALE_CUSTOMERS,
   DEMO_SETTINGS,
   DEMO_TIERS,
@@ -112,7 +115,7 @@ interface TillDemoSale extends DemoSale {
 type TillDemoLine = SaleLineDetail & { product?: string; note?: string }
 
 export function loyaltySetup(): LoyaltySetup {
-  return { programme: DEMO_PROGRAMME, rules: DEMO_RULES, tiers: DEMO_TIERS }
+  return { programme: demoLiveProgramme(), rules: demoLiveRules(), tiers: DEMO_TIERS }
 }
 
 export function findCustomers(query: string): SaleCustomer[] {
@@ -224,6 +227,7 @@ const completedByClientId = new Map<string, TillTicketResult>()
 interface PlannedLine {
   item: StockItemRecord | null
   productId: string | null
+  productKind: string | null
   title: string
   qty: number
   unitPrice: number
@@ -259,6 +263,7 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
       return {
         item,
         productId: null,
+        productKind: null,
         title: item.title ?? "",
         qty,
         unitPrice,
@@ -290,6 +295,7 @@ function planLines(payload: TillSalePayload): PlannedLine[] {
     return {
       item: null,
       productId: product.id,
+      productKind: product.kind,
       title: (open && line.title?.trim()) || product.name,
       qty,
       unitPrice,
@@ -647,7 +653,10 @@ function completeDemoTrade(
     demoPostCredit(customerId, trade.credit, number)
     if (saleCustomer) saleCustomer.creditBalance += trade.credit
   }
-  const points = evaluateTradeInPoints(DEMO_PROGRAMME, [], trade.credit, new Date(context.at))
+  // Points belong to Guild members (docs/api-contract-launch.md, section 2).
+  const points = isGuildMember(customer?.customer.guild_joined_at)
+    ? evaluateTradeInPoints(DEMO_PROGRAMME, [], trade.credit, new Date(context.at))
+    : 0
   if (points > 0) {
     demoAddPoints(customerId, points)
     if (saleCustomer) saleCustomer.pointsBalance += points
@@ -952,21 +961,35 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
       lines.map((line) => line.total),
       discount
     )
+    // The launch (docs/api-contract-launch.md, section 2): points belong to
+    // Guild members, a Guild Membership joins somebody who has not, and
+    // each line goes to the evaluator with its branch, item and product,
+    // as the server's sale route sends them.
+    const sellsMembership = lines.some((line) => line.productKind === "membership")
+    const joinsWithSale = Boolean(customer && !customer.member && sellsMembership)
     const pointsLines: SaleLineForPoints[] = lines.map((line, index) => ({
       game: line.game,
       kind: line.kind,
-      total: nets[index] ?? 0,
+      total: line.productKind === "deposit" ? 0 : (nets[index] ?? 0),
+      lineage: demoLineageOf(
+        line.item ? demoBranchForItem(line.item) : demoBranchForProduct(line.productId ?? "")
+      ),
+      item: line.item?.id ?? null,
+      product: line.productId,
     }))
-    earned = customer
-      ? evaluateSalePoints(DEMO_PROGRAMME, DEMO_RULES, {
-          lines: pointsLines,
-          at: new Date(),
-          isFirstPurchase: false,
-          isBirthdayMonth: false,
-          tier: DEMO_TIERS.find((tier) => tier.id === customer.tierId) ?? null,
-          paidWithPoints: paid.points,
-        }).total
-      : 0
+    earned =
+      customer && (customer.member || joinsWithSale)
+        ? evaluateSalePoints(demoLiveProgramme(), demoLiveRules(), {
+            lines: pointsLines,
+            at: new Date(),
+            isFirstPurchase: false,
+            isBirthdayMonth: false,
+            tier: DEMO_TIERS.find((tier) => tier.id === customer.tierId) ?? null,
+            paidWithPoints: paid.points,
+            paidMember: customer.paidMember || sellsMembership,
+          }).total
+        : 0
+    if (customer && joinsWithSale) demoJoinGuild({ customer: customer.id, marketing_consent: false })
 
     const methods = [...new Set(rows.map((row) => row.method))]
     // Old reports read `payment` and `payment_split`; the tenders are the

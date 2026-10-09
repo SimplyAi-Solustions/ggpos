@@ -16,6 +16,7 @@ import { pbCustomer } from "@/lib/pb-customer"
 import { isDemo } from "@/lib/api/mode"
 import {
   demoGuild,
+  demoJoinMyGuild,
   demoPoints,
   demoRedeem,
   demoRewards,
@@ -34,6 +35,17 @@ import type {
 
 /** `GET /api/vault/me/guild`. */
 export interface GuildSummary {
+  /**
+   * In the GG Guild (docs/api-contract-launch.md, section 2). A customer who
+   * has not joined is asked to read the terms and join; absent on a server
+   * from before the launch, when everybody was a member.
+   */
+  member?: boolean
+  joined_at?: string | null
+  /** The Guild's terms, as the shop wrote them. */
+  terms?: string
+  /** What joining puts on the card, in points. */
+  welcome_bonus?: number
   /** What the programme calls its points, for example "GG Points". */
   points_name: string
   tier: { id: string; name: string } | null
@@ -147,6 +159,22 @@ function listFrom<T>(result: unknown, key: string): T[] {
 export async function getGuild(): Promise<GuildSummary> {
   if (isDemo()) return demoGuild()
   return pbCustomer.send<GuildSummary>("/api/vault/me/guild", { method: "GET" })
+}
+
+/** `POST /api/vault/me/guild/join`: what joining gave them. */
+export interface GuildJoined {
+  joined_at: string
+  points_balance: number
+  welcome_points: number
+}
+
+/** Joins the Guild on the customer's own acceptance of its terms. */
+export async function joinMyGuild(input: { marketing_consent: boolean }): Promise<GuildJoined> {
+  if (isDemo()) return demoJoinMyGuild(input)
+  return pbCustomer.send<GuildJoined>("/api/vault/me/guild/join", {
+    method: "POST",
+    body: { terms_accepted: true, ...input },
+  })
 }
 
 export async function listRewards(): Promise<PortalReward[]> {

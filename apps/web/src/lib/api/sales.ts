@@ -9,7 +9,7 @@
  * shapes from memory.
  */
 import { ClientResponseError } from "pocketbase"
-import { parseTierPerk, type Tender, type TenderInput, type TierPerk } from "@gg/shared"
+import { isGuildMember, parseTierPerk, type Tender, type TenderInput, type TierPerk } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
@@ -166,15 +166,29 @@ interface ExpandedTier {
   id: string
   name?: string
   perks?: unknown
+  paid_plan?: boolean
 }
 
 type PrivateWithCustomer = CustomerPrivateRecord & {
-  expand?: { customer?: CustomerRecord; tier?: ExpandedTier }
+  expand?: {
+    customer?: CustomerRecord & {
+      expand?: { memberships_via_customer?: { status?: string }[] }
+    }
+    tier?: ExpandedTier
+  }
 }
+
+/**
+ * The customer, their tier, and their memberships through the back
+ * relation, so the till knows whether they hold a paid plan for an offer
+ * kept for paid-plan members (docs/api-contract-launch.md, section 2).
+ */
+const SALE_CUSTOMER_EXPAND = "customer,tier,customer.memberships_via_customer"
 
 function toSaleCustomer(row: PrivateWithCustomer): SaleCustomer {
   const customer = row.expand?.customer
   const tier = row.expand?.tier
+  const plans = customer?.expand?.memberships_via_customer
   return {
     id: row.customer,
     name: customer?.name ?? "",
@@ -188,6 +202,10 @@ function toSaleCustomer(row: PrivateWithCustomer): SaleCustomer {
       .filter((perk): perk is TierPerk => perk !== null),
     creditBalance: row.credit_balance ?? 0,
     pointsBalance: row.points_balance ?? 0,
+    member: isGuildMember(customer?.guild_joined_at),
+    paidMember: Array.isArray(plans)
+      ? plans.some((plan) => plan.status === "active")
+      : tier?.paid_plan === true,
   }
 }
 
@@ -200,7 +218,7 @@ export async function findCustomersForSale(query: string): Promise<SaleCustomer[
     : ""
   const page = await pb.collection("customer_private").getList<PrivateWithCustomer>(1, 8, {
     filter,
-    expand: "customer,tier",
+    expand: SALE_CUSTOMER_EXPAND,
     sort: "-updated",
   })
   return page.items.map(toSaleCustomer)
@@ -211,7 +229,7 @@ export async function getCustomerForSale(code: string): Promise<SaleCustomer | n
   if (isDemo()) return demo.customerByCode(code)
   const rows = await pb.collection("customer_private").getList<PrivateWithCustomer>(1, 1, {
     filter: `customer.code = "${quote(code)}"`,
-    expand: "customer,tier",
+    expand: SALE_CUSTOMER_EXPAND,
   })
   const row = rows.items[0]
   return row ? toSaleCustomer(row) : null

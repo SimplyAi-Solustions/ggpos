@@ -32,6 +32,7 @@ import {
 } from "@/features/till/exchange"
 import {
   discountLabel,
+  earnsPoints,
   lineDiscount,
   lineNet,
   ticketIsEmpty,
@@ -68,6 +69,8 @@ export interface TicketPaneProps {
   notice?: string | null
   onAddCustomer: () => void
   onRemoveCustomer: () => void
+  /** "Join the Guild" on an attached customer who is not a member. */
+  onJoinGuild?: () => void
   onOpenLine: (line: TicketLine) => void
   onQty: (line: TicketLine, qty: number) => void
   onPark: () => void
@@ -222,11 +225,13 @@ function CustomerRow({
   readOnly,
   onAdd,
   onRemove,
+  onJoin,
 }: {
   ticket: Ticket
   readOnly: boolean
   onAdd: () => void
   onRemove: () => void
+  onJoin?: () => void
 }) {
   const customer = ticket.customer
   if (!customer) {
@@ -250,10 +255,23 @@ function CustomerRow({
           <span className="tnum font-mono text-[13px] text-muted-foreground-2">
             {displayCode(customer.code)}
           </span>
-          <span className="tnum text-[13px] text-muted-foreground">
-            {customer.pointsBalance.toLocaleString("en-GB")} points
-          </span>
+          {customer.member ? (
+            <span className="tnum text-[13px] text-muted-foreground">
+              {customer.pointsBalance.toLocaleString("en-GB")} points
+            </span>
+          ) : (
+            // Points belong to members (docs/api-contract-launch.md,
+            // section 2): the till says so and offers the join.
+            <span data-testid="ticket-not-member" className="text-[13px] text-muted-foreground">
+              Not in the Guild
+            </span>
+          )}
         </span>
+        {!customer.member && onJoin && !readOnly ? (
+          <Button variant="text" className="min-h-12 self-start" onClick={onJoin}>
+            Join the Guild
+          </Button>
+        ) : null}
       </span>
       {customer.tierName ? <Badge variant="volt">{customer.tierName}</Badge> : null}
       {readOnly ? null : (
@@ -416,6 +434,7 @@ export function TicketPane({
   notice,
   onAddCustomer,
   onRemoveCustomer,
+  onJoinGuild,
   onOpenLine,
   onQty,
   onPark,
@@ -440,6 +459,7 @@ export function TicketPane({
           readOnly={readOnly}
           onAdd={onAddCustomer}
           onRemove={onRemoveCustomer}
+          onJoin={onJoinGuild}
         />
       </div>
 
@@ -490,7 +510,7 @@ export function TicketPane({
           {vatRegistered ? (
             <SummaryRow label="VAT" value={formatGBP(totals.vat)} testId="ticket-vat" />
           ) : null}
-          {ticket.customer && ticket.lines.length > 0 ? (
+          {earnsPoints(ticket) && ticket.lines.length > 0 ? (
             <SummaryRow
               label="Earns"
               value={`${points.toLocaleString("en-GB")} points`}

@@ -10,7 +10,7 @@
  */
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { displayCode, formatGBP } from "@gg/shared"
+import { displayCode, formatGBP, isGuildMember } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/sheet"
 import { SkeletonText } from "@/components/ui/skeleton"
 import { ConfirmDialog } from "@/features/customers/ConfirmDialog"
+import { JoinGuildSheet } from "@/features/guild/JoinGuildSheet"
+import { joinedNote, memberSince } from "@/features/guild/words"
 import { formatShortDate } from "@/features/customers/format"
 import { AdjustSheet } from "@/features/loyalty/AdjustSheet"
 import { PlanSheet } from "@/features/loyalty/PlanSheet"
@@ -140,6 +142,9 @@ export interface GuildSectionProps {
   /** The cached balance from `customer_private`, for the adjustment sheet. */
   pointsBalance: number
   customerCode: string
+  /** When they joined the GG Guild, or empty when they have not. */
+  guildJoinedAt?: string
+  marketingConsent?: boolean
 }
 
 export function GuildSection({
@@ -147,6 +152,8 @@ export function GuildSection({
   customerName,
   customerCode,
   pointsBalance,
+  guildJoinedAt,
+  marketingConsent,
 }: GuildSectionProps) {
   const queryClient = useQueryClient()
   const staff = useStaff()
@@ -159,6 +166,8 @@ export function GuildSection({
   const [cancelling, setCancelling] = React.useState<MembershipRecord | null>(null)
   const [note, setNote] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const [joinOpen, setJoinOpen] = React.useState(false)
+  const member = isGuildMember(guildJoinedAt)
 
   const guildQuery = useQuery({
     queryKey: ["customer-guild", customerId],
@@ -284,6 +293,20 @@ export function GuildSection({
           on the record stays as it is.
         </p>
       ) : null}
+
+      {/* Points belong to members (docs/api-contract-launch.md, section 2). */}
+      <div className="mb-10 flex flex-wrap items-center gap-x-8 gap-y-3">
+        <p data-testid="guild-status" className="text-[15px] leading-[1.5] text-foreground">
+          {member && guildJoinedAt
+            ? memberSince(guildJoinedAt)
+            : "Not in the Guild yet. Their purchases earn points once they join."}
+        </p>
+        {member ? null : (
+          <Button variant="text" type="button" onClick={() => setJoinOpen(true)}>
+            Join the Guild
+          </Button>
+        )}
+      </div>
 
       <div className="flex flex-wrap items-end gap-x-14 gap-y-6">
         <div>
@@ -516,6 +539,21 @@ export function GuildSection({
         onOpenChange={setHistoryOpen}
         customerId={customerId}
         customerName={customerName}
+      />
+
+      <JoinGuildSheet
+        open={joinOpen}
+        onOpenChange={setJoinOpen}
+        customer={{ id: customerId, name: customerName, marketingConsent }}
+        welcomeBonus={
+          config?.loyalty.programme.enabled === false ? 0 : (config?.loyalty.programme.welcomeBonus ?? 0)
+        }
+        onJoined={(result) => {
+          setJoinOpen(false)
+          setError(null)
+          setNote(joinedNote(customerName, result.welcome_points))
+          settle()
+        }}
       />
 
       <AdjustSheet

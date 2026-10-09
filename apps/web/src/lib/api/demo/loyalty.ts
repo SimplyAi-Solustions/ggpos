@@ -17,7 +17,7 @@ import {
   parseTierPerk,
   resolveTier,
 } from "@gg/shared"
-import type { LoyaltyTier, TierPerk } from "@gg/shared"
+import type { LoyaltyProgramme, LoyaltyRule, LoyaltyTier, TierPerk } from "@gg/shared"
 
 import { boxArt } from "@/kit/placeholder-art"
 import {
@@ -215,6 +215,44 @@ export const rewards: LoyaltyRewardRecord[] = [
     imageUrl: boxArt([400, 300]),
   },
 ]
+
+/**
+ * The programme as the shared evaluator reads it: what the demo till and the
+ * demo sale route price with, so an offer or a rate saved on the Loyalty
+ * screen changes both at once, as it does on the server.
+ */
+export function demoLiveProgramme(): LoyaltyProgramme {
+  return {
+    enabled: programme.enabled !== false,
+    earnPerPoundSales: programme.earn_per_pound_sales ?? DEMO_PROGRAMME.earnPerPoundSales,
+    earnPerPoundTradeInCredit:
+      programme.earn_on_trade_in_credit ?? DEMO_PROGRAMME.earnPerPoundTradeInCredit,
+    pointsPerPoundRedemption:
+      programme.points_per_pound_redemption ?? DEMO_PROGRAMME.pointsPerPoundRedemption,
+    minRedeemPoints: programme.min_redeem_points ?? DEMO_PROGRAMME.minRedeemPoints,
+    maxPointsShareOfSale: programme.max_points_share_of_sale ?? DEMO_PROGRAMME.maxPointsShareOfSale,
+    expiryMonthsInactive: programme.expiry_months_inactive ?? DEMO_PROGRAMME.expiryMonthsInactive,
+    tierWindowMonths: programme.tier_window_months ?? DEMO_PROGRAMME.tierWindowMonths,
+    welcomeBonus: programme.welcome_bonus ?? DEMO_PROGRAMME.welcomeBonus,
+    referralBonusReferrer: programme.referral_bonus_referrer ?? DEMO_PROGRAMME.referralBonusReferrer,
+    referralBonusReferee: programme.referral_bonus_referee ?? DEMO_PROGRAMME.referralBonusReferee,
+  }
+}
+
+/** The offers as the shared evaluator reads them, live or not (it skips what is off). */
+export function demoLiveRules(): LoyaltyRule[] {
+  return rules.map((row) => ({
+    id: row.id,
+    name: row.name ?? "",
+    type: row.type as LoyaltyRule["type"],
+    conditions: (row.conditions ?? {}) as LoyaltyRule["conditions"],
+    value: row.value ?? 0,
+    active: row.active !== false,
+    priority: row.priority ?? 0,
+    startsAt: row.starts_at || null,
+    endsAt: row.ends_at || null,
+  }))
+}
 
 export function demoLoyaltyAdmin() {
   return {

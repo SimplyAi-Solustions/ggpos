@@ -2,7 +2,10 @@
 // Source: packages/shared/src. Regenerate with: pnpm --filter @gg/shared build:hooks
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.LOYALTY_CONDITION_KEYS = void 0;
 exports.parseTierPerk = parseTierPerk;
+exports.isGuildMember = isGuildMember;
+exports.lineMatchesRule = lineMatchesRule;
 exports.evaluateSalePoints = evaluateSalePoints;
 exports.evaluateTradeInPoints = evaluateTradeInPoints;
 exports.pointsToPence = pointsToPence;
@@ -16,8 +19,26 @@ exports.resolveTier = resolveTier;
 /**
  * GG Guild loyalty evaluator. Pure functions so the admin preview in the app and
  * the PocketBase hook produce the same points for the same sale.
+ *
+ * Since the launch (docs/api-contract-launch.md, section 2) an offer can name
+ * branches of the category tree, stock items and till products, and can be
+ * kept for paid-plan members. This file is the only place those are matched,
+ * so the Offers editor's examples, the till's "Earns N points" and the sale
+ * route cannot disagree.
  */
+const categories_1 = require("./categories");
 const money_1 = require("./money");
+/** Every key `LoyaltyRuleConditions` has, for the server's shape check. */
+exports.LOYALTY_CONDITION_KEYS = [
+    "games",
+    "kinds",
+    "categories",
+    "items",
+    "products",
+    "minSpend",
+    "weekdays",
+    "paidMembersOnly",
+];
 /**
  * Runtime shape check for one loyalty_tiers.perks entry loaded from
  * PocketBase (plain JSON, so nothing guarantees it matches TierPerk).
@@ -54,6 +75,14 @@ function parseTierPerk(value) {
             return null;
     }
 }
+/**
+ * Whether a customer is in the GG Guild: they joined on `guild_joined_at`.
+ * Points belong to members, so a sale or a buy-in for anybody else earns
+ * none (docs/api-contract-launch.md, section 2).
+ */
+function isGuildMember(joinedAt) {
+    return typeof joinedAt === "string" && joinedAt.trim() !== "";
+}
 function ruleIsLive(rule, at) {
     if (!rule.active)
         return false;
@@ -63,13 +92,37 @@ function ruleIsLive(rule, at) {
         return false;
     return true;
 }
-function lineMatches(line, c) {
+/**
+ * Whether a line is one of the things an offer names. The three lists are
+ * one set ("Trading cards / Pokémon, this ETB and Table time"), so a line
+ * matching any of them is in; an offer naming none of them is on
+ * everything.
+ */
+function lineIsNamed(line, c) {
+    var _a, _b, _c, _d;
+    const categories = (_a = c.categories) !== null && _a !== void 0 ? _a : [];
+    const items = (_b = c.items) !== null && _b !== void 0 ? _b : [];
+    const products = (_c = c.products) !== null && _c !== void 0 ? _c : [];
+    if (categories.length === 0 && items.length === 0 && products.length === 0)
+        return true;
+    const lineage = (_d = line.lineage) !== null && _d !== void 0 ? _d : "";
+    if (lineage && categories.some((id) => (0, categories_1.isWithin)(lineage, id)))
+        return true;
+    if (line.item && items.includes(line.item))
+        return true;
+    if (line.product && products.includes(line.product))
+        return true;
+    return false;
+}
+/** Whether a line meets every condition a rule puts on lines. */
+function lineMatchesRule(line, c) {
     if (c.games && c.games.length > 0 && (!line.game || !c.games.includes(line.game)))
         return false;
     if (c.kinds && c.kinds.length > 0 && !c.kinds.includes(line.kind))
         return false;
-    return true;
+    return lineIsNamed(line, c);
 }
+const lineMatches = lineMatchesRule;
 /**
  * Points earned on a sale: base points per pound on the eligible spend (spend
  * paid with points earns nothing), then rules in priority order (multipliers
@@ -94,6 +147,8 @@ function evaluateSalePoints(programme, rules, ctx) {
     for (const rule of live) {
         const c = rule.conditions;
         if (c.minSpend !== undefined && gross < c.minSpend)
+            continue;
+        if (c.paidMembersOnly && !ctx.paidMember)
             continue;
         switch (rule.type) {
             case "multiplier":
@@ -142,12 +197,14 @@ function evaluateSalePoints(programme, rules, ctx) {
     return { base: (0, money_1.roundHalfUp)(base), ruleAdjustments, tierMultiplier, total };
 }
 /** Points earned on the credit portion of a trade-in, plus any credit bonus rules. */
-function evaluateTradeInPoints(programme, rules, creditPence, at) {
+function evaluateTradeInPoints(programme, rules, creditPence, at, paidMember = false) {
     if (!programme.enabled || creditPence <= 0)
         return 0;
     let points = (creditPence / 100) * programme.earnPerPoundTradeInCredit;
     for (const rule of rules.filter((r) => ruleIsLive(r, at) && r.type === "trade_in_credit_bonus")) {
         if (rule.conditions.minSpend !== undefined && creditPence < rule.conditions.minSpend)
+            continue;
+        if (rule.conditions.paidMembersOnly && !paidMember)
             continue;
         points += rule.value;
     }
