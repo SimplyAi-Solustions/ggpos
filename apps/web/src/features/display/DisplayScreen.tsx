@@ -24,15 +24,11 @@ import { GGLogo } from "@/components/ui/wordmark"
 import { ProductImage } from "@/components/product-image"
 import { QrCode } from "@/features/customers/GuildCard"
 import { Ticker } from "@/features/display/Ticker"
+import type { TillDisplayPayload } from "@/features/display/payload"
 import { useCounterConfig } from "@/lib/api/config"
 import { acceptDisplay, subscribeDisplay } from "@/lib/api/display"
 import { refusalOrFallback } from "@/lib/api/refusal"
-import type {
-  DisplayBuyInPayload,
-  DisplayMode,
-  DisplaySalePayload,
-  DisplayState,
-} from "@/lib/api/types"
+import type { DisplayBuyInPayload, DisplayMode, DisplayState } from "@/lib/api/types"
 
 const IDLE_STATE: DisplayState = {
   mode: "idle",
@@ -214,10 +210,93 @@ function IdleScreen({ ticker, signupUrl }: { ticker: string; signupUrl: string }
   )
 }
 
-function SaleScreen({ payload }: { payload: DisplaySalePayload }) {
+/**
+ * The till has asked for money: the card amount waiting on the Tide reader,
+ * or the cash still to hand over. The amount is the figure in the display
+ * face; the basket stays underneath so the customer can still check it.
+ */
+function PayingScreen({ payload }: { payload: TillDisplayPayload }) {
+  const card = payload.stage === "card"
+  const due = payload.amount_due ?? payload.total
   return (
     <div
       data-testid="display-sale"
+      data-stage={payload.stage}
+      className="mx-auto flex min-h-dvh w-full max-w-[1040px] flex-col justify-center px-5 py-10 sm:px-10"
+    >
+      <Header name={payload.customer_name} />
+      <div className="mt-12">
+        <Total
+          label={card ? "Pay on the card reader" : "To pay in cash"}
+          amount={due}
+          testId="display-amount-due"
+        />
+        {due < payload.total ? (
+          <p className="mt-4 text-[16px] text-muted-foreground sm:text-[18px]">
+            {formatGBP(payload.total - due)} of {formatGBP(payload.total)} is already paid.
+          </p>
+        ) : null}
+      </div>
+      <ul className="mt-10">
+        {payload.lines.map((line, index) => (
+          <Line
+            key={`${line.title}-${index}`}
+            title={line.title}
+            detail={line.detail}
+            qty={line.qty}
+            amount={line.unit_price}
+            image={line.image_url}
+          />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/** The sale is done: the change, when there is any, and the points it earned. */
+function ThanksScreen({ payload }: { payload: TillDisplayPayload }) {
+  const change = payload.change ?? 0
+  const points = payload.points_earned ?? 0
+  return (
+    <div
+      data-testid="display-thanks"
+      className="mx-auto flex min-h-dvh w-full max-w-[1040px] flex-col justify-center px-5 py-10 sm:px-10"
+    >
+      <Header name={payload.customer_name} />
+      <div className="mt-14">
+        <Seal tick />
+        {change > 0 ? (
+          <div className="mt-10">
+            <Total label="Your change" amount={change} testId="display-change" />
+            <p className="mt-6 text-[18px] leading-[1.45] text-foreground sm:text-[20px]">
+              Thank you.
+            </p>
+          </div>
+        ) : (
+          <PageTitle className="mt-10">Thank you</PageTitle>
+        )}
+        {points > 0 ? (
+          <p
+            data-testid="display-points-earned"
+            className="mt-4 text-[16px] text-muted-foreground sm:text-[18px]"
+          >
+            You earned {points.toLocaleString("en-GB")} points.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function SaleScreen({ payload }: { payload: TillDisplayPayload }) {
+  if (payload.stage === "card" || payload.stage === "cash") {
+    return <PayingScreen payload={payload} />
+  }
+  if (payload.stage === "done") return <ThanksScreen payload={payload} />
+  return (
+    <div
+      data-testid="display-sale"
+      data-stage="basket"
       className="mx-auto flex min-h-dvh w-full max-w-[1040px] flex-col justify-center px-5 py-10 sm:px-10"
     >
       <Header name={payload.customer_name} />
@@ -401,7 +480,7 @@ export function DisplayScreen() {
   const mode: DisplayMode = token && token === ranOut ? "idle" : state.mode
 
   if (mode === "sale") {
-    return <SaleScreen payload={state.payload as DisplaySalePayload} />
+    return <SaleScreen payload={state.payload as TillDisplayPayload} />
   }
 
   if (mode === "buy_in") {

@@ -19,6 +19,8 @@ export interface MoneyInputProps {
   placeholder?: string
   "aria-label"?: string
   inputRef?: React.Ref<HTMLInputElement>
+  /** Styles the underlined row: the till makes it a 56px target. */
+  containerClassName?: string
 }
 
 export function MoneyInput({
@@ -30,12 +32,14 @@ export function MoneyInput({
   autoFocus,
   placeholder = "0.00",
   inputRef,
+  containerClassName,
   ...rest
 }: MoneyInputProps) {
   return (
     <Input
       id={id}
       ref={inputRef}
+      containerClassName={containerClassName}
       inputMode="decimal"
       autoComplete="off"
       autoFocus={autoFocus}

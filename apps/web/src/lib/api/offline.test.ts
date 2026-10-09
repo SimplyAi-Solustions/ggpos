@@ -37,13 +37,10 @@ const { registerSender } = await import("@/lib/offline/queue")
 const PAYLOAD = {
   lines: [{ item: "item_1", qty: 1, unit_price: 32499, discount: 0 }],
   customer: null,
-  payment: "cash" as const,
-  payment_split: { cash: 32499 },
   discount: 0,
   discount_source: null,
   reward_code: null,
-  cash_session: "cash_1",
-  sumup_ref: "",
+  tenders: [{ method: "cash" as const, amount: 32499, tendered: 40000 }],
 }
 
 /** A request that never reached anybody. */
@@ -98,8 +95,37 @@ describe("completing a sale with the line down", () => {
     expect(completeSale).not.toHaveBeenCalled()
     expect(queueSnapshot().pending).toHaveLength(1)
     expect(result.sale.id.startsWith("queued:")).toBe(true)
-    // Nothing guesses at the server's arithmetic.
+    // Nothing guesses at the server's arithmetic, but the change was
+    // counted out at the counter whatever the line was doing.
     expect(result.points_earned).toBe(0)
+    expect(result.change).toBe(40000 - 32499)
+    setSimulatedOffline(false)
+  })
+
+  it("keeps the tenders with the queued sale, so it lands paid the way it was paid", async () => {
+    setSimulatedOffline(true)
+
+    await completeSaleQueued({
+      ...PAYLOAD,
+      lines: [
+        ...PAYLOAD.lines,
+        { product: "product_table_time", qty: 1, unit_price: 500, discount: 0 },
+      ],
+      tenders: [
+        { method: "cash", amount: 20000, tendered: 20000 },
+        { method: "card_tide", amount: 12999, card_last4: "4242" },
+      ],
+    })
+
+    const queued = queueSnapshot().pending[0]!
+    const body = (queued.work as unknown as { body: { tenders: unknown[] } }).body
+    expect(body.tenders).toEqual([
+      { method: "cash", amount: 20000, tendered: 20000 },
+      { method: "card_tide", amount: 12999, card_last4: "4242" },
+    ])
+    expect(queued.total).toBe(32999)
+    // A product line is kept so its name can be read back on a conflict.
+    expect(queued.lines.map((line) => line.itemId)).toEqual(["item_1", "product:product_table_time"])
     setSimulatedOffline(false)
   })
 

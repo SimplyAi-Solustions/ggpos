@@ -5,7 +5,7 @@ import { buildCode } from "../packages/shared/src/sku"
 /**
  * The GG Guild at the counter: the admin's rules with their live preview, a
  * paid plan pinning a tier, a perk coming off a wallet, a scanned voucher
- * marked used and spent on a basket, and an adjustment behind a password.
+ * marked used and spent on a ticket, and an adjustment behind a password.
  *
  * Driven against the demo stores, which refuse what the routes refuse in the
  * same sentences, so this proves the screens rather than a lenient fixture.
@@ -50,6 +50,31 @@ async function go(page: Page, action: string) {
   // section), and either one goes to the same screen.
   await palette.getByText(action, { exact: true }).first().click()
   await expect(palette).toBeHidden()
+}
+
+/** The till, whatever the palette calls it. */
+async function goTill(page: Page) {
+  await page.keyboard.press("ControlOrMeta+k")
+  const palette = page.getByRole("dialog", { name: "Commands and catalogue search" })
+  await expect(palette).toBeVisible()
+  await palette.getByText(/^(Sell|Till)$/).first().click()
+  await expect(palette).toBeHidden()
+  await expect(page.getByTestId("till")).toBeVisible()
+}
+
+/** A scan into the till's field, from whichever of its tabs is in front. */
+async function tillScan(page: Page, code: string) {
+  const items = page.getByRole("tab", { name: /^(Items|Pay|Done)$/ })
+  if (await items.isVisible()) await items.click()
+  const field = page.getByTestId("till-scan-field")
+  await field.fill(code)
+  await field.press("Enter")
+}
+
+/** Below 900px the ticket is a tab of its own. */
+async function showTicket(page: Page) {
+  const tab = page.getByTestId("till-ticket-tab")
+  if (await tab.isVisible()) await tab.click()
 }
 
 /** Opens a customer's profile the way staff do, through the list. */
@@ -144,12 +169,11 @@ test.describe("the Guild at the counter", () => {
     await expect(page.getByTestId("guild-section")).toContainText("Renews")
 
     // And the till prices against the tier he now holds, with its perks.
-    await go(page, "Sell")
-    const field = page.getByTestId("sell-scan-field")
-    await field.fill(TOM_CODE)
-    await field.press("Enter")
-    await expect(page.getByTestId("basket-customer")).toContainText("Tom Bradbury")
-    await expect(page.getByTestId("basket-customer")).toContainText("Guild Pass")
+    await goTill(page)
+    await tillScan(page, TOM_CODE)
+    await showTicket(page)
+    await expect(page.getByTestId("ticket-customer")).toContainText("Tom Bradbury")
+    await expect(page.getByTestId("ticket-customer")).toContainText("Guild Pass")
   })
 
   test("uses a perk and moves the counter", async ({ page }) => {
@@ -175,7 +199,7 @@ test.describe("the Guild at the counter", () => {
     await expect(useOne).toBeDisabled()
   })
 
-  test("marks a scanned voucher used, and sends a money-off one to Sell", async ({
+  test("marks a scanned voucher used, and sends a money-off one to the till", async ({
     page,
   }) => {
     await signIn(page)
@@ -207,15 +231,13 @@ test.describe("the Guild at the counter", () => {
     await expect(page.getByRole("button", { name: "Mark as used" })).toBeHidden()
   })
 
-  test("takes a money-off voucher through to the basket", async ({ page }) => {
+  test("takes a money-off voucher through to the till's ticket", async ({ page }) => {
     await signIn(page)
 
     // A reward comes off a sale, so there has to be one to take it off.
-    await go(page, "Sell")
-    const sell = page.getByTestId("sell-scan-field")
-    await sell.fill(DEMO_SKU.display)
-    await sell.press("Enter")
-    await expect(page.getByTestId("basket")).toContainText("Charizard ex")
+    await goTill(page)
+    await tillScan(page, DEMO_SKU.display)
+    await expect(page.getByText("Charizard ex added")).toBeVisible()
 
     await go(page, "Scan")
     const field = page.getByTestId("scan-field")
@@ -224,12 +246,15 @@ test.describe("the Guild at the counter", () => {
     await expect(page.getByTestId("voucher-sheet")).toBeVisible()
     await page.getByRole("button", { name: "Use on a sale" }).click()
 
-    // Sell comes back with the reward's own customer attached and the five
-    // pounds off the basket.
-    await expect(page.getByRole("heading", { name: "Sell" })).toBeVisible()
-    await expect(page.getByTestId("basket-customer")).toContainText("Jasmine Okafor")
+    // The till comes back with the reward's own customer attached and the
+    // five pounds off the ticket.
+    await expect(page.getByTestId("till")).toBeVisible()
     await expect(page.getByText("£5 off a single applied")).toBeVisible()
-    await expect(page.getByTestId("sell-total")).toHaveText("£319.99")
+    await showTicket(page)
+    await expect(page.getByTestId("ticket-customer")).toContainText("Jasmine Okafor")
+    await expect(
+      page.getByTestId("ticket-total").or(page.getByTestId("till-dock-total"))
+    ).toHaveText("£319.99")
   })
 
   test("cancels a voucher and puts the points back", async ({ page }) => {

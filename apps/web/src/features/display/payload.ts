@@ -51,6 +51,27 @@ export interface SaleLineInput {
   image?: string
 }
 
+/**
+ * Where the sale has got to at the till (docs/api-contract-epos.md,
+ * section 4, "Customer display"): the ticket being built, the card amount
+ * waiting on the Tide reader, the cash being counted, or done.
+ */
+export const SALE_STAGES = ["basket", "card", "cash", "done"] as const
+export type SaleStage = (typeof SALE_STAGES)[number]
+
+/**
+ * The sale payload as the till publishes it from Phase 8: the basket, plus
+ * the stage and its figures. `amount_due` is what is left to pay on the
+ * card or in cash; `change` and `points_earned` belong to `done`. The
+ * server's `lib/display.js` allows exactly these, as numbers or that enum.
+ */
+export type TillDisplayPayload = DisplaySalePayload & {
+  stage?: SaleStage
+  amount_due?: number
+  change?: number
+  points_earned?: number
+}
+
 export interface SalePayloadInput {
   lines: SaleLineInput[]
   subtotal: number
@@ -60,6 +81,14 @@ export interface SalePayloadInput {
   pointsToEarn: number
   /** Shortened to a first name and a last initial on the way through. */
   customerName?: string
+  stage?: SaleStage
+  amountDue?: number
+  change?: number
+  pointsEarned?: number
+}
+
+function isStage(value: unknown): value is SaleStage {
+  return typeof value === "string" && (SALE_STAGES as readonly string[]).includes(value)
 }
 
 export function saleLine(line: SaleLineInput): DisplaySaleLine {
@@ -74,8 +103,8 @@ export function saleLine(line: SaleLineInput): DisplaySaleLine {
   return built
 }
 
-export function salePayload(input: SalePayloadInput): DisplaySalePayload {
-  const payload: DisplaySalePayload = {
+export function salePayload(input: SalePayloadInput): TillDisplayPayload {
+  const payload: TillDisplayPayload = {
     lines: input.lines.map(saleLine),
     subtotal: pence(input.subtotal),
     discount: pence(input.discount),
@@ -86,6 +115,16 @@ export function salePayload(input: SalePayloadInput): DisplaySalePayload {
   if (label) payload.discount_label = label
   const name = shortName(input.customerName)
   if (name) payload.customer_name = name
+  if (isStage(input.stage)) {
+    payload.stage = input.stage
+    if (input.stage === "card" || input.stage === "cash") {
+      payload.amount_due = Math.max(0, pence(input.amountDue))
+    }
+    if (input.stage === "done") {
+      payload.change = Math.max(0, pence(input.change))
+      payload.points_earned = Math.max(0, Math.round(input.pointsEarned || 0))
+    }
+  }
   return payload
 }
 
@@ -159,6 +198,10 @@ export function scrubPayload(mode: DisplayMode, payload: unknown): DisplayPayloa
       total: Number(raw.total ?? 0),
       pointsToEarn: Number(raw.points_to_earn ?? 0),
       customerName: raw.customer_name ? String(raw.customer_name) : undefined,
+      stage: isStage(raw.stage) ? raw.stage : undefined,
+      amountDue: Number(raw.amount_due ?? 0),
+      change: Number(raw.change ?? 0),
+      pointsEarned: Number(raw.points_earned ?? 0),
     })
   }
 
@@ -179,7 +222,7 @@ export function scrubPayload(mode: DisplayMode, payload: unknown): DisplayPayloa
 }
 
 /**
- * Whether two payloads say the same thing. The Sell screen publishes on a
+ * Whether two payloads say the same thing. The till publishes on a
  * 400ms debounce and only when this is false, so a screen that re-renders
  * for its own reasons does not put the tablet through a repaint.
  */

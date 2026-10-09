@@ -1,19 +1,23 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, redirect } from "@tanstack/react-router"
 import { z } from "zod"
 
-import { SellScreen } from "@/features/sell/SellScreen"
-
+/**
+ * The old Sell screen's address. The till replaced it (docs/EPOS-PLAN.md,
+ * "The till screen"), so anything still pointing here, a bookmark, the
+ * Scan screen's voucher sheet or the item page's "Sell", lands on the till
+ * with its voucher intact.
+ */
 const searchSchema = z.object({
-  /** A GGV code handed over by the Scan screen's voucher sheet. */
   voucher: z.string().optional(),
 })
 
-function Sell() {
-  const { voucher } = Route.useSearch()
-  return <SellScreen voucher={voucher} />
-}
-
 export const Route = createFileRoute("/counter/sell")({
   validateSearch: searchSchema,
-  component: Sell,
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: "/counter/till",
+      search: search.voucher ? { voucher: search.voucher } : {},
+      replace: true,
+    })
+  },
 })
