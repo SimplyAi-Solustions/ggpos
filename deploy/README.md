@@ -380,8 +380,36 @@ id, not which device or browser it was.
 
 ## 9. Updating
 
-**Automatic** (the normal way, once this is set up): pushing to `main`
-runs `.github/workflows/deploy.yml`, which builds the web app, copies it
+**The self-updater** (the normal way on a server set up by
+`deploy/bootstrap.sh`): a cron line runs `deploy/self-update.sh` every ten
+minutes. It deploys the newest commit on the deploy branch (named in
+`/etc/ggvault/deploy-branch`) only when that commit is finished and tested:
+
+- its subject does not start with `WIP`, so work-in-progress snapshots pushed
+  during a build never reach the till;
+- both CI checks, "Lint, typecheck, test, build" and "PocketBase checks",
+  passed on that exact commit (a commit still under test is tried again on
+  the next run; a failed one is never deployed);
+- a PocketBase backup named `predeploy_<commit>_<time>.zip` was taken first
+  (the newest seven are kept; restore one from `/_/` > Settings > Backups).
+
+If the build fails or the new stack does not pass its health check, the
+previous commit is checked out and rebuilt, and that target is skipped until
+a newer finished commit appears. Its log is
+`<repo>/deploy/logs/self-update.log`. To see what is live from anywhere:
+
+```bash
+curl -s https://ggpos.ggentertainment.co.uk/version.json
+```
+
+To follow a different branch after the pull request merges:
+
+```bash
+echo main | sudo tee /etc/ggvault/deploy-branch
+```
+
+**From GitHub Actions** (if the repository secrets below are set): pushing
+to `main` runs `.github/workflows/deploy.yml`, which builds the web app, copies it
 into `pb_public`, rsyncs everything over SSH, and runs
 `docker compose up -d --build` on the VPS for you. This needs four
 GitHub repository secrets set once, under the repository's Settings >

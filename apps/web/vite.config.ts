@@ -1,9 +1,38 @@
+import { execSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackRouter } from "@tanstack/router-plugin/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig, type Plugin } from "vite"
 import { VitePWA } from "vite-plugin-pwa"
+
+/**
+ * Writes dist/version.json with the commit the build came from, so what is
+ * live on the shop's server can be checked from anywhere
+ * (deploy/self-update.sh, deploy/README.md section 9). JSON is outside the
+ * service worker's precache patterns, so it is always fetched fresh.
+ */
+function versionFile(): Plugin {
+  return {
+    name: "gg-version-file",
+    apply: "build",
+    generateBundle() {
+      let commit = "unknown"
+      try {
+        commit = execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] })
+          .toString()
+          .trim()
+      } catch {
+        // Not a git checkout (a copied bundle): the file still says when.
+      }
+      this.emitFile({
+        type: "asset",
+        fileName: "version.json",
+        source: `${JSON.stringify({ commit, built_at: new Date().toISOString() })}\n`,
+      })
+    },
+  }
+}
 
 import { RUNTIME_CACHES } from "./src/lib/offline/caches.ts"
 
@@ -48,6 +77,7 @@ const READ_THROUGH = [
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    versionFile(),
     // File-based routing. `autoCodeSplitting` moves every route component into
     // its own chunk, so the kit page and the counter screens never travel in
     // the entry bundle.
