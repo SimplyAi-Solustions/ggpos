@@ -274,9 +274,57 @@ Receipts are drawn on a canvas in the app's own fonts (Anton for the total, Spac
 
 ---
 
-## 7. Wave 2 (after wave 1 lands): part-exchange and returns in the ticket
+## 7. Wave 2: part-exchange and exchanges in one ticket
 
-Specified in full before wave 2 starts. In outline: `POST /api/vault/sales/complete` gains `trade_lines` (the trade-in line shape, priced by the shared offer calculator) and `trade_settlement` (`{ "surplus": "cash" | "credit", "id_check"? }`), creating the trade-in and the sale in one transaction with a `part_exchange` tender for the value applied, `sales.trade_in` and `trade_ins.sale` linking them, points earned once (EPOS-PLAN decision 5), and the ID gate and cash cap applied to a cash surplus; and `return_lines` (`[{ "sale_line", "qty", "restock" }]`) so an exchange is one ticket with negative lines.
+Schema (already in `pb/pb_migrations/1789820960_epos_part_exchange.js`): `trade_ins.part_exchange_value` (pence), `trade_ins.payout_type` gains `part_exchange`; `sale_tenders.method` and `sales.payment` gain `exchange`; `TENDER_METHODS` and `TENDER_LABELS` in `epos-types.ts` carry `exchange` ("Exchange"). `sales.trade_in` and `trade_ins.sale` link a part-exchange's two halves.
+
+### Part-exchange (EPOS-PLAN decision 5)
+
+The customer brings items in and puts their value towards what they are buying. The trade is valued at **credit** rates (the value stays in the shop), with the shared offer calculator, exactly as a buy-in's credit offer.
+
+At the till, the Trade-in panel builds a **draft trade-in** for the ticket's customer through the collection API, as the buy-in wizard does today (`trade_ins` with `status: "draft"`, `channel: "counter"`; its `trade_in_lines` with market price, offers and `accepted`), with each accepted line's `offer_price` set to its **credit** offer. A trade-in needs a customer: the panel asks for one first.
+
+`POST /api/vault/sales/complete` gains:
+
+```
+{
+  "trade_in": "<draft trade-in id>",
+  "trade_settlement": {
+    "surplus": "credit" | "cash",          // only when the trade is worth more than the sale
+    "surplus_cash"?: <pence>,              // cash: what the customer is paid, at most the surplus
+    "terms_accepted": true,
+    "signature"?: "data:image/png;base64,...",
+    "id_check"?: { ...exactly the buy-in's id_check... }
+  }
+}
+```
+
+The server, inside the sale's own transaction:
+
+1. Checks the trade-in: draft, offered or accepted; the sale's customer; at least one accepted line. Its value `V` is the sum of accepted `offer_price x qty`.
+2. Works out the sale total `S` after discounts, perks and rewards, then `A = min(V, S)`: what the trade pays towards the sale, written as one `part_exchange` tender of `A`. The other tenders must add up to `S - A` (they may be none).
+3. The surplus `U = V - A`:
+   - `credit`: paid as store credit, `payout_credit = U`;
+   - `cash`: `payout_cash = surplus_cash` (1 to `U`; staff key the cash-rate figure, the till suggests it from the lines' cash offers) and any of `U` not paid in cash is lost to the shop by agreement, so the till shows both figures before Complete. The buy-in rules apply to that cash exactly as they do to a buy-in's: the open session, the cash cap, the customer's address and a verified, unexpired ID (or `id_check` in the same call), 18 or over; the cash is a `payout` movement on the session.
+4. Completes the trade-in with the same steps as `POST /api/vault/trade-ins/{id}/complete` (number, seller snapshot, items in stock at `cost = offer_price`, labels queued, the signature, audit), with `part_exchange_value = A`, `payout_type` `part_exchange` when there is no surplus (otherwise `credit` or `cash`), and `sale` set. That route's logic moves into `pb_hooks/lib/tradeincomplete.js` so the route and the sale share it; the route's behaviour does not change.
+5. **Points once**: the sale earns its points on its whole value as any sale does; the trade-in earns trade-in credit points only on a credit surplus `U`, never on `A`.
+6. Links `sales.trade_in` and `trade_ins.sale`; the sale's response adds `"trade_in": { "id", "number", "value": V, "applied": A, "payout_cash", "payout_credit" }`; the receipt's `trade_in` block carries the same, and the trade lines appear on it as `kind: "trade"` lines with negative totals.
+
+Refusals: 400 "Add the customer before taking a trade-in." (no customer); 409 "That trade-in has already been completed." ; 400 "The payments come to £8.00 but £10.00 is left after the trade-in." ; the buy-in's own sentences for the ID gate and the cash cap; 400 "Pay the surplus as credit or cash." when `U > 0` and no `surplus`.
+
+On the X and Z: `trade_ins.part_exchange_value` sums the `A`s; `cash_paid` and `credit_issued` count only surpluses; the `part_exchange` tender row shows what trade took.
+
+### Exchanges and returns in the ticket
+
+`POST /api/vault/sales/complete` gains `"returns": { "sale": "<original sale id>", "lines": [{ "sale_line", "qty", "restock"? }], "reason": "...", "tenders"?: [...] }`.
+
+Inside the same transaction, the server refunds those lines of the original sale exactly as `POST /api/vault/sales/{id}/refund` does (the shared `breakdown`, `refund_count` and the `-Rn` reference, restock, points reversed, capability `refund` with an override when the role lacks it), for a refund value `R`. Then `E = min(R, S)` is applied to the new sale as one `exchange` tender, and written on the refund as a negative `exchange` tender of `E` under its reference, so nothing moves in the drawer for that part. When `R > S`, the rest `R - S` goes back through `returns.tenders` (cash, card or store credit, as a refund) and the new sale takes no other tender. A ticket may hold returns and no new lines at all: then it is simply a refund.
+
+The response adds `"refund": { "ref", "amount": R, "exchange": E }`; the new sale's receipt shows the returned lines as `kind: "return"` with negative totals and an `Exchange` tender; the refund's own receipt still prints from `?refund=`.
+
+### Packages
+
+**B3** (server): `lib/tradeincomplete.js` (moved out of `tradeins.pb.js`), the sale route's `trade_in`, `trade_settlement` and `returns`, the receipt's trade and return lines, the till report's part-exchange figures, `pb/scripts/checks/31-part-exchange.sh`. **F3** (web): the till's Trade-in panel (the buy-in wizard's line entry and offers, the surplus choice, the ID step and the signature, inside the till) and returns into the ticket as negative lines with the Exchange tender; demo mode; e2e.
 
 ---
 

@@ -1096,6 +1096,7 @@ export const SaleTendersMethodOptions = {
 	"part_exchange": "part_exchange",
 	"gift_card": "gift_card",
 	"sumup_card": "sumup_card",
+	"exchange": "exchange",
 } as const
 export type SaleTendersMethodOptions = typeof SaleTendersMethodOptions[keyof typeof SaleTendersMethodOptions]
 export type SaleTendersRecord = {
@@ -1132,6 +1133,7 @@ export const SalesPaymentOptions = {
 	"card_other": "card_other",
 	"part_exchange": "part_exchange",
 	"gift_card": "gift_card",
+	"exchange": "exchange",
 } as const
 export type SalesPaymentOptions = typeof SalesPaymentOptions[keyof typeof SalesPaymentOptions]
 
@@ -1541,6 +1543,7 @@ export const TradeInsPayoutTypeOptions = {
 	"cash": "cash",
 	"credit": "credit",
 	"mixed": "mixed",
+	"part_exchange": "part_exchange",
 } as const
 export type TradeInsPayoutTypeOptions = typeof TradeInsPayoutTypeOptions[keyof typeof TradeInsPayoutTypeOptions]
 export type TradeInsRecord = {
@@ -1554,6 +1557,7 @@ export type TradeInsRecord = {
 	id_checked_by?: RecordIdString
 	id_document?: RecordIdString
 	number?: string
+	part_exchange_value?: number
 	payout_cash?: number
 	payout_credit?: number
 	payout_type?: TradeInsPayoutTypeOptions

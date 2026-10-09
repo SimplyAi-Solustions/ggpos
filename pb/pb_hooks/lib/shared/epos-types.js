@@ -14,6 +14,8 @@ exports.DENOMINATIONS = exports.TENDER_LABELS = exports.TILL_TENDERS = exports.T
 /**
  * How a sale was paid, one row per tender (`sale_tenders.method`).
  * `sumup_card` exists only on sales taken before SumUp was removed.
+ * `exchange` is goods brought back in the same ticket: positive on the new
+ * sale, negative on the old sale's refund, so it nets to nothing.
  */
 exports.TENDER_METHODS = [
     "cash",
@@ -23,6 +25,7 @@ exports.TENDER_METHODS = [
     "points",
     "part_exchange",
     "gift_card",
+    "exchange",
     "sumup_card",
 ];
 /** What the till offers today. `card_other`, `gift_card` and `sumup_card` are for records only. */
@@ -35,6 +38,7 @@ exports.TENDER_LABELS = {
     points: "Points",
     part_exchange: "Part-exchange",
     gift_card: "Gift card",
+    exchange: "Exchange",
     sumup_card: "Card (SumUp)",
 };
 /** UK notes and coins, in pence, largest first. Keys of a denomination count. */

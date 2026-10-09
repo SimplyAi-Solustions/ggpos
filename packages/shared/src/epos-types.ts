@@ -10,6 +10,8 @@
 /**
  * How a sale was paid, one row per tender (`sale_tenders.method`).
  * `sumup_card` exists only on sales taken before SumUp was removed.
+ * `exchange` is goods brought back in the same ticket: positive on the new
+ * sale, negative on the old sale's refund, so it nets to nothing.
  */
 export const TENDER_METHODS = [
   "cash",
@@ -19,6 +21,7 @@ export const TENDER_METHODS = [
   "points",
   "part_exchange",
   "gift_card",
+  "exchange",
   "sumup_card",
 ] as const
 export type TenderMethod = (typeof TENDER_METHODS)[number]
@@ -35,6 +38,7 @@ export const TENDER_LABELS: Record<TenderMethod, string> = {
   points: "Points",
   part_exchange: "Part-exchange",
   gift_card: "Gift card",
+  exchange: "Exchange",
   sumup_card: "Card (SumUp)",
 }
 
@@ -400,4 +404,58 @@ export interface Printer {
   last_status: string
   /** Polled in the last 30 seconds. */
   online: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2: part-exchange and exchanges in one ticket (docs/api-contract-epos.md,
+// section 7).
+// ---------------------------------------------------------------------------
+
+/** `trade_settlement` on a sale that carries a trade-in. */
+export interface TradeSettlementInput {
+  /** Only when the trade is worth more than the sale. */
+  surplus?: "credit" | "cash"
+  /** Cash only: what the customer is paid, at most the surplus. */
+  surplus_cash?: number
+  terms_accepted: boolean
+  /** A data URL from the signature pad. */
+  signature?: string
+  /** The buy-in's own ID check, for a cash surplus. */
+  id_check?: {
+    id_type: "passport" | "driving_licence" | "other"
+    id_expiry: string
+    id_ref_last4: string
+    dob: string
+    address: string
+    id_document?: string | null
+  } | null
+}
+
+/** `returns` on a sale: lines of an earlier sale brought back in this ticket. */
+export interface TicketReturnsInput {
+  sale: string
+  lines: { sale_line: string; qty: number; restock?: boolean }[]
+  reason: string
+  /** Only when the returns are worth more than this ticket's sale. */
+  tenders?: TenderInput[]
+}
+
+/** What a sale with a trade-in answers with. */
+export interface SaleTradeIn {
+  id: string
+  number: string
+  /** Everything the trade was worth, at credit rates. */
+  value: number
+  /** What it paid towards the sale (the `part_exchange` tender). */
+  applied: number
+  payout_cash: number
+  payout_credit: number
+}
+
+/** What a sale with returns answers with. */
+export interface SaleTicketRefund {
+  ref: string
+  amount: number
+  /** The part that paid for this sale (the `exchange` tender). */
+  exchange: number
 }
