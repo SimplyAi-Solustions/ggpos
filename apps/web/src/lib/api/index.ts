@@ -307,24 +307,23 @@ export async function verifyPassword(
  * Sets a new password on the signed-in staff member's own account, then
  * signs in again with it.
  *
- * PocketBase takes the change through the ordinary record update
- * (`oldPassword`, `password`, `passwordConfirm`) and rotates the account's
- * token key as it saves, so the token this call started with is dead the
- * moment it succeeds. Signing straight back in is therefore part of the
- * change, not an extra step, and the record it returns is the unlocked one
- * the counter then runs on. `pb/pb_hooks/staff.pb.js` is what clears
- * `must_change_password` and audits the change; nothing here sends, stores
- * or logs either password anywhere else.
+ * The change goes through `POST /api/vault/staff/me/password`
+ * (docs/api-contract-epos.md, section 2), which works for every role: the
+ * `staff` collection's own update rule is admin-only, so the record update
+ * this used to make could only ever work for an admin. The route checks the
+ * old password, applies the 12 character rule, clears
+ * `must_change_password` and audits the change, and saving the password
+ * rotates the account's token key, so the token this call started with is
+ * dead the moment it succeeds. Signing straight back in is therefore part
+ * of the change, not an extra step, and the record it returns is the
+ * unlocked one the counter then runs on. Nothing here sends, stores or logs
+ * either password anywhere else.
  *
- * The update goes through `pb.send` rather than `RecordService.update`
- * deliberately. `update` re-saves the auth store with the record from the
- * response and the token the call was made with, which by then is dead:
- * the gate in `features/auth/gate.ts` would see an unlocked staff member,
- * swap `LockedShell` for the whole counter around a half-finished form and
- * unmount the screen mid-change. `pb.send` attaches the current token and
- * leaves the store alone, so the store changes exactly once, at the
- * re-authentication below, and the counter appears when the counter is
- * really there.
+ * The route is called through `pb.send`, which attaches the current token
+ * and leaves the auth store alone, so the store changes exactly once, at
+ * the re-authentication below: the gate in `features/auth/gate.ts` never
+ * sees an unlocked staff member on a dead token and never swaps the counter
+ * in around a half-finished form.
  */
 export async function changeOwnPassword(
   email: string,
@@ -334,7 +333,7 @@ export async function changeOwnPassword(
   if (isDemo()) {
     const staff = demoChangePassword(email, current, next)
     if (!staff) {
-      throw new PasswordChangeError("That password is not right. Try again.")
+      throw new PasswordChangeError(WRONG_CURRENT_PASSWORD)
     }
     return staff
   }
@@ -345,13 +344,9 @@ export async function changeOwnPassword(
   }
 
   try {
-    await pb.send(`/api/collections/staff/records/${encodeURIComponent(signedIn.id)}`, {
-      method: "PATCH",
-      body: {
-        oldPassword: current,
-        password: next,
-        passwordConfirm: next,
-      },
+    await pb.send("/api/vault/staff/me/password", {
+      method: "POST",
+      body: { old_password: current, password: next },
     })
   } catch (error) {
     throw new PasswordChangeError(passwordChangeMessage(error))
@@ -371,25 +366,16 @@ export async function changeOwnPassword(
   }
 }
 
-/** Turns PocketBase's refusal into one sentence a counter can act on. */
+/** The route's own sentence for a wrong current password (contract, section 2). */
+export const WRONG_CURRENT_PASSWORD = "That is not your current password."
+
+/** Turns the route's refusal into one sentence a counter can act on. */
 function passwordChangeMessage(error: unknown): string {
   if (!(error instanceof ClientResponseError)) {
     return "The counter could not reach the server. Check the connection and try again."
   }
-  const fields = (error.response?.data ?? {}) as Record<string, unknown>
-  if (fields.oldPassword) {
-    // PocketBase's own wording here is "Missing or invalid old password",
-    // which says nothing to do about it. This is the sentence the idle lock
-    // and the step-up route already use for the same mistake.
-    return "That password is not right. Try again."
-  }
-  if (error.status === 403 || error.status === 404) {
-    // staff.updateRule is admin-only, so an ordinary staff member's own
-    // record is not theirs to write. Nothing they type can change that.
-    return "This account cannot set its own password. Ask an admin to set a new one for you."
-  }
-  // Everything else the server wrote for staff to read (the 12-character
-  // rule, a reused password) is shown exactly as sent.
+  // Everything the route wrote for staff to read (a wrong current password,
+  // the 12-character rule, a reused password) is shown exactly as sent.
   return (
     refusalMessage(error) ?? "The password could not be changed. Check it and try again."
   )
@@ -487,15 +473,15 @@ export {
 // and the screens that want it import `@/lib/api/lookup` directly.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// Reports, exports, imports and SumUp (Phase 4)
+// Reports, exports and imports (Phase 4), cashing up and staff (Phase 8)
 //
 // Deliberately NOT re-exported here. This barrel is imported by the counter
 // shell, so it travels in the entry chunk, and everything it re-exports
-// travels with it. The Phase 4 modules belong to three routes and nothing
+// travels with it. These modules belong to a handful of routes and nothing
 // else, so those screens import `@/lib/api/reports`, `@/lib/api/exports`,
-// `@/lib/api/imports`, `@/lib/api/sumup` and `@/lib/api/csv-parse`
-// directly - the same reasoning that already keeps `lib/api/lookup` out of
-// this file's `export *` list.
+// `@/lib/api/imports`, `@/lib/api/csv-parse`, `@/lib/api/tillops` and
+// `@/lib/api/staff` directly - the same reasoning that already keeps
+// `lib/api/lookup` out of this file's `export *` list.
 // ---------------------------------------------------------------------------
 
 export {

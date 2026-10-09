@@ -129,7 +129,8 @@ export interface LabelJobRecord extends BaseRecord {
 export interface StaffRecord extends BaseRecord {
   email: string
   name: string
-  role: "admin" | "staff"
+  /** Ranked staff < manager < admin (packages/shared/src/permissions.ts). */
+  role: "admin" | "manager" | "staff"
   active?: boolean
   /**
    * Set on an account still using a password somebody else chose, which the
@@ -1048,6 +1049,56 @@ export interface LoyaltyTierRow {
 }
 
 /**
+ * `settings.epos` as it is stored. Every field is optional on the wire: the
+ * migration seeds them all, but a row an admin has edited by hand in `/_/`
+ * may have lost one, so `eposFrom` in `lib/api/config.ts` fills each gap
+ * with the seed's default rather than trusting the shape.
+ */
+export interface EposSettingsRow {
+  /** Capability -> lowest role, overlaid on the shared defaults. */
+  permissions?: Record<string, string>
+  discount_limit_pct?: number
+  require_card_last4?: boolean
+  auto_lock_minutes?: number
+  /** Pence, smallest first. */
+  quick_cash?: number[]
+  /** Pence. */
+  default_float?: number
+  z_requires_card_total?: boolean
+  /** Only "manual_tide" exists today. */
+  card_provider?: string
+  receipt?: {
+    header?: string
+    footer?: string
+    returns_policy?: string
+    show_portal_qr?: boolean
+  }
+}
+
+/**
+ * The till's settings with every gap filled, the way every screen reads
+ * them through `useCounterConfig()`. Field names match `settings.epos` so a
+ * screen and the contract say the same thing.
+ */
+export interface EposConfig {
+  permissions: import("@gg/shared").PermissionTable
+  discount_limit_pct: number
+  require_card_last4: boolean
+  /** Zero means never lock on a timer. */
+  auto_lock_minutes: number
+  quick_cash: number[]
+  default_float: number
+  z_requires_card_total: boolean
+  card_provider: string
+  receipt: {
+    header: string
+    footer: string
+    returns_policy: string
+    show_portal_qr: boolean
+  }
+}
+
+/**
  * The settings the counter may read. Secrets (`api_keys`, the mail and push
  * keys) never leave the server, so they are not in this shape at all.
  */
@@ -1080,9 +1131,18 @@ export interface VaultSettingsRow {
   shop_email?: string
   receipt_terms?: string
   /**
-   * The SumUp merchant code and, from Phase 7, which paired Solo reader the
-   * counter sends a checkout to. Neither is a key, so the config route
-   * serves them; the API key stays in `api_keys` on the server.
+   * The till's own settings (docs/api-contract-epos.md, section 1), seeded
+   * with defaults by pb_migrations/1789820800_epos_foundation.js. Not a key
+   * and not a secret, so the config route serves it whole.
+   */
+  epos?: EposSettingsRow
+  /** Printed on receipts while the shop is VAT registered. */
+  vat_number?: string
+  /**
+   * SumUp's old merchant code and reader choice. SumUp is gone
+   * (docs/api-contract-epos.md, section 5) and nothing reads or writes this
+   * any more except the demo Solo reader in `lib/api/demo/checkouts.ts`,
+   * which the till package deletes; this goes with it.
    */
   sumup?: {
     merchant_code?: string
@@ -1168,11 +1228,15 @@ export interface CounterConfig {
   /** `settings.cash_cap` in integer GBP pence. */
   cashCap: number
   /**
-   * `settings.sumup.merchant_code`, or "" when SumUp is not set up. The key
-   * itself never leaves the server, so the merchant code is what tells the
-   * Cash screen whether a SumUp pull can work at all.
+   * `settings.epos`, every gap filled with the seed's default: the
+   * permissions table, the discount limit, the auto-lock, the quick cash
+   * notes, the default float and the receipt text.
    */
-  sumupMerchantCode: string
+  epos: EposConfig
+  /** `settings.vat_number`, empty when the shop has none. */
+  vatNumber: string
+  /** `settings.vat_registered`. */
+  vatRegistered: boolean
   /** The programme, its live rules and its tiers. */
   loyalty: LoyaltySetup
   /**
@@ -1381,7 +1445,7 @@ export interface FxRatesView {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: stats, reports, exports, imports and SumUp
+// Phase 4: stats, reports, exports and imports
 //
 // Shapes read off docs/api-contract.md, "Phase 4: stats and reports" and
 // "Phase 4: exports, imports and SumUp". Every money figure is integer GBP
@@ -1501,7 +1565,6 @@ export interface SavedReportInput {
 // --- Exports ---------------------------------------------------------------
 
 export type ExportKey =
-  | "sumup"
   | "ebay-listings"
   | "inventory"
   | "sales"
@@ -1518,7 +1581,7 @@ export interface ExportRequest {
 
 // --- Imports ---------------------------------------------------------------
 
-export type CsvImportType = "card_uploader" | "ebay_orders" | "sumup_sales"
+export type CsvImportType = "card_uploader" | "ebay_orders"
 
 /**
  * One entry of a `csv_imports` row's `errors` list. `kind` is `review` for a
@@ -1603,62 +1666,11 @@ export interface EndListingRow {
   sold_at?: string
 }
 
-// --- SumUp -----------------------------------------------------------------
-
-export interface SumUpTransaction {
-  id: string
-  sumup_id: string
-  transaction_code?: string
-  /** Integer GBP pence, parsed on the server from SumUp's decimal amount. */
-  amount: number
-  timestamp: string
-  status?: string
-}
-
-export interface SumUpSale {
-  id: string
-  number: string
-  total: number
-  /**
-   * What actually went through SumUp: the whole total for a `sumup_card`
-   * sale, `payment_split.sumup_card` for a mixed one. This, never `total`,
-   * is what the card takings compare against.
-   */
-  card_share: number
-  payment?: string
-  created?: string
-  occurred_at?: string
-}
-
-export interface SumUpMatch {
-  transaction: SumUpTransaction
-  sale: SumUpSale
-}
-
-/**
- * `GET /api/vault/sumup/reconcile?date=YYYY-MM-DD`.
- *
- * Only `SUCCESSFUL` transactions appear at all: a refund, a failed or
- * pending transaction and one whose amount could not be read are stored on
- * the server but are in none of these lists and in neither total.
- */
-export interface SumUpReconcile {
-  date: string
-  matched: SumUpMatch[]
-  unmatched_transactions: SumUpTransaction[]
-  unmatched_sales: SumUpSale[]
-  totals: { sumup: number; sales: number; difference: number }
-}
-
-/** `POST /api/vault/sumup/pull`. */
-export interface SumUpPullResult {
-  fetched: number
-  matched: number
-  unmatched: number
-  refunded: number
-}
-
 // --- The Solo reader (Phase 7) ---------------------------------------------
+//
+// SumUp is gone (docs/api-contract-epos.md, section 5). These shapes stay
+// only while the old Sell screen and lib/api/checkouts.ts still import them;
+// the till package removes both, and these go with them.
 
 /** SumUp's own words for where a pairing has got to. */
 export type SumUpReaderStatus = "unknown" | "processing" | "paired" | "expired"

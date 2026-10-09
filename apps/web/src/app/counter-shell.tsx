@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query"
 import {
   ArrowLeftRightIcon,
   EllipsisIcon,
-  HouseIcon,
   LayersIcon,
+  ReceiptIcon,
 } from "lucide-react"
 import { cn } from "cn"
 
@@ -34,7 +34,6 @@ import { Wordmark } from "@/components/ui/wordmark"
 import { useTheme } from "@/components/theme-provider"
 import { CommandPalette } from "@/app/command-palette"
 import { CounterDockContext } from "@/app/counter-dock"
-import { IdleLock } from "@/app/idle-lock"
 import { dispatchScan, makeScanFallback } from "@/app/scan-bus"
 import { useShortcuts } from "@/app/shortcuts"
 import { PageMain } from "@/app/page-transition"
@@ -46,23 +45,46 @@ import { isDemo, isServerUnreachable, setSimulatedOffline } from "@/lib/api"
 import { netSnapshot, subscribeNet } from "@/lib/offline/net"
 import { OfflineStrip } from "@/lib/offline/OfflineStrip"
 import { ServerUnreachable } from "@/app/server-unreachable"
+import { CounterLock } from "@/features/lock/CounterLock"
+import { isCounterLocked, lockCounter } from "@/features/lock/lock-store"
+import { OverrideHost } from "@/features/lock/OverrideHost"
+import { isManagerUp, useStaffRole } from "@/features/lock/role"
+import { SetPinSheet } from "@/features/lock/SetPinSheet"
 
-const NAV = [
+/**
+ * The till is the shop's everyday screen, so it leads the nav and the thumb
+ * bar, in the place Sell had. Paths are plain strings rather than literals:
+ * the till's route is its own package's, and a string keeps this list
+ * honest about that without a type check against a route tree it cannot
+ * see.
+ */
+const NAV: { to: string; label: string }[] = [
+  { to: "/counter/till", label: "Till" },
   { to: "/counter/stock", label: "Stock" },
   { to: "/counter/trade", label: "Trade" },
   { to: "/counter/customers", label: "Customers" },
   { to: "/counter/reports", label: "Reports" },
-] as const
+]
 
-const BAR = [
-  { to: "/counter", label: "Home", exact: true, Icon: HouseIcon },
+/**
+ * Five slots on a phone: the till, the camera scan, stock and trade, then
+ * More. Home is the wordmark, top left, and the first line of More.
+ */
+const BAR: {
+  to: string
+  label: string
+  exact: boolean
+  Icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>
+}[] = [
+  { to: "/counter/till", label: "Till", exact: false, Icon: ReceiptIcon },
   { to: "/counter/scan", label: "Scan", exact: false, Icon: BarcodeGlyph },
   { to: "/counter/stock", label: "Stock", exact: false, Icon: LayersIcon },
   { to: "/counter/trade", label: "Trade", exact: false, Icon: ArrowLeftRightIcon },
-] as const
+]
 
-function AvatarMenu() {
+function AvatarMenu({ onSetPin }: { onSetPin: () => void }) {
   const staff = useStaff()
+  const role = useStaffRole()
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   // Demo mode only: one switch so the offline queue can be walked, shown to
@@ -96,17 +118,19 @@ function AvatarMenu() {
             <Hint>{theme === "dark" ? "On" : "Off"}</Hint>
           </MenuItem>
           <MenuItem onClick={() => void navigate({ to: "/account" })}>My Vault</MenuItem>
-          {/* Only an admin may write their own staff row today
-              (staff.updateRule, 1789819200_auth_collections.js), so only an
-              admin is offered the screen that does it. A staff member who
-              needs a new password asks an admin, exactly as they already do
-              for anything under Settings. */}
-          {staff?.role === "admin" ? (
-            <MenuItem onClick={() => void navigate({ to: "/counter/password" })}>
-              Change password
-            </MenuItem>
+          {/* Everybody's own: the password goes through
+              POST /api/vault/staff/me/password, which works for every role,
+              and the PIN is the one the lock screen takes. */}
+          <MenuItem onClick={onSetPin}>Set PIN</MenuItem>
+          <MenuItem onClick={() => void navigate({ to: "/counter/password" })}>
+            Change password
+          </MenuItem>
+          {role === "admin" ? (
+            <MenuItem onClick={() => void navigate({ to: "/counter/staff" })}>Staff</MenuItem>
           ) : null}
-          {staff?.role === "admin" ? (
+          {/* A manager registers tills, so a manager sees the Tills part of
+              Settings; everything else there stays an admin's. */}
+          {isManagerUp(role) ? (
             <MenuItem onClick={() => void navigate({ to: "/counter/settings" })}>
               Settings
             </MenuItem>
@@ -119,6 +143,7 @@ function AvatarMenu() {
           ) : null}
         </MenuPrimitive.Group>
         <MenuSeparator />
+        <MenuItem onClick={() => lockCounter()}>Lock</MenuItem>
         <MenuItem
           onClick={() => {
             logout()
@@ -173,13 +198,16 @@ function WaitingCount({ count }: { count: number }) {
 function MoreSheet({
   open,
   onOpenChange,
+  onSetPin,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSetPin: () => void
 }) {
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
-  const admin = useStaff()?.role === "admin"
+  const role = useStaffRole()
+  const admin = role === "admin"
 
   const go = (to: string) => {
     onOpenChange(false)
@@ -195,18 +223,20 @@ function MoreSheet({
         <SheetBody>
           <ul className="flex flex-col">
             {[
+              { label: "Home", to: "/counter" },
+              { label: "Cash up", to: "/counter/cash" },
               { label: "Quotes", to: "/counter/quotes" },
               { label: "Customers", to: "/counter/customers" },
               { label: "Reports", to: "/counter/reports" },
               { label: "Exports and imports", to: "/counter/exports" },
               { label: "Add stock", to: "/counter/stock/new" },
-              // The Guild is an admin screen and says so to anybody else,
-              // so the sheet does not offer it to a staff member at all.
-              // "Change password" is admin-only for the reason on the avatar
-              // menu above: only an admin may write their own staff row.
+              // The Guild and Staff are admin screens and say so to anybody
+              // else, so the sheet does not offer them to anybody else.
               ...(admin ? [{ label: "Loyalty", to: "/counter/loyalty" }] : []),
+              ...(admin ? [{ label: "Staff", to: "/counter/staff" }] : []),
+              ...(isManagerUp(role) ? [{ label: "Settings", to: "/counter/settings" }] : []),
               { label: "My Vault", to: "/account" },
-              ...(admin ? [{ label: "Change password", to: "/counter/password" }] : []),
+              { label: "Change password", to: "/counter/password" },
             ].map((entry) => (
               <li key={entry.to} className="border-b border-hairline-soft">
                 <button
@@ -218,6 +248,30 @@ function MoreSheet({
                 </button>
               </li>
             ))}
+            <li className="border-b border-hairline-soft">
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenChange(false)
+                  onSetPin()
+                }}
+                className="flex min-h-12 w-full items-center text-left text-base text-foreground"
+              >
+                Set PIN
+              </button>
+            </li>
+            <li className="border-b border-hairline-soft">
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenChange(false)
+                  lockCounter()
+                }}
+                className="flex min-h-12 w-full items-center text-left text-base text-foreground"
+              >
+                Lock
+              </button>
+            </li>
             <li className="border-b border-hairline-soft">
               <button
                 type="button"
@@ -258,6 +312,8 @@ export function CounterShell() {
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   const [moreOpen, setMoreOpen] = React.useState(false)
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false)
+  const [pinOpen, setPinOpen] = React.useState(false)
+  const openPin = React.useCallback(() => setPinOpen(true), [])
   const [dockSlot, setDockSlot] = React.useState<HTMLDivElement | null>(null)
   const dockRef = React.useRef<HTMLDivElement>(null)
   const demo = isDemo()
@@ -273,7 +329,12 @@ export function CounterShell() {
   React.useEffect(() => {
     const fallback = makeScanFallback(navigate)
     return createWedgeListener({
-      onScan: (raw) => dispatchScan(raw, fallback),
+      // A scan at a locked counter goes nowhere: the till behind the lock
+      // must not take an item on somebody else's ticket.
+      onScan: (raw) => {
+        if (isCounterLocked()) return
+        dispatchScan(raw, fallback)
+      },
       isScanField,
     })
   }, [navigate])
@@ -323,7 +384,8 @@ export function CounterShell() {
             onShowShortcuts={openShortcuts}
           />
           <ShortcutOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-          <IdleLock />
+          <OverrideHost />
+          <CounterLock />
         </div>
       </CounterDockContext.Provider>
     )
@@ -355,7 +417,7 @@ export function CounterShell() {
             ))}
           </ul>
           {demo ? <Badge variant="outline">Demo</Badge> : null}
-          <AvatarMenu />
+          <AvatarMenu onSetPin={openPin} />
         </nav>
       </header>
 
@@ -429,8 +491,10 @@ export function CounterShell() {
         onShowShortcuts={openShortcuts}
       />
       <ShortcutOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-      <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} />
-      <IdleLock />
+      <MoreSheet open={moreOpen} onOpenChange={setMoreOpen} onSetPin={openPin} />
+      <SetPinSheet open={pinOpen} onOpenChange={setPinOpen} />
+      <OverrideHost />
+      <CounterLock />
     </div>
     </CounterDockContext.Provider>
   )

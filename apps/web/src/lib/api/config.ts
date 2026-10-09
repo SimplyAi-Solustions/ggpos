@@ -7,10 +7,16 @@
  * the counter needs out of them, with the keys and secrets left behind.
  *
  * The fetch and the row mappers belong to the buy-in wizard's helpers; this
- * module adds the tiers it does not need, and one TanStack query so the Sell
- * and Cash screens share a single read for the session.
+ * module adds the tiers it does not need, the till's EPOS settings, and one
+ * TanStack query so the till, cashing up and the lock share a single read
+ * for the session.
  */
-import { parseTierPerk, type LoyaltyTier, type TierPerk } from "@gg/shared"
+import {
+  parseTierPerk,
+  resolvePermissions,
+  type LoyaltyTier,
+  type TierPerk,
+} from "@gg/shared"
 import { useQuery } from "@tanstack/react-query"
 
 import { isDemo } from "@/lib/api/mode"
@@ -28,6 +34,8 @@ import { demoSettings } from "@/lib/api/demo/settings"
 import type {
   CounterConfig,
   DisplaySettings,
+  EposConfig,
+  EposSettingsRow,
   LoyaltyTierRow,
   VaultConfig,
 } from "@/lib/api/types"
@@ -68,14 +76,14 @@ async function wireConfig(): Promise<VaultConfig> {
       ...config.settings,
       cash_cap: config.settings.cash_cap ?? DEMO_SETTINGS.cash_cap,
       cash_variance_alert: DEMO_SETTINGS.cash_variance_alert,
-      // A merchant code, so the demo Cash screen shows the SumUp comparison
-      // rather than the line telling you to go and set a key up. The key
-      // itself never reaches a browser, in demo mode or out of it.
-      sumup: { merchant_code: DEMO_SETTINGS.sumup_merchant_code },
-      // The demo Settings screen writes `display` to its own settings
-      // record, so an admin can switch the customer screen on and watch it
-      // follow the till without a server.
+      // The demo Settings screen writes `display`, `epos` and the VAT
+      // fields to its own settings record, so an admin can switch the
+      // customer screen on, change the auto-lock or the quick cash notes and
+      // watch the counter follow without a server.
       display: demoSettings().display,
+      epos: demoSettings().epos,
+      vat_number: demoSettings().vat_number,
+      vat_registered: demoSettings().vat_registered,
     },
     loyalty: {
       ...config.loyalty,
@@ -109,7 +117,66 @@ export function displayFrom(config: VaultConfig): DisplaySettings {
   }
 }
 
-/** Everything the Sell and Cash screens read from the admin-only collections. */
+/**
+ * The seed's EPOS defaults (pb_migrations/1789820800_epos_foundation.js).
+ * Kept in step with the migration by hand: they are what a fresh shop has,
+ * and what fills any gap a hand-edited settings row leaves.
+ */
+export const EPOS_DEFAULTS: Omit<EposConfig, "permissions"> = {
+  discount_limit_pct: 10,
+  require_card_last4: true,
+  auto_lock_minutes: 5,
+  quick_cash: [500, 1000, 2000, 5000],
+  default_float: 10000,
+  z_requires_card_total: true,
+  card_provider: "manual_tide",
+  receipt: {
+    header: "",
+    footer: "Thank you for shopping with GG Entertainment.",
+    returns_policy: "",
+    show_portal_qr: true,
+  },
+}
+
+function wholeNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback
+}
+
+function flag(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback
+}
+
+/**
+ * `settings.epos` with every gap filled. The permissions go through the
+ * shared `resolvePermissions`, so an unknown capability or role in the
+ * stored table is dropped rather than trusted, and the two admin-only
+ * capabilities stay at admin whatever the row says.
+ */
+export function eposFrom(stored: EposSettingsRow | null | undefined): EposConfig {
+  const epos = stored ?? {}
+  const receipt = epos.receipt ?? {}
+  const notes = Array.isArray(epos.quick_cash)
+    ? epos.quick_cash.filter((pence) => Number.isInteger(pence) && pence > 0)
+    : null
+  return {
+    permissions: resolvePermissions(epos.permissions),
+    discount_limit_pct: wholeNumber(epos.discount_limit_pct, EPOS_DEFAULTS.discount_limit_pct),
+    require_card_last4: flag(epos.require_card_last4, EPOS_DEFAULTS.require_card_last4),
+    auto_lock_minutes: wholeNumber(epos.auto_lock_minutes, EPOS_DEFAULTS.auto_lock_minutes),
+    quick_cash: notes ? [...notes].sort((a, b) => a - b) : [...EPOS_DEFAULTS.quick_cash],
+    default_float: wholeNumber(epos.default_float, EPOS_DEFAULTS.default_float),
+    z_requires_card_total: flag(epos.z_requires_card_total, EPOS_DEFAULTS.z_requires_card_total),
+    card_provider: epos.card_provider || EPOS_DEFAULTS.card_provider,
+    receipt: {
+      header: receipt.header ?? EPOS_DEFAULTS.receipt.header,
+      footer: receipt.footer ?? EPOS_DEFAULTS.receipt.footer,
+      returns_policy: receipt.returns_policy ?? EPOS_DEFAULTS.receipt.returns_policy,
+      show_portal_qr: flag(receipt.show_portal_qr, EPOS_DEFAULTS.receipt.show_portal_qr),
+    },
+  }
+}
+
+/** Everything the counter screens read from the admin-only collections. */
 export async function getCounterConfig(): Promise<CounterConfig> {
   const config = await wireConfig()
   return {
@@ -117,10 +184,9 @@ export async function getCounterConfig(): Promise<CounterConfig> {
     // it too. Nothing here invents a threshold of its own.
     cashVarianceAlert: config.settings.cash_variance_alert ?? 0,
     cashCap: config.settings.cash_cap ?? 0,
-    // Empty when the shop has not set SumUp up. The API key stays on the
-    // server (the config route drops `api_keys` wholesale), so the merchant
-    // code is the one honest signal the Cash screen has.
-    sumupMerchantCode: config.settings.sumup?.merchant_code ?? "",
+    epos: eposFrom(config.settings.epos),
+    vatNumber: config.settings.vat_number ?? "",
+    vatRegistered: config.settings.vat_registered === true,
     loyalty: {
       programme: programmeFrom(config),
       rules: loyaltyRulesFrom(config),

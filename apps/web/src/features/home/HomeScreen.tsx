@@ -20,13 +20,18 @@ import { countHoldsEndingToday } from "@/lib/api/wants"
 import { getSparklines } from "@/lib/api/reports"
 import type { SparklineSeries, TodayStats } from "@/lib/api/types"
 
-const QUICK_ACTIONS = [
+/**
+ * The till leads, in the place Sell had: it is where the shop takes money
+ * all day. Its route is the till package's, so the paths here are plain
+ * strings rather than literals checked against a route tree.
+ */
+const QUICK_ACTIONS: { to: string; label: string }[] = [
+  { to: "/counter/till", label: "Till" },
   { to: "/counter/scan", label: "Scan" },
-  { to: "/counter/sell", label: "Sell" },
   { to: "/counter/trade", label: "Buy-in" },
   { to: "/counter/stock/new", label: "Add stock" },
-  { to: "/counter/cash", label: "Cash" },
-] as const
+  { to: "/counter/cash", label: "Cash up" },
+]
 
 interface Tile {
   label: string
@@ -233,10 +238,10 @@ export function HomeScreen() {
           Quick actions
         </MicroLabel>
         <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
-          <Button render={<Link to="/counter/scan" />} trailingArrow>
-            Scan
+          <Button render={<Link to={QUICK_ACTIONS[0]!.to} />} trailingArrow>
+            {QUICK_ACTIONS[0]!.label}
           </Button>
-          {QUICK_ACTIONS.filter((action) => action.to !== "/counter/scan").map(
+          {QUICK_ACTIONS.slice(1).map(
             (action) => (
               <Button
                 key={action.to}

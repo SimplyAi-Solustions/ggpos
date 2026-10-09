@@ -56,7 +56,7 @@ export function ReportsIndexScreen() {
           Files
         </MicroLabel>
         <p className="mb-6 max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground">
-          The SumUp and eBay files, the inventory and sales exports, and the
+          The eBay listing file, the inventory and sales exports, and the
           Card Uploader and eBay orders imports.
         </p>
         <Button variant="text" render={<Link to="/counter/exports" />}>

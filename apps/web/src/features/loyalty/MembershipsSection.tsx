@@ -152,7 +152,7 @@ export function MembershipsSection({
         title="Cancel this plan"
         description={
           cancelling
-            ? `${cancelling.customerName} goes back to the tier their points earn them. Nothing is refunded here: hand that back through SumUp.`
+            ? `${cancelling.customerName} goes back to the tier their points earn them. Nothing is refunded here: give the money back as a refund at the till.`
             : ""
         }
         confirmLabel="Cancel the plan"

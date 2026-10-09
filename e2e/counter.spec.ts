@@ -177,13 +177,39 @@ test.describe("the counter", () => {
     await expect(page).toHaveURL(/\/counter\/trade/)
   })
 
-  test("locks the counter after ten idle minutes", async ({ page }) => {
+  test("locks a registered till to the PIN screen after five idle minutes", async ({ page }) => {
+    // The demo browser is a registered till, so its lock is the PIN screen
+    // on settings.epos.auto_lock_minutes (five by default).
     await page.clock.install()
     await signIn(page)
 
-    await page.clock.fastForward("11:00")
+    await page.clock.fastForward("06:00")
 
     const lock = page.getByRole("dialog", { name: "Locked" })
+    await expect(lock).toBeVisible()
+    await expect(lock).toContainText("DC")
+
+    await lock.getByRole("button", { name: "Demo Counter", exact: true }).click()
+    await page.keyboard.type("0000")
+    await expect(lock.getByText("That PIN is not right. 4 tries left.")).toBeVisible()
+
+    await page.keyboard.type("2580")
+    await expect(lock).toBeHidden()
+  })
+
+  test("locks any other browser with the password after ten idle minutes", async ({ page }) => {
+    // A browser that is not a till keeps the password lock, as before.
+    await page.addInitScript(() => {
+      window.sessionStorage.setItem("gg-demo-device", "none")
+    })
+    await page.clock.install()
+    await signIn(page)
+
+    await page.clock.fastForward("06:00")
+    const lock = page.getByRole("dialog", { name: "Locked" })
+    await expect(lock).toHaveCount(0)
+
+    await page.clock.fastForward("05:00")
     await expect(lock).toBeVisible()
     await expect(lock).toContainText("DC")
 

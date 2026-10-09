@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest"
 
 import { setDataMode } from "@/lib/api/mode"
-import { getCounterConfig, tiersFrom } from "@/lib/api/config"
+import { EPOS_DEFAULTS, eposFrom, getCounterConfig, tiersFrom } from "@/lib/api/config"
 import { DEMO_SETTINGS } from "@/lib/api/demo/store"
 import type { VaultConfig } from "@/lib/api/types"
 
@@ -80,6 +80,35 @@ describe("the counter's configuration", () => {
     expect(tiersFrom(config)[0]?.perks).toEqual([
       { type: "points_multiplier", value: 2 },
     ])
+  })
+
+  it("carries the till's settings, the seed's defaults filling every gap", async () => {
+    const config = await getCounterConfig()
+    expect(config.epos.auto_lock_minutes).toBe(5)
+    expect(config.epos.default_float).toBe(10000)
+    expect(config.epos.quick_cash).toEqual([500, 1000, 2000, 5000])
+    expect(config.epos.permissions.z_report).toBe("manager")
+    expect(config.vatNumber).toBe("")
+
+    const bare = eposFrom(undefined)
+    expect(bare).toEqual({ ...EPOS_DEFAULTS, permissions: bare.permissions })
+    expect(bare.permissions.refund).toBe("manager")
+  })
+
+  it("never trusts a stored permissions table past the shared rules", () => {
+    const epos = eposFrom({
+      permissions: { refund: "staff", settings_manage: "staff", nonsense: "admin", no_sale: "owner" },
+      quick_cash: [2000, -5, 500, 1.5],
+      auto_lock_minutes: -1,
+    })
+    expect(epos.permissions.refund).toBe("staff")
+    // The admin-only pair stays at admin whatever the row says.
+    expect(epos.permissions.settings_manage).toBe("admin")
+    // An unknown role is ignored rather than trusted.
+    expect(epos.permissions.no_sale).toBe("manager")
+    // Notes are whole pence above zero, smallest first.
+    expect(epos.quick_cash).toEqual([500, 2000])
+    expect(epos.auto_lock_minutes).toBe(5)
   })
 
   it("sorts the tiers the way the shop ordered them", () => {

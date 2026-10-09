@@ -137,8 +137,9 @@ test.describe("the first-sign-in password change", () => {
       page.getByText("The two new passwords are different. Type the same one twice.")
     ).toBeVisible()
 
+    // The sentence POST /api/vault/staff/me/password answers with.
     await fillChange(page, "not-the-temporary-one", NEW_PASSWORD, NEW_PASSWORD)
-    await expect(page.getByText("That password is not right. Try again.")).toBeVisible()
+    await expect(page.getByText("That is not your current password.")).toBeVisible()
     await expect(page).toHaveURL(/\/counter\/password$/)
   })
 
@@ -177,5 +178,21 @@ test.describe("the first-sign-in password change", () => {
     await expect(page.getByText("Choose a password only you know.")).toBeVisible()
     await expect(page.getByText("This is your first sign-in.")).toHaveCount(0)
     await expect(page.getByRole("button", { name: /Account menu/ })).toBeVisible()
+  })
+
+  test("lets a member of staff change their own password, not only an admin", async ({
+    page,
+  }) => {
+    await signIn(page, "sam@ggentertainment.co.uk", "ggvault-staff")
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+
+    await page.keyboard.press("ControlOrMeta+k")
+    const palette = page.getByRole("dialog")
+    await palette.getByText("Change password", { exact: true }).click()
+    await expect(page).toHaveURL(/\/counter\/password$/)
+
+    await fillChange(page, "ggvault-staff", NEW_PASSWORD, NEW_PASSWORD)
+    await expect(page).toHaveURL(/\/counter$/)
+    await expect(page.getByRole("button", { name: "Account menu for Sam Bell" })).toBeVisible()
   })
 })

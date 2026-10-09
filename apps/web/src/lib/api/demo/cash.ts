@@ -1,6 +1,11 @@
 /**
- * The cash drawer, answered from memory. `expected` is computed exactly as
- * docs/api-contract.md defines it, so the demo variance is the real sum.
+ * The legacy cash drawer, answered from memory. `expected` is computed
+ * exactly as docs/api-contract.md defines it, so the demo variance is the
+ * real sum.
+ *
+ * Cashing up runs on the demo till now (`demo/till-session.ts`). What is
+ * left here is what the old Sell screen's demo sales, their tests and
+ * Home's open-session line still read; it goes when they move to the till.
  */
 import { DEMO_STAFF } from "@/lib/api/fixtures"
 import {
@@ -113,11 +118,4 @@ export function close(
       DEMO_SETTINGS.cash_variance_alert > 0 &&
       Math.abs(variance) > DEMO_SETTINGS.cash_variance_alert,
   }
-}
-
-export function listSessions(): CashSessionRecord[] {
-  ensureSeeded()
-  return [...demoCashSessions].sort((a, b) =>
-    (b.opened_at ?? "").localeCompare(a.opened_at ?? "")
-  )
 }

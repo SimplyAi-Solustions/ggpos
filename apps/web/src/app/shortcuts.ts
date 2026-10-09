@@ -2,6 +2,7 @@ import * as React from "react"
 import { useNavigate } from "@tanstack/react-router"
 
 import { focusScanField, focusSearchField } from "@/app/focus-registry"
+import { isCounterLocked } from "@/features/lock/lock-store"
 
 /**
  * The counter is a keyboard-first desktop screen. Nothing here fires while
@@ -23,6 +24,7 @@ export interface Shortcut {
 }
 
 export const SHORTCUTS: Shortcut[] = [
+  { keys: "T", label: "Till", group: "Go to" },
   { keys: "S", label: "Scan", group: "Go to" },
   { keys: "N", label: "Add stock", group: "Go to" },
   { keys: "B", label: "New buy-in", group: "Go to" },
@@ -30,6 +32,9 @@ export const SHORTCUTS: Shortcut[] = [
   { keys: "K", label: "Command palette", group: "Find", modifier: true },
   { keys: "?", label: "Keyboard shortcuts", group: "Help" },
 ]
+
+/** The till's own route, which its package owns; a plain string here on purpose. */
+const TILL_PATH: string = "/counter/till"
 
 /** What the modifier is called on this machine, for the keys that need one. */
 export function modifierKey(): string {
@@ -84,6 +89,8 @@ export function useShortcuts({ openPalette, openShortcuts }: ShortcutHandlers) {
 
     function handle(event: KeyboardEvent) {
       if (event.repeat) return
+      // A locked counter answers to nothing but its own lock screen.
+      if (isCounterLocked()) return
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault()
@@ -106,6 +113,11 @@ export function useShortcuts({ openPalette, openShortcuts }: ShortcutHandlers) {
       if (inScan) return
 
       switch (event.key) {
+        case "t":
+        case "T":
+          event.preventDefault()
+          void navigate({ to: TILL_PATH })
+          return
         case "s":
         case "S":
           event.preventDefault()

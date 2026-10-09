@@ -74,29 +74,28 @@ test.describe("exports and imports", () => {
     ).toBeVisible()
   })
 
-  test("downloads the SumUp file with its own column headings", async ({ page }) => {
+  test("downloads the inventory file and offers no SumUp file", async ({ page }) => {
     await signIn(page)
     await openExports(page)
+
+    // SumUp is gone (docs/api-contract-epos.md, section 5): no file for it,
+    // and no word of it on the screen.
+    await expect(page.getByTestId("export-sumup")).toHaveCount(0)
+    await expect(page.getByText(/SumUp/)).toHaveCount(0)
 
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page
-        .getByTestId("export-sumup")
-        .getByRole("button", { name: "Download the SumUp items file" })
+        .getByTestId("export-inventory")
+        .getByRole("button", { name: "Download the Inventory file" })
         .click(),
     ])
     // One black button on this screen, and it is the import.
     await expect(page.locator("[data-variant='circle']")).toHaveCount(0)
-    expect(download.suggestedFilename()).toBe("gg-vault-sumup.csv")
-
-    const path = await download.path()
-    const text = path ? await (await import("node:fs/promises")).readFile(path, "utf8") : ""
-    expect(text.replace(/^\ufeff/, "").split("\r\n")[0]).toBe(
-      "Item name,Description,Category,Price,SKU,Barcode,Quantity,Tax rate (%),Variations,Option set 1,Option set 2,Option set 3,Option set 4,Modifiers,Display colour"
-    )
+    expect(download.suggestedFilename()).toBe("gg-vault-inventory.csv")
 
     // The row remembers that it has been taken, on this computer.
-    await expect(page.getByTestId("export-sumup")).toContainText("Last taken")
+    await expect(page.getByTestId("export-inventory")).toContainText("Last taken")
   })
 
   test("previews a Card Uploader file, imports it and leaves a review queue", async ({
