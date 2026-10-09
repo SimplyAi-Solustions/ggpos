@@ -179,6 +179,8 @@ already exempts this folder from `react-refresh/only-export-components`.
 | `Select` | A choice from a short list. Same underline plus a 1.25 stroke chevron that flips when open. The popup is a paper panel: hairline edge, 4px radius, `shadow-panel`. |
 | `Switch` | A binary setting. Ink track when on, `#e8e8e2` when off, paper thumb, with a 48px hit area below 640px that does not change its drawn size. Never volt. |
 | `Button` | `block` is the one primary action per screen: a 56px black block, Space Mono 700 uppercase .16em at 12px, minimum 176px wide, optional trailing arrow. `circle` is the same action as a 56px disc beside a `MicroLabel`. `text` and `text-destructive` are the secondary and destructive links, with an underline that grows from the left on hover. `ghost-icon` is a bare 40px icon target. `loading` swaps the arrow for the ring and blocks further presses. |
+| `Button variant="key"`, `size="till"` | `key` is the till's choice key: tenders, receipt choices, quick cash notes. A 4px hairline-edged block on the canvas with the block's tracked label in ink, ink fill when `aria-pressed`. Several sit side by side, so none is the screen's one black block. `size="till"` makes a `block` or a `key` 72px tall, on the till, the lock screen and the customer display only. |
+| `Keypad`, `PinDots`, `applyKey` | The till's number pad (`components/ui/keypad.tsx`): twelve 72px keys drawn as a grid of hairlines, Jost 300 digits at 32px. `mode="pin"` has Clear and Backspace beside 0, `mode="money"` has 00 and Backspace. `captureKeyboard` takes digits from the Mac's keyboard too. `PinDots` draws a PIN's progress as ink dots, never digits. `applyKey` is the next value for a key press. |
 | `Chip`, `ChipGroup` | Condition, finish, rarity, filters. Hairline pill, Jost 500 13px, ink fill with paper text when pressed, 32px tall and 48px below 640px (the pill grows rather than taking an invisible hit area, because chips wrap and an overlay would send a tap to the wrong row). `ChipGroup` is a Base UI toggle group: arrow keys move, `multiple` allows several. Never yellow. |
 | `MicroLabel`, `SectionHeading`, `Hint` | The three micro-text tones: label (`#3d3d3a`), section heading (ink, 32px above), helper (`#73736d`). |
 | `PageTitle`, `Lede` | The one Anton line and its single grey sentence, 56ch maximum. |
@@ -373,7 +375,171 @@ and by review. The kit page and both rebuilt screens report zero findings at
 
 ---
 
-## 10. Verifying a change
+## 10. The till
+
+The till (`/counter/till`), the lock screen and cashing up are the shop's
+everyday EPOS (`docs/EPOS-PLAN.md`). They keep every rule above: the canvas
+and grain, ink on paper, hairlines rather than boxes, Space Mono labels, one
+Anton line, volt in its six places and nowhere else. What changes is scale
+and density, because the till is used standing up, with a thumb, on a
+1180 x 820 Android tablet and a Mac, and is read from across a counter. The
+two reference screens a till is checked against are the tablet at 1180 x 820
+landscape and the Mac at 1440 x 900; a phone at 390 x 844 must still work.
+
+### Frame
+
+- The till is the one counter screen that is **full-bleed**. The counter
+  shell drops its header, nav, footer, thumb bar and 1,040px column for
+  `/counter/till*` and renders the screen alone; the wedge listener, the
+  command palette, the shortcuts and the lock stay.
+- **Till header**, 64px, hairline-soft bottom edge: the G mark (`GMark`,
+  24px) linking back to Home; the register and session in Space Mono
+  ("COUNTER" and "OPEN SINCE 09:02", or "CLOSED"); on the right the parked
+  tickets count, the staff member's initials in an `Avatar`, a Lock key
+  (`LockIcon`, 56px target) and a `Menu` for X report, Cash up, No sale,
+  Paid in or out, Returns, Reports and Back to the counter.
+- From 900px: **two panes**. The catalogue on the left takes the rest; the
+  ticket on the right is 400px wide (440px from 1280px), divided from it by
+  one vertical hairline-soft rule, full height. No panel colour: both panes
+  are the canvas.
+- Below 900px: the same two panes as two tabs under the header, "Items" and
+  "Ticket", the ticket tab carrying its line count; the ticket's total and
+  its Pay button dock to the bottom of both tabs.
+- Every target on the till is at least 56px; keypad keys, tender keys and
+  the Pay button are 72px (`size="till"`).
+
+### Catalogue pane
+
+- At the top, the scan field (`Input size="scan"`, barcode glyph, "Scan or
+  search", hint "PRESS ENTER") and under it the **category rail**: one row of
+  `Chip`s at 48px whatever the width, scrolling sideways, "Quick" first. The
+  chosen chip is ink. A category is never volt.
+- **Tiles** fill the space below in a grid of `minmax(136px, 1fr)` columns
+  with 12px gaps. A tile is a 4px-radius hairline-soft outline on the canvas
+  (the one place a till surface has an edge, because a touch target needs
+  one), at least 136px tall: the `ProductImage` at 88px tall in its own
+  ratio and finish, then the name in Jost 500 15px (two lines, then an
+  ellipsis), then the price in Jost 500 15px `tnum`. Pressed, the tile tints
+  to `--row-hover` for 150ms. A till product with no image shows its Lucide
+  icon at 28px and 1.25 stroke in place of the image, never a grey box. An
+  open-price product says "Key price" where the price would be. A stock line
+  that is out shows "Out of stock" in `Hint` and is disabled.
+- Search results replace the tiles with the same tiles, or with the
+  hairline `Table` rows when the search is for serialised stock (singles,
+  graded, retro), where the SKU and condition matter more than the picture.
+
+### Ticket pane
+
+- At the top, the customer: "Add customer" as a `text` button with the
+  person icon, or once attached, the name in Jost 500 16px, the code in
+  Space Mono 13px, the tier as a volt `Badge` and the points balance in
+  Jost. Removing the customer is a `ghost-icon` cross.
+- **Lines** are hairline rows: the title in Jost 400 16px (two lines at
+  most), the SKU or "Till product" and any note in Space Mono 13px beneath,
+  a quantity stepper (thin minus and plus, 48px each) for anything with a
+  quantity above one, and the line total right-aligned in Jost 500 16px
+  `tnum`, with the was-price struck through above it when discounted. A
+  line just added flashes the scan pulse (`useScanPulse`). Tapping a line
+  opens its sheet: quantity, discount (percent or pounds), price, note,
+  Remove. A removed line is logged as a void.
+- Under the lines, a ticket discount line and a VAT line (only when VAT
+  registered), then "Earns N points" when a customer is attached, each a
+  `MicroLabel` with the figure in Jost `tnum` on the right.
+- The **total** is the screen's one Anton line: 40px on the tablet and the
+  Mac, 32px on a phone, `tnum`, right-aligned over the Pay button. It is the
+  largest type in the app because it is read across the counter.
+- **Pay** is the one black block, 72px, the full width of the pane. Above it,
+  three `text` actions: Park, Discount, Clear ticket.
+- An empty ticket shows one grey sentence, "Scan an item or tap a tile",
+  and nothing else.
+
+### Paying
+
+- Pay turns the catalogue pane into the **tender pane**; the ticket stays
+  where it is, read-only, so staff and customer can both still see what is
+  being paid for.
+- The Anton line moves to the tender pane and becomes **what is left to
+  pay** ("£40.00", with "TO PAY" above it as a `MicroLabel`). The ticket's
+  total drops to Jost 500 20px. There is never a second Anton figure.
+- Tenders are a row of `Button variant="key" size="till"`: Cash, Card,
+  Store credit, Points, Voucher, and Trade-in from wave 2. Each opens its
+  step under the row:
+  - **Cash**: the quick notes (`key` buttons: Exact, then the next notes up
+    from settings, such as £5, £10, £20, £50), the `Keypad` in money mode
+    beside them on a tablet and under them on a phone, and the amount handed
+    over in a scan-sized underline field. "Take cash" is the step's block.
+  - **Card**: one sentence, "Key £40.00 on the Tide reader.", then the last
+    four digits in a Space Mono 28px underline field (numeric keyboard,
+    four characters) and two actions: "Approved" (the block) and
+    "Declined" (`text`). Nothing on the screen suggests the till talks to
+    the reader, because it does not.
+  - **Store credit** and **Points**: the balance, the most that can go on
+    this ticket, the amount with the keypad, and the block.
+- Tenders taken are hairline rows under the tender keys ("Cash £20.00",
+  "Card ending 4242 £20.00"), each removable until the sale completes. The
+  amount left updates in Anton as each lands. When it reaches zero the sale
+  completes on its own.
+- **Done**: the `Seal`, the change due as the Anton line when there is
+  change ("CHANGE" above "£10.00"), otherwise the sale number as the outcome
+  code in Space Mono 20px; "Earns 120 points" in Jost; then the receipt
+  choices as four `key` buttons, Print, Email, Gift receipt, No receipt; and
+  "New sale" as the block. Choosing a receipt starts a new sale.
+
+### Lock screen and approval
+
+- **Lock** is a full-screen paper panel over the till, not a dialog over a
+  dimmed page. Top left, the register name as a `MicroLabel`; top right the
+  time in Space Mono. "LOCKED" is the Anton line, with the lede "Tap your
+  name and enter your PIN."
+- The **roster** is a grid of 96px tiles: an `Avatar` at 64px with the
+  initials in Space Mono 20px, the first name in Jost 15px under it. A
+  member with no PIN or a locked PIN is shown, with "No PIN" or "PIN
+  locked" in `Hint`, and opens the password sign-in instead.
+- Tapping a name replaces the roster with the **PIN step**: the name, the
+  `PinDots` for their PIN's length, and the `Keypad` in PIN mode, 72px
+  keys, at most 320px wide, centred. The last digit submits; there is no
+  Enter key. A wrong PIN clears the dots and says "That PIN is not right. 3
+  tries left." under them in `--destructive`. "Use password instead" is a
+  `text` button. "Back" returns to the roster.
+- Switching user keeps the ticket exactly as it was.
+- **Manager approval** is a `Dialog`, the one till task that needs protected
+  focus: the sentence "A manager needs to approve this.", what it is in Jost
+  ("Give a refund of £12.00"), the approvers who can (avatars, 64px), then
+  the PIN step as above. On a phone it is the bottom sheet.
+- An unregistered device shows no lock screen and no roster: the password
+  idle lock, as before, and the till asks a manager to register the device.
+
+### Cashing up
+
+- Cashing up is a counter screen in the normal column, not full-bleed, so it
+  reads like the rest of the counter's records. The page title is the Anton
+  line ("CASH UP").
+- **The count** is a hairline `Table`: one row per denomination, £50 down to
+  1p, with the denomination in Jost 500, a count field (underline, numeric
+  keyboard, 56px tall) and the row total right-aligned `tnum`. The running
+  total sits under it in Jost 500 20px. On the tablet the `Keypad` in PIN
+  mode sits beside the table and types into the focused count.
+- The Z count is **blind**: nothing on the screen says what the drawer
+  should hold until the count is saved. The report then shows the variance
+  in words and figures ("£2.40 over", "£1.10 short", "Exact"), never in
+  colour alone.
+- The Tide card total is one money field with the sentence "From the Tide
+  app, Payments, today's card total." under it.
+- X and Z reports on screen are a 420px column laid out like the printed
+  receipt: `MicroLabel` headings, Jost rows with figures right-aligned
+  `tnum`, hairlines between groups. Print and Back are the actions.
+
+### Receipts
+
+Receipts are drawn for an 80 mm printer at 576 pixels, black on white, in
+the app's own fonts: the shop name in Anton, labels and codes in Space Mono,
+lines in Jost, the total in Anton, the receipt number as a Code 128 barcode
+and the My Vault QR at the foot. No grey, no volt, no grain: thermal paper
+has one colour.
+
+---
+
+## 11. Verifying a change
 
 ```bash
 pnpm --filter web typecheck

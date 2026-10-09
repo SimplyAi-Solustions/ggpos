@@ -35,18 +35,24 @@ export const Collections = {
 	Memberships: "memberships",
 	Notes: "notes",
 	Notifications: "notifications",
+	ParkedTickets: "parked_tickets",
 	PerkUsage: "perk_usage",
 	Platforms: "platforms",
 	PointsLedger: "points_ledger",
 	PriceSnapshots: "price_snapshots",
 	PricingRules: "pricing_rules",
+	PrintJobs: "print_jobs",
+	Printers: "printers",
 	PushSubscriptions: "push_subscriptions",
 	QuoteMessages: "quote_messages",
 	Quotes: "quotes",
 	Referrals: "referrals",
+	RegisterDevices: "register_devices",
+	Registers: "registers",
 	RetroTitles: "retro_titles",
 	RewardRedemptions: "reward_redemptions",
 	SaleLines: "sale_lines",
+	SaleTenders: "sale_tenders",
 	Sales: "sales",
 	SavedReports: "saved_reports",
 	Settings: "settings",
@@ -55,6 +61,12 @@ export const Collections = {
 	StockCounts: "stock_counts",
 	SumupCheckouts: "sumup_checkouts",
 	SumupTransactions: "sumup_transactions",
+	TillCategories: "till_categories",
+	TillEvents: "till_events",
+	TillKeys: "till_keys",
+	TillOverrides: "till_overrides",
+	TillProducts: "till_products",
+	TillReports: "till_reports",
 	TradeInLines: "trade_in_lines",
 	TradeIns: "trade_ins",
 	Users: "users",
@@ -210,12 +222,16 @@ export const CashMovementsTypeOptions = {
 	"refund": "refund",
 	"bank_drop": "bank_drop",
 	"adjustment": "adjustment",
+	"paid_in": "paid_in",
+	"paid_out": "paid_out",
 } as const
 export type CashMovementsTypeOptions = typeof CashMovementsTypeOptions[keyof typeof CashMovementsTypeOptions]
 export type CashMovementsRecord = {
 	amount?: number
+	approver?: RecordIdString
 	created: IsoAutoDateString
 	id: string
+	reason?: string
 	ref?: string
 	session: RecordIdString
 	staff?: RecordIdString
@@ -223,9 +239,13 @@ export type CashMovementsRecord = {
 	updated: IsoAutoDateString
 }
 
-export type CashSessionsRecord = {
+export type CashSessionsRecord<Tclosing_counts = unknown, Topening_counts = unknown> = {
+	card_reported_total?: number
+	card_till_total?: number
+	card_variance?: number
 	closed_at?: IsoDateString
 	closed_by?: RecordIdString
+	closing_counts?: null | Tclosing_counts
 	counted?: number
 	created: IsoAutoDateString
 	expected?: number
@@ -234,8 +254,11 @@ export type CashSessionsRecord = {
 	notes?: string
 	opened_at: IsoAutoDateString
 	opened_by?: RecordIdString
+	opening_counts?: null | Topening_counts
+	register?: RecordIdString
 	updated: IsoAutoDateString
 	variance?: number
+	z_report?: RecordIdString
 }
 
 export type CountersRecord = {
@@ -706,6 +729,19 @@ export type NotificationsRecord = {
 	updated: IsoAutoDateString
 }
 
+export type ParkedTicketsRecord<Titem_ids = unknown, Tpayload = unknown> = {
+	created: IsoAutoDateString
+	customer?: RecordIdString
+	id: string
+	item_ids?: null | Titem_ids
+	label: string
+	payload?: null | Tpayload
+	register: RecordIdString
+	staff?: RecordIdString
+	total?: number
+	updated: IsoAutoDateString
+}
+
 export type PerkUsageRecord = {
 	created: IsoAutoDateString
 	customer: RecordIdString
@@ -822,6 +858,69 @@ export type PricingRulesRecord = {
 	updated: IsoAutoDateString
 }
 
+export const PrintJobsKindOptions = {
+	"receipt": "receipt",
+	"gift_receipt": "gift_receipt",
+	"refund_receipt": "refund_receipt",
+	"x_report": "x_report",
+	"z_report": "z_report",
+	"drawer": "drawer",
+	"test": "test",
+} as const
+export type PrintJobsKindOptions = typeof PrintJobsKindOptions[keyof typeof PrintJobsKindOptions]
+
+export const PrintJobsFormatOptions = {
+	"image/png": "image/png",
+	"text/plain": "text/plain",
+	"application/vnd.star.line": "application/vnd.star.line",
+} as const
+export type PrintJobsFormatOptions = typeof PrintJobsFormatOptions[keyof typeof PrintJobsFormatOptions]
+
+export const PrintJobsStatusOptions = {
+	"queued": "queued",
+	"printing": "printing",
+	"done": "done",
+	"failed": "failed",
+	"cancelled": "cancelled",
+} as const
+export type PrintJobsStatusOptions = typeof PrintJobsStatusOptions[keyof typeof PrintJobsStatusOptions]
+export type PrintJobsRecord = {
+	attempts?: number
+	claimed_at?: IsoDateString
+	created: IsoAutoDateString
+	created_by?: RecordIdString
+	cut?: boolean
+	drawer?: boolean
+	error?: string
+	file?: FileNameString
+	format: PrintJobsFormatOptions
+	id: string
+	kind: PrintJobsKindOptions
+	printed_at?: IsoDateString
+	printer: RecordIdString
+	ref?: string
+	register?: RecordIdString
+	status: PrintJobsStatusOptions
+	text?: string
+	updated: IsoAutoDateString
+}
+
+export type PrintersRecord<Tencodings = unknown> = {
+	active?: boolean
+	created: IsoAutoDateString
+	encodings?: null | Tencodings
+	id: string
+	last_poll_at?: IsoDateString
+	last_status?: string
+	mac: string
+	model?: string
+	name: string
+	paper_width?: number
+	register?: RecordIdString
+	token_hash: string
+	updated: IsoAutoDateString
+}
+
 export type PushSubscriptionsRecord<Tkeys = unknown> = {
 	created: IsoAutoDateString
 	customer?: RecordIdString
@@ -896,6 +995,28 @@ export type ReferralsRecord = {
 	updated: IsoAutoDateString
 }
 
+export type RegisterDevicesRecord = {
+	created: IsoAutoDateString
+	created_by?: RecordIdString
+	id: string
+	label: string
+	last_seen?: IsoDateString
+	register: RecordIdString
+	revoked_at?: IsoDateString
+	secret_hash: string
+	updated: IsoAutoDateString
+}
+
+export type RegistersRecord = {
+	active?: boolean
+	created: IsoAutoDateString
+	id: string
+	location?: RecordIdString
+	name: string
+	sort?: number
+	updated: IsoAutoDateString
+}
+
 export const RetroTitlesRegionOptions = {
 	"PAL": "PAL",
 	"NTSC": "NTSC",
@@ -938,6 +1059,7 @@ export type RewardRedemptionsRecord = {
 export const SaleLinesTaxSchemeOptions = {
 	"margin": "margin",
 	"standard": "standard",
+	"exempt": "exempt",
 } as const
 export type SaleLinesTaxSchemeOptions = typeof SaleLinesTaxSchemeOptions[keyof typeof SaleLinesTaxSchemeOptions]
 
@@ -950,15 +1072,47 @@ export type SaleLinesRecord = {
 	created: IsoAutoDateString
 	discount?: number
 	id: string
-	item: RecordIdString
+	item?: RecordIdString
+	note?: string
+	product?: RecordIdString
 	qty?: number
 	refunded_qty?: number
 	sale: RecordIdString
 	status?: SaleLinesStatusOptions
 	tax_scheme?: SaleLinesTaxSchemeOptions
+	title?: string
 	unit_price?: number
 	updated: IsoAutoDateString
+	vat_amount?: number
 	vat_rate?: number
+}
+
+export const SaleTendersMethodOptions = {
+	"cash": "cash",
+	"card_tide": "card_tide",
+	"card_other": "card_other",
+	"store_credit": "store_credit",
+	"points": "points",
+	"part_exchange": "part_exchange",
+	"gift_card": "gift_card",
+	"sumup_card": "sumup_card",
+} as const
+export type SaleTendersMethodOptions = typeof SaleTendersMethodOptions[keyof typeof SaleTendersMethodOptions]
+export type SaleTendersRecord = {
+	amount?: number
+	card_last4?: string
+	change?: number
+	created: IsoAutoDateString
+	id: string
+	method: SaleTendersMethodOptions
+	reference?: string
+	refund_ref?: string
+	register?: RecordIdString
+	sale: RecordIdString
+	session?: RecordIdString
+	staff?: RecordIdString
+	tendered?: number
+	updated: IsoAutoDateString
 }
 
 export const SalesDiscountSourceOptions = {
@@ -974,6 +1128,10 @@ export const SalesPaymentOptions = {
 	"store_credit": "store_credit",
 	"points": "points",
 	"mixed": "mixed",
+	"card_tide": "card_tide",
+	"card_other": "card_other",
+	"part_exchange": "part_exchange",
+	"gift_card": "gift_card",
 } as const
 export type SalesPaymentOptions = typeof SalesPaymentOptions[keyof typeof SalesPaymentOptions]
 
@@ -1004,14 +1162,18 @@ export type SalesRecord<Tpayment_split = unknown> = {
 	payment?: SalesPaymentOptions
 	payment_split?: null | Tpayment_split
 	points_earned?: number
+	refund_count?: number
 	refunded_total?: number
+	register?: RecordIdString
 	staff?: RecordIdString
 	status?: SalesStatusOptions
 	subtotal?: number
 	sumup_checkout?: RecordIdString
 	sumup_ref?: string
 	total?: number
+	trade_in?: RecordIdString
 	updated: IsoAutoDateString
+	vat_total?: number
 }
 
 export const SavedReportsScheduleOptions = {
@@ -1044,7 +1206,7 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
+export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tepos = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
@@ -1056,6 +1218,7 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	email?: null | Temail
 	email_api_key?: string
 	email_provider?: SettingsEmailProviderOptions
+	epos?: null | Tepos
 	holds?: null | Tholds
 	id: string
 	id_photo_retention_months?: number
@@ -1079,11 +1242,13 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	source_priority?: null | Tsource_priority
 	sumup?: null | Tsumup
 	updated: IsoAutoDateString
+	vat_number?: string
 	vat_registered?: boolean
 }
 
 export const StaffRoleOptions = {
 	"admin": "admin",
+	"manager": "manager",
 	"staff": "staff",
 } as const
 export type StaffRoleOptions = typeof StaffRoleOptions[keyof typeof StaffRoleOptions]
@@ -1096,7 +1261,11 @@ export type StaffRecord = {
 	must_change_password?: boolean
 	name: string
 	password: string
+	pin_failures?: number
 	pin_hash?: string
+	pin_length?: number
+	pin_locked?: boolean
+	pin_set_at?: IsoDateString
 	role: StaffRoleOptions
 	tokenKey: string
 	updated: IsoAutoDateString
@@ -1173,6 +1342,115 @@ export type SumupTransactionsRecord<Tproducts = unknown> = {
 	sumup_id: string
 	timestamp?: IsoDateString
 	transaction_code?: string
+	updated: IsoAutoDateString
+}
+
+export type TillCategoriesRecord<Tfilter = unknown> = {
+	active?: boolean
+	created: IsoAutoDateString
+	filter?: null | Tfilter
+	id: string
+	name: string
+	sort?: number
+	updated: IsoAutoDateString
+}
+
+export const TillEventsKindOptions = {
+	"void_line": "void_line",
+	"void_ticket": "void_ticket",
+	"no_sale": "no_sale",
+	"override": "override",
+	"reprint": "reprint",
+} as const
+export type TillEventsKindOptions = typeof TillEventsKindOptions[keyof typeof TillEventsKindOptions]
+export type TillEventsRecord<Tdetail = unknown> = {
+	amount?: number
+	approver?: RecordIdString
+	created: IsoAutoDateString
+	detail?: null | Tdetail
+	id: string
+	kind: TillEventsKindOptions
+	register: RecordIdString
+	session?: RecordIdString
+	staff?: RecordIdString
+	updated: IsoAutoDateString
+}
+
+export type TillKeysRecord = {
+	category: RecordIdString
+	created: IsoAutoDateString
+	id: string
+	item?: RecordIdString
+	label?: string
+	position?: number
+	product?: RecordIdString
+	updated: IsoAutoDateString
+}
+
+export type TillOverridesRecord<Tcontext = unknown> = {
+	approver: RecordIdString
+	capability: string
+	context?: null | Tcontext
+	created: IsoAutoDateString
+	device?: RecordIdString
+	expires_at: IsoDateString
+	id: string
+	register?: RecordIdString
+	requested_by: RecordIdString
+	token_hash: string
+	updated: IsoAutoDateString
+	used_at?: IsoDateString
+	used_for?: string
+}
+
+export const TillProductsKindOptions = {
+	"service": "service",
+	"open_price": "open_price",
+	"membership": "membership",
+	"deposit": "deposit",
+} as const
+export type TillProductsKindOptions = typeof TillProductsKindOptions[keyof typeof TillProductsKindOptions]
+
+export const TillProductsTaxSchemeOptions = {
+	"standard": "standard",
+	"margin": "margin",
+	"exempt": "exempt",
+} as const
+export type TillProductsTaxSchemeOptions = typeof TillProductsTaxSchemeOptions[keyof typeof TillProductsTaxSchemeOptions]
+export type TillProductsRecord = {
+	active?: boolean
+	barcode?: string
+	category?: RecordIdString
+	created: IsoAutoDateString
+	id: string
+	image?: FileNameString
+	kind: TillProductsKindOptions
+	membership_months?: number
+	membership_tier?: RecordIdString
+	name: string
+	price?: number
+	sort?: number
+	tax_scheme?: TillProductsTaxSchemeOptions
+	updated: IsoAutoDateString
+	vat_rate?: number
+}
+
+export const TillReportsTypeOptions = {
+	"x": "x",
+	"z": "z",
+} as const
+export type TillReportsTypeOptions = typeof TillReportsTypeOptions[keyof typeof TillReportsTypeOptions]
+export type TillReportsRecord<Tdata = unknown> = {
+	created: IsoAutoDateString
+	created_by?: RecordIdString
+	data?: null | Tdata
+	id: string
+	number?: number
+	period_end?: IsoDateString
+	period_start?: IsoDateString
+	register: RecordIdString
+	session: RecordIdString
+	type: TillReportsTypeOptions
 	updated: IsoAutoDateString
 }
 
@@ -1280,6 +1558,7 @@ export type TradeInsRecord = {
 	payout_credit?: number
 	payout_type?: TradeInsPayoutTypeOptions
 	quote?: RecordIdString
+	sale?: RecordIdString
 	seller_address?: string
 	seller_id_expiry?: IsoDateString
 	seller_id_last4?: string
@@ -1337,7 +1616,7 @@ export type AuditLogResponse<Tmeta = unknown, Texpand = unknown> = Required<Audi
 export type CardSetsResponse<Texternal_ids = unknown, Texpand = unknown> = Required<CardSetsRecord<Texternal_ids>> & BaseSystemFields<Texpand>
 export type CardsResponse<Texternal_ids = unknown, Tfinishes_available = unknown, Tprices = unknown, Texpand = unknown> = Required<CardsRecord<Texternal_ids, Tfinishes_available, Tprices>> & BaseSystemFields<Texpand>
 export type CashMovementsResponse<Texpand = unknown> = Required<CashMovementsRecord> & BaseSystemFields<Texpand>
-export type CashSessionsResponse<Texpand = unknown> = Required<CashSessionsRecord> & BaseSystemFields<Texpand>
+export type CashSessionsResponse<Tclosing_counts = unknown, Topening_counts = unknown, Texpand = unknown> = Required<CashSessionsRecord<Tclosing_counts, Topening_counts>> & BaseSystemFields<Texpand>
 export type CountersResponse<Texpand = unknown> = Required<CountersRecord> & BaseSystemFields<Texpand>
 export type CreditLedgerResponse<Texpand = unknown> = Required<CreditLedgerRecord> & BaseSystemFields<Texpand>
 export type CsvImportsResponse<Terrors = unknown, Tresolved_rows = unknown, Texpand = unknown> = Required<CsvImportsRecord<Terrors, Tresolved_rows>> & BaseSystemFields<Texpand>
@@ -1359,26 +1638,38 @@ export type LoyaltyTiersResponse<Tperks = unknown, Texpand = unknown> = Required
 export type MembershipsResponse<Texpand = unknown> = Required<MembershipsRecord> & BaseSystemFields<Texpand>
 export type NotesResponse<Texpand = unknown> = Required<NotesRecord> & BaseSystemFields<Texpand>
 export type NotificationsResponse<Texpand = unknown> = Required<NotificationsRecord> & BaseSystemFields<Texpand>
+export type ParkedTicketsResponse<Titem_ids = unknown, Tpayload = unknown, Texpand = unknown> = Required<ParkedTicketsRecord<Titem_ids, Tpayload>> & BaseSystemFields<Texpand>
 export type PerkUsageResponse<Texpand = unknown> = Required<PerkUsageRecord> & BaseSystemFields<Texpand>
 export type PlatformsResponse<Texpand = unknown> = Required<PlatformsRecord> & BaseSystemFields<Texpand>
 export type PointsLedgerResponse<Texpand = unknown> = Required<PointsLedgerRecord> & BaseSystemFields<Texpand>
 export type PriceSnapshotsResponse<Texpand = unknown> = Required<PriceSnapshotsRecord> & BaseSystemFields<Texpand>
 export type PricingRulesResponse<Texpand = unknown> = Required<PricingRulesRecord> & BaseSystemFields<Texpand>
+export type PrintJobsResponse<Texpand = unknown> = Required<PrintJobsRecord> & BaseSystemFields<Texpand>
+export type PrintersResponse<Tencodings = unknown, Texpand = unknown> = Required<PrintersRecord<Tencodings>> & BaseSystemFields<Texpand>
 export type PushSubscriptionsResponse<Tkeys = unknown, Texpand = unknown> = Required<PushSubscriptionsRecord<Tkeys>> & BaseSystemFields<Texpand>
 export type QuoteMessagesResponse<Texpand = unknown> = Required<QuoteMessagesRecord> & BaseSystemFields<Texpand>
 export type QuotesResponse<Tlines = unknown, Texpand = unknown> = Required<QuotesRecord<Tlines>> & BaseSystemFields<Texpand>
 export type ReferralsResponse<Texpand = unknown> = Required<ReferralsRecord> & BaseSystemFields<Texpand>
+export type RegisterDevicesResponse<Texpand = unknown> = Required<RegisterDevicesRecord> & BaseSystemFields<Texpand>
+export type RegistersResponse<Texpand = unknown> = Required<RegistersRecord> & BaseSystemFields<Texpand>
 export type RetroTitlesResponse<Texternal_ids = unknown, Texpand = unknown> = Required<RetroTitlesRecord<Texternal_ids>> & BaseSystemFields<Texpand>
 export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemptionsRecord> & BaseSystemFields<Texpand>
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
+export type SaleTendersResponse<Texpand = unknown> = Required<SaleTendersRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tepos = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Tepos, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
 export type SumupCheckoutsResponse<Texpand = unknown> = Required<SumupCheckoutsRecord> & BaseSystemFields<Texpand>
 export type SumupTransactionsResponse<Tproducts = unknown, Texpand = unknown> = Required<SumupTransactionsRecord<Tproducts>> & BaseSystemFields<Texpand>
+export type TillCategoriesResponse<Tfilter = unknown, Texpand = unknown> = Required<TillCategoriesRecord<Tfilter>> & BaseSystemFields<Texpand>
+export type TillEventsResponse<Tdetail = unknown, Texpand = unknown> = Required<TillEventsRecord<Tdetail>> & BaseSystemFields<Texpand>
+export type TillKeysResponse<Texpand = unknown> = Required<TillKeysRecord> & BaseSystemFields<Texpand>
+export type TillOverridesResponse<Tcontext = unknown, Texpand = unknown> = Required<TillOverridesRecord<Tcontext>> & BaseSystemFields<Texpand>
+export type TillProductsResponse<Texpand = unknown> = Required<TillProductsRecord> & BaseSystemFields<Texpand>
+export type TillReportsResponse<Tdata = unknown, Texpand = unknown> = Required<TillReportsRecord<Tdata>> & BaseSystemFields<Texpand>
 export type TradeInLinesResponse<Texpand = unknown> = Required<TradeInLinesRecord> & BaseSystemFields<Texpand>
 export type TradeInsResponse<Texpand = unknown> = Required<TradeInsRecord> & BaseSystemFields<Texpand>
 export type UsersResponse<Texpand = unknown> = Required<UsersRecord> & AuthSystemFields<Texpand>
@@ -1419,18 +1710,24 @@ export type CollectionRecords = {
 	memberships: MembershipsRecord
 	notes: NotesRecord
 	notifications: NotificationsRecord
+	parked_tickets: ParkedTicketsRecord
 	perk_usage: PerkUsageRecord
 	platforms: PlatformsRecord
 	points_ledger: PointsLedgerRecord
 	price_snapshots: PriceSnapshotsRecord
 	pricing_rules: PricingRulesRecord
+	print_jobs: PrintJobsRecord
+	printers: PrintersRecord
 	push_subscriptions: PushSubscriptionsRecord
 	quote_messages: QuoteMessagesRecord
 	quotes: QuotesRecord
 	referrals: ReferralsRecord
+	register_devices: RegisterDevicesRecord
+	registers: RegistersRecord
 	retro_titles: RetroTitlesRecord
 	reward_redemptions: RewardRedemptionsRecord
 	sale_lines: SaleLinesRecord
+	sale_tenders: SaleTendersRecord
 	sales: SalesRecord
 	saved_reports: SavedReportsRecord
 	settings: SettingsRecord
@@ -1439,6 +1736,12 @@ export type CollectionRecords = {
 	stock_counts: StockCountsRecord
 	sumup_checkouts: SumupCheckoutsRecord
 	sumup_transactions: SumupTransactionsRecord
+	till_categories: TillCategoriesRecord
+	till_events: TillEventsRecord
+	till_keys: TillKeysRecord
+	till_overrides: TillOverridesRecord
+	till_products: TillProductsRecord
+	till_reports: TillReportsRecord
 	trade_in_lines: TradeInLinesRecord
 	trade_ins: TradeInsRecord
 	users: UsersRecord
@@ -1478,18 +1781,24 @@ export type CollectionResponses = {
 	memberships: MembershipsResponse
 	notes: NotesResponse
 	notifications: NotificationsResponse
+	parked_tickets: ParkedTicketsResponse
 	perk_usage: PerkUsageResponse
 	platforms: PlatformsResponse
 	points_ledger: PointsLedgerResponse
 	price_snapshots: PriceSnapshotsResponse
 	pricing_rules: PricingRulesResponse
+	print_jobs: PrintJobsResponse
+	printers: PrintersResponse
 	push_subscriptions: PushSubscriptionsResponse
 	quote_messages: QuoteMessagesResponse
 	quotes: QuotesResponse
 	referrals: ReferralsResponse
+	register_devices: RegisterDevicesResponse
+	registers: RegistersResponse
 	retro_titles: RetroTitlesResponse
 	reward_redemptions: RewardRedemptionsResponse
 	sale_lines: SaleLinesResponse
+	sale_tenders: SaleTendersResponse
 	sales: SalesResponse
 	saved_reports: SavedReportsResponse
 	settings: SettingsResponse
@@ -1498,6 +1807,12 @@ export type CollectionResponses = {
 	stock_counts: StockCountsResponse
 	sumup_checkouts: SumupCheckoutsResponse
 	sumup_transactions: SumupTransactionsResponse
+	till_categories: TillCategoriesResponse
+	till_events: TillEventsResponse
+	till_keys: TillKeysResponse
+	till_overrides: TillOverridesResponse
+	till_products: TillProductsResponse
+	till_reports: TillReportsResponse
 	trade_in_lines: TradeInLinesResponse
 	trade_ins: TradeInsResponse
 	users: UsersResponse

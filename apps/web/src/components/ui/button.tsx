@@ -32,6 +32,13 @@ const buttonVariants = cva(
         "text-destructive":
           "h-auto max-sm:min-h-12 gap-2 rounded-none bg-transparent p-0 font-mono text-[11px] font-bold tracking-[0.16em] text-destructive uppercase after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 after:bg-destructive after:transition-transform after:duration-150 after:ease-gg hover:after:scale-x-100 [&_svg]:size-4 [&_svg]:stroke-[1.25]",
         /**
+         * The till's choice keys: tenders, receipt choices, the quick cash
+         * notes. A hairline-edged block on the canvas, the block's own
+         * tracked label in ink, ink fill when pressed or chosen. Several sit
+         * side by side, so none of them is the screen's one black block.
+         */
+        key: "h-14 min-w-0 gap-3 rounded-[var(--radius)] border border-hairline bg-transparent px-5 font-mono text-[12px] font-bold tracking-[0.16em] text-foreground uppercase hover:border-foreground aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground [&_svg]:size-5 [&_svg]:stroke-[1.25]",
+        /**
          * A bare 40px icon target: close, more, back. On a phone it keeps
          * the 40px square but takes a 48px hit area, the same way `text`
          * already does with `max-sm:min-h-12`.
@@ -39,8 +46,16 @@ const buttonVariants = cva(
         "ghost-icon":
           "size-10 rounded-[var(--radius)] bg-transparent text-foreground hover:bg-secondary [&_svg]:size-5 [&_svg]:stroke-[1.25] max-sm:after:absolute max-sm:after:inset-x-0 max-sm:after:top-1/2 max-sm:after:h-12 max-sm:after:min-w-12 max-sm:after:-translate-y-1/2 max-sm:after:content-['']",
       },
+      size: {
+        default: "",
+        /**
+         * Touch height for the till, the lock screen and the customer
+         * display: 72px. Only `block` and `key` take it.
+         */
+        till: "h-18",
+      },
     },
-    defaultVariants: { variant: "block" },
+    defaultVariants: { variant: "block", size: "default" },
   }
 )
 
@@ -59,6 +74,7 @@ type ButtonProps = ButtonPrimitive.Props &
 function Button({
   className,
   variant = "block",
+  size = "default",
   loading = false,
   trailingArrow = false,
   disabled,
@@ -75,7 +91,7 @@ function Button({
       data-loading={loading || undefined}
       aria-busy={loading || undefined}
       disabled={disabled || loading || undefined}
-      className={cn(buttonVariants({ variant, className }))}
+      className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     >
       {isCircle ? (

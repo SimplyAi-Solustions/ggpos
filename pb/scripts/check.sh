@@ -7685,5 +7685,20 @@ kill "$FIRSTRUN_PID" 2>/dev/null || true
 wait "$FIRSTRUN_PID" 2>/dev/null || true
 FIRSTRUN_PID=""
 
+# -----------------------------------------------------------------------
+# 27 onwards. The EPOS sections (docs/EPOS-PLAN.md), one file each in
+# pb/scripts/checks/, sourced in name order into this same shell so they
+# share the main server ($BASE), the tokens ($SUPER_TOKEN, $STAFF_TOKEN),
+# $TMP_DIR and the ok/fail/jval helpers. A section that starts a server of
+# its own must stop it before it returns.
+# -----------------------------------------------------------------------
+for EPOS_CHECK in "$ROOT"/pb/scripts/checks/*.sh; do
+  [ -e "$EPOS_CHECK" ] || continue
+  echo
+  echo "== $(basename "$EPOS_CHECK") =="
+  # shellcheck source=/dev/null
+  . "$EPOS_CHECK"
+done
+
 echo
 echo "All checks passed ($PASS_COUNT)."
