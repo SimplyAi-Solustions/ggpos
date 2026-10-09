@@ -18,6 +18,7 @@
 import * as React from "react"
 import type { TillTender } from "@gg/shared"
 
+import type { RefundMethod } from "@/features/till/returns"
 import { emptyTicket, ticketReducer, type Ticket, type TicketAction } from "@/features/till/ticket"
 import type { TakenTender } from "@/features/till/tenders"
 import { newClientId } from "@/lib/offline/queue"
@@ -25,21 +26,71 @@ import { getTillDevice } from "@/lib/till-device"
 
 export type TillPhase = "ticket" | "paying" | "done"
 
-/** The tender step open under the tender keys. */
-export type TenderStep = TillTender | "voucher"
+/** The tender step open under the tender keys. `trade` is the part-exchange's terms and signature. */
+export type TenderStep = TillTender | "voucher" | "trade"
 
 /** A completed sale, for the done view. */
 export interface DoneSale {
-  /** The sale's id, or `queued:<client id>` while it waits to send. */
+  /**
+   * The sale's id, or `queued:<client id>` while it waits to send. For a
+   * ticket of returns alone, which makes no sale, the original sale's id,
+   * which its refund receipt prints from.
+   */
   saleId: string
+  /** The sale number, or for a ticket of returns alone the refund reference. */
   number: string
   total: number
   change: number
   pointsEarned: number
-  /** Cash went in the drawer, so "No receipt" opens it. */
+  /** Cash went in or out of the drawer, so "No receipt" opens it. */
   cash: boolean
   /** Still in the offline queue: no receipt can be printed for it yet. */
   queued: boolean
+  /** A part-exchange: its number, what it paid towards the sale and the surplus paid out. */
+  tradeIn?: { number: string; applied: number; payoutCash: number; payoutCredit: number } | null
+  /** A return on the ticket: its reference, its value and the part that paid for this sale. */
+  refund?: {
+    ref: string
+    amount: number
+    exchange: number
+    /** The original sale, whose refund receipt this is. */
+    saleId: string
+    /** Where the rest went back: "in cash", "to the card ending 4242", "as store credit". */
+    to: string
+  } | null
+  /** Cash handed to the customer: a cash surplus or a cash refund. */
+  payout?: number
+  /** Returns and no sale: only the refund's receipt exists. */
+  refundOnly?: boolean
+}
+
+/**
+ * How a part-exchange or a return is being settled while the ticket is paid
+ * for. Cleared when the ticket goes back to being edited: a signature is
+ * for the trade the customer saw.
+ */
+export interface TillSettlement {
+  /** Where a trade's surplus goes. */
+  surplus: "credit" | "cash" | null
+  /** The cash keyed for a cash surplus, as pence digits; "" is the suggested figure. */
+  surplusCash: string
+  terms: boolean
+  /** The pad's PNG data URL. */
+  signature: string | null
+  /** Where a return's difference goes back to, when it is worth more than the sale. */
+  refundMethod: RefundMethod | null
+  cardLast4: string
+}
+
+export function emptySettlement(): TillSettlement {
+  return {
+    surplus: null,
+    surplusCash: "",
+    terms: false,
+    signature: null,
+    refundMethod: null,
+    cardLast4: "",
+  }
 }
 
 export interface TillState {
@@ -49,6 +100,7 @@ export interface TillState {
   phase: TillPhase
   step: TenderStep | null
   done: DoneSale | null
+  settlement: TillSettlement
 }
 
 export type TillAction =
@@ -58,6 +110,7 @@ export type TillAction =
   | { type: "openStep"; step: TenderStep | null }
   | { type: "setTenders"; tenders: TakenTender[] }
   | { type: "removeTender"; id: string }
+  | { type: "settlement"; patch: Partial<TillSettlement> }
   | { type: "completed"; done: DoneSale }
   | { type: "newSale" }
   | { type: "recall"; ticket: Ticket }
@@ -70,6 +123,7 @@ export function emptyTill(): TillState {
     phase: "ticket",
     step: null,
     done: null,
+    settlement: emptySettlement(),
   }
 }
 
@@ -83,14 +137,34 @@ const TICKET_ACTIONS = new Set<TicketAction["type"]>([
   "applyVoucher",
   "load",
   "clear",
+  "startTrade",
+  "trade",
+  "dropTrade",
+  "rebaseTrade",
+  "setReturns",
 ])
 
 function isTicketAction(action: TillAction): action is TicketAction {
   return TICKET_ACTIONS.has(action.type as TicketAction["type"])
 }
 
+/**
+ * The trade's own housekeeping: a draft's id arriving, saved lines adopting
+ * their ids, a vanished draft being started again. None of it is somebody
+ * changing the ticket, so none of it may start the next sale while the
+ * last one is on the done view.
+ */
+function isTradeHousekeeping(action: TicketAction): boolean {
+  if (action.type === "rebaseTrade") return true
+  return (
+    action.type === "trade" &&
+    (action.action.type === "adopt-line-ids" || action.action.type === "set-draft")
+  )
+}
+
 export function tillReducer(state: TillState, action: TillAction): TillState {
   if (isTicketAction(action)) {
+    if (state.phase === "done" && isTradeHousekeeping(action)) return state
     // A finished sale is not edited: anything added now starts the next one.
     const base = state.phase === "done" ? emptyTill() : state
     const ticket = ticketReducer(base.ticket, action)
@@ -103,13 +177,16 @@ export function tillReducer(state: TillState, action: TillAction): TillState {
       return { ...state, phase: "paying", step: null }
     case "backToTicket":
       if (state.phase !== "paying") return state
-      return { ...state, phase: "ticket", step: null }
+      return { ...state, phase: "ticket", step: null, settlement: emptySettlement() }
     case "openStep":
       return { ...state, step: action.step }
     case "setTenders":
       return { ...state, tenders: action.tenders }
     case "removeTender":
       return { ...state, tenders: state.tenders.filter((tender) => tender.id !== action.id) }
+    case "settlement":
+      if (state.phase !== "paying") return state
+      return { ...state, settlement: { ...state.settlement, ...action.patch } }
     case "completed":
       return { ...state, phase: "done", step: null, done: action.done }
     case "newSale":
@@ -165,6 +242,7 @@ function read(): TillState {
       ...emptyTill(),
       ...parsed,
       ticket: { ...emptyTicket(), ...parsed.ticket },
+      settlement: { ...emptySettlement(), ...parsed.settlement },
     } as TillState
   } catch {
     return emptyTill()

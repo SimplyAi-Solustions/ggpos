@@ -8,6 +8,11 @@
  *
  * A card refund is done on the Tide reader by hand, like a card payment:
  * the till records it.
+ *
+ * "Exchange in this ticket" takes the same lines onto the ticket instead
+ * (docs/api-contract-epos.md, section 7): they show there as negative lines
+ * and go to the server with the sale, which refunds them in the same
+ * transaction and sets them against what the customer is buying.
  */
 import * as React from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
@@ -39,8 +44,10 @@ import {
   originalCardLast4,
   refundTenders,
   refundTotal,
+  ticketReturnFrom,
   type RefundMethod,
 } from "@/features/till/returns"
+import type { TicketReturn } from "@/features/till/ticket"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { lookupSale, refundTillSale, type TillRefundResult } from "@/lib/api/till"
 
@@ -93,12 +100,17 @@ function Stepper({
   )
 }
 
+/** Puts a return on the ticket: null once it is there, or the sentence that says why not. */
+export type ExchangeHandler = (returns: TicketReturn) => string | null
+
 function RefundForm({
   sale,
   onDone,
+  onExchange,
 }: {
   sale: SaleLookup
   onDone: (result: TillRefundResult, cash: boolean) => void
+  onExchange?: ExchangeHandler
 }) {
   const queryClient = useQueryClient()
   const [chosen, setChosen] = React.useState(() => initialChoice(sale))
@@ -346,6 +358,20 @@ function RefundForm({
         >
           {total > 0 ? `Refund ${formatGBP(total)}` : "Refund"}
         </Button>
+        {onExchange ? (
+          <Button
+            variant="text"
+            className={TALL}
+            data-testid="returns-exchange"
+            disabled={refund.isPending || total <= 0}
+            onClick={() => {
+              const built = ticketReturnFrom(sale, chosen, reason, restock)
+              setError(built.ok ? onExchange(built.returns) : built.message)
+            }}
+          >
+            Exchange in this ticket
+          </Button>
+        ) : null}
       </SheetFooter>
     </>
   )
@@ -471,14 +497,30 @@ function Lookup({
   )
 }
 
-function ReturnsFlow({ initial, onClose }: { initial: string; onClose: () => void }) {
+function ReturnsFlow({
+  initial,
+  onClose,
+  onExchange,
+}: {
+  initial: string
+  onClose: () => void
+  onExchange?: ExchangeHandler
+}) {
   const [sale, setSale] = React.useState<SaleLookup | null>(null)
   const [done, setDone] = React.useState<{ result: TillRefundResult; cash: boolean } | null>(null)
 
   if (done && sale) {
     return <Refunded result={done.result} saleId={sale.id} cash={done.cash} onClose={onClose} />
   }
-  if (sale) return <RefundForm sale={sale} onDone={(result, cash) => setDone({ result, cash })} />
+  if (sale) {
+    return (
+      <RefundForm
+        sale={sale}
+        onDone={(result, cash) => setDone({ result, cash })}
+        onExchange={onExchange}
+      />
+    )
+  }
   return <Lookup initial={initial} onFound={setSale} />
 }
 
@@ -486,11 +528,14 @@ export function ReturnsSheet({
   open,
   number,
   onOpenChange,
+  onExchange,
 }: {
   open: boolean
   /** A receipt number scanned on the till, looked up as the sheet opens. */
   number: string
   onOpenChange: (open: boolean) => void
+  /** Puts the chosen lines on the ticket as a return. */
+  onExchange?: ExchangeHandler
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -504,7 +549,12 @@ export function ReturnsSheet({
             Scan the receipt, or find the sale by its number.
           </SheetDescription>
         </SheetHeader>
-        <ReturnsFlow key={number} initial={number} onClose={() => onOpenChange(false)} />
+        <ReturnsFlow
+          key={number}
+          initial={number}
+          onClose={() => onOpenChange(false)}
+          onExchange={onExchange}
+        />
       </SheetContent>
     </Sheet>
   )
