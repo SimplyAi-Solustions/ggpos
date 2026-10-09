@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  branchLabel,
   buildTillReport,
   cardTillTotal,
   cardVariance,
@@ -272,6 +273,21 @@ describe("labels and sentences", () => {
     expect(categoryForKind("")).toBe("Other")
     expect(categoryForKind(null)).toBe("Other")
     expect(categoryForKind("constructor")).toBe("Other")
+  })
+
+  it("labels a line by the first two levels of its branch's path", () => {
+    expect(branchLabel("Trading cards / Pokémon / Singles")).toBe("Trading cards / Pokémon")
+    expect(branchLabel("Retro / Sega / Mega Drive / Games")).toBe("Retro / Sega")
+    expect(branchLabel("Services / Table time")).toBe("Services / Table time")
+    expect(branchLabel("Trading cards")).toBe("Trading cards")
+    expect(branchLabel("Unsorted")).toBe("Unsorted")
+  })
+
+  it("labels a line with no branch Other", () => {
+    expect(branchLabel("")).toBe("Other")
+    expect(branchLabel(null)).toBe("Other")
+    expect(branchLabel(undefined)).toBe("Other")
+    expect(branchLabel("  ")).toBe("Other")
   })
 
   it("says how many tickets are parked, as the contract words it", () => {
