@@ -112,8 +112,13 @@ routerAdd(
         collection: "display_state",
         record: row.id,
         // Identifiers and counts only: nothing off the payload itself,
-        // which is about a customer standing at the counter.
-        meta: { mode: mode, lines: (sanitised.payload.lines || []).length },
+        // which is about a customer standing at the counter. The sale's
+        // stage (section 4) says where the till was, not who was there.
+        meta: {
+          mode: mode,
+          lines: (sanitised.payload.lines || []).length,
+          stage: sanitised.payload.stage || "",
+        },
         ip: e.realIP(),
       });
 

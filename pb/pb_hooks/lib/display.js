@@ -24,6 +24,9 @@
 
 var TTL_MINUTES = 15;
 
+/** Where a sale is at the till, as the display shows it. */
+var SALE_STAGES = ["basket", "card", "cash", "done"];
+
 /** Key names a display payload may never carry, at any depth. */
 var FORBIDDEN_KEY = /(^|_)id$|^ids$|email|phone|mobile|address|postcode|dob|qr_token|code$/i;
 
@@ -109,6 +112,19 @@ function sanitise(mode, raw) {
     if (discountLabel) sale.discount_label = discountLabel;
     var saleName = text(body.customer_name, 80);
     if (saleName) sale.customer_name = saleName;
+    // Where the sale is at the till (docs/api-contract-epos.md, section 4,
+    // "Customer display"): the basket, "Pay £X on the card reader", the cash
+    // change, then the thank you with the points earned. The stage is one
+    // of four words; the rest are pence or points, and only when sent.
+    var stage = util.asStr(body.stage);
+    if (SALE_STAGES.indexOf(stage) >= 0) sale.stage = stage;
+    if (body.amount_due !== undefined && body.amount_due !== null) {
+      sale.amount_due = util.asInt(body.amount_due, 0);
+    }
+    if (body.change !== undefined && body.change !== null) sale.change = util.asInt(body.change, 0);
+    if (body.points_earned !== undefined && body.points_earned !== null) {
+      sale.points_earned = util.asInt(body.points_earned, 0);
+    }
     return { ok: true, payload: sale };
   }
 
@@ -190,6 +206,7 @@ function shape(row) {
 
 module.exports = {
   TTL_MINUTES: TTL_MINUTES,
+  SALE_STAGES: SALE_STAGES,
   forbiddenIn: forbiddenIn,
   sanitise: sanitise,
   stateRow: stateRow,
