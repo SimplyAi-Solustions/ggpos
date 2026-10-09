@@ -16,6 +16,7 @@ import {
   formatGBP,
   parseDecimalToMinor,
   type CardCondition,
+  type CategoryBranch,
 } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
@@ -66,6 +67,9 @@ import {
 } from "@/lib/api"
 import { useCardPrices, usePricingSettings, useRetroPrices } from "@/lib/api/prices"
 import { useVaultConfig } from "@/lib/api/config"
+import { assignCategory, CATEGORY_TREE_KEY } from "@/lib/api/categories"
+import { CategoryPicker } from "@/features/categories/CategoryPicker"
+import { OverrideCancelled } from "@/features/lock/override"
 import type { ItemDetail, ItemStatus } from "@/lib/api/types"
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
@@ -312,6 +316,7 @@ export function ItemPage({ sku }: { sku: string }) {
   const [priceOpen, setPriceOpen] = React.useState(false)
   const [reserveOpen, setReserveOpen] = React.useState(false)
   const [writeOffOpen, setWriteOffOpen] = React.useState(false)
+  const [branchOpen, setBranchOpen] = React.useState(false)
   const [note, setNote] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -402,6 +407,25 @@ export function ItemPage({ sku }: { sku: string }) {
     },
     onError: onFailure("That label could not be queued. Try again."),
   })
+
+  // The branch it is filed in (docs/api-contract-inventory.md, section 1.6),
+  // changed through the assign route like any other filing, so it is
+  // audited and asks a manager when the role cannot manage stock.
+  const refile = useMutation({
+    mutationFn: (branch: CategoryBranch) =>
+      assignCategory({ category: branch.id, items: [item?.id ?? ""] }),
+    onSuccess: (_, branch) => {
+      setBranchOpen(false)
+      setError(null)
+      setNote(`Filed in ${branch.path}`)
+      settle()
+      void queryClient.invalidateQueries({ queryKey: CATEGORY_TREE_KEY })
+    },
+  })
+  const refileError =
+    refile.error && !(refile.error instanceof OverrideCancelled)
+      ? refusalOrFallback(refile.error, "That did not move. Try again.")
+      : null
 
   const writeOff = useMutation({
     mutationFn: (reason: string) => writeOffItem(item?.id ?? "", reason),
@@ -538,6 +562,17 @@ export function ItemPage({ sku }: { sku: string }) {
         {item.condition ? <Row label="Condition">{item.condition}</Row> : null}
         {item.finish ? <Row label="Finish">{sentence(item.finish)}</Row> : null}
         <Row label="Kind">{KIND_LABELS[item.kind]}</Row>
+        <div className="flex min-h-12 flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b border-hairline-soft py-3">
+          <MicroLabel>Branch</MicroLabel>
+          <span className="flex min-w-0 flex-wrap items-baseline justify-end gap-x-6 gap-y-1">
+            <span data-testid="item-branch" className="min-w-0 text-right text-[15px] text-foreground">
+              {item.categoryPath || "Not filed yet"}
+            </span>
+            <Button variant="text" onClick={() => setBranchOpen(true)}>
+              Change
+            </Button>
+          </span>
+        </div>
         <Row label="Cost">
           <span className="tnum">{formatGBP(item.cost ?? 0)}</span>
         </Row>
@@ -777,6 +812,22 @@ export function ItemPage({ sku }: { sku: string }) {
         onOpenChange={setWriteOffOpen}
         pending={writeOff.isPending}
         onConfirm={(reason) => writeOff.mutate(reason)}
+      />
+
+      <CategoryPicker
+        open={branchOpen}
+        onOpenChange={(open) => {
+          if (!open) refile.reset()
+          setBranchOpen(open)
+        }}
+        title="Move it to"
+        description="Where it is filed: the till, Stock and the reports find it there."
+        initial={item.category}
+        pending={refile.isPending}
+        error={refileError}
+        onChoose={(branch) => {
+          if (branch) refile.mutate(branch)
+        }}
       />
     </section>
   )

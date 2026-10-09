@@ -108,6 +108,11 @@ export interface ItemRecord extends BaseRecord {
   notes?: string
   created_by?: string
   acquired_at?: string
+  /**
+   * Its one home branch in the category tree (docs/api-contract-inventory.md,
+   * section 1). The server files a row created without one.
+   */
+  category?: string
 }
 
 /** `label_jobs`. `template` is required by the migration, so queueLabel resolves one. */
@@ -186,6 +191,10 @@ export interface NewItemInput {
   locationId?: string
   ean?: string
   notes?: string
+  /** The branch it is filed in; left out, the server files it by kind and game. */
+  categoryId?: string
+  /** Margin or standard VAT; standard when nothing says otherwise. */
+  taxScheme?: "margin" | "standard"
 }
 
 // ---------------------------------------------------------------------------
@@ -802,6 +811,8 @@ export interface ItemFilters {
   /** Free text over title, code, set and number. */
   search?: string
   locationId?: string
+  /** A branch of the category tree: that branch and everything beneath it. */
+  category?: string
 }
 
 export interface ItemListPage {
@@ -829,6 +840,9 @@ export interface ItemSummary {
   qty: number
   /** The `games` id, which the points preview needs on a basket line. */
   game: string | null
+  /** Its branch's id and path, "Trading cards / Pokémon / Singles", or "". */
+  categoryId?: string
+  categoryPath?: string
 }
 
 export type ItemEventKind =
@@ -862,6 +876,8 @@ export interface ItemDetail extends StockItemRecord {
   reservedForCode: string | null
   reservedUntil: string | null
   history: ItemEvent[]
+  /** Its branch's path, "Trading cards / Pokémon / Singles", or "". */
+  categoryPath?: string
 }
 
 /** What the item page's edit sheets send back. */
@@ -1462,6 +1478,11 @@ export interface ReportQuery {
   group?: ReportGroup
   /** Report-specific; the route falls back to its own first dimension. */
   by?: string
+  /**
+   * Sales by category only: the branch whose child branches the rows are
+   * (docs/api-contract-inventory.md, section 1.4). Left out, the top level.
+   */
+  branch?: string
   compare?: "previous" | "none"
 }
 
@@ -1526,12 +1547,23 @@ export interface SparklineSeries {
 export type ReportSchedule = "none" | "weekly" | "monthly"
 
 /** A `saved_reports` row: named filters, and optionally an email schedule. */
+/** What a saved view keeps: never the dates. */
+export interface SavedReportFilters {
+  by?: string
+  group?: ReportGroup
+  /** The category branch a sales report was drilled into. */
+  branch?: string
+}
+
 export interface SavedReportRecord {
   id: string
   owner?: string
   report_key: string
-  /** `{ by, group }` only: the period is always computed fresh from the schedule. */
-  filters?: { by?: string; group?: ReportGroup }
+  /**
+   * `{ by, group }`, and `branch` for a sales report drilled into the
+   * category tree: the period is always computed fresh from the schedule.
+   */
+  filters?: SavedReportFilters
   name?: string
   schedule?: ReportSchedule
   recipients?: string[]
@@ -1544,7 +1576,7 @@ export interface SavedReportInput {
   id?: string
   report_key: string
   name: string
-  filters: { by?: string; group?: ReportGroup }
+  filters: SavedReportFilters
   schedule: ReportSchedule
   recipients: string[]
 }

@@ -6,6 +6,7 @@ import { displayCode } from "@gg/shared"
 
 import { DEMO_GAMES, DEMO_LOCATIONS } from "@/lib/api/fixtures"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
+import { demoCategoryPaths, demoSubtreeIds } from "@/lib/api/demo/categories"
 import {
   DEMO_SALE_CUSTOMERS,
   demoBuyIns,
@@ -35,7 +36,10 @@ function locationName(id?: string): string {
   return DEMO_LOCATIONS.find((location) => location.id === id)?.name ?? ""
 }
 
-export function toSummary(item: StockItemRecord): ItemSummary {
+export function toSummary(
+  item: StockItemRecord,
+  paths: Map<string, string> = demoCategoryPaths()
+): ItemSummary {
   return {
     id: item.id,
     sku: item.sku,
@@ -50,6 +54,8 @@ export function toSummary(item: StockItemRecord): ItemSummary {
     platform: platformForItem(item),
     qty: item.qty ?? 1,
     game: item.game ?? null,
+    categoryId: item.category ?? "",
+    categoryPath: item.category ? (paths.get(item.category) ?? "") : "",
   }
 }
 
@@ -110,6 +116,8 @@ function historyFor(item: StockItemRecord): ItemEvent[] {
 
 export function getItem(sku: string): ItemDetail | null {
   ensureSeeded()
+  // Files the row first if nobody has, so its branch comes back with it.
+  const paths = demoCategoryPaths()
   const item = itemStore().find((row) => row.sku === sku)
   if (!item) return null
 
@@ -131,6 +139,7 @@ export function getItem(sku: string): ItemDetail | null {
     reservedForCode: reservedFor?.code ? displayCode(reservedFor.code) : null,
     reservedUntil: item.reserved_until ?? null,
     history: historyFor(item),
+    categoryPath: item.category ? (paths.get(item.category) ?? "") : "",
   }
 }
 
@@ -148,10 +157,14 @@ export function updateItem(id: string, patch: ItemPatch): ItemDetail {
 
 export function listItems(filters: ItemFilters, page: number): ItemListPage {
   ensureSeeded()
+  // Files any row nobody has filed yet, so the paths below are all there.
+  const paths = demoCategoryPaths()
+  const within = filters.category ? demoSubtreeIds(filters.category) : null
   const needle = filters.search?.trim().toLowerCase() ?? ""
   const matched = itemStore().filter((item) => {
     if (filters.status && (item.status ?? "in_stock") !== filters.status) return false
     if (filters.locationId && item.location !== filters.locationId) return false
+    if (within && !within.has(item.category ?? "")) return false
     if (!needle) return true
     const haystack = [item.title, item.sku, item.set_code, item.number, item.ean]
       .filter(Boolean)
@@ -162,7 +175,7 @@ export function listItems(filters: ItemFilters, page: number): ItemListPage {
 
   const start = (page - 1) * PER_PAGE
   return {
-    items: matched.slice(start, start + PER_PAGE).map(toSummary),
+    items: matched.slice(start, start + PER_PAGE).map((item) => toSummary(item, paths)),
     page,
     perPage: PER_PAGE,
     totalItems: matched.length,

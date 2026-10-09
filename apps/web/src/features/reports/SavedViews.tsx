@@ -35,9 +35,9 @@ import { refusalOrFallback } from "@/lib/api/refusal"
 import { deleteSavedReport, saveSavedReport } from "@/lib/api/reports"
 import { SCHEDULES, scheduleLabel } from "@/features/reports/schedules"
 import type {
-  ReportGroup,
   ReportKey,
   ReportSchedule,
+  SavedReportFilters,
   SavedReportRecord,
 } from "@/lib/api/types"
 
@@ -70,7 +70,7 @@ export interface SaveViewSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   reportKey: ReportKey
-  filters: { by?: string; group?: ReportGroup }
+  filters: SavedReportFilters
   /** Every saved view for this report, so one can be replaced or removed. */
   views: SavedReportRecord[]
   admin: boolean
@@ -126,7 +126,7 @@ function SaveViewForm({
   onDone,
 }: {
   reportKey: ReportKey
-  filters: { by?: string; group?: ReportGroup }
+  filters: SavedReportFilters
   views: SavedReportRecord[]
   admin: boolean
   onDone: () => void

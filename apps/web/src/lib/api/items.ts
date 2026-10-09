@@ -42,6 +42,8 @@ type ExpandedItem = StockItemRecord & {
     card?: CardRecord
     game?: GameRecord
     location?: LocationRecord
+    /** Its branch, for the path the list and the item page show. */
+    category?: { id: string; path?: string; name?: string }
     reserved_for?: { id: string; name?: string; code?: string }
     trade_in_line?: {
       id: string
@@ -51,7 +53,12 @@ type ExpandedItem = StockItemRecord & {
 }
 
 const DETAIL_EXPAND =
-  "card,game,location,reserved_for,trade_in_line.trade_in,trade_in_line.trade_in.customer"
+  "card,game,location,category,reserved_for,trade_in_line.trade_in,trade_in_line.trade_in.customer"
+
+function categoryPathOf(item: ExpandedItem): string {
+  const branch = item.expand?.category
+  return branch?.path || branch?.name || ""
+}
 
 function imageFor(item: ExpandedItem): string | undefined {
   const card = item.expand?.card
@@ -76,6 +83,8 @@ function toSummary(item: ExpandedItem): ItemSummary {
     platform: platformForItem(item),
     qty: item.qty ?? 1,
     game: item.game ?? null,
+    categoryId: item.category ?? "",
+    categoryPath: categoryPathOf(item),
   }
 }
 
@@ -154,6 +163,7 @@ async function toDetail(item: ExpandedItem): Promise<ItemDetail> {
       : null,
     reservedUntil: item.reserved_until ?? null,
     history: await historyFor(item),
+    categoryPath: categoryPathOf(item),
   }
 }
 
@@ -195,6 +205,9 @@ export async function listItems(
   const clauses: string[] = []
   if (filters.status) clauses.push(`status = "${quote(filters.status)}"`)
   if (filters.locationId) clauses.push(`location = "${quote(filters.locationId)}"`)
+  // The branch and everything beneath it: every branch under it carries its
+  // id in its lineage (docs/api-contract-inventory.md, section 1.3).
+  if (filters.category) clauses.push(`category.lineage ~ "|${quote(filters.category)}|"`)
   if (filters.search?.trim()) {
     const needle = quote(filters.search.trim())
     clauses.push(
@@ -204,7 +217,7 @@ export async function listItems(
 
   const result = await pb.collection("items").getList<ExpandedItem>(page, PER_PAGE, {
     filter: clauses.join(" && "),
-    expand: "card,location",
+    expand: "card,location,category",
     sort: "-created",
   })
 

@@ -3,8 +3,10 @@
  * the voids, answered from memory for the tab like every other demo store.
  *
  * The catalogue is the seed's (docs/api-contract-epos.md, section 4, "The
- * till catalogue"): the five till products on a "Quick" category, plus two
- * dynamic categories listing the stock lines the demo shop holds. Those
+ * till catalogue"): the five till products on the "Quick" page, the one
+ * quick-key page left once the category tree replaced the empty ones
+ * (docs/api-contract-inventory.md, section 1.5), then the tree's top-level
+ * branches. A branch opens through `demoTillBranch`, the branch route. The
  * stock lines are added to the shared demo item store the first time the
  * till asks for its catalogue, so scanning, Stock and the till all see the
  * same shelf, and a screen that never opens the till never sees them.
@@ -12,6 +14,8 @@
 import { ClientResponseError } from "pocketbase"
 import {
   buildCode,
+  isWithin,
+  type TillBranchView,
   type TillCatalogue,
   type TillCatalogueItem,
   type TillCatalogueProduct,
@@ -20,8 +24,20 @@ import {
 } from "@gg/shared"
 
 import { DEMO_STAFF } from "@/lib/api/fixtures"
+import {
+  chipOf,
+  demoCategoryTree,
+  demoProductHome,
+  demoTopBranches,
+} from "@/lib/api/demo/categories"
 import { findDemoCustomer } from "@/lib/api/demo/customers"
-import { demoId, demoSales, ensureSeeded, itemStore } from "@/lib/api/demo/store"
+import {
+  demoCardImage,
+  demoId,
+  demoSales,
+  ensureSeeded,
+  itemStore,
+} from "@/lib/api/demo/store"
 import { PLATFORMS } from "@/design/platforms"
 import { boxArt } from "@/kit/placeholder-art"
 import type { StockItemRecord } from "@/lib/api/types"
@@ -242,7 +258,7 @@ function toCatalogueItem(item: StockItemRecord): TillCatalogueItem {
     title: item.title ?? "",
     price: item.price ?? 0,
     qty: item.qty ?? 0,
-    image_url: ART[item.id] ?? "",
+    image_url: ART[item.id] ?? demoCardImage(item.card) ?? "",
     kind: item.kind,
     status: item.status ?? "in_stock",
   }
@@ -265,6 +281,11 @@ interface DemoCategory {
   keys: { product?: string; item?: string; label?: string }[]
 }
 
+/**
+ * The quick-key pages. Sealed, Accessories and Services were pages with no
+ * keys of their own, which the tree replaced and the Phase 9 migration
+ * switches off; Quick, with its keys, stays.
+ */
 const CATEGORIES: DemoCategory[] = [
   {
     id: "category_quick",
@@ -280,26 +301,6 @@ const CATEGORIES: DemoCategory[] = [
       { item: "item_demo_sold_1" },
       { product: "product_guild_membership" },
       { product: "product_deposit" },
-    ],
-  },
-  { id: "category_sealed", name: "Sealed", sort: 10, filter: { kinds: ["sealed"] }, keys: [] },
-  {
-    id: "category_accessories",
-    name: "Accessories",
-    sort: 20,
-    filter: { kinds: ["accessory"] },
-    keys: [],
-  },
-  {
-    id: "category_services",
-    name: "Services",
-    sort: 30,
-    filter: null,
-    keys: [
-      { product: "product_table_time" },
-      { product: "product_event_entry" },
-      { product: "product_deposit" },
-      { product: "product_guild_membership" },
     ],
   },
 ]
@@ -327,10 +328,82 @@ export function demoCatalogue(): TillCatalogue {
       ]
     }),
   }))
-  return { categories }
+  return { categories, branches: demoTopBranches() }
 }
 
 const PER_PAGE = 40
+
+function refuse(status: number, message: string): never {
+  throw new ClientResponseError({ status, response: { code: status, message, data: {} } })
+}
+
+function onShelf(item: StockItemRecord): boolean {
+  return (item.status ?? "in_stock") === "in_stock" && (item.qty ?? 1) > 0
+}
+
+/**
+ * `GET /api/vault/till/branch/{id}?q=&page=` (docs/api-contract-inventory.md,
+ * section 1.3): the branch, the trail down to its parent, its visible child
+ * branches, the products and the shelf stock whose home it is, by title, 40
+ * a page. With words, the products and stock anywhere beneath it whose
+ * name, title or code has them in, and no child branches.
+ */
+export function demoTillBranch(
+  id: string,
+  query: { q?: string; page?: number } = {}
+): TillBranchView {
+  ensureTillStock()
+  const branches = demoCategoryTree().branches
+  const branch = branches.find((entry) => entry.id === id)
+  if (!branch || !branch.visible) refuse(404, "That branch was not found.")
+
+  const trail = branch.lineage
+    .split("|")
+    .filter(Boolean)
+    .slice(0, -1)
+    .map((entry) => branches.find((row) => row.id === entry))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .map((row) => ({ id: row.id, name: row.name }))
+
+  const needle = query.q?.trim().toLowerCase() ?? ""
+  const within = (home: string) => {
+    const at = branches.find((row) => row.id === home)
+    return Boolean(at && isWithin(at.lineage, id))
+  }
+  const matches = (...fields: (string | undefined)[]) =>
+    fields.some((field) => (field ?? "").toLowerCase().includes(needle))
+
+  const products = DEMO_TILL_PRODUCTS.filter((product) => {
+    if (!product.active) return false
+    const home = demoProductHome(product.id)
+    return needle ? within(home) && matches(product.name) : home === id
+  }).map(toProduct)
+
+  const items = itemStore()
+    .filter((item) => {
+      if (!onShelf(item) || !item.category) return false
+      return needle
+        ? within(item.category) && matches(item.title, item.sku)
+        : item.category === id
+    })
+    .sort((a, b) => (a.title ?? "").localeCompare(b.title ?? "", "en-GB"))
+
+  const children = needle
+    ? []
+    : branches.filter((row) => row.parent === id && row.visible).map(chipOf)
+
+  const page = Math.max(1, query.page ?? 1)
+  return {
+    branch: { id: branch.id, name: branch.name, path: branch.path },
+    trail,
+    children,
+    products,
+    items: items.slice((page - 1) * PER_PAGE, page * PER_PAGE).map(toCatalogueItem),
+    page,
+    per_page: PER_PAGE,
+    total: items.length,
+  }
+}
 
 export function demoCategoryItems(
   categoryId: string,
@@ -353,6 +426,13 @@ export function demoCategoryItems(
     page,
     total: matches.length,
   }
+}
+
+/** The active till products whose home is this branch, for "File these". */
+export function demoProductsIn(categoryId: string): { id: string; name: string }[] {
+  return DEMO_TILL_PRODUCTS.filter(
+    (product) => product.active && demoProductHome(product.id) === categoryId
+  ).map((product) => ({ id: product.id, name: product.name }))
 }
 
 /** Till products whose name has these words in it. */

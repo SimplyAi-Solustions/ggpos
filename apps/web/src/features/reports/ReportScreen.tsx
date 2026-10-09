@@ -59,10 +59,14 @@ import {
 } from "@/features/reports/range"
 import {
   REPORT_SPECS,
+  categoryColumns,
   figureText,
   type ColumnSpec,
   type ReportSpec,
 } from "@/features/reports/specs"
+import { Breadcrumb } from "@/features/categories/Breadcrumb"
+import { branchById, trailOf } from "@/features/categories/tree"
+import { useCategoryTree } from "@/lib/api/categories"
 
 /** The same treatment every other screen gives a blocked block button. */
 const BLOCKED = "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
@@ -180,6 +184,14 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const [range, setRange] = React.useState<DateRange>(() => resolvePreset("last30", today))
   const [group, setGroup] = React.useState<ReportGroup>("day")
   const [by, setBy] = React.useState<string>(spec.dimensions[0]?.key ?? "")
+  // Sales by category drills down the tree (docs/api-contract-inventory.md,
+  // section 1.4): the branch whose child branches the rows are, "" for the
+  // top level.
+  const [branchId, setBranchId] = React.useState("")
+  const byCategory = by === "category"
+  const branch = byCategory ? branchId : ""
+  const tree = useCategoryTree({ enabled: byCategory })
+  const branches = React.useMemo(() => tree.data?.branches ?? [], [tree.data])
   // Stock has nothing that can be compared with a past period, so the
   // control is not offered there rather than offered and left doing nothing.
   const comparable = spec.comparable !== false
@@ -191,13 +203,14 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   const previous = React.useMemo(() => previousPeriod(range), [range])
 
   const query = useQuery({
-    queryKey: ["report", reportKey, range.from, range.to, group, by, compare],
+    queryKey: ["report", reportKey, range.from, range.to, group, by, branch, compare],
     queryFn: () =>
       getReport(reportKey, {
         from: range.from,
         to: range.to,
         group,
         by: by || undefined,
+        ...(branch ? { branch } : {}),
         compare: compare ? "previous" : "none",
       }),
     // A staff member never sees the register, so nothing asks for it.
@@ -206,13 +219,14 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   })
 
   const before = useQuery({
-    queryKey: ["report", reportKey, previous.from, previous.to, group, by, false],
+    queryKey: ["report", reportKey, previous.from, previous.to, group, by, branch, false],
     queryFn: () =>
       getReport(reportKey, {
         from: previous.from,
         to: previous.to,
         group,
         by: by || undefined,
+        ...(branch ? { branch } : {}),
         compare: "none",
       }),
     enabled: invalid === null && compare && spec.chart !== null,
@@ -228,9 +242,28 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   function loadView(view: SavedReportRecord) {
     if (view.filters?.group) setGroup(view.filters.group)
     if (view.filters?.by) setBy(view.filters.by)
+    setBranchId(view.filters?.by === "category" ? (view.filters.branch ?? "") : "")
   }
 
   const envelope = query.data ?? null
+
+  const columns = React.useMemo(
+    () =>
+      byCategory
+        ? categoryColumns({
+            branch,
+            onDrill: setBranchId,
+            pathOf: (id) => branchById(branches, id)?.path ?? "",
+          })
+        : spec.columns,
+    [byCategory, branch, branches, spec.columns]
+  )
+  const trail = byCategory
+    ? [
+        { id: "", name: "All branches" },
+        ...trailOf(branches, branch).map((step) => ({ id: step.id, name: step.name })),
+      ]
+    : []
 
   const chartData: ChartDatum[] = React.useMemo(() => {
     if (!envelope || !spec.chart) return []
@@ -277,7 +310,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
   function exportCsv() {
     if (!envelope) return
     const text = buildCsv(
-      spec.columns.map((column) => ({
+      columns.map((column) => ({
         label: column.label,
         value: (row: ReportRow) => (column.csv ? column.csv(row) : column.text(row)),
       })),
@@ -418,9 +451,18 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
 
           <div className="mt-16">
             <SectionHeading>{spec.tableHeading}</SectionHeading>
+            {byCategory ? (
+              <Breadcrumb
+                label="Category"
+                steps={trail}
+                onStep={setBranchId}
+                className="-mt-2 mb-4"
+                testId="report-trail"
+              />
+            ) : null}
             <ReportTable
               testId="report-table"
-              columns={spec.columns}
+              columns={columns}
               rows={envelope.table}
               empty={empty}
               imagePlatform={ITEM_TABLES[reportKey]}
@@ -480,7 +522,7 @@ export function ReportScreen({ reportKey }: { reportKey: ReportKey }) {
         open={saveOpen}
         onOpenChange={setSaveOpen}
         reportKey={reportKey}
-        filters={{ by: by || undefined, group }}
+        filters={{ by: by || undefined, group, ...(branch ? { branch } : {}) }}
         views={views.data ?? []}
         admin={admin}
       />

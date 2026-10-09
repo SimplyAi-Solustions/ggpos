@@ -4,17 +4,22 @@
  *
  * No zebra, no outer border, no card: rows at ink 12 percent and a lot of
  * air, as DESIGN.md's data section sets out.
+ *
+ * The category tree (docs/api-contract-inventory.md, section 1.6): a branch
+ * filter through the picker that takes in everything beneath the branch, a
+ * Category column with the last two levels of each row's path, and rows
+ * ticked here filed into a branch in one go.
  */
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { useInfiniteQuery } from "@tanstack/react-query"
-import { displayCode, formatGBP } from "@gg/shared"
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { displayCode, formatGBP, type CategoryBranch } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Chip, ChipGroup } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
-import { Hint } from "@/components/ui/micro-label"
+import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { StickerCards } from "@/components/ui/sticker"
 import {
@@ -28,7 +33,13 @@ import {
 } from "@/components/ui/table"
 import { ProductImage } from "@/components/product-image"
 import { registerSearchField } from "@/app/focus-registry"
+import { CategoryPicker } from "@/features/categories/CategoryPicker"
+import { RowCheck } from "@/features/categories/RowCheck"
+import { lastLevels } from "@/features/categories/tree"
+import { OverrideCancelled } from "@/features/lock/override"
 import { listItems } from "@/lib/api"
+import { assignCategory, CATEGORY_TREE_KEY } from "@/lib/api/categories"
+import { refusalOrFallback } from "@/lib/api/refusal"
 import type { ItemStatus } from "@/lib/api/types"
 
 const FILTERS: { value: ItemStatus; label: string }[] = [
@@ -54,10 +65,17 @@ export interface StockListScreenProps {
 
 export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenProps) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const searchRef = React.useRef<HTMLInputElement>(null)
   const [status, setStatus] = React.useState<ItemStatus | null>(initialStatus)
   const [search, setSearch] = React.useState("")
   const deferred = React.useDeferredValue(search)
+  /** The branch the list is narrowed to, with everything beneath it. */
+  const [branch, setBranch] = React.useState<CategoryBranch | null>(null)
+  /** Which picker is open: the filter, or filing the ticked rows. */
+  const [picking, setPicking] = React.useState<"filter" | "file" | null>(null)
+  const [chosen, setChosen] = React.useState<string[]>([])
+  const [note, setNote] = React.useState<string | null>(null)
 
   React.useEffect(() => registerSearchField(searchRef.current), [])
 
@@ -71,9 +89,12 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
     hasNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-    queryKey: ["items", status, deferred],
+    queryKey: ["items", status, deferred, branch?.id ?? ""],
     queryFn: ({ pageParam }) =>
-      listItems({ status: status ?? undefined, search: deferred }, pageParam),
+      listItems(
+        { status: status ?? undefined, search: deferred, category: branch?.id },
+        pageParam
+      ),
     initialPageParam: 1,
     getNextPageParam: (last) =>
       last.page < last.totalPages ? last.page + 1 : undefined,
@@ -82,6 +103,31 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
 
   const rows = data?.pages.flatMap((page) => page.items) ?? []
   const totalItems = data?.pages[0]?.totalItems ?? 0
+  const ticked = chosen.filter((id) => rows.some((row) => row.id === id))
+
+  const file = useMutation({
+    mutationFn: (into: CategoryBranch) => assignCategory({ category: into.id, items: ticked }),
+    onSuccess: (result, into) => {
+      setPicking(null)
+      setChosen([])
+      setNote(
+        `${result.items} ${result.items === 1 ? "row" : "rows"} filed in ${lastLevels(into.path)}.`
+      )
+      void queryClient.invalidateQueries({ queryKey: ["items"] })
+      void queryClient.invalidateQueries({ queryKey: ["item"] })
+      void queryClient.invalidateQueries({ queryKey: CATEGORY_TREE_KEY })
+    },
+  })
+
+  function toggle(id: string, on: boolean) {
+    setNote(null)
+    setChosen((now) => (on ? [...now.filter((entry) => entry !== id), id] : now.filter((entry) => entry !== id)))
+  }
+
+  const fileError =
+    file.error && !(file.error instanceof OverrideCancelled)
+      ? refusalOrFallback(file.error, "Those rows were not filed. Try again.")
+      : null
 
   return (
     <section className="pt-16 sm:pt-24">
@@ -114,6 +160,47 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
         </ChipGroup>
       </div>
 
+      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2" data-testid="stock-branch-filter">
+        <MicroLabel>Branch</MicroLabel>
+        <span className="min-w-0 text-[15px] text-foreground" data-testid="stock-branch">
+          {branch ? branch.path : "Every branch"}
+        </span>
+        <span className="flex items-center gap-6">
+          <Button variant="text" onClick={() => setPicking("filter")}>
+            {branch ? "Change" : "Choose a branch"}
+          </Button>
+          {branch ? (
+            <Button variant="text" onClick={() => setBranch(null)}>
+              Every branch
+            </Button>
+          ) : null}
+        </span>
+      </div>
+
+      {ticked.length > 0 || note ? (
+        <div
+          className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-2"
+          data-testid="stock-bulk"
+          aria-live="polite"
+        >
+          {ticked.length > 0 ? (
+            <>
+              <span className="tnum text-[15px] text-foreground">
+                {ticked.length} chosen
+              </span>
+              <Button variant="text" onClick={() => setPicking("file")}>
+                File in a branch
+              </Button>
+              <Button variant="text" onClick={() => setChosen([])}>
+                Clear
+              </Button>
+            </>
+          ) : note ? (
+            <span className="text-[15px] text-muted-foreground">{note}</span>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="mt-12">
         {rows.length === 0 ? (
           <div className="flex flex-col items-start gap-6">
@@ -123,7 +210,9 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                 ? "Looking through the shelves."
                 : search
                   ? "Nothing matches that. Try the code, or clear the filters."
-                  : "Nothing is in stock under that filter. Add an item and it will show up here."}
+                  : branch
+                    ? `Nothing in ${branch.name} under that filter. Choose another branch, or add an item.`
+                    : "Nothing is in stock under that filter. Add an item and it will show up here."}
             </p>
             <Button render={<Link to="/counter/stock/new" />} trailingArrow>
               Add stock
@@ -133,11 +222,15 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-12">
+                  <span className="sr-only">Choose</span>
+                </TableHead>
                 <TableHead>
                   <span className="sr-only">Picture</span>
                 </TableHead>
                 <TableHead>Item</TableHead>
                 <TableHead>Code</TableHead>
+                <TableHead>Category</TableHead>
                 <TableHead>Condition</TableHead>
                 <TableHead numeric>Price</TableHead>
                 <TableHead>Status</TableHead>
@@ -159,6 +252,7 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                     })
                   }
                   onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return
                     if (event.key !== "Enter" && event.key !== " ") return
                     event.preventDefault()
                     void navigate({
@@ -167,6 +261,19 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                     })
                   }}
                 >
+                  <TableCell className="w-12 p-0">
+                    {/* The whole cell is the target, not just the square. */}
+                    <label
+                      className="flex size-12 cursor-pointer items-center justify-start"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <RowCheck
+                        label={`Choose ${row.title}`}
+                        checked={chosen.includes(row.id)}
+                        onChange={(on) => toggle(row.id, on)}
+                      />
+                    </label>
+                  </TableCell>
                   <TableImageCell>
                     <ProductImage
                       src={row.image}
@@ -183,8 +290,15 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                       <Hint className="block truncate normal-case">{row.detail}</Hint>
                     ) : null}
                   </TableCell>
-                  <TableCell className="tnum font-mono text-[13px]">
+                  <TableCell className="tnum font-mono text-[13px] whitespace-nowrap">
                     {displayCode(row.sku)}
+                  </TableCell>
+                  <TableCell
+                    className="max-w-56 truncate text-muted-foreground"
+                    data-testid="stock-category"
+                    title={row.categoryPath || undefined}
+                  >
+                    {row.categoryPath ? lastLevels(row.categoryPath) : "-"}
                   </TableCell>
                   <TableCell>{row.condition || "-"}</TableCell>
                   <TableCell numeric>{formatGBP(row.price)}</TableCell>
@@ -215,6 +329,34 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
           </Hint>
         </div>
       ) : null}
+
+      <CategoryPicker
+        open={picking === "filter"}
+        onOpenChange={(open) => setPicking(open ? "filter" : null)}
+        title="Show a branch"
+        description="The list keeps the rows in the branch you choose and everything beneath it."
+        initial={branch?.id}
+        onChoose={(next) => {
+          setBranch(next)
+          setChosen([])
+          setPicking(null)
+        }}
+      />
+      <CategoryPicker
+        open={picking === "file"}
+        onOpenChange={(open) => {
+          if (!open) file.reset()
+          setPicking(open ? "file" : null)
+        }}
+        title={`File ${ticked.length} ${ticked.length === 1 ? "row" : "rows"}`}
+        description="They move into the branch you choose. Nothing else about them changes."
+        initial={branch?.id}
+        pending={file.isPending}
+        error={fileError}
+        onChoose={(into) => {
+          if (into) file.mutate(into)
+        }}
+      />
     </section>
   )
 }

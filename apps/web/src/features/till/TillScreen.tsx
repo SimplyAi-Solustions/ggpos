@@ -41,7 +41,7 @@ import {
   type IdCaptureValues,
 } from "@/features/tradein/id-capture"
 import type { TradeLine } from "@/features/tradein/machine"
-import { CataloguePane } from "@/features/till/CataloguePane"
+import { CataloguePane, type OpenBranch } from "@/features/till/CataloguePane"
 import { DonePane, type ReceiptChoice } from "@/features/till/DonePane"
 import { ReturnsSheet } from "@/features/till/ReturnsSheet"
 import { RefundPane, SettlePane, TradeStep } from "@/features/till/SettlePane"
@@ -127,6 +127,9 @@ import {
 } from "@/lib/api/till"
 import { currentRegisterId, useTillCurrent } from "@/lib/api/till-session"
 import type { ItemDetail, ItemSummary, SaleCustomer } from "@/lib/api/types"
+
+/** Stock that is one row per unit: the line needs its full record. */
+const SERIALISED = new Set(["single", "graded", "retro", "other"])
 
 /** Panels own the pointer while they are open; the scan field must not fight them. */
 const KEEPS_FOCUS =
@@ -222,6 +225,8 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
 
   const [tab, setTab] = React.useState<"items" | "ticket">("items")
   const [categoryId, setCategoryId] = React.useState<string | null>(null)
+  /** A branch of the category tree open in the catalogue pane, in place of a page. */
+  const [branch, setBranch] = React.useState<OpenBranch | null>(null)
   const [search, setSearch] = React.useState<string | null>(null)
   const [scanError, setScanError] = React.useState<string | null>(null)
   const [scanNote, setScanNote] = React.useState<string | null>(null)
@@ -287,6 +292,9 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       ["till-category"],
       ["till-catalogue"],
       ["till-search-stock"],
+      // A sale takes stock off a branch's shelf, and its count with it.
+      ["till-branch"],
+      ["category-tree"],
       // A part-exchange moves the seller's record, their ID and the buy-ins.
       ["customer"],
       ["id-document"],
@@ -374,6 +382,32 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   const chooseItem = React.useCallback(
     (item: TillCatalogueItem, label?: string) => addLine(lineFromCatalogueItem(item, label)),
     [addLine]
+  )
+
+  /**
+   * A stock row from a branch's tiles. One that is one row per unit (a
+   * single, a graded card, a retro game) goes on through its full record,
+   * as a scan of its label would, so the line carries its condition and
+   * its game; a stock line with a quantity goes on as its tile does.
+   */
+  const chooseBranchItem = React.useCallback(
+    async (item: TillCatalogueItem) => {
+      if (!SERIALISED.has(item.kind)) {
+        chooseItem(item)
+        return
+      }
+      try {
+        const detail = await getItem(item.sku)
+        if (!detail) {
+          setScanError(`${item.title} is not in stock any more.`)
+          return
+        }
+        addItemDetail(detail)
+      } catch (error) {
+        setScanError(refusalOrFallback(error, "That item could not be looked up. Try again."))
+      }
+    },
+    [chooseItem, addItemDetail]
   )
 
   const chooseStock = React.useCallback(
@@ -598,6 +632,13 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     const timer = window.setTimeout(() => setSearch(typed.trim()), 350)
     return () => window.clearTimeout(timer)
   }, [typed])
+
+  /** Back to the tiles: the words, the live search and the field itself. */
+  const clearScanField = React.useCallback(() => {
+    setSearch(null)
+    setTyped("")
+    if (scanRef.current) scanRef.current.value = ""
+  }, [])
 
   const tradePanel = phase === "ticket" && tradeOpen && Boolean(ticket.trade)
   const showCatalogue = phase === "ticket" && !tradePanel && (wide || tab === "items")
@@ -1404,17 +1445,35 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         categoryId={categoryId}
         onCategory={(id) => {
           setSearch(null)
+          setBranch(null)
           setCategoryId(id)
         }}
-        search={search}
-        onClearSearch={() => {
-          setSearch(null)
-          setTyped("")
-          if (scanRef.current) scanRef.current.value = ""
+        branch={branch}
+        onRailBranch={(id) => {
+          clearScanField()
+          // Back from the top of a branch returns to the page it came from,
+          // however many branches were opened from the rail since.
+          setBranch((now) => ({ id, top: id, from: now ? now.from : categoryId }))
         }}
+        onOpenBranch={(id) => {
+          clearScanField()
+          setBranch((now) => (now ? { ...now, id } : { id, top: id, from: categoryId }))
+        }}
+        onBranchBack={(parent) => {
+          clearScanField()
+          if (parent) {
+            setBranch((now) => (now ? { ...now, id: parent } : null))
+            return
+          }
+          setCategoryId(branch?.from ?? categoryId)
+          setBranch(null)
+        }}
+        search={search}
+        onClearSearch={clearScanField}
         onProduct={chooseProduct}
         onItem={chooseItem}
         onStock={(item) => void chooseStock(item)}
+        onBranchItem={(item) => void chooseBranchItem(item)}
       />
     )
 

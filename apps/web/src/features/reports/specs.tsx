@@ -9,6 +9,7 @@
  */
 import { Link } from "@tanstack/react-router"
 import { displayCode, encodeCode, formatGBP } from "@gg/shared"
+import { ChevronRightIcon } from "lucide-react"
 
 import { poundsCell } from "@/features/reports/csv"
 import { formatPercent } from "@/lib/format"
@@ -199,6 +200,71 @@ function skuColumn(label = "SKU"): ColumnSpec {
 }
 
 // ---------------------------------------------------------------------------
+// Sales by category: rows that drill down the tree
+// ---------------------------------------------------------------------------
+
+/**
+ * A category row's figure. The contract names it `net`
+ * (docs/api-contract-inventory.md, section 1.4); the report's other
+ * dimensions call the same figure `revenue`, so either is read.
+ */
+export function categoryNet(row: ReportRow): number {
+  return typeof row.net === "number" ? num(row, "net") : num(row, "revenue")
+}
+
+/**
+ * The Sales table by category: a branch with branches beneath it is a
+ * button down into them, and the exported file carries each branch's full
+ * path rather than its name alone.
+ */
+export function categoryColumns(options: {
+  onDrill: (id: string) => void
+  /** A branch's full path, for the CSV. */
+  pathOf: (id: string) => string
+  /** The branch drilled into, whose own row is "In <name> itself". */
+  branch: string
+}): ColumnSpec[] {
+  return [
+    {
+      key: "label",
+      label: "Category",
+      summary: "title",
+      text: (row) => str(row, "label"),
+      csv: (row) => {
+        const path = options.pathOf(str(row, "key"))
+        if (!path) return str(row, "label")
+        return str(row, "key") === options.branch ? `${path} (itself)` : path
+      },
+      sortValue: (row) => str(row, "label").toLowerCase(),
+      cell: (row) =>
+        row.has_children === true ? (
+          <button
+            type="button"
+            data-testid="report-drill"
+            onClick={() => options.onDrill(str(row, "key"))}
+            className="inline-flex max-w-full items-center gap-1.5 text-left text-foreground underline-offset-4 outline-none hover:underline focus-visible:underline"
+          >
+            <span className="truncate">{str(row, "label")}</span>
+            <ChevronRightIcon aria-hidden="true" className="size-4 shrink-0 stroke-[1.25]" />
+          </button>
+        ) : (
+          str(row, "label")
+        ),
+    },
+    {
+      key: "net",
+      label: "Revenue",
+      numeric: true,
+      summary: "figure",
+      text: (row) => formatGBP(categoryNet(row)),
+      csv: (row) => poundsCell(categoryNet(row)),
+      sortValue: (row) => categoryNet(row),
+    },
+    countColumn("count", "Sales", "detail"),
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // The spec
 // ---------------------------------------------------------------------------
 
@@ -271,6 +337,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
     dimensions: [
       { key: "game", label: "Game" },
       { key: "kind", label: "Kind" },
+      { key: "category", label: "Category" },
       { key: "staff", label: "Staff" },
       { key: "payment", label: "Payment" },
     ],

@@ -4,6 +4,11 @@
  * the stock lines it lists. A search replaces the tiles with the same
  * tiles, or with hairline table rows for serialised stock (singles, graded,
  * retro), where the code and the condition matter more than the picture.
+ *
+ * The rail shows the quick-key pages, then the category tree's top-level
+ * branches (docs/api-contract-inventory.md, section 1.6). A branch opens
+ * its view in place of the tiles, and while one is open the scan field's
+ * words search beneath it; a scanned code still finds the item anywhere.
  */
 import * as React from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
@@ -31,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ProductImage } from "@/components/product-image"
+import { BranchView } from "@/features/till/BranchView"
 import { ItemTile, KeyTile } from "@/features/till/Tile"
 import { listItems } from "@/lib/api"
 import { getCategoryItems, searchTillProducts } from "@/lib/api/till"
@@ -66,6 +72,17 @@ function TileSkeletons() {
   )
 }
 
+/** A branch open in the pane, the top-level one it is under, and the page it was opened from. */
+export interface OpenBranch {
+  id: string
+  top: string
+  from: string | null
+}
+
+/** Rail chips are pages and branches, two collections, so each value says which. */
+const PAGE = "page:"
+const BRANCH = "branch:"
+
 export interface CataloguePaneProps {
   scanRef: React.RefObject<HTMLInputElement | null>
   scanError: string | null
@@ -77,6 +94,14 @@ export interface CataloguePaneProps {
   onRetryCatalogue: () => void
   categoryId: string | null
   onCategory: (id: string) => void
+  /** The branch open in the pane, or null for a page's tiles. */
+  branch: OpenBranch | null
+  /** A top-level branch from the rail. */
+  onRailBranch: (id: string) => void
+  /** A folder tile or a step of the breadcrumb, under the same top-level branch. */
+  onOpenBranch: (id: string) => void
+  /** Up to `parent`, or with null back to the page the branch was opened from. */
+  onBranchBack: (parent: string | null) => void
   /** The words being searched for, or null for the tiles. */
   search: string | null
   onClearSearch: () => void
@@ -84,6 +109,8 @@ export interface CataloguePaneProps {
   onItem: (item: TillCatalogueItem, label?: string) => void
   /** A serialised item from a search: added through its full record. */
   onStock: (item: ItemSummary) => void
+  /** A stock row from a branch: a serialised one through its full record. */
+  onBranchItem: (item: TillCatalogueItem) => void
 }
 
 function CategoryItems({
@@ -252,14 +279,25 @@ export function CataloguePane({
   onRetryCatalogue,
   categoryId,
   onCategory,
+  branch,
+  onRailBranch,
+  onOpenBranch,
+  onBranchBack,
   search,
   onClearSearch,
   onProduct,
   onItem,
   onStock,
+  onBranchItem,
 }: CataloguePaneProps) {
   const categories = catalogue?.categories ?? []
+  const branches = catalogue?.branches ?? []
   const category = categories.find((entry) => entry.id === categoryId) ?? categories[0]
+  const chosen = branch
+    ? `${BRANCH}${branch.top}`
+    : !search && category
+      ? `${PAGE}${category.id}`
+      : null
 
   return (
     <section aria-label="Catalogue" className="flex min-h-full flex-col px-5 pt-4 pb-8 sm:px-8">
@@ -286,23 +324,46 @@ export function CataloguePane({
 
       <ChipGroup
         aria-label="Categories"
-        value={search || !category ? [] : [category.id]}
+        value={chosen ? [chosen] : []}
         onValueChange={(next) => {
-          const chosen = next[0]
-          if (chosen) onCategory(chosen)
-          else if (category) onCategory(category.id)
+          // Tapping the chip that is already chosen goes back to its top.
+          const value = next[0] ?? chosen
+          if (!value) return
+          if (value.startsWith(BRANCH)) onRailBranch(value.slice(BRANCH.length))
+          else onCategory(value.slice(PAGE.length))
         }}
         className="mt-5 -mx-1 flex-nowrap overflow-x-auto px-1 pb-1"
+        data-testid="till-rail"
       >
         {categories.map((entry) => (
-          <Chip key={entry.id} value={entry.id} className="h-12 px-5">
+          <Chip key={`${PAGE}${entry.id}`} value={`${PAGE}${entry.id}`} className="h-12 px-5">
+            {entry.name}
+          </Chip>
+        ))}
+        {branches.map((entry) => (
+          <Chip
+            key={`${BRANCH}${entry.id}`}
+            value={`${BRANCH}${entry.id}`}
+            className="h-12 px-5"
+          >
             {entry.name}
           </Chip>
         ))}
       </ChipGroup>
 
       <div className="mt-5 flex-1">
-        {search ? (
+        {branch ? (
+          <BranchView
+            key={branch.id}
+            branchId={branch.id}
+            search={search}
+            onOpen={onOpenBranch}
+            onBack={onBranchBack}
+            onClearSearch={onClearSearch}
+            onProduct={onProduct}
+            onItem={onBranchItem}
+          />
+        ) : search ? (
           <div className="flex flex-col gap-5">
             <div className="flex items-center justify-between gap-6">
               <MicroLabel tone="ink" className="truncate">

@@ -32,6 +32,7 @@ import type {
   SavedReportRecord,
   SparklineSeries,
 } from "@/lib/api/types"
+import { demoCategoryTree } from "@/lib/api/demo/categories"
 
 // ---------------------------------------------------------------------------
 // A deterministic number for a given day and figure
@@ -281,6 +282,83 @@ function skew(from: string, dimension: Dimension[], field: string): number[] {
   return dimension.map((entry) => entry.weight * (0.7 + unit(from, `${field}-${entry.key}`) * 0.6))
 }
 
+/** How much of a level each seeded branch takes; a branch not named takes 4. */
+const BRANCH_WEIGHTS: Record<string, number> = {
+  tcg: 56,
+  retro: 16,
+  boardgames: 5,
+  minis: 4,
+  pc: 3,
+  accessories: 6,
+  food: 4,
+  services: 5,
+  unsorted: 1,
+  "tcg.pokemon": 44,
+  "tcg.mtg": 20,
+  "tcg.yugioh": 12,
+  "tcg.onepiece": 8,
+  "tcg.lorcana": 6,
+  "tcg.other": 2,
+  "tcg.pokemon.singles": 46,
+  "tcg.pokemon.sealed": 30,
+  "tcg.pokemon.graded": 12,
+  "tcg.pokemon.accessories": 6,
+  "retro.nintendo": 40,
+  "retro.sony": 24,
+  "retro.sega": 20,
+}
+
+/**
+ * Sales by category (docs/api-contract-inventory.md, section 1.4): the
+ * branch's child branches with what each took, plus "In <name> itself" for
+ * what is filed on the branch itself. Each level is split from its parent's
+ * own share, walking down from the top, so a drill-down always adds up to
+ * the row it came from.
+ */
+function categoryTable(query: Required<ReportQuery>, revenue: number, count: number): ReportRow[] {
+  const branches = demoCategoryTree().branches
+  const level = (parent: string, net: number, lines: number): ReportRow[] => {
+    const self = parent ? branches.find((branch) => branch.id === parent) : undefined
+    const entries = branches
+      .filter((branch) => branch.parent === parent)
+      .map((branch) => ({
+        key: branch.id,
+        label: branch.name,
+        weight: BRANCH_WEIGHTS[branch.key] ?? 4,
+        has_children: branch.counts.children > 0,
+      }))
+    if (self && (self.counts.items > 0 || self.counts.products > 0)) {
+      entries.push({ key: self.id, label: `In ${self.name} itself`, weight: 3, has_children: false })
+    }
+    const weights = entries.map(
+      (entry) => entry.weight * (0.7 + unit(query.from, `category-${entry.key}`) * 0.6)
+    )
+    const nets = split(net, weights)
+    const counts = split(lines, weights)
+    return entries
+      .map((entry, index) => ({
+        key: entry.key,
+        label: entry.label,
+        net: nets[index] ?? 0,
+        count: counts[index] ?? 0,
+        has_children: entry.has_children,
+      }))
+      .filter((row) => row.net !== 0 || row.count !== 0)
+  }
+
+  const target = branches.find((branch) => branch.id === query.branch)
+  let parent = ""
+  let net = revenue
+  let lines = count
+  for (const id of target ? target.lineage.split("|").filter(Boolean) : []) {
+    const hit = level(parent, net, lines).find((row) => row.key === id)
+    net = Number(hit?.net ?? 0)
+    lines = Number(hit?.count ?? 0)
+    parent = id
+  }
+  return level(parent, net, lines)
+}
+
 // ---------------------------------------------------------------------------
 // The nine reports
 // ---------------------------------------------------------------------------
@@ -315,12 +393,15 @@ function salesReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Partia
         avg_basket: bucketCount === 0 ? 0 : Math.round(bucketRevenue / bucketCount),
       }
     }),
-    table: dimension.map((entry, index) => ({
-      key: entry.key,
-      label: entry.label,
-      revenue: revenues[index] ?? 0,
-      count: counts[index] ?? 0,
-    })),
+    table:
+      query.by === "category"
+        ? categoryTable(query, revenue, count)
+        : dimension.map((entry, index) => ({
+            key: entry.key,
+            label: entry.label,
+            revenue: revenues[index] ?? 0,
+            count: counts[index] ?? 0,
+          })),
     totals: {
       revenue,
       count,
@@ -809,6 +890,7 @@ export function demoReport(key: ReportKey, query: ReportQuery, now?: Date): Repo
     to: query.to,
     group: query.group ?? "day",
     by: query.by ?? "",
+    branch: query.branch ?? "",
     compare: query.compare ?? "none",
   }
   const built = BUILDERS[key](filled, daysIn(filled.from, filled.to, now))

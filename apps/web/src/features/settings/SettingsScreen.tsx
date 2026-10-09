@@ -36,6 +36,7 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useCounterDock } from "@/app/counter-dock"
 import { isManagerUp, useStaffRole } from "@/features/lock/role"
+import { CategoriesSection } from "@/features/settings/CategoriesSection"
 import { PermissionsTable } from "@/features/settings/PermissionsTable"
 import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
@@ -917,6 +918,8 @@ function Editor({
         <PrintersSection />
       </section>
 
+      <CategoriesSection />
+
       {dock
         ? createPortal(
             <div className="border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
@@ -939,13 +942,17 @@ function AdminsOnly() {
   )
 }
 
-/** A manager registers tills: the Tills section, and a line about the rest. */
+/**
+ * A manager registers tills and keeps the category tree: those two
+ * sections, and a line about the rest.
+ */
 function ManagerSettings() {
   return (
     <section className="pt-16 sm:pt-24">
       <PageTitle>Settings</PageTitle>
-      <Lede>Tills are yours to set up. The rest of Settings is for admins.</Lede>
+      <Lede>Tills and categories are yours to set up. The rest of Settings is for admins.</Lede>
       <TillsSection admin={false} />
+      <CategoriesSection />
     </section>
   )
 }
