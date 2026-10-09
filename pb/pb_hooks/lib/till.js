@@ -184,9 +184,10 @@ function byIds(app, collection, ids) {
 }
 
 /**
- * The category label for every line: a till product's category name, or the
- * stock line's kind as the shared `categoryForKind` names it. A product with
- * no category, a deleted item and a line with neither sell as "Other".
+ * The category label for every line: a till product's top-level branch in
+ * the category tree ("Services"), or the stock line's kind as the shared
+ * `categoryForKind` names it. A product with no branch, a deleted item and a
+ * line with neither sell as "Other".
  */
 function lineCategories(app, lines) {
   var till = sharedTill();
@@ -200,7 +201,20 @@ function lineCategories(app, lines) {
   var items = byIds(app, "items", itemIds);
   var categoryIds = [];
   for (var id in products) categoryIds.push(products[id].getString("category"));
-  var categories = byIds(app, "till_categories", categoryIds);
+  var branches = byIds(app, "categories", categoryIds);
+  // Each branch's top level is the first id in its lineage ("|root|...|").
+  var rootOf = {};
+  var rootIds = [];
+  for (var b in branches) {
+    var root = branches[b].getString("lineage").split("|")[1] || "";
+    rootOf[b] = root;
+    rootIds.push(root);
+  }
+  var roots = byIds(app, "categories", rootIds);
+  var categories = {};
+  for (var c in rootOf) {
+    if (roots[rootOf[c]]) categories[c] = roots[rootOf[c]];
+  }
 
   var out = {};
   for (var k = 0; k < lines.length; k++) {

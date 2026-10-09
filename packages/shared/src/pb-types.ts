@@ -14,6 +14,7 @@ export const Collections = {
 	Cards: "cards",
 	CashMovements: "cash_movements",
 	CashSessions: "cash_sessions",
+	Categories: "categories",
 	Counters: "counters",
 	CreditLedger: "credit_ledger",
 	CsvImports: "csv_imports",
@@ -259,6 +260,41 @@ export type CashSessionsRecord<Tclosing_counts = unknown, Topening_counts = unkn
 	updated: IsoAutoDateString
 	variance?: number
 	z_report?: RecordIdString
+}
+
+export const CategoriesDefaultKindOptions = {
+	"single": "single",
+	"graded": "graded",
+	"retro": "retro",
+	"sealed": "sealed",
+	"accessory": "accessory",
+	"other": "other",
+} as const
+export type CategoriesDefaultKindOptions = typeof CategoriesDefaultKindOptions[keyof typeof CategoriesDefaultKindOptions]
+
+export const CategoriesDefaultTaxSchemeOptions = {
+	"margin": "margin",
+	"standard": "standard",
+	"exempt": "exempt",
+} as const
+export type CategoriesDefaultTaxSchemeOptions = typeof CategoriesDefaultTaxSchemeOptions[keyof typeof CategoriesDefaultTaxSchemeOptions]
+export type CategoriesRecord = {
+	active?: boolean
+	created: IsoAutoDateString
+	default_game?: RecordIdString
+	default_kind?: CategoriesDefaultKindOptions
+	default_platform?: RecordIdString
+	default_tax_scheme?: CategoriesDefaultTaxSchemeOptions
+	depth?: number
+	id: string
+	image?: FileNameString
+	key?: string
+	lineage?: string
+	name: string
+	parent?: RecordIdString
+	path?: string
+	sort?: number
+	updated: IsoAutoDateString
 }
 
 export type CountersRecord = {
@@ -517,6 +553,7 @@ export type ItemsSourceOptions = typeof ItemsSourceOptions[keyof typeof ItemsSou
 export type ItemsRecord = {
 	acquired_at?: IsoDateString
 	card?: RecordIdString
+	category?: RecordIdString
 	cert_no?: string
 	completeness?: ItemsCompletenessOptions
 	condition?: ItemsConditionOptions
@@ -1621,6 +1658,7 @@ export type CardSetsResponse<Texternal_ids = unknown, Texpand = unknown> = Requi
 export type CardsResponse<Texternal_ids = unknown, Tfinishes_available = unknown, Tprices = unknown, Texpand = unknown> = Required<CardsRecord<Texternal_ids, Tfinishes_available, Tprices>> & BaseSystemFields<Texpand>
 export type CashMovementsResponse<Texpand = unknown> = Required<CashMovementsRecord> & BaseSystemFields<Texpand>
 export type CashSessionsResponse<Tclosing_counts = unknown, Topening_counts = unknown, Texpand = unknown> = Required<CashSessionsRecord<Tclosing_counts, Topening_counts>> & BaseSystemFields<Texpand>
+export type CategoriesResponse<Texpand = unknown> = Required<CategoriesRecord> & BaseSystemFields<Texpand>
 export type CountersResponse<Texpand = unknown> = Required<CountersRecord> & BaseSystemFields<Texpand>
 export type CreditLedgerResponse<Texpand = unknown> = Required<CreditLedgerRecord> & BaseSystemFields<Texpand>
 export type CsvImportsResponse<Terrors = unknown, Tresolved_rows = unknown, Texpand = unknown> = Required<CsvImportsRecord<Terrors, Tresolved_rows>> & BaseSystemFields<Texpand>
@@ -1693,6 +1731,7 @@ export type CollectionRecords = {
 	cards: CardsRecord
 	cash_movements: CashMovementsRecord
 	cash_sessions: CashSessionsRecord
+	categories: CategoriesRecord
 	counters: CountersRecord
 	credit_ledger: CreditLedgerRecord
 	csv_imports: CsvImportsRecord
@@ -1764,6 +1803,7 @@ export type CollectionResponses = {
 	cards: CardsResponse
 	cash_movements: CashMovementsResponse
 	cash_sessions: CashSessionsResponse
+	categories: CategoriesResponse
 	counters: CountersResponse
 	credit_ledger: CreditLedgerResponse
 	csv_imports: CsvImportsResponse

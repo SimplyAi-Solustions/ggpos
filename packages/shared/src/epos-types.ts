@@ -342,6 +342,40 @@ export interface TillCategory {
 /** `GET /api/vault/till/catalogue`. */
 export interface TillCatalogue {
   categories: TillCategory[]
+  /**
+   * The category tree's visible top-level branches, in order: the rail's
+   * chips after the quick-key pages (docs/api-contract-inventory.md,
+   * section 1). Absent from a server older than Phase 9.
+   */
+  branches?: TillBranchChip[]
+}
+
+/** A branch as the till shows it: a rail chip or a folder tile. */
+export interface TillBranchChip {
+  id: string
+  name: string
+  image_url: string
+  /** Stock rows in stock in this branch and everything under it. */
+  items: number
+}
+
+/** `GET /api/vault/till/branch/{id}`: one branch of the tree, as the till browses it. */
+export interface TillBranchView {
+  branch: { id: string; name: string; path: string }
+  /** From the top-level branch down to this one's parent, for the breadcrumb. */
+  trail: { id: string; name: string }[]
+  /** Its visible child branches, in order, as folder tiles. */
+  children: TillBranchChip[]
+  /** Active till products whose home is this branch. */
+  products: TillCatalogueProduct[]
+  /**
+   * Stock rows in stock whose home is this branch, a page at a time; with a
+   * search, anything in this branch or under it that matches.
+   */
+  items: TillCatalogueItem[]
+  page: number
+  per_page: number
+  total: number
 }
 
 /** `GET /api/vault/sales/lookup`. */
