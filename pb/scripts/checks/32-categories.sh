@@ -235,9 +235,10 @@ S32_DEFAULTS_JS="[d.kind, d.game, d.platform, d.tax_scheme].join('|')"
 [ "$(s32_t "t.filter((b) => b.key).length")" = "235" ] || fail "every seeded branch should carry its key"
 [ "$(s32_t "t.filter((b) => b.image_url !== '').length")" = "0" ] || fail "a seeded branch has an image"
 # Active till products by home branch, as the migration filed them: the open-price
-# Single card on Trading cards, an hour of table time, event entry, the deposit on
-# Services, and the switched-off membership (not counted).
-[ "$(s32_t "key('tcg').counts.products + ',' + key('services.tabletime').counts.products + ',' + key('services.events').counts.products + ',' + key('services').counts.products + ',' + key('services.memberships').counts.products")" = "1,1,1,1,0" ] \
+# Single card on Trading cards, an hour of table time, event entry, the deposit and
+# the Booking key (1789821160_booking_product.js) on Services, and the
+# switched-off membership (not counted).
+[ "$(s32_t "key('tcg').counts.products + ',' + key('services.tabletime').counts.products + ',' + key('services.events').counts.products + ',' + key('services').counts.products + ',' + key('services.memberships').counts.products")" = "1,1,1,2,0" ] \
   || fail "the seeded till products are not counted on their branches: $(s32_t "key('tcg').counts.products + ',' + key('services.tabletime').counts.products + ',' + key('services.events').counts.products + ',' + key('services').counts.products + ',' + key('services.memberships').counts.products")"
 S32_STATUS="$(s32_get "invalid.token" "/api/vault/categories/tree")"
 [ "$S32_STATUS" = "401" ] || fail "the tree answered $S32_STATUS to a request with no valid sign-in"

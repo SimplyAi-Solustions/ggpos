@@ -125,10 +125,13 @@ function usedUpMessage(type, allowed, now, used) {
   }
 
   var opening =
-    allowed === 2
-      ? `Both ${words.plural} this month are used.`
-      : `All ${allowed} ${words.plural} this month are used.`;
-  var next = allowed === 2 ? "The next two come on" : `The next ${allowed} come on`;
+    allowed === 1
+      ? `This month's ${words.singular} is used.`
+      : allowed === 2
+        ? `Both ${words.plural} this month are used.`
+        : `All ${allowed} ${words.plural} this month are used.`;
+  var next =
+    allowed === 1 ? "The next one comes on" : allowed === 2 ? "The next two come on" : `The next ${allowed} come on`;
   return `${opening} ${next} ${nextPeriodStart(now)}.`;
 }
 
