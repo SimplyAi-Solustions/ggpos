@@ -7,7 +7,7 @@
  *   cron snapshots_rollup           (Sunday 02:30)
  *
  * The work itself is lib/snapshots.js's `rollup`; both callers below are
- * thin wrappers over it, the same shape sumup.pb.js is over lib/sumup.js.
+ * thin wrappers over it.
  * 02:30 on a Sunday puts it half an hour clear of crons.pb.js's own
  * weekly `prices` set sync at 03:00, so the two never walk the catalogue
  * at the same time.

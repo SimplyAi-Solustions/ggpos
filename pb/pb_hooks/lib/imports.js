@@ -545,8 +545,9 @@ function resolveReviewRow(txApp, staffId, importRecord, rowNumber, cardId, skip,
  * once nothing is left, mirroring `sales.pb.js`'s own counter-sale logic.
  *
  * `payment` is left blank on every created sale: none of `sales.payment`'s
- * values (sumup_card, cash, store_credit, points, mixed) describe money
- * that went through this shop at all - eBay collected the buyer's payment
+ * values (the till's tenders, `mixed`, and the historic `sumup_card`)
+ * describe money that went through this shop at all - eBay collected the
+ * buyer's payment
  * on its own side - so `channel: "ebay"` is what actually says how this
  * sale happened, and a fabricated payment method would be worse than none.
  *

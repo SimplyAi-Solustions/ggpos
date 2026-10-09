@@ -1,16 +1,27 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 /**
- * sales.pb.js - sale completion and refunds.
+ * sales.pb.js - sale completion, the sale lookup and refunds.
  *
  *   POST /api/vault/sales/complete
- *   POST /api/vault/sales/{id}/refund   (step-up)
+ *   GET  /api/vault/sales/lookup?number=GG-S-000456
+ *   POST /api/vault/sales/{id}/refund   (capability refund)
  *
- * docs/api-contract.md ("Sales") for the shapes, docs/PLAN.md ("Core flows
- * and rules > Sale completion") for the rules. Same shape as the trade-in
- * route: validate first, then one $app.runInTransaction with every write
- * through txApp, with a `halt` object carrying any in-transaction refusal
- * back out past the Go boundary.
+ * docs/api-contract.md ("Sales") for the original shapes,
+ * docs/api-contract-epos.md section 4 for the till's: tenders, till
+ * products, server-checked discounts and price overrides, VAT, voids, the
+ * register and its open session. Same shape as the trade-in route: validate
+ * first, then one $app.runInTransaction with every write through txApp, with
+ * a `halt` object carrying any in-transaction refusal back out past the Go
+ * boundary.
+ *
+ * Every till sale and every refund needs an open cash session on the
+ * register it names (the default register when it names none), and is
+ * linked to that register and session; every payment is a `sale_tenders`
+ * row (lib/tenders.js). Older callers' `payment` / `payment_split` and
+ * `refund_method` are mapped onto tenders. SumUp is gone (section 5): a new
+ * SumUp payment is refused, and historic `sumup_card` sales are left as
+ * they are.
  *
  * A refund never rewrites what was sold. `sale_lines.qty` and `.discount`
  * are the as-sold figures for good; a refund moves
@@ -19,31 +30,23 @@
  * sequence of partial refunds adds back up to exactly what was taken.
  *
  * `sales.complete` also accepts an optional `client_id` (the offline
- * queue's idempotency key, docs/api-contract.md's "Sales" section): a
- * replayed request carrying one that already exists returns that sale's
- * own body again rather than creating a second sale.
- *
- * Since Phase 7 it accepts `sumup_checkout` too - the card payment a
- * paired Solo reader has already taken (lib/readers.js). The checkout has
- * to be `paid`, unused, and for exactly the card part of this sale; on
- * success the sale carries the reader's own transaction code as
- * `sumup_ref` and the two rows point at each other, all inside the same
- * transaction as the rest of the sale.
+ * queue's idempotency key): a replayed request carrying one that already
+ * exists returns that sale's own body again rather than creating a second
+ * sale.
  *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
 
 // ---------------------------------------------------------------------
-// POST /api/vault/sales/complete
-// ---------------------------------------------------------------------
-// ---------------------------------------------------------------------
 // Defaults for a sale created without them. `channel` is "counter" unless
 // the eBay orders import (imports.pb.js) has already said "ebay", and
-// `occurred_at` is now unless that import carries the order's own date.
-// Both fields arrived in Phase 4 (migrations 1789820280 and 1789820340),
-// after the completion route below was written, and a record hook is the
-// one place every create path passes through, the import's included.
+// `occurred_at` is now unless that import carries the order's own date. A
+// counter sale with no register is the default register's
+// (docs/api-contract-epos.md, section 1): the completion route always names
+// one, and this covers anything else that writes a counter sale. A record
+// hook is the one place every create path passes through, the import's
+// included; an eBay sale is left without one.
 // ---------------------------------------------------------------------
 onRecordCreate((e) => {
   if (!e.record.getString("channel")) {
@@ -52,9 +55,17 @@ onRecordCreate((e) => {
   if (!e.record.getString("occurred_at")) {
     e.record.set("occurred_at", new Date().toISOString());
   }
+  if (e.record.getString("channel") === "counter" && !e.record.getString("register")) {
+    const registers = require(`${__hooks}/lib/registers.js`);
+    const fallback = registers.defaultRegister(e.app);
+    if (fallback) e.record.set("register", fallback.id);
+  }
   e.next();
 }, "sales");
 
+// ---------------------------------------------------------------------
+// POST /api/vault/sales/complete
+// ---------------------------------------------------------------------
 routerAdd(
   "POST",
   "/api/vault/sales/complete",
@@ -65,23 +76,41 @@ routerAdd(
     const balances = require(`${__hooks}/lib/balances.js`);
     const referralsLib = require(`${__hooks}/lib/referrals.js`);
     const rewardsLib = require(`${__hooks}/lib/rewards.js`);
-    const readersLib = require(`${__hooks}/lib/readers.js`);
     const notifyLib = require(`${__hooks}/lib/notify.js`);
+    const perms = require(`${__hooks}/lib/permissions.js`);
+    const registers = require(`${__hooks}/lib/registers.js`);
+    const tendersLib = require(`${__hooks}/lib/tenders.js`);
+    const quotes = require(`${__hooks}/lib/quotes.js`);
     const saleline = require(`${__hooks}/lib/shared/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
+    const vat = require(`${__hooks}/lib/shared/vat.js`);
 
-    const METHODS = ["sumup_card", "cash", "store_credit", "points"];
+    const MAX_LINES = 200;
+    const MAX_VOIDS = 100;
 
     const staff = e.auth;
     const body = util.body(e);
     const now = new Date();
 
+    /** A JS array from an untyped body value, [] when it is not a list. */
+    function listOf(value) {
+      if (!value || typeof value !== "object" || typeof value.length !== "number") return [];
+      const out = [];
+      for (let i = 0; i < value.length; i++) out.push(value[i]);
+      return out;
+    }
+
+    /** Whether a body field was sent at all (0 counts; null and "" do not). */
+    function given(value) {
+      return value !== undefined && value !== null && value !== "";
+    }
+
     // -----------------------------------------------------------------
     // Idempotency (docs/api-contract.md, "Sales"): the offline queue's
     // client_id. A replayed request with one already on a sale skips every
     // check below and returns that sale's own body, rebuilt from the
-    // stored row plus the customer's *current* balances, rather than
+    // stored rows plus the customer's *current* balances, rather than
     // selling the same items twice. Checked before anything else is even
     // read, so a duplicate never re-runs (and re-fails) the stock checks
     // against items the first completion already sold.
@@ -105,6 +134,7 @@ routerAdd(
           ? balances.recompute(e.app, existingCustomerId)
           : { credit: 0, points: 0 };
         const existingSplit = util.jsonField(existingSale, "payment_split", {}) || {};
+        const existingTenders = tendersLib.tendersFor(e.app, existingSale, "");
         return e.json(200, {
           sale: {
             id: existingSale.id,
@@ -116,18 +146,42 @@ routerAdd(
           points_earned: existingSale.getInt("points_earned"),
           credit_balance: fresh.credit,
           points_balance: fresh.points,
+          tenders: existingTenders,
+          change: tendersLib.changeOf(existingTenders),
+          vat_total: existingSale.getInt("vat_total"),
+          receipt: { number: existingSale.getString("number") },
         });
       }
     }
 
     // -----------------------------------------------------------------
-    // Lines and stock
+    // The register and its open session (section 4): every till sale,
+    // whatever the tender. A `cash_session` from an older caller has to be
+    // the one that is open.
     // -----------------------------------------------------------------
-    const rawLines = body.lines && body.lines.length ? body.lines : [];
-    if (rawLines.length === 0) {
-      throw e.badRequestError("Add at least one item to the sale.", null);
+    const resolved = registers.resolve(e.app, util.asStr(body.register));
+    if (resolved.status) throw e.error(resolved.status, resolved.message, null);
+    const register = resolved.register;
+    const registerName = register.getString("name");
+    const session = registers.openSession(e.app, register.id);
+    if (!session) throw e.error(409, "Open the till first.", null);
+    const sentSession = util.asStr(body.cash_session);
+    if (sentSession && sentSession !== session.id) {
+      throw e.error(
+        409,
+        `That cash session is not the one open on ${registerName}. Reload the till and try again.`,
+        null
+      );
     }
 
+    const settings = util.settings(e.app);
+    const epos = tendersLib.eposSettings(e.app, settings);
+    const cashCap = settings ? settings.getInt("cash_cap") : 0;
+    const vatRegistered = settings ? settings.getBool("vat_registered") : false;
+
+    // -----------------------------------------------------------------
+    // The customer
+    // -----------------------------------------------------------------
     const customerId = util.asStr(body.customer);
     let customer = null;
     let priv = null;
@@ -146,61 +200,215 @@ routerAdd(
       }
     }
 
-    const planned = [];
-    let subtotal = 0;
-    for (let i = 0; i < rawLines.length; i++) {
-      const raw = rawLines[i];
-      const itemId = util.asStr(raw.item);
-      let item = null;
-      try {
-        item = e.app.findRecordById("items", itemId);
-      } catch (err) {
-        throw e.notFoundError(`Item ${i + 1} is not in stock any more. Scan it again.`, null);
-      }
+    // -----------------------------------------------------------------
+    // Lines: stock items and till products
+    // -----------------------------------------------------------------
+    const rawLines = listOf(body.lines);
+    if (rawLines.length === 0) {
+      throw e.badRequestError("Add at least one item to the sale.", null);
+    }
+    if (rawLines.length > MAX_LINES) {
+      throw e.badRequestError(`A sale can hold up to ${MAX_LINES} lines. Split it into two sales.`, null);
+    }
 
-      const status = item.getString("status");
-      const reservedForThisCustomer =
-        status === "reserved" && customerId && item.getString("reserved_for") === customerId;
-      if (status !== "in_stock" && !reservedForThisCustomer) {
-        throw e.error(
-          409,
-          `${item.getString("sku")} is ${status.replace("_", " ")} and cannot be sold. Remove it from the sale.`,
+    const planned = [];
+    const qtyByItem = {};
+    const memberships = [];
+    let subtotal = 0;
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const raw = rawLines[i] && typeof rawLines[i] === "object" ? rawLines[i] : {};
+      const itemId = util.asStr(raw.item);
+      const productId = util.asStr(raw.product);
+      if (itemId && productId) {
+        throw e.badRequestError(
+          `Line ${i + 1} names a stock item and a till product. Send one or the other.`,
           null
         );
       }
 
       const qty = Math.max(1, util.asInt(raw.qty, 1));
-      const stock = Math.max(0, item.getInt("qty"));
-      if (qty > stock) {
-        throw e.error(
-          409,
-          `Only ${stock} of ${item.getString("sku")} left in stock. Lower the quantity.`,
-          null
-        );
+      const lineDiscount = util.asInt(raw.discount, 0);
+      let plan = null;
+
+      if (productId) {
+        let product = null;
+        try {
+          product = e.app.findRecordById("till_products", productId);
+        } catch (err) {
+          throw e.notFoundError(`Line ${i + 1} is not on the till any more. Reload the till.`, null);
+        }
+        const name = product.getString("name");
+        if (!product.getBool("active")) {
+          throw e.error(409, `${name} is switched off. Take it off the ticket.`, null);
+        }
+        const kind = product.getString("kind");
+        // A deposit is whatever the customer leaves, so it is keyed like
+        // an open-price product.
+        const openPrice = kind === "open_price" || kind === "deposit";
+        let unitPrice = product.getInt("price");
+        let overrideFrom = null;
+        if (openPrice) {
+          if (!given(raw.unit_price)) {
+            throw e.badRequestError(`Key a price for ${name}.`, null);
+          }
+          unitPrice = util.asInt(raw.unit_price, 0);
+        } else if (given(raw.unit_price)) {
+          unitPrice = util.asInt(raw.unit_price, 0);
+          if (unitPrice !== product.getInt("price")) overrideFrom = product.getInt("price");
+        }
+        const sentTitle = util.asStr(raw.title);
+        const taxScheme = product.getString("tax_scheme") || "standard";
+
+        if (kind === "membership") {
+          if (!customerId) {
+            throw e.badRequestError("Attach the customer to sell a Guild Membership.", null);
+          }
+          let tier = null;
+          const tierId = product.getString("membership_tier");
+          if (tierId) {
+            try {
+              tier = e.app.findRecordById("loyalty_tiers", tierId);
+            } catch (err) {
+              tier = null;
+            }
+          }
+          if (!tier) {
+            throw e.error(409, "Guild Membership has no tier to grant yet. Set one under Settings first.", null);
+          }
+          const months = product.getInt("membership_months");
+          if (months < 1) {
+            throw e.error(409, `${name} has no length set yet. Set one under Settings first.`, null);
+          }
+          memberships.push({ index: i, tier: tier, months: months * qty });
+        }
+
+        plan = {
+          index: i,
+          product: product,
+          item: null,
+          kind: kind,
+          game: null,
+          sku: "",
+          title: (openPrice && sentTitle ? sentTitle : name).slice(0, 300),
+          label: name,
+          qty: qty,
+          unitPrice: unitPrice,
+          overrideFrom: overrideFrom,
+          taxScheme: taxScheme,
+          vatRate: vat.rateFor({
+            taxScheme: taxScheme,
+            rate: product.getFloat("vat_rate"),
+            vatRegistered: vatRegistered,
+          }),
+        };
+      } else {
+        let item = null;
+        try {
+          item = e.app.findRecordById("items", itemId);
+        } catch (err) {
+          throw e.notFoundError(`Item ${i + 1} is not in stock any more. Scan it again.`, null);
+        }
+
+        const status = item.getString("status");
+        const reservedForThisCustomer =
+          status === "reserved" && customerId && item.getString("reserved_for") === customerId;
+        if (status !== "in_stock" && !reservedForThisCustomer) {
+          throw e.error(
+            409,
+            `${item.getString("sku")} is ${status.replace("_", " ")} and cannot be sold. Remove it from the sale.`,
+            null
+          );
+        }
+
+        // The same stock line on two lines of one ticket counts once
+        // against its stock.
+        qtyByItem[item.id] = (qtyByItem[item.id] || 0) + qty;
+        const stock = Math.max(0, item.getInt("qty"));
+        if (qtyByItem[item.id] > stock) {
+          throw e.error(
+            409,
+            `Only ${stock} of ${item.getString("sku")} left in stock. Lower the quantity.`,
+            null
+          );
+        }
+
+        const ownPrice = item.getInt("price");
+        const unitPrice = given(raw.unit_price) ? util.asInt(raw.unit_price, ownPrice) : ownPrice;
+        const taxScheme = item.getString("tax_scheme") || "margin";
+        plan = {
+          index: i,
+          product: null,
+          item: item,
+          kind: item.getString("kind"),
+          game: item.getString("game") || null,
+          sku: item.getString("sku"),
+          title: (item.getString("title") || item.getString("sku")).slice(0, 300),
+          label: item.getString("sku"),
+          qty: qty,
+          unitPrice: unitPrice,
+          overrideFrom: unitPrice !== ownPrice ? ownPrice : null,
+          taxScheme: taxScheme,
+          vatRate: vat.rateFor({
+            taxScheme: taxScheme,
+            rate: vat.STANDARD_VAT_RATE,
+            vatRegistered: vatRegistered,
+          }),
+        };
       }
 
-      const unitPrice = util.asInt(raw.unit_price, item.getInt("price"));
-      const lineDiscount = util.asInt(raw.discount, 0);
-      if (unitPrice < 0 || lineDiscount < 0) {
+      if (plan.unitPrice < 0 || lineDiscount < 0) {
         throw e.badRequestError("A price or discount cannot be negative. Check the line.", null);
       }
-      const lineTotal = unitPrice * qty - lineDiscount;
+      const lineGross = plan.unitPrice * qty;
+      const lineTotal = lineGross - lineDiscount;
       if (lineTotal < 0) {
-        throw e.badRequestError(
-          `The discount on ${item.getString("sku")} is more than the line is worth.`,
+        throw e.badRequestError(`The discount on ${plan.label} is more than the line is worth.`, null);
+      }
+      plan.discount = lineDiscount;
+      plan.lineGross = lineGross;
+      plan.lineTotal = lineTotal;
+      subtotal += lineTotal;
+      planned.push(plan);
+    }
+
+    // One kind of membership per sale: two tiers at once would leave the
+    // customer with two plans pinning their tier.
+    for (let m = 1; m < memberships.length; m++) {
+      if (memberships[m].tier.id !== memberships[0].tier.id) {
+        throw e.badRequestError("Sell one kind of Guild Membership at a time.", null);
+      }
+    }
+    let membershipPlan = null;
+    if (memberships.length) {
+      let months = 0;
+      for (let m = 0; m < memberships.length; m++) months += memberships[m].months;
+      membershipPlan = { tier: memberships[0].tier, months: months, indexes: [] };
+      for (let m = 0; m < memberships.length; m++) membershipPlan.indexes.push(memberships[m].index);
+
+      let active = null;
+      try {
+        active = e.app.findFirstRecordByFilter(
+          "memberships",
+          'customer = {:customer} && status = "active"',
+          { customer: customerId }
+        );
+      } catch (err) {
+        active = null;
+      }
+      if (active && active.getString("tier") !== membershipPlan.tier.id) {
+        let activeName = "another";
+        try {
+          activeName = e.app.findRecordById("loyalty_tiers", active.getString("tier")).getString("name");
+        } catch (err) {
+          activeName = "another";
+        }
+        throw e.error(
+          409,
+          `This customer already has a ${activeName} membership until ${quotes.ukDateShort(active.getString("renews_at"))}. Cancel it before selling a different one.`,
           null
         );
       }
-      subtotal += lineTotal;
-
-      planned.push({
-        item: item,
-        qty: qty,
-        unitPrice: unitPrice,
-        discount: lineDiscount,
-        lineTotal: lineTotal,
-        overrideFrom: unitPrice !== item.getInt("price") ? item.getInt("price") : null,
-      });
     }
 
     const saleDiscount = util.asInt(body.discount, 0);
@@ -213,98 +421,53 @@ routerAdd(
     const total = subtotal - saleDiscount;
 
     // -----------------------------------------------------------------
-    // Payment split
+    // Voids: lines that were on this ticket and removed before payment
     // -----------------------------------------------------------------
-    const payment = util.asStr(body.payment) || "sumup_card";
-    if (payment !== "mixed" && METHODS.indexOf(payment) < 0) {
-      throw e.badRequestError("Pick a payment method for this sale.", null);
+    const rawVoids = listOf(body.voided);
+    if (rawVoids.length > MAX_VOIDS) {
+      throw e.badRequestError(`A sale can record up to ${MAX_VOIDS} removed lines.`, null);
     }
-
-    const rawSplit = body.payment_split && typeof body.payment_split === "object" ? body.payment_split : null;
-    const split = { sumup_card: 0, cash: 0, store_credit: 0, points: 0 };
-    if (rawSplit) {
-      for (let i = 0; i < METHODS.length; i++) {
-        split[METHODS[i]] = util.asInt(rawSplit[METHODS[i]], 0);
+    const voids = [];
+    for (let v = 0; v < rawVoids.length; v++) {
+      const raw = rawVoids[v] && typeof rawVoids[v] === "object" ? rawVoids[v] : {};
+      const amount = util.asInt(raw.amount, 0);
+      if (amount < 0) {
+        throw e.badRequestError("A removed line cannot have a negative amount. Check the voids.", null);
       }
-    } else if (payment !== "mixed") {
-      // "for a single payment method the split may be omitted"
-      split[payment] = total;
-    }
-
-    let splitTotal = 0;
-    for (let i = 0; i < METHODS.length; i++) {
-      if (split[METHODS[i]] < 0) {
-        throw e.badRequestError("A payment amount cannot be negative. Check the split.", null);
-      }
-      splitTotal += split[METHODS[i]];
-    }
-    if (splitTotal !== total) {
-      throw e.badRequestError(
-        `The payment adds up to ${money.formatGBP(splitTotal)} but the sale comes to ${money.formatGBP(total)}. Adjust the split.`,
-        null
-      );
+      voids.push({
+        title: (util.asStr(raw.title) || "Line").slice(0, 120),
+        qty: Math.max(1, util.asInt(raw.qty, 1)),
+        amount: amount,
+      });
     }
 
     // -----------------------------------------------------------------
-    // The card payment a Solo reader has already taken (Phase 7)
-    //
-    // `sumup_checkout` is the row POST /api/vault/sumup/checkouts made
-    // and the reader's own callback marked `paid` (lib/readers.js). It
-    // has to be paid, unused, and for exactly the card part of this sale
-    // - checked here for the fast refusal and again inside the
-    // transaction below against the live row, so two tills cannot both
-    // spend one payment.
+    // Tenders (section 4): the shared rules, then the live limits the
+    // shared rules cannot see - the cash cap, the credit and the points.
     // -----------------------------------------------------------------
-    const checkoutId = util.asStr(body.sumup_checkout);
-    let checkout = null;
-    if (checkoutId) {
-      try {
-        checkout = e.app.findRecordById("sumup_checkouts", checkoutId);
-      } catch (err) {
-        throw e.error(422, "That card payment was not found. Take the payment on the reader again.", null);
-      }
-      const checkoutRefusal = readersLib.saleRefusal(e.app, checkout, split.sumup_card);
-      if (checkoutRefusal) {
-        throw e.error(checkoutRefusal.status, checkoutRefusal.message, null);
-      }
-    }
+    const tenderCheck = tendersLib.saleTenders(body, {
+      total: total,
+      requireCardLast4: epos.require_card_last4,
+      hasCustomer: !!customerId,
+    });
+    if (!tenderCheck.ok) throw e.error(tenderCheck.status, tenderCheck.message, null);
+    const tenders = tenderCheck.tenders;
+    const cashAmount = tenderCheck.cash;
+    const creditAmount = tendersLib.amountFor(tenders, "store_credit");
+    const pointsAmount = tendersLib.amountFor(tenders, "points");
 
-    // -----------------------------------------------------------------
-    // Cash, credit, points and the reward code
-    // -----------------------------------------------------------------
-    const settings = util.settings(e.app);
-    const cashCap = settings ? settings.getInt("cash_cap") : 0;
-    const vatRegistered = settings ? settings.getBool("vat_registered") : false;
-
-    let session = null;
-    if (split.cash > 0) {
-      const sessionId = util.asStr(body.cash_session);
-      if (!sessionId) {
-        throw e.error(422, "Open a cash session before taking cash.", null);
-      }
-      try {
-        session = e.app.findRecordById("cash_sessions", sessionId);
-      } catch (err) {
-        throw e.error(422, "That cash session does not exist. Open a session and try again.", null);
-      }
-      if (session.getString("closed_at")) {
-        throw e.error(422, "That cash session is closed. Open a new one before taking cash.", null);
-      }
+    if (cashAmount > 0) {
       // A cap of zero means no cash at all, not "no limit".
       if (cashCap <= 0) {
         throw e.error(422, "Cash sales are switched off in settings.", null);
       }
-      if (split.cash > cashCap) {
+      if (cashAmount > cashCap) {
         throw e.error(
           422,
           `Cash is capped at ${money.formatGBP(cashCap)} a sale. Take the rest by card.`,
           null
         );
       }
-    }
-
-    if ((split.store_credit > 0 || split.points > 0) && !customerId) {
-      throw e.error(422, "Add the customer before using store credit or points.", null);
     }
 
     const programme = util.programme(e.app);
@@ -334,19 +497,22 @@ routerAdd(
       return "Those points cannot be used on this sale.";
     }
 
-    if (split.store_credit > creditBalance) {
+    if (creditAmount > creditBalance) {
       throw e.error(422, creditRefusal(creditBalance), null);
     }
 
     let pointsSpent = 0;
-    if (split.points > 0) {
-      pointsSpent = loyalty.penceToPoints(split.points, programme);
+    if (pointsAmount > 0) {
+      pointsSpent = loyalty.penceToPoints(pointsAmount, programme);
       const check = loyalty.checkPointsRedemption(programme, pointsBalance, pointsSpent, total);
       if (!check.ok) {
         throw e.error(422, pointsRefusal(check, pointsBalance), null);
       }
     }
 
+    // -----------------------------------------------------------------
+    // The reward code
+    // -----------------------------------------------------------------
     const discountSource = util.asStr(body.discount_source);
     const rewardCode = util.asStr(body.reward_code);
     let redemption = null;
@@ -407,22 +573,27 @@ routerAdd(
     }
 
     // -----------------------------------------------------------------
-    // Points earned (never on the part paid with points)
+    // Points earned (never on the part paid with points, and never on a
+    // deposit, which is money held against a later sale that earns them).
     //
     // The sale-level discount comes off the lines pro rata first, so the
     // gross the evaluator sees is the amount actually charged rather than
-    // the pre-discount subtotal.
+    // the pre-discount subtotal. The same spread prices each line's VAT.
     // -----------------------------------------------------------------
     const grosses = [];
     for (let i = 0; i < planned.length; i++) grosses.push(planned[i].lineTotal);
-    const earnNets = saleline.spread(grosses, saleDiscount);
+    const nets = saleline.spread(grosses, saleDiscount);
 
     const earnLines = [];
+    let vatTotal = 0;
     for (let i = 0; i < planned.length; i++) {
+      planned[i].net = nets[i];
+      planned[i].vatAmount = vat.vatInside(nets[i], planned[i].vatRate);
+      vatTotal += planned[i].vatAmount;
       earnLines.push({
-        game: planned[i].item.getString("game") || null,
-        kind: planned[i].item.getString("kind"),
-        total: earnNets[i],
+        game: planned[i].game,
+        kind: planned[i].kind,
+        total: planned[i].kind === "deposit" ? 0 : nets[i],
       });
     }
 
@@ -444,82 +615,138 @@ routerAdd(
     }
     const isBirthdayMonth =
       !!customer && customer.getInt("birthday_month") === now.getUTCMonth() + 1;
+    const customerTier = priv ? util.tier(e.app, priv.getString("tier")) : null;
 
     const earn = loyalty.evaluateSalePoints(programme, rules, {
       lines: earnLines,
       at: now,
       isFirstPurchase: isFirstPurchase,
       isBirthdayMonth: isBirthdayMonth,
-      tier: priv ? util.tier(e.app, priv.getString("tier")) : null,
-      paidWithPoints: split.points,
+      tier: customerTier,
+      paidWithPoints: pointsAmount,
     });
     // Points belong to a customer. A walk-in sale earns none.
     const pointsEarned = customerId ? earn.total : 0;
+
+    // -----------------------------------------------------------------
+    // Discounts and prices, checked on the server (section 4). A line
+    // discount or a manual ticket discount above
+    // settings.epos.discount_limit_pct of what it applies to needs
+    // discount_over_limit; a unit_price that is not the item's or the
+    // priced product's own needs price_override; recording voids needs
+    // void_line. A reward's discount was matched to the reward above, and
+    // the customer's own percent-off perks are worked out here, so only
+    // what is left over counts as manual.
+    // -----------------------------------------------------------------
+    function perkAllowance() {
+      if (!customerTier || !customerTier.perks) return 0;
+      const percentOff = [];
+      for (let p = 0; p < customerTier.perks.length; p++) {
+        if (customerTier.perks[p].type === "percent_off") percentOff.push(customerTier.perks[p]);
+      }
+      if (!percentOff.length) return 0;
+      let amount = 0;
+      for (let i = 0; i < planned.length; i++) {
+        let best = 0;
+        for (let p = 0; p < percentOff.length; p++) {
+          const scope = percentOff[p].scope || [];
+          if (scope.indexOf(planned[i].kind) >= 0 && percentOff[p].value > best) best = percentOff[p].value;
+        }
+        if (best > 0) amount += money.applyPercent(planned[i].lineGross, best);
+      }
+      return amount;
+    }
+
+    function overLimit(off, base) {
+      return off > 0 && off * 100 > base * epos.discount_limit_pct;
+    }
+
+    const ticketIsReward = discountSource === "reward" && !!redemption;
+    const manualTicket = ticketIsReward ? 0 : Math.max(0, saleDiscount - perkAllowance());
+
+    let needsPrice = false;
+    let needsDiscount = overLimit(manualTicket, subtotal);
+    for (let i = 0; i < planned.length; i++) {
+      if (planned[i].overrideFrom !== null) needsPrice = true;
+      if (overLimit(planned[i].discount, planned[i].lineGross)) needsDiscount = true;
+    }
+    const capabilities = [];
+    if (needsPrice) capabilities.push("price_override");
+    if (needsDiscount) capabilities.push("discount_over_limit");
+    if (voids.length) capabilities.push("void_line");
+
+    let grant = null;
+    if (capabilities.length) {
+      grant = perms.checkAll(e, capabilities);
+      if (!grant.ok) return perms.refuse(e, grant);
+    }
+
+    /** The approver a capability was granted by, or "" when the caller holds it. */
+    function approverFor(capability) {
+      const list = grant && grant.grants ? grant.grants : [];
+      for (let g = 0; g < list.length; g++) {
+        if (list[g].capability === capability && list[g].approver) return list[g].approver.id;
+      }
+      return "";
+    }
 
     // -----------------------------------------------------------------
     // Write
     // -----------------------------------------------------------------
     let halt = null;
     let result = null;
-    let referralOutcome = { pending: [] };
+    let pending = [];
 
     try {
       e.app.runInTransaction((txApp) => {
+        // The session is re-read here: a Z report on the other device
+        // between the check above and this write closes it.
+        const liveSession = registers.openSession(txApp, register.id);
+        if (!liveSession || liveSession.id !== session.id) {
+          halt = { status: 409, message: "Open the till first." };
+          throw new Error(halt.message);
+        }
+
         // Balances are read before the transaction for the staff-facing
         // refusals; re-read them here so two tills spending the same credit
         // or the same points cannot both succeed.
-        if (customerId && (split.store_credit > 0 || split.points > 0)) {
-          if (split.store_credit > 0) {
-            const liveCredit = balances.creditBalance(txApp, customerId);
-            if (split.store_credit > liveCredit) {
-              halt = { status: 422, message: creditRefusal(liveCredit) };
-              throw new Error(halt.message);
-            }
+        if (customerId && creditAmount > 0) {
+          const liveCredit = balances.creditBalance(txApp, customerId);
+          if (creditAmount > liveCredit) {
+            halt = { status: 422, message: creditRefusal(liveCredit) };
+            throw new Error(halt.message);
           }
-          if (split.points > 0) {
-            const livePoints = balances.pointsBalance(txApp, customerId);
-            const liveCheck = loyalty.checkPointsRedemption(
-              programme,
-              livePoints,
-              pointsSpent,
-              total
-            );
-            if (!liveCheck.ok) {
-              halt = { status: 422, message: pointsRefusal(liveCheck, livePoints) };
-              throw new Error(halt.message);
-            }
+        }
+        if (customerId && pointsAmount > 0) {
+          const livePoints = balances.pointsBalance(txApp, customerId);
+          const liveCheck = loyalty.checkPointsRedemption(programme, livePoints, pointsSpent, total);
+          if (!liveCheck.ok) {
+            halt = { status: 422, message: pointsRefusal(liveCheck, livePoints) };
+            throw new Error(halt.message);
           }
         }
 
+        const liveItems = {};
         for (let i = 0; i < planned.length; i++) {
-          const live = txApp.findRecordById("items", planned[i].item.id);
+          if (!planned[i].item) continue;
+          const id = planned[i].item.id;
+          if (liveItems[id]) continue;
+          const live = txApp.findRecordById("items", id);
           const status = live.getString("status");
           const reservedForThisCustomer =
             status === "reserved" && customerId && live.getString("reserved_for") === customerId;
-          if ((status !== "in_stock" && !reservedForThisCustomer) || live.getInt("qty") < planned[i].qty) {
+          if ((status !== "in_stock" && !reservedForThisCustomer) || live.getInt("qty") < qtyByItem[id]) {
             halt = {
               status: 409,
               message: `${live.getString("sku")} was sold while this sale was open. Remove it and try again.`,
             };
             throw new Error(halt.message);
           }
-        }
-
-        // The card payment is re-checked against the live row here, not
-        // the one read before the transaction opened, so a checkout that
-        // paid for another sale in the meantime cannot pay for this one
-        // too.
-        let liveCheckout = null;
-        if (checkout) {
-          liveCheckout = txApp.findRecordById("sumup_checkouts", checkout.id);
-          const liveRefusal = readersLib.saleRefusal(txApp, liveCheckout, split.sumup_card);
-          if (liveRefusal) {
-            halt = { status: liveRefusal.status, message: liveRefusal.message };
-            throw new Error(halt.message);
-          }
+          liveItems[id] = live;
         }
 
         const number = counters.nextNumber(txApp, "sale");
+        const sharedTenders = require(`${__hooks}/lib/shared/tenders.js`);
 
         const sale = new Record(txApp.findCollectionByNameOrId("sales"), {
           number: number,
@@ -527,82 +754,115 @@ routerAdd(
           subtotal: subtotal,
           discount: saleDiscount,
           total: total,
-          payment: payment,
-          payment_split: split,
-          // The reader's own transaction code is the reference when there
-          // is one: it is what the SumUp app and the reconcile screen
-          // both show, and it cannot be mistyped.
-          sumup_ref: liveCheckout ? liveCheckout.getString("transaction_code") : util.asStr(body.sumup_ref),
+          payment: sharedTenders.paymentFor(tenders),
+          // Mirrored for the reports written before tenders existed.
+          payment_split: sharedTenders.splitFor(tenders),
           points_earned: pointsEarned,
           refunded_total: 0,
+          refund_count: 0,
+          vat_total: vatTotal,
           status: "complete",
+          channel: "counter",
+          register: register.id,
+          cash_session: session.id,
         });
         if (customerId) sale.set("customer", customerId);
-        if (session) sale.set("cash_session", session.id);
         if (discountSource) sale.set("discount_source", discountSource);
         if (clientId) sale.set("client_id", clientId);
-        if (liveCheckout) sale.set("sumup_checkout", liveCheckout.id);
         txApp.save(sale);
 
-        if (liveCheckout) {
-          liveCheckout.set("sale", sale.id);
-          txApp.save(liveCheckout);
+        try {
+          perms.consume(txApp, grant, "sale:" + sale.id);
+        } catch (err) {
+          halt = { status: 409, message: "That approval has already been used. Ask for it again." };
+          throw err;
         }
 
         const saleLines = txApp.findCollectionByNameOrId("sale_lines");
         for (let i = 0; i < planned.length; i++) {
           const plan = planned[i];
-          const live = txApp.findRecordById("items", plan.item.id);
-          const taxScheme = live.getString("tax_scheme") || "margin";
+          const line = new Record(saleLines, {
+            sale: sale.id,
+            qty: plan.qty,
+            unit_price: plan.unitPrice,
+            discount: plan.discount,
+            refunded_qty: 0,
+            // Margin scheme lines carry no line VAT (the VAT sits on the
+            // margin and is worked out in the stock book); a standard
+            // line only carries VAT once the shop is registered.
+            vat_rate: plan.vatRate,
+            vat_amount: plan.vatAmount,
+            tax_scheme: plan.taxScheme,
+            title: plan.title,
+            status: "sold",
+          });
+          if (plan.item) line.set("item", plan.item.id);
+          if (plan.product) line.set("product", plan.product.id);
+          txApp.save(line);
 
-          txApp.save(
-            new Record(saleLines, {
-              sale: sale.id,
-              item: live.id,
-              qty: plan.qty,
-              unit_price: plan.unitPrice,
-              discount: plan.discount,
-              refunded_qty: 0,
-              // Margin scheme lines carry no line VAT (the VAT sits on the
-              // margin and is worked out in the stock book); a standard
-              // line only carries VAT once the shop is registered.
-              vat_rate: vatRegistered && taxScheme === "standard" ? 20 : 0,
-              tax_scheme: taxScheme,
-              status: "sold",
-            })
-          );
-
-          const remaining = live.getInt("qty") - plan.qty;
-          live.set("qty", remaining);
-          if (remaining <= 0) {
-            live.set("status", "sold");
-            live.set("reserved_for", "");
-            live.set("reserved_until", "");
+          if (plan.item) {
+            const live = liveItems[plan.item.id];
+            const remaining = live.getInt("qty") - plan.qty;
+            live.set("qty", remaining);
+            if (remaining <= 0) {
+              live.set("status", "sold");
+              live.set("reserved_for", "");
+              live.set("reserved_until", "");
+            }
+            txApp.save(live);
           }
-          txApp.save(live);
 
           if (plan.overrideFrom !== null) {
             auditLib.writeAuditLog(txApp, {
               actor: staff.id,
               action: "price_override",
-              collection: "items",
-              record: live.id,
+              collection: plan.item ? "items" : "till_products",
+              record: plan.item ? plan.item.id : plan.product.id,
               meta: {
-                sku: live.getString("sku"),
+                sku: plan.sku,
                 sale: number,
                 from: plan.overrideFrom,
                 to: plan.unitPrice,
+                approver: approverFor("price_override"),
               },
               ip: e.realIP(),
             });
           }
         }
 
-        if (split.store_credit > 0) {
+        // Each line's VAT is inside its net after its share of the ticket
+        // discount, and that share is the shared spread in the stored
+        // "created,id" order (lib/vaultutil.js's saleLineRows): the order
+        // the refund breakdown, the receipt and the X and Z report all
+        // allocate in. Lines written in one transaction can come back in a
+        // different order from the request's, which can move the spread's
+        // rounding penny, so the VAT worked out above is settled here
+        // against the stored rows.
+        const storedRows = util.saleLineRows(txApp, sale.id);
+        const storedSplit = saleline.breakdown(util.asSoldLines(storedRows), saleDiscount);
+        let storedVat = 0;
+        for (let r = 0; r < storedRows.length; r++) {
+          const row = storedRows[r];
+          if (!row) continue;
+          const entry = storedSplit.byId[row.id];
+          const lineVat = entry ? vat.vatInside(entry.net, row.getFloat("vat_rate")) : 0;
+          storedVat += lineVat;
+          if (lineVat !== row.getInt("vat_amount")) {
+            row.set("vat_amount", lineVat);
+            txApp.save(row);
+          }
+        }
+        if (storedVat !== vatTotal) {
+          vatTotal = storedVat;
+          sale.set("vat_total", vatTotal);
+          txApp.save(sale);
+        }
+
+        if (creditAmount > 0) {
           txApp.save(
             new Record(txApp.findCollectionByNameOrId("credit_ledger"), {
               customer: customerId,
-              amount: -split.store_credit,
+              amount: -creditAmount,
               reason: "sale",
               ref: number,
               staff: staff.id,
@@ -641,19 +901,86 @@ routerAdd(
         // (lib/referrals.js). A walk-in sale, or a customer with no
         // pending referral, is a no-op.
         if (customerId) {
-          referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+          const referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+          pending = pending.concat(referralOutcome.pending || []);
         }
 
-        if (split.cash > 0 && session) {
-          txApp.save(
-            new Record(txApp.findCollectionByNameOrId("cash_movements"), {
-              session: session.id,
-              type: "cash_sale",
-              amount: split.cash,
-              ref: number,
-              staff: staff.id,
-            })
-          );
+        // A Guild Membership sold at the till creates the customer's
+        // membership, or extends the one they have from the later of now
+        // and its current end (the same rule as the renew route).
+        let membershipMeta = null;
+        if (membershipPlan) {
+          let paid = 0;
+          for (let m = 0; m < membershipPlan.indexes.length; m++) {
+            for (let i = 0; i < planned.length; i++) {
+              if (planned[i].index === membershipPlan.indexes[m]) paid += planned[i].net;
+            }
+          }
+          let live = null;
+          try {
+            live = txApp.findFirstRecordByFilter(
+              "memberships",
+              'customer = {:customer} && status = "active"',
+              { customer: customerId }
+            );
+          } catch (err) {
+            live = null;
+          }
+          if (live && live.getString("tier") !== membershipPlan.tier.id) {
+            halt = {
+              status: 409,
+              message: "This customer's membership changed while this sale was open. Reload the customer and try again.",
+            };
+            throw new Error(halt.message);
+          }
+          if (!live) {
+            // A lapsed plan on the same tier is picked up again rather than
+            // left beside a new one.
+            try {
+              live = txApp.findFirstRecordByFilter(
+                "memberships",
+                'customer = {:customer} && status = "lapsed" && tier = {:tier}',
+                { customer: customerId, tier: membershipPlan.tier.id }
+              );
+            } catch (err) {
+              live = null;
+            }
+          }
+          const currentEnd = live && live.getString("renews_at")
+            ? new Date(String(live.getString("renews_at")).replace(" ", "T"))
+            : now;
+          const from = !isNaN(currentEnd.getTime()) && currentEnd.getTime() > now.getTime() ? currentEnd : now;
+          const renewsAt = util.addMonths(from, membershipPlan.months).toISOString();
+          const note = `Sold on ${number}`;
+          const tierName = membershipPlan.tier.getString("name");
+          if (live) {
+            live.set("status", "active");
+            live.set("renews_at", renewsAt);
+            live.set("price", paid);
+            live.set("payment_note", note);
+            txApp.save(live);
+          } else {
+            live = new Record(txApp.findCollectionByNameOrId("memberships"), {
+              customer: customerId,
+              tier: membershipPlan.tier.id,
+              status: "active",
+              started_at: now.toISOString(),
+              renews_at: renewsAt,
+              price: paid,
+              payment_note: note,
+            });
+            txApp.save(live);
+            const n = notifyLib.notify(txApp, {
+              customer: customerId,
+              type: "membership_started",
+              title: `Your ${tierName} is live`,
+              body: `Your ${tierName} runs until ${quotes.ukDateShort(renewsAt)}. The perks are in My Vault, under Guild.`,
+              link: "/account/guild",
+              email: true,
+            });
+            pending = pending.concat(n.pending || []);
+          }
+          membershipMeta = { membership: live.id, tier: membershipPlan.tier.id, months: membershipPlan.months };
         }
 
         if (redemption) {
@@ -668,26 +995,79 @@ routerAdd(
           txApp.save(liveRedemption);
         }
 
+        // One sale_tenders row per tender, and the drawer moves by the cash
+        // tender's amount, never by what was handed over.
+        const tenderRows = tendersLib.writeTenders(txApp, {
+          sale: sale.id,
+          refundRef: "",
+          tenders: tenders,
+          register: register.id,
+          session: session.id,
+          staff: staff.id,
+        });
+        tendersLib.writeCashMovement(txApp, {
+          session: session.id,
+          type: "cash_sale",
+          amount: cashAmount,
+          ref: number,
+          staff: staff.id,
+        });
+
+        // Lines taken off this ticket before payment, for the X and Z.
+        if (voids.length) {
+          const events = txApp.findCollectionByNameOrId("till_events");
+          const voidApprover = approverFor("void_line");
+          for (let v = 0; v < voids.length; v++) {
+            // The same shape POST /api/vault/till/void writes, which the
+            // X and Z report reads (section 3): the line's value in pence,
+            // and its title and quantity.
+            const event = new Record(events, {
+              register: register.id,
+              session: session.id,
+              kind: "void_line",
+              amount: voids[v].amount,
+              detail: { title: voids[v].title, qty: voids[v].qty },
+              staff: staff.id,
+            });
+            if (voidApprover) event.set("approver", voidApprover);
+            txApp.save(event);
+          }
+        }
+
+        perms.logOverrides(txApp, grant, {
+          register: register.id,
+          session: session.id,
+          amount: total,
+          detail: { sale: number },
+          used_for: "sale:" + sale.id,
+        });
+
         const fresh = customerId
           ? balances.recompute(txApp, customerId)
           : { credit: 0, points: 0 };
 
+        const tenderMeta = [];
+        for (let t = 0; t < tenders.length; t++) {
+          tenderMeta.push({ method: tenders[t].method, amount: tenders[t].amount });
+        }
         const meta = {
           number: number,
           lines: planned.length,
           total: total,
-          payment: payment,
-          cash_session: session ? session.id : "",
+          payment: sale.getString("payment"),
+          tenders: tenderMeta,
+          vat_total: vatTotal,
+          register: register.id,
+          cash_session: session.id,
+          voids: voids.length,
+          approvals: perms.auditMeta(grant),
         };
         if (redemption) {
           meta.reward_redemption = redemption.id;
           meta.reward = redemption.getString("reward");
           meta.discount = saleDiscount;
         }
-        if (liveCheckout) {
-          meta.sumup_checkout = liveCheckout.id;
-          meta.sumup_ref = liveCheckout.getString("transaction_code");
-        }
+        if (membershipMeta) meta.membership = membershipMeta;
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
           action: "sale_complete",
@@ -699,10 +1079,15 @@ routerAdd(
 
         result = {
           sale: { id: sale.id, number: number, total: total, status: "complete" },
-          sumup_amount: split.sumup_card,
+          // SumUp is gone; kept at 0 for callers that still read it.
+          sumup_amount: 0,
           points_earned: pointsEarned,
           credit_balance: fresh.credit,
           points_balance: fresh.points,
+          tenders: tenderRows,
+          change: tenderCheck.change,
+          vat_total: vatTotal,
+          receipt: { number: number },
         };
       });
     } catch (err) {
@@ -711,7 +1096,7 @@ routerAdd(
     }
 
     // After the transaction has committed, never inside it (lib/notify.js).
-    notifyLib.sendPending(e.app, referralOutcome.pending || []);
+    notifyLib.sendPending(e.app, pending);
 
     return e.json(200, result);
   },
@@ -719,17 +1104,113 @@ routerAdd(
 );
 
 // ---------------------------------------------------------------------
-// POST /api/vault/sales/{id}/refund  (step-up)
+// GET /api/vault/sales/lookup?number=GG-S-000456   (staff)
+//
+// A sale by its receipt number, typed or scanned: the barcode carries the
+// number without dashes (GGS000456), and a refund receipt's reference
+// (GG-S-000456-R1) finds the sale it refunded. Each line comes with what is
+// still refundable, worked out by the same shared breakdown the refund
+// route uses (docs/api-contract-epos.md, section 4).
+// ---------------------------------------------------------------------
+routerAdd(
+  "GET",
+  "/api/vault/sales/lookup",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const csvLib = require(`${__hooks}/lib/csv.js`);
+    const tendersLib = require(`${__hooks}/lib/tenders.js`);
+    const receiptLib = require(`${__hooks}/lib/salereceipt.js`);
+    const saleline = require(`${__hooks}/lib/shared/saleline.js`);
+
+    const typed = csvLib.queryParam(e, "number");
+    const number = receiptLib.normaliseNumber(typed);
+    if (!number) {
+      throw e.badRequestError("Scan the receipt or type its number, for example GG-S-000456.", null);
+    }
+
+    let sale = null;
+    try {
+      sale = e.app.findFirstRecordByFilter("sales", "number = {:n}", { n: number });
+    } catch (err) {
+      sale = null;
+    }
+    if (!sale) throw e.notFoundError(`No sale has the number ${number}.`, null);
+
+    const rows = util.saleLineRows(e.app, sale.id);
+    const sold = saleline.breakdown(util.asSoldLines(rows), sale.getInt("discount"));
+    const described = receiptLib.describeLines(e.app, rows);
+
+    const lines = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row) continue;
+      const entry = sold.byId[row.id];
+      if (!entry) continue;
+      const refundable = row.getString("status") === "refunded" ? 0 : saleline.remainingQty(entry);
+      const about = described[row.id] || { title: "", detail: "", sku: "" };
+      lines.push({
+        id: row.id,
+        title: about.title,
+        detail: about.detail,
+        sku: about.sku,
+        qty: entry.qty,
+        refunded_qty: entry.refundedQty,
+        unit_price: row.getInt("unit_price"),
+        // Everything off this line, its share of a ticket discount
+        // included, so unit_price x qty - discount = net.
+        discount: row.getInt("unit_price") * entry.qty - entry.net,
+        net: entry.net,
+        refundable_qty: refundable,
+        refundable_amount: refundable > 0 ? saleline.refundAmount(entry, refundable) : 0,
+        tax_scheme: row.getString("tax_scheme") || "margin",
+      });
+    }
+
+    let customer = null;
+    if (sale.getString("customer")) {
+      try {
+        const c = e.app.findRecordById("customers", sale.getString("customer"));
+        customer = { id: c.id, name: c.getString("name"), code: c.getString("code") };
+      } catch (err) {
+        customer = null;
+      }
+    }
+
+    return e.json(200, {
+      sale: {
+        id: sale.id,
+        number: sale.getString("number"),
+        occurred_at: receiptLib.isoDate(sale.getString("occurred_at") || sale.getString("created")),
+        total: sale.getInt("total"),
+        status: sale.getString("status"),
+        customer: customer,
+        register_name: receiptLib.registerName(e.app, sale.getString("register")),
+        staff_name: receiptLib.staffName(e.app, sale.getString("staff")),
+        lines: lines,
+        tenders: tendersLib.tendersFor(e.app, sale, ""),
+      },
+    });
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// POST /api/vault/sales/{id}/refund   (capability refund)
 // ---------------------------------------------------------------------
 routerAdd(
   "POST",
   "/api/vault/sales/{id}/refund",
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
-    const stepup = require(`${__hooks}/lib/stepup.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const balances = require(`${__hooks}/lib/balances.js`);
+    const perms = require(`${__hooks}/lib/permissions.js`);
+    const registers = require(`${__hooks}/lib/registers.js`);
+    const tendersLib = require(`${__hooks}/lib/tenders.js`);
     const saleline = require(`${__hooks}/lib/shared/saleline.js`);
+    const money = require(`${__hooks}/lib/shared/money.js`);
+
+    const MAX_LINES = 100;
 
     /** The sale's line records by id, beside the shared breakdown of them. */
     function recordsById(rows) {
@@ -740,7 +1221,17 @@ routerAdd(
       return map;
     }
 
-    stepup.requireStepUp(e);
+    /** A line goes back on the shelf unless the till says it is not fit to (`restock: false`). */
+    function restockOf(value) {
+      if (value === false || value === 0) return false;
+      const s = String(value === undefined || value === null ? "" : value).toLowerCase();
+      return !(s === "false" || s === "0" || s === "no");
+    }
+
+    /** The one wording for a drawer that cannot cover a cash refund. */
+    function drawerShort(expected) {
+      return `The drawer should only hold ${money.formatGBP(Math.max(0, expected))}. Refund the rest to card or store credit.`;
+    }
 
     const staff = e.auth;
     const body = util.body(e);
@@ -760,14 +1251,12 @@ routerAdd(
       throw e.badRequestError("Say why this is being refunded.", null);
     }
 
-    const refundMethod = util.asStr(body.refund_method) || "sumup_card";
-    if (["cash", "store_credit", "sumup_card"].indexOf(refundMethod) < 0) {
-      throw e.badRequestError("Pick how the refund is going back: cash, store credit or card.", null);
-    }
-
     const rawLines = body.lines && body.lines.length ? body.lines : [];
     if (rawLines.length === 0) {
       throw e.badRequestError("Pick at least one line to refund.", null);
+    }
+    if (rawLines.length > MAX_LINES) {
+      throw e.badRequestError(`A refund can take up to ${MAX_LINES} lines at once.`, null);
     }
 
     // The as-sold breakdown: unit_price, qty and discount as they were at
@@ -779,9 +1268,11 @@ routerAdd(
     const asSold = saleline.breakdown(util.asSoldLines(soldRows), sale.getInt("discount"));
 
     const requested = {};
+    const restock = {};
     const order = [];
     for (let i = 0; i < rawLines.length; i++) {
-      const lineId = util.asStr(rawLines[i].sale_line);
+      const raw = rawLines[i] && typeof rawLines[i] === "object" ? rawLines[i] : {};
+      const lineId = util.asStr(raw.sale_line);
       const entry = asSold.byId[lineId];
       if (!entry) {
         throw e.badRequestError("One of those lines is not on this sale.", null);
@@ -790,12 +1281,14 @@ routerAdd(
         throw e.error(409, "One of those lines has already been refunded.", null);
       }
       const remaining = saleline.remainingQty(entry);
-      const want = Math.max(1, util.asInt(rawLines[i].qty, remaining));
+      const want = Math.max(1, util.asInt(raw.qty, remaining));
       if (requested[lineId] === undefined) {
         requested[lineId] = 0;
+        restock[lineId] = true;
         order.push(lineId);
       }
       requested[lineId] += want;
+      if (!restockOf(raw.restock)) restock[lineId] = false;
       if (requested[lineId] > remaining) {
         throw e.badRequestError(
           `Only ${remaining} of that line is still sold. Lower the quantity.`,
@@ -804,18 +1297,35 @@ routerAdd(
       }
     }
 
-    const customerId = sale.getString("customer");
-    if (refundMethod === "store_credit" && !customerId) {
-      throw e.error(422, "This sale has no customer, so it cannot go back as store credit.", null);
+    // What these lines and quantities come to, from the shared breakdown.
+    let amount = 0;
+    for (let i = 0; i < order.length; i++) {
+      amount += saleline.refundAmount(asSold.byId[order[i]], requested[order[i]]);
     }
 
-    let session = null;
-    if (refundMethod === "cash") {
-      session = util.openCashSession(e.app);
-      if (!session) {
-        throw e.error(422, "Open a cash session before refunding cash.", null);
-      }
+    const customerId = sale.getString("customer");
+    const tenderCheck = tendersLib.refundTenders(body, { amount: amount, hasCustomer: !!customerId });
+    if (!tenderCheck.ok) throw e.error(tenderCheck.status, tenderCheck.message, null);
+    const tenders = tenderCheck.tenders;
+    const cashAmount = tenderCheck.cash;
+    const creditAmount = tendersLib.amountFor(tenders, "store_credit");
+
+    // Every refund is made at a till with its drawer open (section 4).
+    const resolved = registers.resolve(e.app, util.asStr(body.register));
+    if (resolved.status) throw e.error(resolved.status, resolved.message, null);
+    const register = resolved.register;
+    const session = registers.openSession(e.app, register.id);
+    if (!session) throw e.error(409, "Open the till first.", null);
+
+    if (cashAmount > 0) {
+      const expected = util.sessionExpected(e.app, session);
+      if (cashAmount > expected) throw e.error(409, drawerShort(expected), null);
     }
+
+    // Capability last, so a manager is only asked to approve a refund that
+    // will otherwise go through. Step-up is no longer needed (section 4).
+    const grant = perms.check(e, "refund");
+    if (!grant.ok) return perms.refuse(e, grant);
 
     let halt = null;
     let result = null;
@@ -826,6 +1336,19 @@ routerAdd(
         if (liveSale.getString("status") === "refunded") {
           halt = { status: 409, message: "This sale has already been refunded in full." };
           throw new Error(halt.message);
+        }
+
+        const liveSession = registers.openSession(txApp, register.id);
+        if (!liveSession || liveSession.id !== session.id) {
+          halt = { status: 409, message: "Open the till first." };
+          throw new Error(halt.message);
+        }
+        if (cashAmount > 0) {
+          const liveExpected = util.sessionExpected(txApp, liveSession);
+          if (cashAmount > liveExpected) {
+            halt = { status: 409, message: drawerShort(liveExpected) };
+            throw new Error(halt.message);
+          }
         }
 
         // Re-read every line and price from the live refunded_qty, so two
@@ -854,31 +1377,60 @@ routerAdd(
             };
             throw new Error(halt.message);
           }
-          refunded += saleline.refundAmount(entry, want);
+          const lineAmount = saleline.refundAmount(entry, want);
+          refunded += lineAmount;
           plans.push({
             line: record,
             qty: entry.qty,
             already: entry.refundedQty,
             want: want,
+            amount: lineAmount,
+            restock: restock[order[i]],
           });
         }
+        // The tenders were checked against the amount worked out before
+        // the transaction; a refund of other units of the same line in the
+        // meantime can move it by a penny of rounding.
+        if (refunded !== amount) {
+          halt = {
+            status: 409,
+            message: "That line was refunded while this refund was open. Reload the sale and try again.",
+          };
+          throw new Error(halt.message);
+        }
 
+        try {
+          perms.consume(txApp, grant, "refund:" + liveSale.id);
+        } catch (err) {
+          halt = { status: 409, message: "That approval has already been used. Ask for it again." };
+          throw err;
+        }
+
+        const count = liveSale.getInt("refund_count") + 1;
+        const refundRef = `${liveSale.getString("number")}-R${count}`;
+
+        let restocked = 0;
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i];
+          const itemId = plan.line.getString("item");
 
-          let item = null;
-          try {
-            item = txApp.findRecordById("items", plan.line.getString("item"));
-          } catch (err) {
-            halt = {
-              status: 409,
-              message: "That item has been deleted, so it cannot go back into stock.",
-            };
-            throw new Error(halt.message);
+          // A till product has no stock; a damaged return stays as it is.
+          if (itemId && plan.restock) {
+            let item = null;
+            try {
+              item = txApp.findRecordById("items", itemId);
+            } catch (err) {
+              halt = {
+                status: 409,
+                message: "That item has been deleted, so it cannot go back into stock.",
+              };
+              throw new Error(halt.message);
+            }
+            item.set("qty", item.getInt("qty") + plan.want);
+            item.set("status", "in_stock");
+            txApp.save(item);
+            restocked += plan.want;
           }
-          item.set("qty", item.getInt("qty") + plan.want);
-          item.set("status", "in_stock");
-          txApp.save(item);
 
           // qty and discount stay as sold for ever; only refunded_qty moves.
           const after = plan.already + plan.want;
@@ -896,6 +1448,7 @@ routerAdd(
         const refundedBefore = liveSale.getInt("refunded_total");
         const refundedAfter = refundedBefore + refunded;
         liveSale.set("refunded_total", refundedAfter);
+        liveSale.set("refund_count", count);
         liveSale.set("status", allRefunded ? "refunded" : "part_refunded");
         txApp.save(liveSale);
 
@@ -908,30 +1461,35 @@ routerAdd(
           saleline.pointsCum(pointsEarned, saleTotal, refundedAfter) -
           saleline.pointsCum(pointsEarned, saleTotal, refundedBefore);
 
-        if (refundMethod === "store_credit" && refunded > 0) {
+        if (creditAmount > 0) {
           txApp.save(
             new Record(txApp.findCollectionByNameOrId("credit_ledger"), {
               customer: customerId,
-              amount: refunded,
+              amount: creditAmount,
               reason: "sale",
-              ref: liveSale.getString("number") + " refund",
+              ref: refundRef,
               staff: staff.id,
             })
           );
         }
 
-        if (refundMethod === "cash" && refunded > 0 && session) {
-          txApp.save(
-            new Record(txApp.findCollectionByNameOrId("cash_movements"), {
-              session: session.id,
-              type: "refund",
-              // Signed: money out of the drawer is negative.
-              amount: -refunded,
-              ref: liveSale.getString("number") + " refund",
-              staff: staff.id,
-            })
-          );
-        }
+        // Signed: money out of the drawer is negative.
+        tendersLib.writeCashMovement(txApp, {
+          session: session.id,
+          type: "refund",
+          amount: -cashAmount,
+          ref: refundRef,
+          staff: staff.id,
+        });
+
+        const tenderRows = tendersLib.writeTenders(txApp, {
+          sale: liveSale.id,
+          refundRef: refundRef,
+          tenders: tenders,
+          register: register.id,
+          session: session.id,
+          staff: staff.id,
+        });
 
         if (customerId && pointsToReverse !== 0) {
           // The points ledger is allowed to go negative here: a customer who
@@ -942,7 +1500,7 @@ routerAdd(
               customer: customerId,
               delta: -pointsToReverse,
               reason: "refund_reverse",
-              ref: liveSale.getString("number") + " refund",
+              ref: refundRef,
               staff: staff.id,
             })
           );
@@ -959,10 +1517,34 @@ routerAdd(
         });
         txApp.save(note);
 
+        perms.logOverrides(txApp, grant, {
+          register: register.id,
+          session: session.id,
+          amount: refunded,
+          detail: { sale: liveSale.getString("number"), ref: refundRef },
+          used_for: "refund:" + liveSale.id,
+        });
+
         const fresh = customerId
           ? balances.recompute(txApp, customerId)
           : { credit: 0, points: 0 };
 
+        // The lines and quantities of this refund live here and nowhere
+        // else: the refund receipt (lib/salereceipt.js) reads them back by
+        // `ref`. Identifiers and the shop's own money only.
+        const lineMeta = [];
+        for (let i = 0; i < plans.length; i++) {
+          lineMeta.push({
+            sale_line: plans[i].line.id,
+            qty: plans[i].want,
+            amount: plans[i].amount,
+            restock: plans[i].restock,
+          });
+        }
+        const tenderMeta = [];
+        for (let t = 0; t < tenders.length; t++) {
+          tenderMeta.push({ method: tenders[t].method, amount: tenders[t].amount });
+        }
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
           action: "sale_refund",
@@ -970,18 +1552,31 @@ routerAdd(
           record: liveSale.id,
           meta: {
             number: liveSale.getString("number"),
-            lines: plans.length,
+            ref: refundRef,
+            lines: lineMeta,
             refunded: refunded,
             refunded_total: refundedAfter,
-            refund_method: refundMethod,
+            tenders: tenderMeta,
+            refund_method: util.asStr(body.refund_method),
+            restocked: restocked,
             points_reversed: pointsToReverse,
             note: note.id,
+            register: register.id,
+            session: session.id,
+            approvals: perms.auditMeta(grant),
           },
           ip: e.realIP(),
         });
 
         result = {
-          sale: { id: liveSale.id, status: liveSale.getString("status") },
+          sale: {
+            id: liveSale.id,
+            number: liveSale.getString("number"),
+            status: liveSale.getString("status"),
+            refunded_total: refundedAfter,
+            refund_count: count,
+          },
+          refund: { ref: refundRef, amount: refunded, tenders: tenderRows },
           refunded: refunded,
           refunded_total: refundedAfter,
           points_reversed: pointsToReverse,

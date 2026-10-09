@@ -30,8 +30,11 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
 
-    // Never leaves the server, whatever a future migration adds.
-    const DROPPED = ["api_keys", "email", "push", "collectionId", "collectionName"];
+    // Never leaves the server, whatever a future migration adds. `sumup`
+    // is the old card reader's merchant settings: SumUp is gone
+    // (docs/api-contract-epos.md, section 5), and the row keeps them only
+    // as history.
+    const DROPPED = ["api_keys", "email", "push", "sumup", "collectionId", "collectionName"];
 
     function isDropped(name) {
       if (DROPPED.indexOf(name) >= 0) return true;
