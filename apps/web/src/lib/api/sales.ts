@@ -50,6 +50,12 @@ export type TillSaleLine =
       title?: string
       note?: string
     }
+  /**
+   * A booking's deposit, balance, session charge or event entry
+   * (docs/api-contract-launch.md, section 4, "Paying"): the sale marks it
+   * paid and confirms a held booking in the same transaction.
+   */
+  | { booking: string; qty: number; unit_price: number; discount: number; title: string; note?: string }
 
 /** A line taken off the ticket before payment, written as a void. */
 export interface TillVoidedLine {

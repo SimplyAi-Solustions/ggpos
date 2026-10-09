@@ -85,6 +85,12 @@ export interface TicketLine {
   vatRate: number
   discount: Adjustment
   note: string
+  /**
+   * A booking's deposit, balance or session charge (docs/api-contract-launch.md,
+   * section 4, "Paying"): sent as `lines[].booking`, made by
+   * `features/bookings/till-line.ts`. Absent on every other line.
+   */
+  bookingId?: string | null
 }
 
 /** A line removed before payment: written as a void with the sale. */
@@ -369,6 +375,8 @@ function clampLine(line: TicketLine): TicketLine {
 /** Whether a new line is more of one already on the ticket. */
 export function sameThing(a: TicketLine, b: TicketLine): boolean {
   if (a.itemId && b.itemId) return a.itemId === b.itemId
+  // One line a booking: what is paid towards it is that line's price.
+  if (a.bookingId || b.bookingId) return Boolean(a.bookingId) && a.bookingId === b.bookingId
   // An open-price key is a new line every time: two single cards at
   // different prices are two lines, not one line of two.
   if (a.productId && b.productId) return a.productId === b.productId && !a.openPrice && !b.openPrice
@@ -740,6 +748,14 @@ export type SaleLineInput =
       title?: string
       note?: string
     }
+  | {
+      booking: string
+      qty: number
+      unit_price: number
+      discount: number
+      title: string
+      note?: string
+    }
 
 /**
  * The lines as `POST /api/vault/sales/complete` takes them. The price goes
@@ -756,6 +772,7 @@ export function saleLines(ticket: Ticket): SaleLineInput[] {
       ...(line.note ? { note: line.note } : {}),
     }
     if (line.itemId) return { item: line.itemId, ...common }
+    if (line.bookingId) return { booking: line.bookingId, ...common, title: line.title }
     return {
       product: line.productId ?? "",
       ...common,

@@ -3,6 +3,7 @@ import { Link, Outlet } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import {
   BellIcon,
+  CalendarIcon,
   CameraIcon,
   CreditCardIcon,
   HeartIcon,
@@ -32,6 +33,8 @@ import { useCustomerSession } from "@/features/portal/session"
 
 const BAR = [
   { to: "/account", label: "Card", exact: true, Icon: CreditCardIcon },
+  // Bookings (package BW, docs/api-contract-launch.md, section 4).
+  { to: "/account/bookings", label: "Book", exact: false, Icon: CalendarIcon },
   { to: "/account/quotes", label: "Quotes", exact: false, Icon: CameraIcon },
   { to: "/account/wants", label: "Wants", exact: false, Icon: HeartIcon },
   { to: "/account/credit", label: "Credit", exact: false, Icon: WalletIcon },

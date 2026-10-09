@@ -88,7 +88,12 @@ const PRODUCT_LINE = "product:"
 
 function saleLines(payload: TillSalePayload): QueuedLine[] {
   return payload.lines.map((line) => ({
-    itemId: "item" in line ? line.item : `${PRODUCT_LINE}${line.product}`,
+    itemId:
+      "item" in line
+        ? line.item
+        : "product" in line
+          ? `${PRODUCT_LINE}${line.product}`
+          : `booking:${line.booking}`,
     qty: line.qty,
     unitPrice: line.unit_price,
   }))

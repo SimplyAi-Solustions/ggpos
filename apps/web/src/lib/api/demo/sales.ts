@@ -57,6 +57,11 @@ import {
 } from "@/lib/api/demo/till-session"
 import { demoProduct, demoRecordVoids } from "@/lib/api/demo/till"
 import {
+  demoPlanBookingLine,
+  demoSettleBookingLine,
+  demoUnpayBookingLine,
+} from "@/lib/api/demo/bookings"
+import {
   DEMO_PROGRAMME,
   DEMO_RULES,
   DEMO_SALE_CUSTOMERS,
@@ -109,7 +114,7 @@ interface TillDemoSale extends DemoSale {
 }
 
 /** A demo sale line, which may be a till product rather than an item. */
-type TillDemoLine = SaleLineDetail & { product?: string; note?: string }
+type TillDemoLine = SaleLineDetail & { product?: string; note?: string; booking?: string }
 
 export function loyaltySetup(): LoyaltySetup {
   return { programme: DEMO_PROGRAMME, rules: DEMO_RULES, tiers: DEMO_TIERS }
@@ -233,12 +238,33 @@ interface PlannedLine {
   note: string
   kind: string
   game: string | null
+  /** A booking line (docs/api-contract-launch.md, section 4, "Paying"). */
+  bookingId?: string
 }
 
 function planLines(payload: TillSalePayload): PlannedLine[] {
   return payload.lines.map((line, index) => {
     const qty = Math.max(1, Math.floor(line.qty || 1))
     const discount = Math.max(0, Math.round(line.discount ?? 0))
+    // ---- Bookings (package BW): a deposit, balance, session or entry ----
+    if ("booking" in line) {
+      const earlier = payload.lines.slice(0, index).flatMap((other) => ("booking" in other ? [other] : []))
+      const planned = demoPlanBookingLine(line, index, earlier)
+      return {
+        item: null,
+        productId: null,
+        title: planned.title,
+        qty: 1,
+        unitPrice: planned.amount,
+        discount,
+        total: planned.amount - discount,
+        taxScheme: "standard",
+        note: line.note ?? "",
+        kind: "other",
+        game: null,
+        bookingId: line.booking,
+      }
+    }
     if ("item" in line) {
       const item = itemFor(line.item)
       if (!item) throw refusal(404, `Item ${index + 1} is not in stock any more. Scan it again.`)
@@ -770,6 +796,9 @@ function applyRefund(
   sessionId: string
 ): string {
   for (const { line, qty, restock } of plan.planned) {
+    // A booking line refunded comes off what the booking has paid (package BW).
+    const booking = (line as TillDemoLine).booking
+    if (booking) demoUnpayBookingLine(booking, line.id)
     line.refunded_qty = (line.refunded_qty ?? 0) + qty
     if (line.refunded_qty >= (line.qty ?? 1)) line.status = "refunded"
     if (!restock || !line.item) continue
@@ -1001,6 +1030,7 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
         sale: saleId,
         item: line.item?.id ?? "",
         ...(line.productId ? { product: line.productId } : {}),
+        ...(line.bookingId ? { booking: line.bookingId } : {}),
         qty: line.qty,
         unit_price: line.unitPrice,
         discount: line.discount,
@@ -1022,6 +1052,14 @@ export function completeTicket(payload: TillTicketPayload): TillTicketResult {
       item.reserved_until = undefined
       item.updated = now
     }
+    // ---- Bookings (package BW): the line goes on what the booking has paid ----
+    lines.forEach((line, index) => {
+      if (!line.bookingId) return
+      demoSettleBookingLine(line.bookingId, line.unitPrice, {
+        sale: { id: saleId, number },
+        saleLine: sale.lines[index]?.id ?? "",
+      })
+    })
 
     if (customer) {
       customer.creditBalance -= paid.credit

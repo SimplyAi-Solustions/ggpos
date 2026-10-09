@@ -288,7 +288,7 @@ export function LineRow({
   const net = lineNet(line)
   const was = line.listPrice * line.qty
   const reduced = lineDiscount(line) > 0 || net !== was
-  const meta = [line.sku ? displayCode(line.sku) : "Till product", line.note]
+  const meta = [line.sku ? displayCode(line.sku) : line.bookingId ? "Booking" : "Till product", line.note]
     .filter(Boolean)
     .join(" · ")
 
