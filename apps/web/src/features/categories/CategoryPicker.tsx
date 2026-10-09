@@ -158,13 +158,13 @@ function PickerBody({
               No branch matches that. Check the spelling, or go down the tree.
             </p>
           ) : (
-            <ul aria-label="Branches found" data-testid="category-picker-results" className="border-t border-hairline-soft">
+            <ul aria-label="Branches found" data-testid="category-picker-results">
               {results.map((match) => (
                 <li key={match.branch.id}>
                   <button
                     type="button"
                     onClick={() => go(match.branch.id)}
-                    className="flex min-h-14 w-full items-center justify-between gap-4 border-b border-hairline-soft py-3 text-left outline-none transition-colors duration-150 ease-gg hover:bg-row-hover focus-visible:bg-row-hover"
+                    className="flex min-h-14 w-full items-center justify-between gap-4 border-b border-hairline-soft py-3 [li:first-child>&]:border-t text-left outline-none transition-colors duration-150 ease-gg hover:bg-row-hover focus-visible:bg-row-hover"
                   >
                     <span className="min-w-0 text-[15px] leading-[1.4]">
                       {match.levels.map((level, index) => (
@@ -199,7 +199,6 @@ function PickerBody({
               <ul
                 aria-label={here ? `Branches in ${here.name}` : "Branches"}
                 data-testid="category-picker-rows"
-                className="border-t border-hairline-soft"
               >
                 {rows.map((branch) => {
                   const deeper = childrenOf(branches, branch.id).some(isOffered)
@@ -208,7 +207,7 @@ function PickerBody({
                       <button
                         type="button"
                         onClick={() => go(branch.id)}
-                        className="flex min-h-14 w-full items-center justify-between gap-4 border-b border-hairline-soft py-3 text-left outline-none transition-colors duration-150 ease-gg hover:bg-row-hover focus-visible:bg-row-hover"
+                        className="flex min-h-14 w-full items-center justify-between gap-4 border-b border-hairline-soft py-3 [li:first-child>&]:border-t text-left outline-none transition-colors duration-150 ease-gg hover:bg-row-hover focus-visible:bg-row-hover"
                       >
                         <span className="min-w-0 truncate text-[16px] text-foreground">
                           {branch.name}
@@ -235,7 +234,7 @@ function PickerBody({
           </div>
         )}
       </SheetBody>
-      <SheetFooter className="flex-col items-stretch gap-3 border-t border-hairline-soft">
+      <SheetFooter className="flex-col items-stretch gap-3">
         <p className="text-[13px] leading-[1.45] text-muted-foreground" data-testid="category-picker-current">
           {here ? here.path : allowTop ? "The top level" : "Go into a branch to choose it."}
         </p>

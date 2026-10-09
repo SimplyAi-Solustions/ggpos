@@ -153,6 +153,8 @@ interface DragView {
 
 interface RowProps {
   branch: CategoryBranch
+  /** The first row carries the list's top rule. */
+  first: boolean
   open: boolean
   hasChildren: boolean
   drag: DragView | null
@@ -179,6 +181,7 @@ interface RowProps {
 
 function BranchRow({
   branch,
+  first,
   open,
   hasChildren,
   drag,
@@ -224,12 +227,13 @@ function BranchRow({
             "pointer-events-none absolute right-0 z-10 h-0.5 bg-foreground",
             zone === "before" ? "-top-px" : "-bottom-px"
           )}
-          style={{ left: `calc(${branch.depth} * ${INDENT} + 48px)` }}
+          style={{ left: `calc(${branch.depth} * ${INDENT} + 44px)` }}
         />
       ) : null}
       <div
         className={cn(
-          "flex min-h-14 items-center gap-1 border-b border-hairline-soft pr-0 select-none",
+          "flex min-h-14 items-center gap-1 border-b border-hairline-soft py-2 pr-0 select-none",
+          first && "border-t",
           "transition-colors duration-150 ease-gg",
           zone === "inside" && "bg-row-hover ring-1 ring-foreground ring-inset"
         )}
@@ -243,7 +247,11 @@ function BranchRow({
           type="button"
           aria-label={`Drag ${branch.name}. Arrow keys move it up or down.`}
           data-testid="category-grip"
-          className="flex size-12 shrink-0 cursor-grab touch-none items-center justify-center rounded-[var(--radius)] text-muted-foreground-2 outline-none hover:text-foreground focus-visible:text-foreground active:cursor-grabbing"
+          className={cn(
+            "relative flex size-10 shrink-0 cursor-grab touch-none items-center justify-center rounded-[var(--radius)] text-muted-foreground-2 outline-none hover:text-foreground focus-visible:text-foreground active:cursor-grabbing",
+            // The same 48px phone target the ghost-icon button carries.
+            "max-sm:after:absolute max-sm:after:inset-x-0 max-sm:after:top-1/2 max-sm:after:h-12 max-sm:after:min-w-12 max-sm:after:-translate-y-1/2 max-sm:after:content-['']"
+          )}
           onPointerDown={(event) => {
             event.stopPropagation()
             onGrip(event)
@@ -341,7 +349,7 @@ function BranchRow({
                 render={
                   <Button
                     variant="ghost-icon"
-                    className="size-12 shrink-0"
+                    className="shrink-0"
                     aria-label={`More for ${branch.name}`}
                   />
                 }
@@ -688,10 +696,10 @@ function FileList({
         ) : rows.length + (products.data?.length ?? 0) === 0 ? (
           <p className="text-[15px] text-muted-foreground">Unsorted is empty. Everything is filed.</p>
         ) : (
-          <ul className="border-t border-hairline-soft" data-testid="unsorted-rows">
+          <ul data-testid="unsorted-rows">
             {rows.map((row) => (
               <li key={row.id}>
-                <label className="flex min-h-14 cursor-pointer items-center gap-4 border-b border-hairline-soft py-2">
+                <label className="flex min-h-14 cursor-pointer items-center gap-4 border-b border-hairline-soft py-2 [li:first-child>&]:border-t">
                   <RowCheck
                     label={`Choose ${row.title}`}
                     checked={items.includes(row.id)}
@@ -709,7 +717,7 @@ function FileList({
             ))}
             {(products.data ?? []).map((product) => (
               <li key={product.id}>
-                <label className="flex min-h-14 cursor-pointer items-center gap-4 border-b border-hairline-soft py-2">
+                <label className="flex min-h-14 cursor-pointer items-center gap-4 border-b border-hairline-soft py-2 [li:first-child>&]:border-t">
                   <RowCheck
                     label={`Choose ${product.name}`}
                     checked={chosenProducts.includes(product.id)}
@@ -1141,14 +1149,15 @@ export function CategoriesSection() {
         </p>
       ) : (
         <ul
-          className="border-t border-hairline-soft [--gg-category-indent:16px] sm:[--gg-category-indent:28px]"
+          className="[--gg-category-indent:16px] sm:[--gg-category-indent:28px]"
           data-testid="category-tree"
           aria-label="Categories"
         >
-          {rows.map((branch) => (
+          {rows.map((branch, index) => (
             <BranchRow
               key={`${branch.id}-${renaming === branch.id ? "edit" : "view"}`}
               branch={branch}
+              first={index === 0}
               open={open.has(branch.id)}
               hasChildren={branch.counts.children > 0}
               drag={drag}
