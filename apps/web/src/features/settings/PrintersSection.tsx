@@ -89,8 +89,10 @@ export function PrintersSection() {
     refetchInterval: 15_000,
     retry: false,
   })
+  // Its own key: the Tills section caches every register, switched off
+  // included, under ["registers"], in another shape.
   const registers = useQuery({
-    queryKey: ["registers"],
+    queryKey: ["registers", "active"],
     queryFn: listRegisters,
     staleTime: 60_000,
     retry: false,

@@ -46,7 +46,9 @@ async function target(
 ): Promise<{ register: NamedRef | null; printer: Printer | null }> {
   const [registers, printers] = await Promise.all([
     queryClient.fetchQuery({
-      queryKey: ["registers"],
+      // The active registers only; ["registers"] alone is the Tills
+      // section's full list, switched-off registers included.
+      queryKey: ["registers", "active"],
       queryFn: listRegisters,
       staleTime: 60_000,
     }),

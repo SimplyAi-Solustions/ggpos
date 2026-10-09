@@ -16,7 +16,7 @@ import type {
   TillReport,
 } from "@gg/shared"
 
-import { DEMO_REGISTER } from "@/lib/api/demo/till-session"
+import { DEMO_REGISTER, demoListRegisters } from "@/lib/api/demo/till-session"
 import type { PrintJobInput, PrinterWithUrl, NewPrinter, PrintJobList } from "@/lib/api/printing"
 
 const DEMO_MAC = "00:11:e5:06:04:ff"
@@ -77,8 +77,11 @@ export function listPrinters(): Printer[] {
   return state.printers.map(fresh)
 }
 
+/** The demo's switched-on registers, the same list Settings, Tills edits. */
 export function listRegisters(): NamedRef[] {
-  return [DEMO_REGISTER]
+  return demoListRegisters()
+    .filter((row) => row.active)
+    .map((row) => ({ id: row.id, name: row.name }))
 }
 
 function token(): string {
