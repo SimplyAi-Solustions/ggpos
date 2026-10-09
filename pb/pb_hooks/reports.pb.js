@@ -170,3 +170,114 @@ routerAdd(
   },
   $apis.requireAuth("staff")
 );
+
+// ---------------------------------------------------------------------
+// The dashboard and the VAT return (docs/api-contract-launch.md, section
+// 3). Their own paths, so they answer their own shapes rather than the
+// report envelope; both need `reports_view`. The builders live in
+// lib/reports/dashboard.js and lib/reports/vat.js.
+// ---------------------------------------------------------------------
+
+/** GET /api/vault/reports/dashboard?from=&to=&compare=previous */
+routerAdd(
+  "GET",
+  "/api/vault/reports/dashboard",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const perms = require(`${__hooks}/lib/permissions.js`);
+    const dates = require(`${__hooks}/lib/reports/dates.js`);
+    const csvLib = require(`${__hooks}/lib/csv.js`);
+    const dashboard = require(`${__hooks}/lib/reports/dashboard.js`);
+
+    const grant = perms.check(e, "reports_view");
+    if (!grant.ok) return perms.refuse(e, grant);
+
+    const from = csvLib.queryParam(e, "from");
+    const to = csvLib.queryParam(e, "to");
+    if (!dates.isValidDateStr(from) || !dates.isValidDateStr(to)) {
+      throw e.badRequestError("Pick a date range. Both from and to are needed, as YYYY-MM-DD.", null);
+    }
+    if (from > to) {
+      throw e.badRequestError("The from date is after the to date. Swap them over.", null);
+    }
+    if (dates.daysBetweenInclusive(from, to) > 400) {
+      throw e.badRequestError("Pick a range of up to 400 days.", null);
+    }
+
+    return e.json(
+      200,
+      dashboard.build(e.app, util, { from: from, to: to, compare: csvLib.queryParam(e, "compare") || "none" })
+    );
+  },
+  $apis.requireAuth("staff")
+);
+
+/** GET /api/vault/reports/vat?period=2026-Q4 (the quarter today is in when left out) */
+routerAdd(
+  "GET",
+  "/api/vault/reports/vat",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const perms = require(`${__hooks}/lib/permissions.js`);
+    const csvLib = require(`${__hooks}/lib/csv.js`);
+    const vatReport = require(`${__hooks}/lib/reports/vat.js`);
+
+    const grant = perms.check(e, "reports_view");
+    if (!grant.ok) return perms.refuse(e, grant);
+
+    const period = csvLib.queryParam(e, "period") || vatReport.currentPeriod(e.app, util);
+    const body = vatReport.build(e.app, util, period);
+    if (!body) throw e.badRequestError("Pick a quarter, as 2026-Q4.", null);
+    return e.json(200, body);
+  },
+  $apis.requireAuth("staff")
+);
+
+/**
+ * POST /api/vault/reports/vat/purchases  (settings_manage)
+ * { period: "2026-Q4", vat: <pence>, net: <pence> }: the purchase figures
+ * for boxes 4 and 7, entered by hand until purchases are recorded. Audited;
+ * answers the quarter's return with them in.
+ */
+routerAdd(
+  "POST",
+  "/api/vault/reports/vat/purchases",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const perms = require(`${__hooks}/lib/permissions.js`);
+    const auditLib = require(`${__hooks}/lib/audit.js`);
+    const vatReport = require(`${__hooks}/lib/reports/vat.js`);
+    const vatreturn = require(`${__hooks}/lib/shared/vatreturn.js`);
+
+    const grant = perms.check(e, "settings_manage");
+    if (!grant.ok) return perms.refuse(e, grant);
+
+    const body = util.body(e);
+    const period = util.asStr(body.period);
+    const quarter = vatreturn.vatQuarter(period, vatReport.vatSettings(e.app, util).startMonth);
+    if (!quarter) throw e.badRequestError("Pick a quarter, as 2026-Q4.", null);
+
+    const figures = { vat: body.vat, net: body.net };
+    const keys = ["vat", "net"];
+    for (let i = 0; i < keys.length; i++) {
+      const value = figures[keys[i]];
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100000000000) {
+        throw e.badRequestError("Enter the purchase figures in pence, as whole numbers of 0 or more.", null);
+      }
+    }
+
+    e.app.runInTransaction((txApp) => {
+      vatReport.savePurchases(txApp, quarter.period, figures, grant.by);
+      auditLib.writeAuditLog(txApp, {
+        actor: grant.by.id,
+        action: "vat_purchases",
+        collection: "settings",
+        record: "",
+        meta: { period: quarter.period, vat: figures.vat, net: figures.net },
+        ip: e.realIP(),
+      });
+    });
+    return e.json(200, vatReport.build(e.app, util, quarter.period));
+  },
+  $apis.requireAuth("staff")
+);

@@ -11,3 +11,5 @@ export * from "./tenders";
 export * from "./vat";
 export * from "./categories";
 export * from "./bookings";
+export * from "./dashboard";
+export * from "./vatreturn";

@@ -299,7 +299,46 @@ routerAdd(
     const settings = util.settings(e.app);
     const epos = tendersLib.eposSettings(e.app, settings);
     const cashCap = settings ? settings.getInt("cash_cap") : 0;
-    const vatRegistered = settings ? settings.getBool("vat_registered") : false;
+
+    // --- VAT per line (docs/api-contract-launch.md, section 3) -----------
+    // Each line is charged by its item's or till product's own treatment,
+    // else its branch's default, through the shared resolver; nothing is
+    // charged unless the shop is registered and today is on or after
+    // `vat_registered_from`.
+    const vatRegistered = vat.vatApplies(
+      {
+        registered: settings ? settings.getBool("vat_registered") : false,
+        from: settings ? settings.getString("vat_registered_from") : "",
+      },
+      now
+    );
+    const standardRate = vat.standardRateOf(settings ? settings.getFloat("vat_standard_rate") : 0);
+    const branchVat = {};
+    /** The scheme and the rate charged for an item or till product's line. */
+    function lineVatOf(record, fallback) {
+      const categoryId = record.getString("category");
+      if (categoryId && !Object.prototype.hasOwnProperty.call(branchVat, categoryId)) {
+        let branch = null;
+        try {
+          branch = e.app.findRecordById("categories", categoryId);
+        } catch (err) {
+          branch = null;
+        }
+        branchVat[categoryId] = branch
+          ? { scheme: branch.getString("default_tax_scheme"), rate: branch.getFloat("default_vat_rate") }
+          : null;
+      }
+      const resolved = vat.resolveVat({
+        own: { scheme: record.getString("tax_scheme"), rate: record.getFloat("vat_rate") },
+        branch: categoryId ? branchVat[categoryId] : null,
+        fallback: fallback,
+        standardRate: standardRate,
+      });
+      return {
+        scheme: resolved.scheme,
+        rate: vat.rateFor({ taxScheme: resolved.scheme, rate: resolved.rate, vatRegistered: vatRegistered }),
+      };
+    }
 
     // -----------------------------------------------------------------
     // The customer
@@ -485,7 +524,7 @@ routerAdd(
           if (unitPrice !== product.getInt("price")) overrideFrom = product.getInt("price");
         }
         const sentTitle = util.asStr(raw.title);
-        const taxScheme = product.getString("tax_scheme") || "standard";
+        const productVat = lineVatOf(product, "standard");
 
         if (kind === "membership") {
           if (!customerId) {
@@ -522,12 +561,8 @@ routerAdd(
           qty: qty,
           unitPrice: unitPrice,
           overrideFrom: overrideFrom,
-          taxScheme: taxScheme,
-          vatRate: vat.rateFor({
-            taxScheme: taxScheme,
-            rate: product.getFloat("vat_rate"),
-            vatRegistered: vatRegistered,
-          }),
+          taxScheme: productVat.scheme,
+          vatRate: productVat.rate,
         };
       } else {
         let item = null;
@@ -562,7 +597,7 @@ routerAdd(
 
         const ownPrice = item.getInt("price");
         const unitPrice = given(raw.unit_price) ? util.asInt(raw.unit_price, ownPrice) : ownPrice;
-        const taxScheme = item.getString("tax_scheme") || "margin";
+        const itemVat = lineVatOf(item, "margin");
         plan = {
           index: i,
           product: null,
@@ -575,12 +610,8 @@ routerAdd(
           qty: qty,
           unitPrice: unitPrice,
           overrideFrom: unitPrice !== ownPrice ? ownPrice : null,
-          taxScheme: taxScheme,
-          vatRate: vat.rateFor({
-            taxScheme: taxScheme,
-            rate: vat.STANDARD_VAT_RATE,
-            vatRegistered: vatRegistered,
-          }),
+          taxScheme: itemVat.scheme,
+          vatRate: itemVat.rate,
         };
       }
 

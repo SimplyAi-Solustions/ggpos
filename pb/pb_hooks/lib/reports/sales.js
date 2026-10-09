@@ -285,6 +285,10 @@ var PERIOD_SCOPED_TOTALS = { revenue: true, count: true, avg_basket: true, heatm
 
 module.exports = {
   build: build,
+  // The dashboard's by-category rows place each line here too, so its
+  // top-level branches are this report's rows exactly.
+  categoryView: categoryView,
+  categoryRowFor: categoryRowFor,
   VALID_BY: VALID_BY,
   MONEY_FIELDS: MONEY_FIELDS,
   PERIOD_SCOPED_TOTALS: PERIOD_SCOPED_TOTALS,
