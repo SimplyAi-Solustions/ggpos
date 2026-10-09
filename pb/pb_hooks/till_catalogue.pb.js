@@ -6,6 +6,7 @@
  *
  *   GET /api/vault/till/catalogue                     (staff)
  *   GET /api/vault/till/category/{id}/items?q=&page=  (staff)
+ *   GET /api/vault/till/branch/{id}?q=&page=          (staff)
  *
  * One call loads the till: every active category in `sort` order, each with
  * its quick keys in `position` order and the product or stock line behind
@@ -14,6 +15,10 @@
  * A category with a `filter` ({ kinds?, games? }) is dynamic: its tiles are
  * the in-stock stock lines that match, a page at a time, from the second
  * route.
+ *
+ * Since Phase 9 the catalogue also carries `branches`, the category tree's
+ * visible top-level branches, and the third route browses one branch of the
+ * tree (docs/api-contract-inventory.md, section 1.3).
  *
  * A key whose product is switched off is left out: the sale route would
  * refuse it. A stock line that has sold out keeps its key, with its quantity
@@ -99,7 +104,18 @@ routerAdd(
       });
     }
 
-    return e.json(200, { categories: out });
+    // The category tree's visible top-level branches follow the quick-key
+    // pages on the rail (docs/api-contract-inventory.md, section 1.3). The
+    // rail still draws from the pages if the tree cannot be read.
+    let branches = [];
+    try {
+      branches = catalogue.topBranches(e.app);
+    } catch (err) {
+      console.log(`[till_catalogue] could not read the category tree: ${err}`);
+      branches = [];
+    }
+
+    return e.json(200, { categories: out, branches: branches });
   },
   $apis.requireAuth("staff")
 );
@@ -171,6 +187,35 @@ routerAdd(
     for (let i = 0; i < list.length; i++) items.push(catalogue.itemShape(e.app, list[i], cardImages));
 
     return e.json(200, { items: items, page: page, per_page: PER_PAGE, total: total });
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// GET /api/vault/till/branch/{id}?q=&page=   (staff)
+//
+// One branch of the category tree as the till browses it
+// (docs/api-contract-inventory.md, section 1.3): its trail for the
+// breadcrumb, its visible child branches as folder tiles, the active till
+// products homed here and the stock on the shelf homed here, 40 a page. With
+// `q`, products and stock anywhere beneath it that match by name, title or
+// SKU, and no child branches. A branch that is missing or switched off (or
+// beneath one that is) is 404.
+// ---------------------------------------------------------------------
+routerAdd(
+  "GET",
+  "/api/vault/till/branch/{id}",
+  (e) => {
+    const util = require(`${__hooks}/lib/vaultutil.js`);
+    const csvLib = require(`${__hooks}/lib/csv.js`);
+    const catalogue = require(`${__hooks}/lib/tillcatalogue.js`);
+
+    const q = csvLib.queryParam(e, "q").slice(0, 100);
+    const page = Math.max(1, util.asInt(csvLib.queryParam(e, "page"), 1));
+
+    const view = catalogue.branchView(e.app, e.request.pathValue("id"), q, page);
+    if (!view) throw e.notFoundError("That branch was not found.", null);
+    return e.json(200, view);
   },
   $apis.requireAuth("staff")
 );

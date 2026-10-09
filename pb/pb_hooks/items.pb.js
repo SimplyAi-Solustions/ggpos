@@ -7,7 +7,9 @@
  *  - assign `sku` when left empty (single/graded/retro/sealed/accessory/
  *    other, from the item's `kind`), retrying the random body until one
  *    is confirmed unique;
- *  - derive `title` when left empty, from the linked card or retro title.
+ *  - derive `title` when left empty, from the linked card or retro title;
+ *  - file the item in the category tree when `category` is left empty
+ *    (lib/categories.js `fileItem`).
  *
  * Everything the handler needs - require()d modules and helper functions
  * alike - is defined *inside* the handler. Each registered handler runs
@@ -96,6 +98,18 @@ onRecordCreate((e) => {
   }
 
   deriveTitleIfEmpty();
+
+  // Phase 9 (docs/api-contract-inventory.md, section 1.2): an item created
+  // with no branch is filed by the shared rule from its kind, its game and
+  // its retro title's platform, falling back to Unsorted. This is the one
+  // place every create path passes through, so Add stock, the buy-in and
+  // part-exchange completions and the Card Uploader import all end up filed.
+  // It never throws: a missing tree must not stop an item being created.
+  if (!e.record.getString("category")) {
+    const categories = require(`${__hooks}/lib/categories.js`);
+    const home = categories.fileItem(e.app, e.record);
+    if (home) e.record.set("category", home);
+  }
 
   e.next();
 
