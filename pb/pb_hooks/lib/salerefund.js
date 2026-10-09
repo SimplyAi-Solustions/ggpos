@@ -287,6 +287,16 @@ function write(txApp, plan, opts) {
     p.line.set("refunded_qty", afterQty);
     if (afterQty >= p.qty) p.line.set("status", "refunded");
     txApp.save(p.line);
+
+    // A booking line takes what it paid back off the booking's `paid`
+    // (docs/api-contract-launch.md, section 4).
+    if (p.line.getString("booking")) {
+      require(__hooks + "/lib/bookings.js").unpay(txApp, p.line, p.want, {
+        ref: refundRef,
+        staffId: opts.staffId,
+        ip: opts.ip,
+      });
+    }
   }
 
   var allRefunded = true;

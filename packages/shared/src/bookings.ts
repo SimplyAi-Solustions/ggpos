@@ -254,3 +254,276 @@ export interface Availability {
     slots: Slot[]
   }[]
 }
+
+// ---------------------------------------------------------------------------
+// The booking routes' own rules (BK), here so the web's demo mode agrees
+// ---------------------------------------------------------------------------
+
+/** A shop-time date ("2026-10-16") moved by whole days. */
+export function addDays(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number)
+  return new Date(Date.UTC(y ?? 0, (m ?? 1) - 1, (d ?? 1) + days)).toISOString().slice(0, 10)
+}
+
+/** The UTC instants a shop-time date runs between: 23 hours in March, 25 in October. */
+export function shopDayBounds(date: string): BusyWindow {
+  return {
+    starts_at: shopTimeToUtc(date, "00:00").toISOString(),
+    ends_at: shopTimeToUtc(addDays(date, 1), "00:00").toISOString(),
+  }
+}
+
+/**
+ * The clash sentence for a window against what is busy, or null: the same
+ * words as `bookingProblem`'s, for a walk-in session, which starts now
+ * whatever the hours and the slot grid say.
+ */
+export function clashProblem(
+  resource: Pick<BookableResource, "name"> & { kind?: ResourceKind },
+  window: BusyWindow,
+  busy: readonly BusyWindow[]
+): string | null {
+  const clash = busy.find((other) => overlaps(window, other))
+  if (!clash) return null
+  return `${resource.name} is booked from ${shopClock(clash.starts_at)} to ${shopClock(clash.ends_at)}. Pick another time or another ${kindWord(resource)}.`
+}
+
+/** What a booking needs for `liveWindow`. */
+export interface BookingTimes {
+  status: BookingStatus
+  starts_at: string
+  ends_at: string
+  checked_in_at?: string | null
+  checked_out_at?: string | null
+}
+
+/**
+ * The time a booking takes up, or null when it takes none. A held or
+ * confirmed booking takes its own window. A checked-in one that has not
+ * checked out is a session still running, and nobody knows when it will
+ * stop, so it takes at least to the end of the slot it is in now, counting
+ * whole slots from check-in.
+ */
+export function liveWindow(booking: BookingTimes, slotMinutes: number, now: Date): BusyWindow | null {
+  if (!BOOKING_ACTIVE_STATUSES.includes(booking.status)) return null
+  if (booking.status !== "checked_in" || booking.checked_out_at) {
+    return { starts_at: booking.starts_at, ends_at: booking.ends_at }
+  }
+  const step = Math.max(5, slotMinutes || 60) * 60_000
+  const checkedIn = Date.parse(booking.checked_in_at || booking.starts_at)
+  const start = Math.min(Date.parse(booking.starts_at), checkedIn)
+  const slotsSoFar = Math.max(1, Math.floor((now.getTime() - checkedIn) / step) + 1)
+  const end = Math.max(Date.parse(booking.ends_at), checkedIn + slotsSoFar * step)
+  return { starts_at: new Date(start).toISOString(), ends_at: new Date(end).toISOString() }
+}
+
+/** An event entry, as the waitlist reads it. */
+export interface EventEntry {
+  id: string
+  party_size: number
+  status: BookingStatus
+  /** When it was made: the order the waitlist keeps. */
+  created: string
+}
+
+const FIRM_ENTRY: readonly BookingStatus[] = ["confirmed", "checked_in", "completed"]
+
+/**
+ * An event's waitlist, first in line first. Places go by party size to the
+ * firm entries (confirmed, checked in or completed) and then to the held
+ * ones in the order they were made. Once a held entry does not fit, it and
+ * every held entry after it wait, so a smaller party never jumps the queue.
+ * A capacity of 0 has no limit and no waitlist.
+ */
+export function waitlistOf(capacity: number, entries: readonly EventEntry[]): string[] {
+  if (!(capacity > 0)) return []
+  let taken = entries
+    .filter((entry) => FIRM_ENTRY.includes(entry.status))
+    .reduce((sum, entry) => sum + Math.max(1, entry.party_size), 0)
+  const held = entries
+    .filter((entry) => entry.status === "held")
+    .slice()
+    .sort((a, b) => Date.parse(a.created) - Date.parse(b.created) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const waiting: string[] = []
+  for (const entry of held) {
+    const size = Math.max(1, entry.party_size)
+    if (waiting.length === 0 && taken + size <= capacity) {
+      taken += size
+    } else {
+      waiting.push(entry.id)
+    }
+  }
+  return waiting
+}
+
+/**
+ * The weekly repeats of an event after its first: the same shop clock time
+ * each week (so 18:00 stays 18:00 across the clock change), for every one
+ * that starts after `now` and no more than `days` from it.
+ */
+export function repeatWindows(first: BusyWindow, now: Date, days: number = 28): BusyWindow[] {
+  const startMs = Date.parse(first.starts_at)
+  const length = Date.parse(first.ends_at) - startMs
+  if (!(length > 0)) return []
+  const date = shopDateOf(new Date(startMs))
+  const clock = shopClock(first.starts_at)
+  const until = now.getTime() + days * 86_400_000
+  const week = 7 * 86_400_000
+  const out: BusyWindow[] = []
+  // Start a week or so before now rather than walking from a first event
+  // years back.
+  for (let k = Math.max(1, Math.floor((now.getTime() - startMs) / week)); k < 10_000; k++) {
+    const start = shopTimeToUtc(addDays(date, 7 * k), clock).getTime()
+    if (start > until) break
+    if (start > now.getTime()) {
+      out.push({ starts_at: new Date(start).toISOString(), ends_at: new Date(start + length).toISOString() })
+    }
+  }
+  return out
+}
+
+const DAY_NAMES: Record<WeekdayKey, string> = {
+  sun: "Sunday",
+  mon: "Monday",
+  tue: "Tuesday",
+  wed: "Wednesday",
+  thu: "Thursday",
+  fri: "Friday",
+  sat: "Saturday",
+}
+
+const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/
+
+/**
+ * Why a set of opening hours cannot be saved, or null. Empty (or nothing)
+ * is fine: a resource with no hours of its own keeps the shop's. Each day is
+ * a list of windows of two "HH:MM" times, the first before the second, and
+ * a day's windows do not overlap.
+ */
+export function hoursProblem(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value !== "object" || Array.isArray(value)) return "Set the opening hours as times for each day."
+  for (const [key, windows] of Object.entries(value as Record<string, unknown>)) {
+    if (!(WEEKDAY_KEYS as readonly string[]).includes(key)) {
+      return `There is no day called ${key}. Use mon, tue, wed, thu, fri, sat or sun.`
+    }
+    const day = DAY_NAMES[key as WeekdayKey]
+    if (!Array.isArray(windows)) return `Set ${day}'s opening times as a list, or leave it out for closed.`
+    const seen: [string, string][] = []
+    for (const window of windows) {
+      if (
+        !Array.isArray(window) ||
+        window.length !== 2 ||
+        typeof window[0] !== "string" ||
+        typeof window[1] !== "string" ||
+        !CLOCK.test(window[0]) ||
+        !CLOCK.test(window[1])
+      ) {
+        return `Each opening time on ${day} needs a start and an end, like 10:00 and 20:00.`
+      }
+      const [open, close] = window as [string, string]
+      if (open >= close) return `On ${day}, ${open} to ${close} ends before it starts. Check the times.`
+      if (seen.some(([o, c]) => open < c && o < close)) return `Two of ${day}'s opening times overlap. Make them one.`
+      seen.push([open, close])
+    }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// What the booking routes answer (BK)
+// ---------------------------------------------------------------------------
+
+/** A sale line that paid towards a booking. */
+export interface BookingPayment {
+  sale: { id: string; number: string }
+  sale_line: string
+  /** Pence of the booking's price this line settles while it is not refunded. */
+  amount: number
+}
+
+/** One booking as the booking routes answer it. */
+export interface BookingView {
+  id: string
+  kind: "resource" | "event"
+  resource: { id: string; name: string; kind: ResourceKind } | null
+  event: { id: string; name: string } | null
+  /** `member` is whether they are in the Guild (members' prices). */
+  customer: { id: string; name: string; code: string; member: boolean } | null
+  /** The customer's name, or the name given for a booking with no customer record. */
+  name: string
+  phone: string
+  email: string
+  starts_at: string
+  ends_at: string
+  party_size: number
+  status: BookingStatus
+  price: number
+  deposit: number
+  paid: number
+  /** What is left to pay: price less paid, never below 0. */
+  balance: number
+  source: "till" | "online" | "phone" | ""
+  checked_in_at: string | null
+  checked_out_at: string | null
+  /** 1 for the first in line on an event's waitlist; null when not waiting. */
+  waitlist_position: number | null
+  /** Staff only; empty in a customer's own answer. */
+  notes: string
+  created: string
+  /** On the single booking (`GET /api/vault/bookings/{id}`, staff) only. */
+  payments?: BookingPayment[]
+}
+
+/** The lines of one sale the till refunds through its refund flow. */
+export interface BookingRefund {
+  sale: { id: string; number: string }
+  lines: { sale_line: string; qty: number }[]
+  /** Pence of the booking's price these lines settled. */
+  amount: number
+}
+
+/** `POST /api/vault/bookings/{id}/cancel`. */
+export interface BookingCancelled extends BookingView {
+  refunds: BookingRefund[]
+  /** Pence paid that stays with the shop (the deposit kept). */
+  kept: number
+}
+
+/** `POST /api/vault/bookings/{id}/check-out`. */
+export interface BookingCheckedOut extends BookingView {
+  charge: { minutes: number; slots: number; price: number; balance: number }
+}
+
+/** An event as the booking routes answer it. */
+export interface EventView {
+  id: string
+  name: string
+  game: { id: string; name: string } | null
+  format: string
+  starts_at: string
+  ends_at: string
+  /** 0 for no limit. */
+  capacity: number
+  /** null when there is no limit. */
+  places_left: number | null
+  entry_fee: number
+  member_fee: number | null
+  online: boolean
+  status: "draft" | "published" | "cancelled" | "finished"
+  repeat_weekly: boolean
+  repeat_of: string | null
+  resources: { id: string; name: string; kind: ResourceKind }[]
+  description: string
+  /** Players entered (party sizes), the waitlist left out. */
+  entered: number
+  /** Entries on the waitlist. */
+  waitlist: number
+}
+
+/** A station on the stations strip: its running session, and its next booking today. */
+export interface StationView {
+  resource: Pick<BookableResource, "id" | "name" | "kind" | "slot_minutes" | "price" | "member_price">
+  session: BookingView | null
+  next: BookingView | null
+}

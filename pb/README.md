@@ -288,6 +288,9 @@ retrying `e.next()` on a unique-constraint failure.
 | `till.pb.js` | Phase 8: opening the till, the running report, X and Z reports, paid in and out, bank drops, no sale and voids, per register. Every figure comes from the shared `buildTillReport` (`packages/shared/src/till.ts`) through `lib/till.js`; a Z report is refused any change or delete at the record level. Section 3 of the EPOS contract. |
 | `till_catalogue.pb.js` | Phase 8: the till's category tiles and the dynamic category items (`lib/tillcatalogue.js`). Since Phase 9 the catalogue also carries `branches` (the visible top-level branches), and `GET /api/vault/till/branch/:id?q=&page=` browses one branch of the tree. |
 | `categories.pb.js` | Phase 9: the stock category tree (`docs/api-contract-inventory.md`, section 1). `GET /api/vault/categories/tree` (staff), `POST /api/vault/categories/:id/move`, `/reorder` and `/assign` (capability `stock_manage` through `lib/permissions.js`, with the override flow; each audited as `category_move`, `category_reorder` and `category_assign`), and the record hooks that keep the tree sound through the collection API too: the name, parent, depth and sibling-name refusals (400), Unsorted kept on and in the tree (409), delete refused while a branch holds branches, stock rows or till products (409), `key` that a request can never set or change, `path`, `lineage` and `depth` always derived from the parent with the subtree rewritten in the same transaction, an unknown `category` on an item or till product refused (400), and a till product with no branch filed in Unsorted. Logic in `lib/categories.js`. |
+| `bookings.pb.js` | Launch (`docs/api-contract-launch.md`, section 4): bookings. `GET /api/vault/bookings/availability` (staff) and `GET /api/public/availability` (anyone; online resources only, no booking detail, started slots not free); `GET`/`POST /api/vault/bookings` (the day and week lists; a booking or an event entry, by `bookings_manage` or by a customer for themselves on an `online` resource or event, held for the till); `GET /api/vault/bookings/stations`, `POST /api/vault/bookings/walk-in`; `GET /api/vault/bookings/{id}` (staff get its `payments`), `/move`, `/cancel` (staff keep or refund the deposit and get the sale lines to refund through the till's refund route; a customer cancels their own unpaid one), `/no-show`, `/check-in`, `/check-out` (a PC or console charges by the clock through the shared `sessionCharge`); `GET /api/vault/me/bookings` (customer); `GET /api/vault/events`, `/events/{id}`, `POST /api/vault/events/{id}/check-in` (the Guild card's QR, code or id) and `/cancel` (manager or admin); `GET /api/public/events`. Record hooks: an event written through the collection API must end after it starts, is cancelled through its route, cannot be published onto a booked table, and moves its entries with it in one transaction; `resources.hours` and `settings.opening_hours` must read as opening hours; events and resources are audited by field name. Paying is a `booking` line on `POST /api/vault/sales/complete` (`lib/bookings.js` `saleLine` and `settle`, called from `sales.pb.js`), and refunding the line takes it off `paid` (`unpay`, from `lib/salerefund.js`). |
+| `bookings_crons.pb.js` | Launch: `bookings_remind` (09:05 UTC) reminds tomorrow's held and confirmed bookings once each (`booking_reminder` audit row), by `lib/notify.js` for a customer or by email to the address on the booking; `booking_events_repeat` (04:15 UTC) makes each weekly event's repeats (unless it is a draft) for the next four weeks at the same shop clock time, as drafts with the shop told when one lands on a booked table. |
+| `lib/bookings.js` | Launch: the PocketBase half of bookings, every slot, clash, price, charge, place count and waitlist from `packages/shared/src/bookings.ts`. Resources and events in the shared shapes (a number never set reads 0, so a member price, deposit or member fee of 0 means none and a capacity of 0 no limit), busy windows (live bookings, a running session to the end of the slot it is in, published events through `resources.id ?=`), availability, the prepare and write halves of every booking route with the overlap and places re-read inside the transaction, `BookingView`/`EventView`, the refunds a cancellation lists, free event entries used and given back, the sale line, settling and unpaying, and both crons. |
 | `sale_receipts.pb.js` | Phase 8: a sale's or a refund's `ReceiptData` (`lib/salereceipt.js`) and the emailed receipt. |
 | `printing.pb.js` | Phase 8: receipt printers, print jobs, the drawer kick and the three Star CloudPRNT methods a printer calls, plus the `print_jobs_tidy` cron. Protocol notes in `lib/printing.js`. |
 
@@ -866,6 +869,21 @@ branch route and the catalogue's `branches`; the lineage filter on stock;
 the X report's category labels; the sales report by category with and without
 `branch`, as CSV and in a saved view; the pages migration; and the tree
 left exactly as it was found).
+
+`34-bookings.sh` covers bookings (launch contract, section 4): availability
+inside a resource's own hours and the shop's, a closed day, and BST either
+side of the October change; booking with the clash sentence, the hours,
+slot, party and name refusals, member pricing, moving, cancelling with the
+deposit kept or refunded through the till, no-shows, check-in on the day and
+check-out; a customer booking online for themselves and refused for an
+offline resource, someone else, a past slot or a paid cancellation; walk-in
+sessions with the grace minutes at the member price; paying a booking's
+deposit and balance at the till, never past its price, and refunding it;
+an event's capacity by party size, the waitlist in order, free entries from
+a tier, check-in by QR and cancelling an event; the weekly repeats and the
+reminders through their crons; two tills racing for one slot and one
+balance; the hours checks on save; and audit rows free of customer detail.
+It removes every resource, event and booking it made.
 
 Prints `OK:`/`FAIL:` per step, exits non-zero on the first failure, and
 always tears the server and temp directory down again (a `trap ... EXIT`),
