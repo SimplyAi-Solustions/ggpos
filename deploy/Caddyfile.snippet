@@ -52,7 +52,11 @@ ggpos.ggentertainment.co.uk {
 		# manifest-src so the Vite-built PWA's inline styles, self-hosted
 		# fonts, service worker and web-app manifest are all allowed
 		# while everything else stays locked to our own origin.
-		Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' assets.tcgdex.net cards.scryfall.io cards.lorcast.com blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'"
+		# script-src adds 'wasm-unsafe-eval' (and nothing else): Safari's
+		# camera scanner is a WebAssembly reader served from this origin,
+		# and a browser only compiles WebAssembly when the policy says so
+		# (deploy/README.md, section 15).
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' assets.tcgdex.net cards.scryfall.io cards.lorcast.com blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'"
 	}
 
 	# --- Upload size ----------------------------------------------------

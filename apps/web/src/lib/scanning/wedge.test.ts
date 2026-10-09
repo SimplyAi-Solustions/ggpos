@@ -97,6 +97,49 @@ describe("createWedgeListener", () => {
     expect(onScan).not.toHaveBeenCalled()
   })
 
+  it("drops a scanner's own prefix character when the shop has set none", () => {
+    // A scanner left with a prefix from its factory or its last owner: the
+    // code still lands, for a GG code, an EAN and the customer card's URL.
+    const onScan = vi.fn()
+    const time = clock()
+    stop = createWedgeListener({ onScan, now: time.now })
+
+    for (const scanned of ["~GGS7F3K2Q", "]5012345678900", "§https://ggpos.ggentertainment.co.uk/c/abc123"]) {
+      time.tick(500)
+      type(document.body, scanned, time)
+      press(document.body, "Enter")
+    }
+
+    expect(onScan.mock.calls).toEqual([
+      ["GGS7F3K2Q"],
+      ["5012345678900"],
+      ["https://ggpos.ggentertainment.co.uk/c/abc123"],
+    ])
+  })
+
+  it("keeps a code that starts with a letter or a digit whole", () => {
+    const onScan = vi.fn()
+    const time = clock()
+    stop = createWedgeListener({ onScan, now: time.now })
+
+    type(document.body, "5012345678900", time)
+    press(document.body, "Enter")
+
+    expect(onScan).toHaveBeenCalledExactlyOnceWith("5012345678900")
+  })
+
+  it("takes a Bluetooth scanner's slower keys, up to the gap", () => {
+    // A Bluetooth HID scanner on the tablet sends a key every 20 to 40ms.
+    const onScan = vi.fn()
+    const time = clock()
+    stop = createWedgeListener({ onScan, now: time.now })
+
+    type(document.body, "GGS7F3K2Q", time, 40)
+    press(document.body, "Enter")
+
+    expect(onScan).toHaveBeenCalledExactlyOnceWith("GGS7F3K2Q")
+  })
+
   it("stays out of the way while another text field has focus", () => {
     const onScan = vi.fn()
     const time = clock()
