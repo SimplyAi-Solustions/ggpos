@@ -73,7 +73,7 @@ s31_item() {
 s31_customer() {
   curl -s -X POST "$BASE/api/collections/customers/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"name\":\"$1\",\"source\":\"counter\"}" | jval id
+    -d "{\"name\":\"$1\",\"source\":\"counter\",\"guild_joined_at\":\"2026-01-01 00:00:00.000Z\"}" | jval id
 }
 
 # $1 customer, [$2 status, default draft], then one JSON object per line

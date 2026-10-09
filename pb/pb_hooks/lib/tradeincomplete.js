@@ -644,8 +644,27 @@ function complete(txApp, prepared, opts) {
   // --- points on the credit portion ------------------------------------
   // Only on store credit paid out: on a part-exchange that is the credit
   // surplus alone, never the part that paid for the sale, which earns its
-  // points on the sale (docs/EPOS-PLAN.md, decision 5).
-  var pointsEarned = loyalty.evaluateTradeInPoints(p.programme, p.rules, payoutCredit, now);
+  // points on the sale (docs/EPOS-PLAN.md, decision 5). Points belong to
+  // Guild members, so a seller who has not joined earns none
+  // (docs/api-contract-launch.md, section 2).
+  // Read inside the transaction: a sale that sells the Guild Membership
+  // joins its customer before the part-exchange completes.
+  var guildLib = require(`${__hooks}/lib/guild.js`);
+  var seller = null;
+  try {
+    seller = txApp.findRecordById("customers", p.customerId);
+  } catch (err) {
+    seller = p.customer;
+  }
+  var pointsEarned = guildLib.isMember(seller)
+    ? loyalty.evaluateTradeInPoints(
+        p.programme,
+        p.rules,
+        payoutCredit,
+        now,
+        guildLib.isPaidMember(txApp, p.customerId)
+      )
+    : 0;
   if (pointsEarned > 0) {
     txApp.save(
       new Record(txApp.findCollectionByNameOrId("points_ledger"), {

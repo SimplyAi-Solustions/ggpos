@@ -309,6 +309,8 @@ export interface TillCatalogueProduct {
   open_price: boolean
   image_url: string
   tax_scheme: "standard" | "margin" | "exempt"
+  /** Its home branch in the category tree, for an offer on a branch (launch, section 2). */
+  category?: string
 }
 
 export interface TillCatalogueItem {
@@ -320,6 +322,8 @@ export interface TillCatalogueItem {
   image_url: string
   kind: string
   status: string
+  /** Its home branch in the category tree, for an offer on a branch (launch, section 2). */
+  category?: string
 }
 
 export interface TillKey {

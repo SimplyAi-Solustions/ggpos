@@ -858,6 +858,19 @@ routerAdd(
     for (let i = 0; i < planned.length; i++) grosses.push(planned[i].lineTotal);
     const nets = saleline.spread(grosses, saleDiscount);
 
+    // -----------------------------------------------------------------
+    // The Guild and its offers (docs/api-contract-launch.md, section 2).
+    // Points belong to members; the paid upgrade includes the Guild, so a
+    // Guild Membership sold to somebody who has not joined joins them with
+    // this sale and it earns as a member's sale does. Each line goes to the
+    // evaluator with its branch lineage, item and product (lib/guild.js).
+    // -----------------------------------------------------------------
+    const guildLib = require(`${__hooks}/lib/guild.js`);
+    const joinsWithSale = !!customer && !!membershipPlan && !guildLib.isMember(customer);
+    const guildMember = !!customer && (guildLib.isMember(customer) || joinsWithSale);
+    const paidMember = !!customer && (!!membershipPlan || guildLib.isPaidMember(e.app, customerId));
+    const earnFacts = guildLib.earnFacts(e.app, planned);
+
     const earnLines = [];
     let vatTotal = 0;
     for (let i = 0; i < planned.length; i++) {
@@ -868,6 +881,9 @@ routerAdd(
         game: planned[i].game,
         kind: planned[i].kind,
         total: planned[i].kind === "deposit" ? 0 : nets[i],
+        lineage: earnFacts[i].lineage,
+        item: earnFacts[i].item,
+        product: earnFacts[i].product,
       });
     }
 
@@ -898,11 +914,13 @@ routerAdd(
       isBirthdayMonth: isBirthdayMonth,
       tier: customerTier,
       paidWithPoints: pointsAmount,
+      paidMember: paidMember,
     });
-    // Points belong to a customer. A walk-in sale earns none. A sale that
-    // takes a part-exchange earns them on its whole value like any sale; the
-    // trade-in earns its own only on a credit surplus (EPOS-PLAN decision 5).
-    const pointsEarned = customerId ? earn.total : 0;
+    // Points belong to a Guild member. A walk-in sale, or one to a customer
+    // who has not joined, earns none. A sale that takes a part-exchange
+    // earns them on its whole value like any sale; the trade-in earns its
+    // own only on a credit surplus (EPOS-PLAN decision 5).
+    const pointsEarned = customerId && guildMember ? earn.total : 0;
 
     // -----------------------------------------------------------------
     // The part-exchange's settlement (section 7). A surplus is paid as
@@ -1344,6 +1362,19 @@ routerAdd(
           membershipMeta = { membership: live.id, tier: membershipPlan.tier.id, months: membershipPlan.months };
         }
 
+        // The paid upgrade includes the Guild: somebody buying it who had
+        // not joined joins with this sale, welcome bonus and Guild card
+        // included (lib/guild.js).
+        let guildJoinMeta = null;
+        if (joinsWithSale) {
+          const joining = txApp.findRecordById("customers", customerId);
+          if (!guildLib.isMember(joining)) {
+            const joined = guildLib.join(txApp, joining, { staffId: staff.id, now: now });
+            pending = pending.concat(joined.pending || []);
+            guildJoinMeta = { welcome_points: joined.points };
+          }
+        }
+
         if (redemption) {
           const liveRedemption = txApp.findRecordById("reward_redemptions", redemption.id);
           if (liveRedemption.getString("status") !== "issued") {
@@ -1469,6 +1500,7 @@ routerAdd(
           meta.discount = saleDiscount;
         }
         if (membershipMeta) meta.membership = membershipMeta;
+        if (guildJoinMeta) meta.guild_join = guildJoinMeta;
         // Identifiers and the shop's own money: the part-exchange as the
         // response gives it, and which refund the returns were, which the
         // receipt and a replay read back from here.

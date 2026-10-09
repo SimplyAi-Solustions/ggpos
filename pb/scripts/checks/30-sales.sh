@@ -127,7 +127,7 @@ S30_CLERK_TOKEN="$(curl -s -X POST "$BASE/api/collections/staff/auth-with-passwo
 
 S30_CUSTOMER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Sasha Till","email":"sasha-till@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Sasha Till","email":"sasha-till@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 [ -n "$S30_CUSTOMER_ID" ] || fail "30: could not create the check customer"
 
 # Start from a till of our own: whatever an earlier section left open on
@@ -268,8 +268,10 @@ S30_D_LINE="$(s30_list sale_lines "sale='$S30_D_SALE'")"
 ok "an open-price product needs a keyed price, takes the keyed title, and needs no price override"
 
 # --- 30e. The membership product -----------------------------------------
+# The launch's Guild+ migration links the product to a paid-plan tier and
+# switches it on; the tier is taken off here to reach the no-tier refusal.
 curl -s -o /dev/null -X PATCH "$BASE/api/collections/till_products/records/$S30_MEMBERSHIP" \
-  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d '{"active":true}'
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d '{"active":true,"membership_tier":""}'
 S30_STATUS="$(s30_post "$STAFF_TOKEN" "/api/vault/sales/complete" \
   "{\"lines\":[{\"product\":\"$S30_MEMBERSHIP\",\"qty\":1}],\"tenders\":[{\"method\":\"card_tide\",\"amount\":2400,\"card_last4\":\"2222\"}]}")"
 s30_expect "$S30_STATUS" 400 "Attach the customer to sell a Guild Membership." "a membership with no customer"

@@ -267,7 +267,7 @@ ok "item sku '$ITEM_SKU' passes the sku.ts check-character rule"
 # -----------------------------------------------------------------------
 CUSTOMER_JSON="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Check Customer","email":"check-customer@local.test","source":"counter"}')"
+  -d '{"name":"Check Customer","email":"check-customer@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}')"
 CUSTOMER_ID="$(echo "$CUSTOMER_JSON" | jval id)"
 CUSTOMER_CODE="$(echo "$CUSTOMER_JSON" | jval code)"
 [ -n "$CUSTOMER_ID" ] || fail "customer not created: $CUSTOMER_JSON"
@@ -539,7 +539,7 @@ ok "cash-sessions/current reports the float as the expected total"
 # --- 14b. A seller and a draft buy-in ----------------------------------
 SELLER_JSON="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Seller Check","email":"seller-check@local.test","source":"counter"}')"
+  -d '{"name":"Seller Check","email":"seller-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}')"
 SELLER_ID="$(echo "$SELLER_JSON" | jval id)"
 [ -n "$SELLER_ID" ] || fail "could not create the seller customer: $SELLER_JSON"
 SELLER_PRIVATE_ID="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$SELLER_ID%22" \
@@ -861,7 +861,7 @@ node -e '
 
 BIG_CUSTOMER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Big Photo Check","email":"big-photo-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Big Photo Check","email":"big-photo-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 [ -n "$BIG_CUSTOMER_ID" ] || fail "could not create the big-photo customer"
 
 BIG_UPLOAD_TIME="$(curl -s -o "$TMP_DIR/big-check.json" -w '%{time_total}' \
@@ -945,7 +945,7 @@ ok "the signature file is refused without a token (got $SIGNATURE_BARE_STATUS)"
 # --- 15e. CSV cells that a spreadsheet would run as a formula -----------
 FORMULA_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"=HYPERLINK(\"x\")","email":"formula-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"=HYPERLINK(\"x\")","email":"formula-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 [ -n "$FORMULA_SELLER_ID" ] || fail "could not create the formula-named seller"
 FORMULA_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
@@ -977,7 +977,7 @@ ok "completing a trade-in twice is refused with 409"
 # --- 15g/h. Payout arithmetic and the terms -----------------------------
 GUARD_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Guard Check","email":"guard-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Guard Check","email":"guard-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 GUARD_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$GUARD_SELLER_ID\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
@@ -1028,7 +1028,7 @@ flagged_seller() {
   local cid pid
   cid="$(curl -s -X POST "$BASE/api/collections/customers/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\"}" | jval id)"
+    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\",\"guild_joined_at\":\"2026-01-01 00:00:00.000Z\"}" | jval id)"
   pid="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$cid%22" \
     -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
   curl -s -o /dev/null -X PATCH "$BASE/api/collections/customer_private/records/$pid" \
@@ -1253,7 +1253,7 @@ ok "a cash refund writes a negative cash_movement ($CASH_SALE_NUMBER)"
 # --- 15n. A sale part-paid with points ----------------------------------
 POINTS_CUSTOMER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Points Check","email":"points-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Points Check","email":"points-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 curl -s -o /dev/null -X POST "$BASE/api/collections/points_ledger/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$POINTS_CUSTOMER_ID\",\"delta\":2000,\"reason\":\"adjust\",\"ref\":\"check seed\"}"
@@ -1430,7 +1430,7 @@ KEYLESS_STAFF_TOKEN="$(curl -s -X POST "$KEYLESS_BASE/api/collections/staff/auth
   -d "{\"identity\":\"$STAFF_EMAIL\",\"password\":\"$STAFF_PASSWORD\"}" | jval token)"
 KEYLESS_CUSTOMER="$(curl -s -X POST "$KEYLESS_BASE/api/collections/customers/records" \
   -H "Authorization: $KEYLESS_STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Keyless Check","email":"keyless-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Keyless Check","email":"keyless-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 [ -n "$KEYLESS_CUSTOMER" ] || fail "could not create a customer on the keyless server"
 
 KEYLESS_STATUS="$(curl -s -o "$KEYLESS_DIR/id-check.json" -w '%{http_code}' \
@@ -1526,7 +1526,7 @@ ok "the id-document lookup returns the latest document and never the photo"
 
 EMPTY_DOC_CUSTOMER="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"No Document Check","email":"no-document-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"No Document Check","email":"no-document-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 EMPTY_DOC="$(curl -s -H "Authorization: $PLAIN_TOKEN" "$BASE/api/vault/customers/$EMPTY_DOC_CUSTOMER/id-document" | jval document)"
 [ -z "$EMPTY_DOC" ] || fail "a customer with no ID document returned '$EMPTY_DOC', expected null"
 ok "a customer with no ID document on file returns null"
@@ -1534,10 +1534,10 @@ ok "a customer with no ID document on file returns null"
 # --- 16c. Merging a duplicate customer -----------------------------------
 DUPE_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Dupe Check","email":"dupe-check@local.test","phone":"+447700900001","source":"counter"}' | jval id)"
+  -d '{"name":"Dupe Check","email":"dupe-check@local.test","phone":"+447700900001","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 KEEP_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Keep Check","email":"keep-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Keep Check","email":"keep-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 [ -n "$DUPE_ID" ] && [ -n "$KEEP_ID" ] || fail "could not create the merge check customers"
 
 DUPE_PRIVATE="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$DUPE_ID%22" \
@@ -1685,7 +1685,7 @@ ok "a merge sums perk_usage for a shared perk and month and moves the rest acros
 # --- 16d. Erasing a customer ---------------------------------------------
 ERASE_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Erase Check","email":"erase-check@local.test","phone":"+447700900002","marketing_consent":true,"birthday_month":4,"source":"counter"}' | jval id)"
+  -d '{"name":"Erase Check","email":"erase-check@local.test","phone":"+447700900002","marketing_consent":true,"birthday_month":4,"source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 ERASE_PRIVATE="$(curl -s "$BASE/api/collections/customer_private/records?filter=customer%3D%22$ERASE_ID%22" \
   -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
 [ -n "$ERASE_ID" ] && [ -n "$ERASE_PRIVATE" ] || fail "could not create the erase check customer"
@@ -1831,7 +1831,7 @@ ok "the retention purge is audited by record id"
 # know it is a lot.
 LOT_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Bulk Lot Check","email":"bulk-lot-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Bulk Lot Check","email":"bulk-lot-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 LOT_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$LOT_SELLER_ID\",\"status\":\"draft\",\"channel\":\"counter\"}" | jval id)"
@@ -1887,7 +1887,7 @@ ok "a bulk lot reads as an ordinary line on the receipt and in the stock book"
 # --- 18b. An overridden line, and a retro line's cosmetic grade ----------
 OVERRIDE_SELLER_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Override Check","email":"override-check@local.test","source":"counter"}' | jval id)"
+  -d '{"name":"Override Check","email":"override-check@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 RETRO_GAME_ID="$(curl -s "$BASE/api/collections/games/records?filter=key%3D%27retro%27" -H "Authorization: $STAFF_TOKEN" | jval "items.0.id")"
 [ -n "$RETRO_GAME_ID" ] || fail "seeded game 'retro' not found"
 OVERRIDE_TRADE_ID="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
@@ -3795,7 +3795,7 @@ p5_make_customer() {
   # $1 name, $2 email -> prints the customer id
   curl -s -X POST "$BASE/api/collections/customers/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\"}" | jval id
+    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\",\"guild_joined_at\":\"2026-01-01 00:00:00.000Z\"}" | jval id
 }
 
 p5_make_card() {
@@ -4758,7 +4758,7 @@ p6_customer() {
   # $1 name, $2 email -> the customer id
   curl -s -X POST "$BASE/api/collections/customers/records" \
     -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\"}" | jval id
+    -d "{\"name\":\"$1\",\"email\":\"$2\",\"source\":\"counter\",\"guild_joined_at\":\"2026-01-01 00:00:00.000Z\"}" | jval id
 }
 
 p6_award() {
@@ -4805,7 +4805,7 @@ ok "joining the Guild writes one welcome notification naming the bonus, and no t
 # A customer with no email address has nowhere to read it, so no row at all.
 P6_NOEMAIL_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"P6 No Email","source":"counter"}' | jval id)"
+  -d '{"name":"P6 No Email","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z"}' | jval id)"
 [ -n "$P6_NOEMAIL_ID" ] || fail "could not create a customer without an email address"
 p6_expect_private "$P6_NOEMAIL_ID" points_balance 100 "a customer with no email address missed the welcome bonus"
 [ "$(p6_notifications "$P6_NOEMAIL_ID" welcome)" = "0" ] \
@@ -4825,7 +4825,7 @@ P6_REFERRER_CODE="$(curl -s "$BASE/api/collections/customers/records/$P6_REFERRE
 P6_BAD_REFERRAL="$(curl -s -o "$TMP_DIR/p6-bad-referral.json" -w '%{http_code}' \
   -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"P6 Bad Code","email":"p6-badcode@local.test","source":"counter","referred_by":"GGC-ZZZZZ"}')"
+  -d '{"name":"P6 Bad Code","email":"p6-badcode@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z","referred_by":"GGC-ZZZZZ"}')"
 [ "$P6_BAD_REFERRAL" = "400" ] \
   || fail "creating a customer with an unknown referral code returned $P6_BAD_REFERRAL, expected 400: $(cat "$TMP_DIR/p6-bad-referral.json")"
 grep -q "No customer has the code" "$TMP_DIR/p6-bad-referral.json" \
@@ -4842,7 +4842,7 @@ ok "a referral code nobody holds is refused at creation (400), and no customer i
 P6_SELF_REFERRAL="$(curl -s -o "$TMP_DIR/p6-self-referral.json" -w '%{http_code}' \
   -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d '{"id":"p6selfreferral1","name":"P6 Self","email":"p6-self@local.test","source":"counter","referred_by":"p6selfreferral1"}')"
+  -d '{"id":"p6selfreferral1","name":"P6 Self","email":"p6-self@local.test","source":"counter","guild_joined_at":"2026-01-01 00:00:00.000Z","referred_by":"p6selfreferral1"}')"
 [ "$P6_SELF_REFERRAL" = "400" ] \
   || fail "a customer referring themselves returned $P6_SELF_REFERRAL, expected 400: $(cat "$TMP_DIR/p6-self-referral.json")"
 grep -q "cannot refer themselves" "$TMP_DIR/p6-self-referral.json" \
@@ -4851,7 +4851,7 @@ ok "a customer cannot refer themselves (400)"
 
 P6_REFEREE_ID="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"name\":\"P6 Referee\",\"email\":\"p6-referee@local.test\",\"source\":\"counter\",\"referred_by\":\"$P6_REFERRER_CODE\"}" | jval id)"
+  -d "{\"name\":\"P6 Referee\",\"email\":\"p6-referee@local.test\",\"source\":\"counter\",\"guild_joined_at\":\"2026-01-01 00:00:00.000Z\",\"referred_by\":\"$P6_REFERRER_CODE\"}" | jval id)"
 [ -n "$P6_REFEREE_ID" ] || fail "could not create the referred customer"
 P6_REFEREE_REFERRED_BY="$(curl -s "$BASE/api/collections/customers/records/$P6_REFEREE_ID" -H "Authorization: $STAFF_TOKEN" | jval referred_by)"
 [ "$P6_REFEREE_REFERRED_BY" = "$P6_REFERRER_ID" ] \
@@ -5590,7 +5590,7 @@ ok "a referral with one customer at both ends pays nobody, whichever way it got 
 # completion route.
 P6_BUYIN_REFEREE="$(curl -s -X POST "$BASE/api/collections/customers/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"name\":\"P6 Buy-in Referee\",\"email\":\"p6-buyin-referee@local.test\",\"source\":\"counter\",\"referred_by\":\"$P6_REFERRER_CODE\"}" | jval id)"
+  -d "{\"name\":\"P6 Buy-in Referee\",\"email\":\"p6-buyin-referee@local.test\",\"source\":\"counter\",\"guild_joined_at\":\"2026-01-01 00:00:00.000Z\",\"referred_by\":\"$P6_REFERRER_CODE\"}" | jval id)"
 [ -n "$P6_BUYIN_REFEREE" ] || fail "could not create the buy-in referee"
 P6_BUYIN_TRADE="$(curl -s -X POST "$BASE/api/collections/trade_ins/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \

@@ -1,7 +1,14 @@
 /**
  * GG Guild loyalty evaluator. Pure functions so the admin preview in the app and
  * the PocketBase hook produce the same points for the same sale.
+ *
+ * Since the launch (docs/api-contract-launch.md, section 2) an offer can name
+ * branches of the category tree, stock items and till products, and can be
+ * kept for paid-plan members. This file is the only place those are matched,
+ * so the Offers editor's examples, the till's "Earns N points" and the sale
+ * route cannot disagree.
  */
+import { isWithin } from "./categories"
 import { roundHalfUp } from "./money"
 
 export interface LoyaltyProgramme {
@@ -32,11 +39,35 @@ export type LoyaltyRuleType =
 export interface LoyaltyRuleConditions {
   games?: string[]
   kinds?: string[]
+  /**
+   * Category tree branch ids. A line matches when its home branch is one of
+   * these or sits anywhere beneath one, so "Trading cards" takes in every
+   * Pokémon single.
+   */
+  categories?: string[]
+  /** Stock item ids. */
+  items?: string[]
+  /** Till product ids. */
+  products?: string[]
   /** Minimum spend in pence for the rule to apply. */
   minSpend?: number
   /** 0 = Sunday ... 6 = Saturday */
   weekdays?: number[]
+  /** Only for a customer on an active paid plan (Guild+). */
+  paidMembersOnly?: boolean
 }
+
+/** Every key `LoyaltyRuleConditions` has, for the server's shape check. */
+export const LOYALTY_CONDITION_KEYS = [
+  "games",
+  "kinds",
+  "categories",
+  "items",
+  "products",
+  "minSpend",
+  "weekdays",
+  "paidMembersOnly",
+] as const
 
 export interface LoyaltyRule {
   id: string
@@ -109,7 +140,19 @@ export interface SaleLineForPoints {
   kind: string
   /** Line total in pence after discounts. */
   total: number
+  /**
+   * The line's home branch as its `lineage` ("|rootId|...|ownId|"), or empty
+   * when it has none. A category offer matches on this.
+   */
+  lineage?: string | null
+  /** The stock item sold on this line, when it is one. */
+  item?: string | null
+  /** The till product sold on this line, when it is one. */
+  product?: string | null
 }
+
+/** One line of a sale as the evaluator reads it (the contract's name). */
+export type EarnLine = SaleLineForPoints
 
 export interface EarnContext {
   lines: SaleLineForPoints[]
@@ -120,6 +163,17 @@ export interface EarnContext {
   tier: LoyaltyTier | null
   /** Pence paid with points (never earns points). */
   paidWithPoints: number
+  /** The customer holds an active paid plan, for an offer kept for them. */
+  paidMember?: boolean
+}
+
+/**
+ * Whether a customer is in the GG Guild: they joined on `guild_joined_at`.
+ * Points belong to members, so a sale or a buy-in for anybody else earns
+ * none (docs/api-contract-launch.md, section 2).
+ */
+export function isGuildMember(joinedAt: string | null | undefined): boolean {
+  return typeof joinedAt === "string" && joinedAt.trim() !== ""
 }
 
 export interface EarnBreakdown {
@@ -136,11 +190,32 @@ function ruleIsLive(rule: LoyaltyRule, at: Date): boolean {
   return true
 }
 
-function lineMatches(line: SaleLineForPoints, c: LoyaltyRuleConditions): boolean {
+/**
+ * Whether a line is one of the things an offer names. The three lists are
+ * one set ("Trading cards / Pokémon, this ETB and Table time"), so a line
+ * matching any of them is in; an offer naming none of them is on
+ * everything.
+ */
+function lineIsNamed(line: SaleLineForPoints, c: LoyaltyRuleConditions): boolean {
+  const categories = c.categories ?? []
+  const items = c.items ?? []
+  const products = c.products ?? []
+  if (categories.length === 0 && items.length === 0 && products.length === 0) return true
+  const lineage = line.lineage ?? ""
+  if (lineage && categories.some((id) => isWithin(lineage, id))) return true
+  if (line.item && items.includes(line.item)) return true
+  if (line.product && products.includes(line.product)) return true
+  return false
+}
+
+/** Whether a line meets every condition a rule puts on lines. */
+export function lineMatchesRule(line: SaleLineForPoints, c: LoyaltyRuleConditions): boolean {
   if (c.games && c.games.length > 0 && (!line.game || !c.games.includes(line.game))) return false
   if (c.kinds && c.kinds.length > 0 && !c.kinds.includes(line.kind)) return false
-  return true
+  return lineIsNamed(line, c)
 }
+
+const lineMatches = lineMatchesRule
 
 /**
  * Points earned on a sale: base points per pound on the eligible spend (spend
@@ -170,6 +245,7 @@ export function evaluateSalePoints(
   for (const rule of live) {
     const c = rule.conditions
     if (c.minSpend !== undefined && gross < c.minSpend) continue
+    if (c.paidMembersOnly && !ctx.paidMember) continue
     switch (rule.type) {
       case "multiplier":
       case "day_of_week": {
@@ -218,12 +294,14 @@ export function evaluateTradeInPoints(
   programme: LoyaltyProgramme,
   rules: LoyaltyRule[],
   creditPence: number,
-  at: Date
+  at: Date,
+  paidMember = false
 ): number {
   if (!programme.enabled || creditPence <= 0) return 0
   let points = (creditPence / 100) * programme.earnPerPoundTradeInCredit
   for (const rule of rules.filter((r) => ruleIsLive(r, at) && r.type === "trade_in_credit_bonus")) {
     if (rule.conditions.minSpend !== undefined && creditPence < rule.conditions.minSpend) continue
+    if (rule.conditions.paidMembersOnly && !paidMember) continue
     points += rule.value
   }
   return roundHalfUp(points)
