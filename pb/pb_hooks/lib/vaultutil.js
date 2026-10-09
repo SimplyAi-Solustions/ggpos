@@ -289,6 +289,10 @@ function meShapeFor(app, customer) {
       birthday_month: customer.getInt("birthday_month"),
       qr_token: customer.getString("qr_token"),
       created: customer.getString("created"),
+      // In the Guild, and since when (docs/api-contract-launch.md, section
+      // 2): My Vault prices bookings and events for members from this.
+      guild_joined_at: customer.getString("guild_joined_at") || null,
+      member: !!customer.getString("guild_joined_at"),
       notifications: {
         email: customer.getBool("notify_email"),
         push: customer.getBool("notify_push"),

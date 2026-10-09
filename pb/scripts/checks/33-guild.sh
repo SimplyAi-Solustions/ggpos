@@ -280,14 +280,17 @@ S33_STATUS="$(s33_get "$S33_MO_TOKEN" "/api/vault/me/guild")"
 [ "$(s33_count points_ledger "customer='$S33_MO' && reason='welcome'")" = "1" ] || fail "My Vault's join paid the bonus more than once"
 [ "$(s33_list audit_log "action='guild_join' && record='$S33_MO'" | jval "items.0.meta.by")" = "customer" ] || fail "My Vault's join was not audited as the customer's"
 
-# A customer setting their own date through the collection API joins the same way, once.
+# A customer setting their own date through the collection API is refused:
+# the Guild page asks for the terms first.
 S33_KAI="$(s33_customer "Kai Self" "kai-self@local.test")"
 S33_KAI_TOKEN="$(curl -s -X POST "$BASE/api/collections/customers/impersonate/$S33_KAI" \
   -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" -d '{}' | jval token)"
+[ -n "$S33_KAI_TOKEN" ] || fail "could not sign in as the self-join customer"
 S33_STATUS="$(s33_call PATCH "$S33_KAI_TOKEN" "/api/collections/customers/records/$S33_KAI" '{"guild_joined_at":"2020-01-01 00:00:00.000Z"}')"
-s33_expect "$S33_STATUS" 200 "" "a customer joining through their own record"
-[ "$(s33_count points_ledger "customer='$S33_KAI' && reason='welcome'")" = "1" ] || fail "a customer joining through their own record did not get one bonus"
-ok "My Vault asks for the terms, joins once with the bonus once, and says so; a customer's own record joins the same way"
+s33_expect "$S33_STATUS" 403 "Join the Guild on the Guild page in My Vault. It asks you to accept the terms first." "a customer joining through their own record"
+[ -z "$(s33_rec customers "$S33_KAI" guild_joined_at)" ] || fail "a customer's own record update joined them"
+[ "$(s33_count points_ledger "customer='$S33_KAI'")" = "0" ] || fail "a refused self-join paid points"
+ok "My Vault asks for the terms, joins once with the bonus once, and says so; a customer's own record update cannot join them"
 
 # --- 33e. A non-member's buy-in credit earns nothing; a member's earns ----
 S33_SIGNATURE="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="

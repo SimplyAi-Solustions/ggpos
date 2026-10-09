@@ -88,3 +88,36 @@ The editor ("Offers" in Loyalty) starts from templates, each a sentence with bla
 - **Photos**: Take photo on the item page and in Add stock: the camera on the tablet (`capture`), the webcam or a file on the Mac, cropped to the item's platform ratio with the capture guide, saved to `items.photos`; the first photo is the one the website shows, else the catalogue image.
 - **The website** (`SimplyAi-Solustions/ggentertainment-site`, Astro): a Shop section (`/shop`): the category tree as navigation, search, item cards in the site's own style, an item page with photos and "Ask about this" (phone, email, or the existing interest form), all from the public feed in the browser so it is always current; a stock strip on the home page. A runbook entry for building and deploying the site.
 - **Scanning**: confirm the camera scanner works on the Android tablet (Chrome) and the Mac (Safari and Chrome) and a USB or Bluetooth scanner works as a keyboard on both; fix what does not.
+
+---
+
+## 7. As built
+
+### Guild and offers (GO)
+
+- The join route lives in the existing `guild.pb.js`; My Vault joins through `POST /api/vault/me/guild/join`, and `GET /me/guild` also answers `member`, `joined_at`, `terms` and `welcome_bonus`.
+- Through the collection API a staff member setting `guild_joined_at` on a non-member joins them (stamped now, the welcome bonus once); a member's date is never moved or cleared; a customer cannot join by updating their own record (403 "Join the Guild on the Guild page in My Vault. It asks you to accept the terms first.").
+- Selling the Guild Membership to a non-member joins them in the same sale, which then earns as a member's sale.
+- The members-only switch is the condition key `paidMembersOnly`; a paid member is anyone with an active membership. "Guild+" sits between Regular and Legend (5% off sealed, 1.25 times points, two free entries a month, members' event prices, early release booking).
+- The Guild card is the existing card page and label; no PDF is emailed (the mailer sends plain text), the welcome email carries the code and the My Vault link.
+- The till catalogue's item and product shapes carry `category`, so the till's points preview matches branch offers.
+
+### Bookings (BK)
+
+- Routes beyond the contract: the day and week list (`GET /api/vault/bookings`), `GET .../stations`, `POST .../walk-in`, `GET .../{id}`, `GET /api/vault/me/bookings`, `GET /api/vault/events`, `GET .../events/{id}`, `POST .../events/{id}/check-in` and `/cancel`, `GET /api/public/events`.
+- Every booking route answers the booking (`BookingView`); cancel adds `refunds` (the sale lines to refund through the refund route, which moves the money) and `kept`; check-out adds `charge`.
+- `paid` counts each booking line's unit price, so a discounted line still settles; a refund takes the same back. A booking line is one unit on the Booking till product (seeded under Services, `1789821160_booking_product.js`).
+- Event fees are per player; the member fee covers the whole party when the booker is a member. Free entries are applied with `free_entry: true` and given back on a cancel in the same month. The waitlist is strict first come, first served; joining it needs `waitlist: true`.
+- A checked-out booked session is charged by the clock but never below its booked price. Staff availability shows the whole day; the public route marks started slots taken.
+- A 0 member price, deposit or member fee means none, and a capacity of 0 means no limit.
+- Weekly repeats are their own rows with `repeat_of`; one that would land on a booked table is made as a draft and staff are told.
+- Further notifications: an online booking's confirmation, a waitlist place, a staff cancellation.
+
+### Agents, MCP and research (AG)
+
+- Creating an agent and issuing it a new token need the admin's password step-up as well as `staff_manage`, so an agent can never mint itself another credential. Routes beyond the contract: `PATCH /api/vault/agents/{id}` (on and off), `GET .../{id}/actions`, `GET` and `POST /api/vault/agents/webhook`, `GET /api/vault/research/{id}`, and list filters by trade-in line, item, card and retro title.
+- `kind` cannot be set or changed through the collection API except by a superuser; the roster and the staff list leave agents out; agents are refused PINs, password sign-in, override approval, step-up and ID photos (403).
+- Asking for research on something with an open request returns that request (`existing: true`). Comps must be GBP, each with an ebay.co.uk item link and sold within 30 days, because they go through the UK comp rule; the eBay link adds UK sellers only (`LH_PrefLoc=1`).
+- The research webhook is sent after the request's transaction commits, with a 3 second timeout, and carries `X-GG-Signature` plus the Hermes webhook headers (`X-Webhook-Signature`, `X-Webhook-Signature-V2`, `X-Webhook-Timestamp`). For it to reach Gandalf, the VPS must be able to reach the Mac Mini (Tailscale, for example).
+- MCP tool calls loop back to `GG_LOOPBACK_URL`, else the request's own host when it is this machine, else `http://127.0.0.1:8090`; each call is audited as `mcp_call` with the tool name only. `GET /api/vault/config` no longer carries `agent_webhook`.
+- `docs/agents.md` is the setup guide for Gandalf and any other Hermes agent.

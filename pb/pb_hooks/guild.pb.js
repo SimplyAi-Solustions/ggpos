@@ -446,6 +446,11 @@ onRecordUpdateRequest((e) => {
   if (before) {
     if (sent !== before) e.record.set("guild_joined_at", before);
   } else if (sent) {
+    // A customer joins on My Vault's Guild page, which asks them to accept
+    // the terms first; their own record update is not a way round that.
+    if (e.auth && e.auth.collection().name === "customers") {
+      throw e.forbiddenError("Join the Guild on the Guild page in My Vault. It asks you to accept the terms first.", null);
+    }
     e.record.set("guild_joined_at", new Date().toISOString());
     joining = true;
   }

@@ -1168,8 +1168,12 @@ cp "$S32_DIR/last.json" "$S32_DIR/tree.json"
 [ "$(s32_t "t.filter((b) => b.parent === '').map((b) => b.id + ':' + b.sort).join()")" = "$S32_ORIGINAL_TOP" ] || fail "the top level is not back in its original order and numbering"
 S32_PROBLEMS="$(s32_tree_problems seed)"
 [ -z "$S32_PROBLEMS" ] || fail "the tree is not as it was found: $S32_PROBLEMS"
-[ "$(s32_t "t.map((b) => b.key + ':' + b.counts.items + ':' + b.counts.items_total + ':' + b.counts.products).join()")" = "$S32_SHELF_BEFORE" ] \
-  || fail "the shelf and product counts are not as they were found"
+S32_SHELF_AFTER="$(s32_t "t.map((b) => b.key + ':' + b.counts.items + ':' + b.counts.items_total + ':' + b.counts.products).join()")"
+[ "$S32_SHELF_AFTER" = "$S32_SHELF_BEFORE" ] \
+  || fail "the shelf and product counts are not as they were found: $(node -e '
+    const a = process.argv[1].split(","), b = process.argv[2].split(",");
+    process.stdout.write(a.map((x, i) => (x === b[i] ? "" : `${x} became ${b[i]}`)).filter(Boolean).join("; "));
+  ' "$S32_SHELF_BEFORE" "$S32_SHELF_AFTER")"
 # The default register's till is as it was found: closed, or open on a session of its own.
 s32_close_till
 if [ -n "$S32_TILL_WAS_OPEN" ]; then
