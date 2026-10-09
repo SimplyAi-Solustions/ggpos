@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  addDays,
   bookingPrice,
   bookingProblem,
+  clashProblem,
   daySlots,
   entryFee,
+  hoursProblem,
   isBritishSummerTime,
+  liveWindow,
   placesLeft,
+  repeatWindows,
   sessionCharge,
   shopClock,
   shopDateOf,
+  shopDayBounds,
   shopTimeToUtc,
+  waitlistOf,
   weekdayOf,
   type OpeningHours,
 } from "../src/bookings"
@@ -127,5 +134,125 @@ describe("prices", () => {
       ])
     ).toBe(3)
     expect(placesLeft(0, [])).toBe(Number.POSITIVE_INFINITY)
+  })
+})
+
+describe("the booking routes' own rules", () => {
+  it("moves a date by days and bounds a shop day, 25 hours on the October change", () => {
+    expect(addDays("2026-10-31", 1)).toBe("2026-11-01")
+    expect(addDays("2026-03-01", -1)).toBe("2026-02-28")
+    expect(shopDayBounds("2026-10-16")).toEqual({
+      starts_at: "2026-10-15T23:00:00.000Z",
+      ends_at: "2026-10-16T23:00:00.000Z",
+    })
+    const change = shopDayBounds("2026-10-25")
+    expect(change.starts_at).toBe("2026-10-24T23:00:00.000Z")
+    expect(change.ends_at).toBe("2026-10-26T00:00:00.000Z")
+  })
+
+  it("words a walk-in's clash the way bookingProblem does", () => {
+    const busy = [{ starts_at: "2026-10-16T17:00:00.000Z", ends_at: "2026-10-16T18:00:00.000Z" }]
+    const pc = { name: "PC 3", kind: "pc" as const }
+    expect(clashProblem(pc, { starts_at: "2026-10-16T16:30:00.000Z", ends_at: "2026-10-16T17:30:00.000Z" }, busy)).toBe(
+      "PC 3 is booked from 18:00 to 19:00. Pick another time or another PC."
+    )
+    expect(clashProblem(pc, { starts_at: "2026-10-16T16:00:00.000Z", ends_at: "2026-10-16T17:00:00.000Z" }, busy)).toBeNull()
+  })
+
+  it("takes a booking's own window, nothing for a finished one, and a running session to the end of its slot", () => {
+    const booked = {
+      status: "confirmed" as const,
+      starts_at: "2026-10-16T17:00:00.000Z",
+      ends_at: "2026-10-16T18:00:00.000Z",
+    }
+    const now = new Date("2026-10-16T17:30:00.000Z")
+    expect(liveWindow(booked, 60, now)).toEqual({ starts_at: booked.starts_at, ends_at: booked.ends_at })
+    expect(liveWindow({ ...booked, status: "cancelled" }, 60, now)).toBeNull()
+    expect(liveWindow({ ...booked, status: "completed" }, 60, now)).toBeNull()
+
+    const session = {
+      status: "checked_in" as const,
+      starts_at: "2026-10-16T15:00:00.000Z",
+      ends_at: "2026-10-16T16:00:00.000Z",
+      checked_in_at: "2026-10-16T15:00:00.000Z",
+    }
+    // Two and a half hours in: busy to the end of the third hour.
+    expect(liveWindow(session, 60, now)?.ends_at).toBe("2026-10-16T18:00:00.000Z")
+    // Exactly on a slot's end it has started the next one.
+    expect(liveWindow(session, 60, new Date("2026-10-16T16:00:00.000Z"))?.ends_at).toBe("2026-10-16T17:00:00.000Z")
+    // A booked session checked in early is busy from check-in.
+    expect(
+      liveWindow({ ...booked, status: "checked_in", checked_in_at: "2026-10-16T16:50:00.000Z" }, 60, now)?.starts_at
+    ).toBe("2026-10-16T16:50:00.000Z")
+  })
+
+  it("keeps an event's waitlist first come first served by party size", () => {
+    const entries = [
+      { id: "a", party_size: 2, status: "confirmed" as const, created: "2026-10-01T10:00:00.000Z" },
+      { id: "b", party_size: 3, status: "held" as const, created: "2026-10-01T11:00:00.000Z" },
+      { id: "c", party_size: 3, status: "held" as const, created: "2026-10-01T12:00:00.000Z" },
+      { id: "d", party_size: 1, status: "held" as const, created: "2026-10-01T13:00:00.000Z" },
+      { id: "e", party_size: 4, status: "cancelled" as const, created: "2026-10-01T09:00:00.000Z" },
+    ]
+    // 2 firm and 3 held make 5 of 6; c (3) does not fit, and d waits behind it.
+    expect(waitlistOf(6, entries)).toEqual(["c", "d"])
+    // A place frees when b cancels: c moves up, and d still fits after it.
+    const freed = entries.map((x) => (x.id === "b" ? { ...x, status: "cancelled" as const } : x))
+    expect(waitlistOf(6, freed)).toEqual([])
+    expect(waitlistOf(0, entries)).toEqual([])
+    // A firm entry made later still counts first.
+    const squeezed = [
+      ...entries,
+      { id: "f", party_size: 2, status: "checked_in" as const, created: "2026-10-02T10:00:00.000Z" },
+    ]
+    expect(waitlistOf(4, squeezed)).toEqual(["b", "c", "d"])
+  })
+
+  it("repeats an event weekly at the same shop clock time across the clock change", () => {
+    const first = { starts_at: "2026-10-09T17:00:00.000Z", ends_at: "2026-10-09T20:00:00.000Z" }
+    const repeats = repeatWindows(first, new Date("2026-10-09T12:00:00.000Z"))
+    expect(repeats.map((w) => w.starts_at)).toEqual([
+      "2026-10-16T17:00:00.000Z",
+      "2026-10-23T17:00:00.000Z",
+      // 18:00 GMT from here on.
+      "2026-10-30T18:00:00.000Z",
+    ])
+    expect(repeats[2]?.ends_at).toBe("2026-10-30T21:00:00.000Z")
+    // From a first event long ago, only the weeks ahead.
+    const later = repeatWindows(first, new Date("2027-06-01T12:00:00.000Z"), 14)
+    expect(later.map((w) => shopClock(w.starts_at))).toEqual(["18:00", "18:00"])
+    expect(later[0]?.starts_at).toBe("2027-06-04T17:00:00.000Z")
+    expect(repeatWindows({ ...first, ends_at: first.starts_at }, new Date("2026-10-09T12:00:00.000Z"))).toEqual([])
+  })
+
+  it("checks opening hours before they are saved", () => {
+    expect(hoursProblem(null)).toBeNull()
+    expect(hoursProblem({})).toBeNull()
+    expect(
+      hoursProblem({
+        mon: [
+          ["10:00", "13:00"],
+          ["14:00", "24:00"],
+        ],
+        sun: [],
+      })
+    ).toBeNull()
+    expect(hoursProblem([])).toBe("Set the opening hours as times for each day.")
+    expect(hoursProblem({ monday: [] })).toBe("There is no day called monday. Use mon, tue, wed, thu, fri, sat or sun.")
+    expect(hoursProblem({ tue: "10:00-20:00" })).toBe("Set Tuesday's opening times as a list, or leave it out for closed.")
+    expect(hoursProblem({ wed: [["10", "20:00"]] })).toBe(
+      "Each opening time on Wednesday needs a start and an end, like 10:00 and 20:00."
+    )
+    expect(hoursProblem({ thu: [["20:00", "10:00"]] })).toBe(
+      "On Thursday, 20:00 to 10:00 ends before it starts. Check the times."
+    )
+    expect(
+      hoursProblem({
+        fri: [
+          ["10:00", "14:00"],
+          ["13:00", "18:00"],
+        ],
+      })
+    ).toBe("Two of Friday's opening times overlap. Make them one.")
   })
 })

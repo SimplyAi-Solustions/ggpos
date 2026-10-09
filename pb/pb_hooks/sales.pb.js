@@ -458,7 +458,19 @@ routerAdd(
       const lineDiscount = util.asInt(raw.discount, 0);
       let plan = null;
 
-      if (productId) {
+      // A booking's price, deposit or balance, or an event entry
+      // (docs/api-contract-launch.md, section 4): lib/bookings.js checks and
+      // prices the line, never past what is left to pay, and the booking is
+      // settled in this sale's own transaction below.
+      const bookingId = util.asStr(raw.booking);
+      if (bookingId) {
+        const bookingLine = require(`${__hooks}/lib/bookings.js`).saleLine(e.app, raw, i, {
+          vatRegistered: vatRegistered,
+          planned: planned,
+        });
+        if (!bookingLine.ok) throw e.error(bookingLine.status, bookingLine.message, null);
+        plan = bookingLine.plan;
+      } else if (productId) {
         let product = null;
         try {
           product = e.app.findRecordById("till_products", productId);
@@ -470,6 +482,9 @@ routerAdd(
           throw e.error(409, `${name} is switched off. Take it off the ticket.`, null);
         }
         const kind = product.getString("kind");
+        if (kind === "booking") {
+          throw e.badRequestError(`Line ${i + 1} is the Booking key with no booking. Pick the booking to take payment for.`, null);
+        }
         // A deposit is whatever the customer leaves, so it is keyed like
         // an open-price product.
         const openPrice = kind === "open_price" || kind === "deposit";
@@ -1159,6 +1174,7 @@ routerAdd(
           if (note) line.set("note", note);
           if (plan.item) line.set("item", plan.item.id);
           if (plan.product) line.set("product", plan.product.id);
+          if (plan.booking) line.set("booking", plan.booking.id);
           txApp.save(line);
 
           if (plan.item) {
@@ -1217,6 +1233,20 @@ routerAdd(
           vatTotal = storedVat;
           sale.set("vat_total", vatTotal);
           txApp.save(sale);
+        }
+
+        // Bookings paid on this ticket (docs/api-contract-launch.md, section
+        // 4): `paid` moves and a held booking is confirmed, re-checked against
+        // the live booking so two tills cannot pay one past its price.
+        const settled = require(`${__hooks}/lib/bookings.js`).settle(txApp, planned, {
+          sale: sale,
+          number: number,
+          staffId: staff.id,
+          ip: e.realIP(),
+        });
+        if (!settled.ok) {
+          halt = { status: settled.status, message: settled.message };
+          throw new Error(halt.message);
         }
 
         if (creditAmount > 0) {

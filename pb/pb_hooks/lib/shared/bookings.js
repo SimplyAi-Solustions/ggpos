@@ -27,6 +27,13 @@ exports.bookingPrice = bookingPrice;
 exports.sessionCharge = sessionCharge;
 exports.entryFee = entryFee;
 exports.placesLeft = placesLeft;
+exports.addDays = addDays;
+exports.shopDayBounds = shopDayBounds;
+exports.clashProblem = clashProblem;
+exports.liveWindow = liveWindow;
+exports.waitlistOf = waitlistOf;
+exports.repeatWindows = repeatWindows;
+exports.hoursProblem = hoursProblem;
 exports.RESOURCE_KINDS = ["table", "pc", "console", "room"];
 exports.BOOKING_STATUSES = ["held", "confirmed", "checked_in", "completed", "cancelled", "no_show"];
 /** A booking in one of these takes its time up. */
@@ -185,4 +192,155 @@ function placesLeft(capacity, entries) {
         .filter((entry) => exports.BOOKING_ACTIVE_STATUSES.includes(entry.status) || entry.status === "completed")
         .reduce((sum, entry) => sum + Math.max(1, entry.party_size), 0);
     return Math.max(0, capacity - taken);
+}
+// ---------------------------------------------------------------------------
+// The booking routes' own rules (BK), here so the web's demo mode agrees
+// ---------------------------------------------------------------------------
+/** A shop-time date ("2026-10-16") moved by whole days. */
+function addDays(date, days) {
+    const [y, m, d] = date.split("-").map(Number);
+    return new Date(Date.UTC(y !== null && y !== void 0 ? y : 0, (m !== null && m !== void 0 ? m : 1) - 1, (d !== null && d !== void 0 ? d : 1) + days)).toISOString().slice(0, 10);
+}
+/** The UTC instants a shop-time date runs between: 23 hours in March, 25 in October. */
+function shopDayBounds(date) {
+    return {
+        starts_at: shopTimeToUtc(date, "00:00").toISOString(),
+        ends_at: shopTimeToUtc(addDays(date, 1), "00:00").toISOString(),
+    };
+}
+/**
+ * The clash sentence for a window against what is busy, or null: the same
+ * words as `bookingProblem`'s, for a walk-in session, which starts now
+ * whatever the hours and the slot grid say.
+ */
+function clashProblem(resource, window, busy) {
+    const clash = busy.find((other) => overlaps(window, other));
+    if (!clash)
+        return null;
+    return `${resource.name} is booked from ${shopClock(clash.starts_at)} to ${shopClock(clash.ends_at)}. Pick another time or another ${kindWord(resource)}.`;
+}
+/**
+ * The time a booking takes up, or null when it takes none. A held or
+ * confirmed booking takes its own window. A checked-in one that has not
+ * checked out is a session still running, and nobody knows when it will
+ * stop, so it takes at least to the end of the slot it is in now, counting
+ * whole slots from check-in.
+ */
+function liveWindow(booking, slotMinutes, now) {
+    if (!exports.BOOKING_ACTIVE_STATUSES.includes(booking.status))
+        return null;
+    if (booking.status !== "checked_in" || booking.checked_out_at) {
+        return { starts_at: booking.starts_at, ends_at: booking.ends_at };
+    }
+    const step = Math.max(5, slotMinutes || 60) * 60000;
+    const checkedIn = Date.parse(booking.checked_in_at || booking.starts_at);
+    const start = Math.min(Date.parse(booking.starts_at), checkedIn);
+    const slotsSoFar = Math.max(1, Math.floor((now.getTime() - checkedIn) / step) + 1);
+    const end = Math.max(Date.parse(booking.ends_at), checkedIn + slotsSoFar * step);
+    return { starts_at: new Date(start).toISOString(), ends_at: new Date(end).toISOString() };
+}
+const FIRM_ENTRY = ["confirmed", "checked_in", "completed"];
+/**
+ * An event's waitlist, first in line first. Places go by party size to the
+ * firm entries (confirmed, checked in or completed) and then to the held
+ * ones in the order they were made. Once a held entry does not fit, it and
+ * every held entry after it wait, so a smaller party never jumps the queue.
+ * A capacity of 0 has no limit and no waitlist.
+ */
+function waitlistOf(capacity, entries) {
+    if (!(capacity > 0))
+        return [];
+    let taken = entries
+        .filter((entry) => FIRM_ENTRY.includes(entry.status))
+        .reduce((sum, entry) => sum + Math.max(1, entry.party_size), 0);
+    const held = entries
+        .filter((entry) => entry.status === "held")
+        .slice()
+        .sort((a, b) => Date.parse(a.created) - Date.parse(b.created) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const waiting = [];
+    for (const entry of held) {
+        const size = Math.max(1, entry.party_size);
+        if (waiting.length === 0 && taken + size <= capacity) {
+            taken += size;
+        }
+        else {
+            waiting.push(entry.id);
+        }
+    }
+    return waiting;
+}
+/**
+ * The weekly repeats of an event after its first: the same shop clock time
+ * each week (so 18:00 stays 18:00 across the clock change), for every one
+ * that starts after `now` and no more than `days` from it.
+ */
+function repeatWindows(first, now, days = 28) {
+    const startMs = Date.parse(first.starts_at);
+    const length = Date.parse(first.ends_at) - startMs;
+    if (!(length > 0))
+        return [];
+    const date = shopDateOf(new Date(startMs));
+    const clock = shopClock(first.starts_at);
+    const until = now.getTime() + days * 86400000;
+    const week = 7 * 86400000;
+    const out = [];
+    // Start a week or so before now rather than walking from a first event
+    // years back.
+    for (let k = Math.max(1, Math.floor((now.getTime() - startMs) / week)); k < 10000; k++) {
+        const start = shopTimeToUtc(addDays(date, 7 * k), clock).getTime();
+        if (start > until)
+            break;
+        if (start > now.getTime()) {
+            out.push({ starts_at: new Date(start).toISOString(), ends_at: new Date(start + length).toISOString() });
+        }
+    }
+    return out;
+}
+const DAY_NAMES = {
+    sun: "Sunday",
+    mon: "Monday",
+    tue: "Tuesday",
+    wed: "Wednesday",
+    thu: "Thursday",
+    fri: "Friday",
+    sat: "Saturday",
+};
+const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
+/**
+ * Why a set of opening hours cannot be saved, or null. Empty (or nothing)
+ * is fine: a resource with no hours of its own keeps the shop's. Each day is
+ * a list of windows of two "HH:MM" times, the first before the second, and
+ * a day's windows do not overlap.
+ */
+function hoursProblem(value) {
+    if (value === null || value === undefined)
+        return null;
+    if (typeof value !== "object" || Array.isArray(value))
+        return "Set the opening hours as times for each day.";
+    for (const [key, windows] of Object.entries(value)) {
+        if (!exports.WEEKDAY_KEYS.includes(key)) {
+            return `There is no day called ${key}. Use mon, tue, wed, thu, fri, sat or sun.`;
+        }
+        const day = DAY_NAMES[key];
+        if (!Array.isArray(windows))
+            return `Set ${day}'s opening times as a list, or leave it out for closed.`;
+        const seen = [];
+        for (const window of windows) {
+            if (!Array.isArray(window) ||
+                window.length !== 2 ||
+                typeof window[0] !== "string" ||
+                typeof window[1] !== "string" ||
+                !CLOCK.test(window[0]) ||
+                !CLOCK.test(window[1])) {
+                return `Each opening time on ${day} needs a start and an end, like 10:00 and 20:00.`;
+            }
+            const [open, close] = window;
+            if (open >= close)
+                return `On ${day}, ${open} to ${close} ends before it starts. Check the times.`;
+            if (seen.some(([o, c]) => open < c && o < close))
+                return `Two of ${day}'s opening times overlap. Make them one.`;
+            seen.push([open, close]);
+        }
+    }
+    return null;
 }
