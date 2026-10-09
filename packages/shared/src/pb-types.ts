@@ -10,6 +10,8 @@ export const Collections = {
 	Superusers: "_superusers",
 	AdapterState: "adapter_state",
 	AuditLog: "audit_log",
+	BookingEvents: "booking_events",
+	Bookings: "bookings",
 	CardSets: "card_sets",
 	Cards: "cards",
 	CashMovements: "cash_movements",
@@ -50,6 +52,8 @@ export const Collections = {
 	Referrals: "referrals",
 	RegisterDevices: "register_devices",
 	Registers: "registers",
+	ResearchRequests: "research_requests",
+	Resources: "resources",
 	RetroTitles: "retro_titles",
 	RewardRedemptions: "reward_redemptions",
 	SaleLines: "sale_lines",
@@ -174,6 +178,81 @@ export type AuditLogRecord<Tmeta = unknown> = {
 	updated: IsoAutoDateString
 }
 
+export const BookingEventsStatusOptions = {
+	"draft": "draft",
+	"published": "published",
+	"cancelled": "cancelled",
+	"finished": "finished",
+} as const
+export type BookingEventsStatusOptions = typeof BookingEventsStatusOptions[keyof typeof BookingEventsStatusOptions]
+export type BookingEventsRecord = {
+	capacity?: number
+	created: IsoAutoDateString
+	description?: string
+	ends_at: IsoDateString
+	entry_fee?: number
+	format?: string
+	game?: RecordIdString
+	id: string
+	image?: FileNameString
+	member_fee?: number
+	name: string
+	online?: boolean
+	repeat_of?: RecordIdString
+	repeat_weekly?: boolean
+	resources?: RecordIdString[]
+	starts_at: IsoDateString
+	status: BookingEventsStatusOptions
+	updated: IsoAutoDateString
+}
+
+export const BookingsKindOptions = {
+	"resource": "resource",
+	"event": "event",
+} as const
+export type BookingsKindOptions = typeof BookingsKindOptions[keyof typeof BookingsKindOptions]
+
+export const BookingsStatusOptions = {
+	"held": "held",
+	"confirmed": "confirmed",
+	"checked_in": "checked_in",
+	"completed": "completed",
+	"cancelled": "cancelled",
+	"no_show": "no_show",
+} as const
+export type BookingsStatusOptions = typeof BookingsStatusOptions[keyof typeof BookingsStatusOptions]
+
+export const BookingsSourceOptions = {
+	"till": "till",
+	"online": "online",
+	"phone": "phone",
+} as const
+export type BookingsSourceOptions = typeof BookingsSourceOptions[keyof typeof BookingsSourceOptions]
+export type BookingsRecord = {
+	checked_in_at?: IsoDateString
+	checked_out_at?: IsoDateString
+	created: IsoAutoDateString
+	created_by?: RecordIdString
+	customer?: RecordIdString
+	deposit?: number
+	email?: string
+	ends_at: IsoDateString
+	event?: RecordIdString
+	id: string
+	kind: BookingsKindOptions
+	name?: string
+	notes?: string
+	paid?: number
+	party_size?: number
+	phone?: string
+	price?: number
+	resource?: RecordIdString
+	source?: BookingsSourceOptions
+	starts_at: IsoDateString
+	status: BookingsStatusOptions
+	updated: IsoAutoDateString
+}
+
 export type CardSetsRecord<Texternal_ids = unknown> = {
 	code: string
 	created: IsoAutoDateString
@@ -285,6 +364,7 @@ export type CategoriesRecord = {
 	default_kind?: CategoriesDefaultKindOptions
 	default_platform?: RecordIdString
 	default_tax_scheme?: CategoriesDefaultTaxSchemeOptions
+	default_vat_rate?: number
 	depth?: number
 	id: string
 	image?: FileNameString
@@ -293,6 +373,7 @@ export type CategoriesRecord = {
 	name: string
 	parent?: RecordIdString
 	path?: string
+	show_online?: boolean
 	sort?: number
 	updated: IsoAutoDateString
 }
@@ -400,6 +481,7 @@ export type CustomersRecord = {
 	created: IsoAutoDateString
 	email?: string
 	emailVisibility?: boolean
+	guild_joined_at?: IsoDateString
 	id: string
 	marketing_consent?: boolean
 	name: string
@@ -531,6 +613,7 @@ export type ItemsRegionOptions = typeof ItemsRegionOptions[keyof typeof ItemsReg
 export const ItemsTaxSchemeOptions = {
 	"margin": "margin",
 	"standard": "standard",
+	"exempt": "exempt",
 } as const
 export type ItemsTaxSchemeOptions = typeof ItemsTaxSchemeOptions[keyof typeof ItemsTaxSchemeOptions]
 
@@ -585,6 +668,7 @@ export type ItemsRecord = {
 	reserved_until?: IsoDateString
 	retro_title?: RecordIdString
 	set_code?: string
+	show_online?: boolean
 	sku: string
 	source?: ItemsSourceOptions
 	status?: ItemsStatusOptions
@@ -595,6 +679,7 @@ export type ItemsRecord = {
 	title?: string
 	trade_in_line?: RecordIdString
 	updated: IsoAutoDateString
+	vat_rate?: number
 }
 
 export const LabelJobsStatusOptions = {
@@ -1054,6 +1139,59 @@ export type RegistersRecord = {
 	updated: IsoAutoDateString
 }
 
+export const ResearchRequestsStatusOptions = {
+	"open": "open",
+	"claimed": "claimed",
+	"done": "done",
+	"cancelled": "cancelled",
+} as const
+export type ResearchRequestsStatusOptions = typeof ResearchRequestsStatusOptions[keyof typeof ResearchRequestsStatusOptions]
+export type ResearchRequestsRecord<Tcomps = unknown> = {
+	card?: RecordIdString
+	claimed_at?: IsoDateString
+	claimed_by?: RecordIdString
+	comps?: null | Tcomps
+	condition?: string
+	created: IsoAutoDateString
+	done_at?: IsoDateString
+	finish?: string
+	id: string
+	item?: RecordIdString
+	query: string
+	requested_by?: RecordIdString
+	result?: string
+	retro_title?: RecordIdString
+	status: ResearchRequestsStatusOptions
+	trade_in_line?: RecordIdString
+	updated: IsoAutoDateString
+}
+
+export const ResourcesKindOptions = {
+	"table": "table",
+	"pc": "pc",
+	"console": "console",
+	"room": "room",
+} as const
+export type ResourcesKindOptions = typeof ResourcesKindOptions[keyof typeof ResourcesKindOptions]
+export type ResourcesRecord<Thours = unknown> = {
+	active?: boolean
+	capacity?: number
+	created: IsoAutoDateString
+	deposit?: number
+	hours?: null | Thours
+	id: string
+	image?: FileNameString
+	kind: ResourcesKindOptions
+	member_price?: number
+	name: string
+	note?: string
+	online?: boolean
+	price?: number
+	slot_minutes?: number
+	sort?: number
+	updated: IsoAutoDateString
+}
+
 export const RetroTitlesRegionOptions = {
 	"PAL": "PAL",
 	"NTSC": "NTSC",
@@ -1106,6 +1244,7 @@ export const SaleLinesStatusOptions = {
 } as const
 export type SaleLinesStatusOptions = typeof SaleLinesStatusOptions[keyof typeof SaleLinesStatusOptions]
 export type SaleLinesRecord = {
+	booking?: RecordIdString
 	created: IsoAutoDateString
 	discount?: number
 	id: string
@@ -1245,7 +1384,8 @@ export const SettingsEmailProviderOptions = {
 	"none": "none",
 } as const
 export type SettingsEmailProviderOptions = typeof SettingsEmailProviderOptions[keyof typeof SettingsEmailProviderOptions]
-export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tepos = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
+export type SettingsRecord<Tagent_webhook = unknown, Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tepos = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tonline = unknown, Topening_hours = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown> = {
+	agent_webhook?: null | Tagent_webhook
 	api_keys?: null | Tapi_keys
 	bulk_rate_pct?: number
 	cash_cap?: number
@@ -1266,6 +1406,8 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	markup_bands?: null | Tmarkup_bands
 	min_single_offer?: number
 	offer?: null | Toffer
+	online?: null | Tonline
+	opening_hours?: null | Topening_hours
 	push?: null | Tpush
 	quote_expiry_days?: number
 	receipt_terms?: string
@@ -1282,7 +1424,10 @@ export type SettingsRecord<Tapi_keys = unknown, Tcondition_multipliers = unknown
 	sumup?: null | Tsumup
 	updated: IsoAutoDateString
 	vat_number?: string
+	vat_period_start_month?: number
 	vat_registered?: boolean
+	vat_registered_from?: IsoDateString
+	vat_standard_rate?: number
 }
 
 export const StaffRoleOptions = {
@@ -1291,12 +1436,20 @@ export const StaffRoleOptions = {
 	"staff": "staff",
 } as const
 export type StaffRoleOptions = typeof StaffRoleOptions[keyof typeof StaffRoleOptions]
+
+export const StaffKindOptions = {
+	"person": "person",
+	"agent": "agent",
+} as const
+export type StaffKindOptions = typeof StaffKindOptions[keyof typeof StaffKindOptions]
 export type StaffRecord = {
 	active?: boolean
+	agent_note?: string
 	created: IsoAutoDateString
 	email: string
 	emailVisibility?: boolean
 	id: string
+	kind?: StaffKindOptions
 	must_change_password?: boolean
 	name: string
 	password: string
@@ -1447,6 +1600,7 @@ export const TillProductsKindOptions = {
 	"open_price": "open_price",
 	"membership": "membership",
 	"deposit": "deposit",
+	"booking": "booking",
 } as const
 export type TillProductsKindOptions = typeof TillProductsKindOptions[keyof typeof TillProductsKindOptions]
 
@@ -1654,6 +1808,8 @@ export type OtpsResponse<Texpand = unknown> = Required<OtpsRecord> & BaseSystemF
 export type SuperusersResponse<Texpand = unknown> = Required<SuperusersRecord> & AuthSystemFields<Texpand>
 export type AdapterStateResponse<Tvalue = unknown, Texpand = unknown> = Required<AdapterStateRecord<Tvalue>> & BaseSystemFields<Texpand>
 export type AuditLogResponse<Tmeta = unknown, Texpand = unknown> = Required<AuditLogRecord<Tmeta>> & BaseSystemFields<Texpand>
+export type BookingEventsResponse<Texpand = unknown> = Required<BookingEventsRecord> & BaseSystemFields<Texpand>
+export type BookingsResponse<Texpand = unknown> = Required<BookingsRecord> & BaseSystemFields<Texpand>
 export type CardSetsResponse<Texternal_ids = unknown, Texpand = unknown> = Required<CardSetsRecord<Texternal_ids>> & BaseSystemFields<Texpand>
 export type CardsResponse<Texternal_ids = unknown, Tfinishes_available = unknown, Tprices = unknown, Texpand = unknown> = Required<CardsRecord<Texternal_ids, Tfinishes_available, Tprices>> & BaseSystemFields<Texpand>
 export type CashMovementsResponse<Texpand = unknown> = Required<CashMovementsRecord> & BaseSystemFields<Texpand>
@@ -1694,13 +1850,15 @@ export type QuotesResponse<Tlines = unknown, Texpand = unknown> = Required<Quote
 export type ReferralsResponse<Texpand = unknown> = Required<ReferralsRecord> & BaseSystemFields<Texpand>
 export type RegisterDevicesResponse<Texpand = unknown> = Required<RegisterDevicesRecord> & BaseSystemFields<Texpand>
 export type RegistersResponse<Texpand = unknown> = Required<RegistersRecord> & BaseSystemFields<Texpand>
+export type ResearchRequestsResponse<Tcomps = unknown, Texpand = unknown> = Required<ResearchRequestsRecord<Tcomps>> & BaseSystemFields<Texpand>
+export type ResourcesResponse<Thours = unknown, Texpand = unknown> = Required<ResourcesRecord<Thours>> & BaseSystemFields<Texpand>
 export type RetroTitlesResponse<Texternal_ids = unknown, Texpand = unknown> = Required<RetroTitlesRecord<Texternal_ids>> & BaseSystemFields<Texpand>
 export type RewardRedemptionsResponse<Texpand = unknown> = Required<RewardRedemptionsRecord> & BaseSystemFields<Texpand>
 export type SaleLinesResponse<Texpand = unknown> = Required<SaleLinesRecord> & BaseSystemFields<Texpand>
 export type SaleTendersResponse<Texpand = unknown> = Required<SaleTendersRecord> & BaseSystemFields<Texpand>
 export type SalesResponse<Tpayment_split = unknown, Texpand = unknown> = Required<SalesRecord<Tpayment_split>> & BaseSystemFields<Texpand>
 export type SavedReportsResponse<Tfilters = unknown, Trecipients = unknown, Texpand = unknown> = Required<SavedReportsRecord<Tfilters, Trecipients>> & BaseSystemFields<Texpand>
-export type SettingsResponse<Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tepos = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Tepos, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
+export type SettingsResponse<Tagent_webhook = unknown, Tapi_keys = unknown, Tcondition_multipliers = unknown, Tdisplay = unknown, Temail = unknown, Tepos = unknown, Tholds = unknown, Timport_mappings = unknown, Tmarkup_bands = unknown, Toffer = unknown, Tonline = unknown, Topening_hours = unknown, Tpush = unknown, Tretro_source_priority = unknown, Trewards = unknown, Tsource_priority = unknown, Tsumup = unknown, Texpand = unknown> = Required<SettingsRecord<Tagent_webhook, Tapi_keys, Tcondition_multipliers, Tdisplay, Temail, Tepos, Tholds, Timport_mappings, Tmarkup_bands, Toffer, Tonline, Topening_hours, Tpush, Tretro_source_priority, Trewards, Tsource_priority, Tsumup>> & BaseSystemFields<Texpand>
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
@@ -1727,6 +1885,8 @@ export type CollectionRecords = {
 	_superusers: SuperusersRecord
 	adapter_state: AdapterStateRecord
 	audit_log: AuditLogRecord
+	booking_events: BookingEventsRecord
+	bookings: BookingsRecord
 	card_sets: CardSetsRecord
 	cards: CardsRecord
 	cash_movements: CashMovementsRecord
@@ -1767,6 +1927,8 @@ export type CollectionRecords = {
 	referrals: ReferralsRecord
 	register_devices: RegisterDevicesRecord
 	registers: RegistersRecord
+	research_requests: ResearchRequestsRecord
+	resources: ResourcesRecord
 	retro_titles: RetroTitlesRecord
 	reward_redemptions: RewardRedemptionsRecord
 	sale_lines: SaleLinesRecord
@@ -1799,6 +1961,8 @@ export type CollectionResponses = {
 	_superusers: SuperusersResponse
 	adapter_state: AdapterStateResponse
 	audit_log: AuditLogResponse
+	booking_events: BookingEventsResponse
+	bookings: BookingsResponse
 	card_sets: CardSetsResponse
 	cards: CardsResponse
 	cash_movements: CashMovementsResponse
@@ -1839,6 +2003,8 @@ export type CollectionResponses = {
 	referrals: ReferralsResponse
 	register_devices: RegisterDevicesResponse
 	registers: RegistersResponse
+	research_requests: ResearchRequestsResponse
+	resources: ResourcesResponse
 	retro_titles: RetroTitlesResponse
 	reward_redemptions: RewardRedemptionsResponse
 	sale_lines: SaleLinesResponse

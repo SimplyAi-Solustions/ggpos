@@ -26,6 +26,12 @@ Design decisions made in this plan (each can be changed):
 5. **Part-exchange earns points once.** The sale earns points on its whole value. The part of the trade-in that pays for the sale earns no trade-in points; only a surplus taken as store credit earns them, as today.
 6. **SumUp is removed from the app** (routes, crons, settings, screens, exports, tests), but its collections and historical data stay. Historic sales keep `sumup_card` as their tender and reports label it "Card (SumUp)".
 7. **Stock lives in a category tree of any depth, brand before type.** Every product and every stock item has one home branch (Trading cards > Pokémon > Singles; Retro > Sega > Mega Drive > Games), so a report by category adds up at every level. A starter tree covering the shop's ranges is seeded and staff reshape it in Settings. Browsing the tree is how staff find anything without a barcode.
+8. **The GG Guild is free to join; the £24 membership is an upgrade.** Anyone joins in seconds at the till or in My Vault and gets the Guild card (their QR and code). Points belong to members: a sale to a customer who has not joined earns none, and the till offers to join them. The paid membership (price set in Settings) grants a paid-plan tier with extra perks.
+9. **Loyalty offers are sentences with blanks.** Points per pound, times points or bonus points on chosen branches, items or products, points days, first-purchase and birthday bonuses, each with dates and a live example. They are loyalty rules underneath, matched by the one shared evaluator.
+10. **Gandalf has full admin access, as an agent.** An AI agent is a staff record of kind agent with the admin role, a long-lived token and no password or PIN, reached through GG Vault's own MCP endpoint or its API. Everything it does is audited under its own name; ID photos stay behind a person's step-up.
+11. **VAT is per line from day one, charged only once registered.** Margin, standard 20%, reduced 5%, zero or exempt, set per branch (as the default), per till product and per item. The VAT return report gives the nine boxes for any quarter, the margin scheme working included.
+12. **Online bookings are held and paid at the till until Stripe is switched on.** Tables, PC and console stations and rooms are booked by the slot; tournaments and events take entries; walk-in sessions on the stations run on a clock and charge by the slot.
+13. **The website shows stock from GG Vault's public feed.** Only items marked to show online, with no cost, supplier or customer detail, drawn in the browser so it is always current.
 
 ## What already exists and is reused
 
@@ -40,6 +46,10 @@ From the code inventory (`docs/` is the record; the inventory itself was taken o
 - The offline queue for sales, the customer display, the reports suite and `daily_stats`.
 
 Gaps the inventory confirmed, each closed in Phase 8 unless noted: no PIN switching and no staff management screen; no X or Z reports and no per-tender totals; no sale receipts, receipt printer or drawer; no cash tendered or change; no parked tickets; discounts and price overrides trusted from the client; no VAT totals on a sale; one cash session shop-wide; sales, sale lines, cash sessions and cash movements editable and deletable by any staff token through the raw collection API; memberships not linked to a sale (Phase 10); no stock adjustments, suppliers or purchase orders (Phase 9); the display has no paid or change state.
+
+## Launch plan (opening 16 October 2026)
+
+Before opening, beyond the till and the category tree: the Guild and offers (GO), reports, Excel and VAT (RV), bookings (BK on the server, BW in the web), agents, MCP and eBay sold research (AG), and stock online with photos (WS). The contract is `docs/api-contract-launch.md`. Phase 10's bookings and membership sales and parts of Phase 11's reports come forward into it; offline selling, gift cards, clock-in, suppliers, purchase orders, goods in and the EPOS Now import follow after opening.
 
 ## Phases
 
