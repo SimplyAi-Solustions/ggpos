@@ -596,7 +596,12 @@ ok "with the till closed, a sale and a refund are both refused whatever the tend
 
 # --- 30m. The till catalogue ----------------------------------------------
 S30_QUICK="$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=name='Quick'" "$BASE/api/collections/till_categories/records" | jval "items.0.id")"
-S30_SEALED="$(curl -s -G -H "Authorization: $STAFF_TOKEN" --data-urlencode "filter=name='Sealed'" "$BASE/api/collections/till_categories/records" | jval "items.0.id")"
+# The category tree switches the seeded Sealed page off (it has no keys), so this
+# section makes a dynamic page of its own and removes it again afterwards.
+S30_SEALED="$(curl -s -X POST "$BASE/api/collections/till_categories/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"S30 Sealed","sort":900,"active":true,"filter":{"kinds":["sealed"]}}' | jval id)"
+[ -n "$S30_SEALED" ] || fail "30: could not make the dynamic page for the catalogue checks"
 S30_M_LINE="$(s30_item "S30 Quick Key Sleeves" 5 450 accessory)"
 curl -s -o /dev/null -X POST "$BASE/api/collections/till_keys/records" \
   -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
@@ -620,8 +625,8 @@ S30_M_CHECK="$(s30_body | node -e '
   if (quick.keys.some((k) => k.product && k.product.name.startsWith("Guild Membership"))) problems.push("a switched-off product has a key");
   const sleeves = quick.keys.find((k) => k.item && k.item.id === process.argv[1]);
   if (!sleeves || sleeves.label !== "Sleeves" || sleeves.item.qty !== 5 || sleeves.item.kind !== "accessory" || !sleeves.item.sku) problems.push("the stock line key is wrong");
-  const sealed = cats.find((c) => c.name === "Sealed");
-  if (!sealed || sealed.dynamic !== true) problems.push("Sealed is not dynamic");
+  const sealed = cats.find((c) => c.name === "S30 Sealed");
+  if (!sealed || sealed.dynamic !== true) problems.push("S30 Sealed is not dynamic");
   if (quick.dynamic !== false) problems.push("Quick is dynamic");
   process.stdout.write(problems.join("; "));
 ' "$S30_M_LINE")"
@@ -640,6 +645,7 @@ S30_STATUS="$(s30_get "$S30_CLERK_TOKEN" "/api/vault/till/category/$S30_QUICK/it
 s30_expect "$S30_STATUS" 400 "Quick has its own keys, not a stock list. Use the till catalogue." "the stock list of a category that is not dynamic"
 S30_STATUS="$(s30_get "$S30_CLERK_TOKEN" "/api/vault/till/category/nosuchcategory1/items")"
 s30_expect "$S30_STATUS" 404 "That category is not on the till any more. Reload the till." "the stock list of a category that does not exist"
+curl -s -o /dev/null -X DELETE "$BASE/api/collections/till_categories/records/$S30_SEALED" -H "Authorization: $STAFF_TOKEN"
 ok "a dynamic category lists in-stock stock lines of its kinds, searched by title, a page at a time"
 
 # --- 30n. Receipts for a sale and for a refund ---------------------------
