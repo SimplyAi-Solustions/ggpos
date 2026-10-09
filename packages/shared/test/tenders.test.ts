@@ -8,7 +8,7 @@ import {
   checkSaleTenders,
   MAX_TENDERS,
   NEEDS_CUSTOMER,
-  PART_EXCHANGE_LATER,
+  PART_EXCHANGE_PANEL,
   paymentFor,
   REFUND_NEEDS_CUSTOMER,
   splitFor,
@@ -109,7 +109,7 @@ describe("a sale's tenders", () => {
 
   it("refuses SumUp, part-exchange for now, and anything it does not know", () => {
     expect(refused(checkSaleTenders([{ method: "sumup_card", amount: 4000 }], rules))).toBe(SUMUP_GONE)
-    expect(refused(checkSaleTenders([{ method: "part_exchange", amount: 4000 }], rules))).toBe(PART_EXCHANGE_LATER)
+    expect(refused(checkSaleTenders([{ method: "part_exchange", amount: 4000 }], rules))).toBe(PART_EXCHANGE_PANEL)
     expect(refused(checkSaleTenders([{ method: "gift_card", amount: 4000 }], rules))).toBe(
       "Pick how the customer is paying: cash, card, store credit or points."
     )

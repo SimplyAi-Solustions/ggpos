@@ -162,6 +162,19 @@ export function ReceiptScreen({ id }: { id: string }) {
         </table>
 
         <section className="mt-8 flex flex-wrap justify-end gap-x-16 gap-y-4 border-t border-hairline pt-5">
+          {(receipt.trade_in.part_exchange ?? 0) > 0 ? (
+            <div className="text-right">
+              <Label>
+                {receipt.trade_in.sale_number
+                  ? `Towards sale ${receipt.trade_in.sale_number}`
+                  : "Towards the sale"}
+              </Label>
+              <p className="tnum mt-1 text-[12pt] text-foreground">
+                {receipt.trade_in.part_exchange_display ||
+                  formatGBP(receipt.trade_in.part_exchange ?? 0)}
+              </p>
+            </div>
+          ) : null}
           {receipt.trade_in.payout_cash > 0 ? (
             <div className="text-right">
               <Label>Cash paid</Label>

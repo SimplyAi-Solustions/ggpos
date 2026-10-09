@@ -151,11 +151,15 @@ function buildDayRow(app, dateStr, stockValuation) {
   } catch (err) {
     tradeIns = [];
   }
-  var buyInTotalByPayout = { cash: 0, credit: 0 };
+  // A part-exchange (docs/api-contract-epos.md, section 7) pays for stock
+  // twice over: what it put against its sale, and any surplus paid out as
+  // cash or credit. All three are buy-in spend.
+  var buyInTotalByPayout = { cash: 0, credit: 0, part_exchange: 0 };
   for (var t = 0; t < tradeIns.length; t++) {
     if (!tradeIns[t]) continue;
     buyInTotalByPayout.cash += tradeIns[t].getInt("payout_cash");
     buyInTotalByPayout.credit += tradeIns[t].getInt("payout_credit");
+    buyInTotalByPayout.part_exchange += tradeIns[t].getInt("part_exchange_value");
   }
 
   // --- Items in: acquired that day ------------------------------------------

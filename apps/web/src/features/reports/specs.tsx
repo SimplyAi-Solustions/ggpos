@@ -309,6 +309,7 @@ export const REPORT_SPECS: Record<ReportKey, ReportSpec> = {
       { key: "count", label: "Buy-ins", figure: "count" },
       { key: "cash", label: "Paid in cash", figure: "money" },
       { key: "credit", label: "Paid in credit", figure: "money" },
+      { key: "part_exchange", label: "Paid in part-exchange", figure: "money" },
       { key: "avg_offer_pct", label: "Average offer", figure: "percent" },
       { key: "sell_through_ratio", label: "Sold per bought", figure: "ratio" },
     ],

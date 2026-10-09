@@ -84,7 +84,10 @@ function build(app, util, params) {
     var tcid = tradeIn.getString("customer");
     if (!tcid) continue;
     tradeInByCustomer[tcid] =
-      (tradeInByCustomer[tcid] || 0) + tradeIn.getInt("payout_cash") + tradeIn.getInt("payout_credit");
+      (tradeInByCustomer[tcid] || 0) +
+      tradeIn.getInt("payout_cash") +
+      tradeIn.getInt("payout_credit") +
+      tradeIn.getInt("part_exchange_value");
   }
 
   var customerLookup = query.cachedLookup(app, "customers");

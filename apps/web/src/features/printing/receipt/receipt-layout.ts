@@ -126,12 +126,20 @@ function vatTable(page: Page, receipt: ReceiptData) {
   }
 }
 
-/** The lines of the sale. A gift receipt keeps the words and drops every price. */
+/**
+ * The receipt's own lines: a sale's items, or everything a refund gave back.
+ * A gift receipt keeps the words and drops every price. On a sale taken with
+ * an exchange or a part-exchange, the lines brought back and traded in are
+ * not the sale's: they print after the tenders they paid, under their own
+ * headings (broughtBack, tradeInBlock).
+ */
 function lineItems(page: Page, receipt: ReceiptData, gift: boolean) {
   const title = FACE.sansMedium(26)
   const small = FACE.sans(21)
+  const refund = receipt.kind === "refund"
   for (const line of receipt.lines) {
-    const tag = line.kind === "return" ? "Returned. " : line.kind === "trade" ? "Traded in. " : ""
+    if (!refund && line.kind !== "sale") continue
+    const tag = refund ? "Returned. " : ""
     if (gift) {
       page.row(line.title, line.qty !== 1 ? `x${line.qty}` : "", title)
       const detail = `${tag}${line.detail}`.trim()
@@ -205,15 +213,43 @@ function customerBlock(page: Page, receipt: ReceiptData) {
   }
 }
 
-/** A part-exchange: what the trade-in came to and how the difference was paid. */
+/** Lines of another kind on a sale's receipt, title and figure, detail under. */
+function otherLines(page: Page, lines: ReceiptData["lines"]) {
+  const title = FACE.sans(23)
+  const small = FACE.sans(21)
+  for (const line of lines) {
+    page.row(line.title, formatGBP(line.total), title)
+    if (line.detail.trim()) page.wrap(line.detail.trim(), small)
+    if (line.qty !== 1) page.line(`${line.qty} x ${formatGBP(line.unit_price)}`, small)
+  }
+}
+
+/** An exchange: the goods brought back, whose value is the Exchange tender above. */
+function broughtBack(page: Page, receipt: ReceiptData) {
+  if (receipt.kind === "refund") return
+  const lines = receipt.lines.filter((line) => line.kind === "return")
+  if (lines.length === 0) return
+  page.rule()
+  page.line("BROUGHT BACK", FACE.monoBold(19, 3))
+  page.gap(2)
+  otherLines(page, lines)
+}
+
+/** A part-exchange: what was traded in, what it came to, and how it was paid. */
 function tradeInBlock(page: Page, receipt: ReceiptData) {
   const trade = receipt.trade_in
-  if (!trade) return
+  if (!trade || receipt.kind === "refund") return
   const body = FACE.sans(23)
   page.rule()
   page.line("PART-EXCHANGE", FACE.monoBold(19, 3))
   page.gap(2)
-  page.row(`Trade-in ${trade.number}`, formatGBP(trade.value), body)
+  otherLines(
+    page,
+    receipt.lines.filter((line) => line.kind === "trade")
+  )
+  page.gap(4)
+  page.row(`Trade-in ${trade.number}`, formatGBP(trade.value), FACE.sansMedium(23))
+  if (trade.applied > 0) page.row("Towards this sale", formatGBP(trade.applied), body)
   if (trade.payout_cash > 0) page.row("Paid out in cash", formatGBP(trade.payout_cash), body)
   if (trade.payout_credit > 0) page.row("Added as store credit", formatGBP(trade.payout_credit), body)
 }
@@ -263,8 +299,9 @@ export function layoutReceipt(receipt: ReceiptData, opts: ReceiptLayoutOptions):
   if (!gift) {
     totals(page, receipt)
     tenders(page, receipt)
-    customerBlock(page, receipt)
+    broughtBack(page, receipt)
     tradeInBlock(page, receipt)
+    customerBlock(page, receipt)
   }
 
   if (receipt.returns_policy.trim()) {

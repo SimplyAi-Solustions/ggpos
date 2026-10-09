@@ -205,7 +205,7 @@ s30_tender_refusal '[{"method":"store_credit","amount":4000}]' 422 \
 s30_tender_refusal '[{"method":"sumup_card","amount":4000}]' 400 \
   "SumUp is no longer used. Take card payments on the Tide reader." "a SumUp tender"
 s30_tender_refusal '[{"method":"part_exchange","amount":4000}]' 400 \
-  "Part-exchange is not available yet." "a part-exchange tender"
+  "Take part-exchange through Trade in on the ticket." "a part-exchange tender"
 s30_tender_refusal '[{"method":"gift_card","amount":4000}]' 400 \
   "Pick how the customer is paying: cash, card, store credit or points." "an unknown tender"
 s30_tender_refusal '[{"method":"cash","amount":0}]' 400 \

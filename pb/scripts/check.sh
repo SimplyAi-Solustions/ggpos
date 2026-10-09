@@ -3374,7 +3374,7 @@ REGISTER_NONADMIN_STATUS="$(curl -s -o /dev/null -w '%{http_code}' \
 [ "$REGISTER_NONADMIN_STATUS" = "403" ] || fail "a non-admin fetching the buy-in register returned $REGISTER_NONADMIN_STATUS, expected 403"
 
 REGISTER_CSV="$(curl -s "$BASE/api/vault/exports/buy-in-register.csv?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN")"
-sed -n 1p <<< "$REGISTER_CSV" | grep -qF "Trade-in number,Date,Staff,Customer,Seller name,Seller address,ID type,ID last four digits,ID expiry,Item description,Condition,Quantity,Market price,Offer price,Payout type,Cash amount,Credit amount,Signature reference" \
+sed -n 1p <<< "$REGISTER_CSV" | grep -qF "Trade-in number,Date,Staff,Customer,Seller name,Seller address,ID type,ID last four digits,ID expiry,Item description,Condition,Quantity,Market price,Offer price,Payout type,Cash amount,Credit amount,Part-exchange amount,Sale number,Signature reference" \
   || fail "the buy-in register export CSV header row is wrong: $(echo "$REGISTER_CSV" | head -n1)"
 ok "the inventory, sales and buy-in register exports have header rows, and the register is admin only"
 

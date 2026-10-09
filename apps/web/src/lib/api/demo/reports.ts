@@ -225,7 +225,7 @@ function salesTotalOf(row: DailyStatRow): number {
 
 function buyInTotalOf(row: DailyStatRow): number {
   const payout = row.buy_in_total_by_payout ?? {}
-  return (payout.cash ?? 0) + (payout.credit ?? 0)
+  return (payout.cash ?? 0) + (payout.credit ?? 0) + (payout.part_exchange ?? 0)
 }
 
 function sum(values: number[]): number {
@@ -335,6 +335,7 @@ function buyinsReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Parti
   const count = sum(rows.map((row) => row.buy_in_count ?? 0))
   const cash = sum(rows.map((row) => row.buy_in_total_by_payout?.cash ?? 0))
   const credit = sum(rows.map((row) => row.buy_in_total_by_payout?.credit ?? 0))
+  const partExchange = sum(rows.map((row) => row.buy_in_total_by_payout?.part_exchange ?? 0))
   const dimension = dimensionFor("buyins", query.by === "staff" ? "staff" : "game")
   const weights = skew(query.from, dimension, "buyins")
   const spends = split(spend, weights)
@@ -372,6 +373,7 @@ function buyinsReport(query: Required<ReportQuery>, rows: DailyStatRow[]): Parti
       avg_offer_pct: Math.round((52 + unit(query.from, "offerpct") * 10) * 10) / 10,
       cash,
       credit,
+      part_exchange: partExchange,
       items_bought: itemsBought,
       items_sold: itemsSold,
       sell_through_ratio:

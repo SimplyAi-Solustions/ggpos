@@ -312,13 +312,39 @@ describe("a refund receipt", () => {
 describe("a part-exchange", () => {
   it("shows the trade-in's number, value and how the difference was paid", () => {
     const data = sale()
-    data.trade_in = { number: "GG-BI-000123", value: 4000, payout_cash: 1000, payout_credit: 500 }
+    data.trade_in = {
+      id: "t1",
+      number: "GG-BI-000123",
+      value: 4000,
+      applied: 2500,
+      payout_cash: 1000,
+      payout_credit: 500,
+    }
     const out = layoutReceipt(data, { width: 576, measure })
     expect(has(out, "PART-EXCHANGE")).toBe(true)
     expect(has(out, "Trade-in GG-BI-000123")).toBe(true)
     expect(find(out, "£40.00")).toBeDefined()
+    expect(has(out, "Towards this sale")).toBe(true)
     expect(has(out, "Paid out in cash")).toBe(true)
     expect(has(out, "Added as store credit")).toBe(true)
+  })
+
+  it("prints traded-in and brought-back lines under their own headings, after the tenders", () => {
+    const data = sale()
+    data.trade_in = { id: "t1", number: "GG-BI-000124", value: 1800, applied: 1800, payout_cash: 0, payout_credit: 0 }
+    data.lines = [
+      ...data.lines,
+      { ...data.lines[0]!, title: "Charizard ex #199", detail: "NM", total: -1800, unit_price: 1800, discount: 0, kind: "trade" },
+      { ...data.lines[0]!, title: "Booster bundle", detail: "", total: -1200, unit_price: 1200, discount: 0, kind: "return" },
+    ]
+    const out = layoutReceipt(data, { width: 576, measure })
+    const order = (text: string) => out.ops.findIndex((op) => op.kind === "text" && op.text.includes(text))
+    expect(order("PAID BY")).toBeGreaterThan(-1)
+    expect(order("BROUGHT BACK")).toBeGreaterThan(order("PAID BY"))
+    expect(order("Booster bundle")).toBeGreaterThan(order("BROUGHT BACK"))
+    expect(order("PART-EXCHANGE")).toBeGreaterThan(order("BROUGHT BACK"))
+    expect(order("Charizard ex #199")).toBeGreaterThan(order("PART-EXCHANGE"))
+    expect(order("Charizard ex #199")).toBeGreaterThan(order("TOTAL"))
   })
 })
 

@@ -478,6 +478,12 @@ export interface ReceiptPayload {
     payout_type: PayoutType | ""
     payout_cash: number
     payout_credit: number
+    /** What a part-exchange paid towards its sale at the till; 0 for a buy-in. */
+    part_exchange?: number
+    part_exchange_display?: string
+    /** The sale a part-exchange went towards, e.g. GG-S-000456. */
+    sale_number?: string
+    /** Cash, credit and any part-exchange together. */
     payout_total: number
     payout_cash_display: string
     payout_credit_display: string
@@ -1491,7 +1497,8 @@ export interface DailyStatRow {
   /** What has been refunded against sales booked on this day. */
   sales_refunded?: number
   buy_in_count?: number
-  buy_in_total_by_payout?: { cash?: number; credit?: number }
+  /** `part_exchange` is what part-exchanges paid towards their sales. */
+  buy_in_total_by_payout?: { cash?: number; credit?: number; part_exchange?: number }
   items_in?: number
   items_out?: number
   stock_value_cost?: number

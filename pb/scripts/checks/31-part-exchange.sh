@@ -308,6 +308,25 @@ S31_B_AUDIT="$(s31_list audit_log "action='trade_in_complete' && record='$S31_A_
 [ "$(s31_count cash_movements "ref='$S31_B_TRADE_NUMBER'")" = "0" ] || fail "a part-exchange with no surplus moved the drawer"
 ok "a trade worth less than the sale pays £10.00 as one part_exchange tender, the card takes the rest, and the trade-in is numbered, linked both ways, stocked, labelled and audited"
 
+# What the part-exchange paid towards the sale is buy-in spend: on the buy-in
+# receipt, the buy-in register and the day's stats.
+S31_STATUS="$(s31_get "$STAFF_TOKEN" "/api/vault/trade-ins/$S31_A_TRADE/receipt")"
+s31_expect "$S31_STATUS" 200 "" "the part-exchange's buy-in receipt"
+[ "$(s31_field trade_in.part_exchange)" = "1000" ] && [ "$(s31_field trade_in.sale_number)" = "$S31_B_NUMBER" ] \
+  && [ "$(s31_field trade_in.payout_total)" = "1000" ] \
+  || fail "the buy-in receipt does not carry what the part-exchange paid towards $S31_B_NUMBER: $(s31_body)"
+S31_REGISTER_ROW="$(curl -s "$BASE/api/vault/exports/buy-in-register.csv?from=$TODAY&to=$TODAY" \
+  -H "Authorization: $STAFF_TOKEN" | grep -m1 -F "$S31_B_TRADE_NUMBER," || true)"
+echo "$S31_REGISTER_ROW" | grep -qF ",part_exchange,0.00,0.00,10.00,$S31_B_NUMBER," \
+  || fail "the buy-in register row for $S31_B_TRADE_NUMBER does not carry the part-exchange: $S31_REGISTER_ROW"
+curl -s -o /dev/null -X POST "$BASE/api/vault/stats/rebuild?from=$TODAY&to=$TODAY" -H "Authorization: $STAFF_TOKEN"
+S31_DAILY_PX="$(curl -s -G -H "Authorization: $SUPER_TOKEN" \
+  --data-urlencode "filter=date>='${TODAY} 00:00:00.000Z' && date<='${TODAY} 23:59:59.999Z'" \
+  "$BASE/api/collections/daily_stats/records" | jval "items.0.buy_in_total_by_payout.part_exchange")"
+[ "${S31_DAILY_PX:-0}" -ge 1000 ] \
+  || fail "daily_stats.buy_in_total_by_payout.part_exchange is '$S31_DAILY_PX', expected at least the £10.00 part-exchange"
+ok "the £10.00 a part-exchange paid towards its sale is buy-in spend on its receipt, the buy-in register and the day's stats"
+
 # Points once: the sale earns on its whole £30.00, as the control sale did,
 # and the trade-in earns nothing on what paid for it.
 [ "$(jval points_earned <"$S31_DIR/b.json")" = "$S31_CTRL_POINTS" ] \

@@ -1,6 +1,6 @@
 /**
  * "buyins" report: spend by game or staff; average offer as a percent of
- * market; cash vs credit mix; items bought vs sold ratio; top sellers to
+ * market; the cash, credit and part-exchange mix; items bought vs sold ratio; top sellers to
  * the shop (docs/PLAN.md, "Reporting"; docs/api-contract.md, Phase 4).
  *
  * Series and headline totals read daily_stats per day (daily.rowForDate);
@@ -31,14 +31,16 @@ function build(app, util, params) {
   var totalCount = 0;
   var totalCash = 0;
   var totalCredit = 0;
+  var totalPartExchange = 0;
   for (var d = 0; d < days.length; d++) {
     var row = dayRows[d];
     var payout = row.buy_in_total_by_payout || {};
-    var spend = (payout.cash || 0) + (payout.credit || 0);
+    var spend = (payout.cash || 0) + (payout.credit || 0) + (payout.part_exchange || 0);
     totalSpend += spend;
     totalCount += row.buy_in_count;
     totalCash += payout.cash || 0;
     totalCredit += payout.credit || 0;
+    totalPartExchange += payout.part_exchange || 0;
 
     var label = dates.groupLabel(days[d], group);
     if (!byLabel[label]) {
@@ -81,7 +83,8 @@ function build(app, util, params) {
     if (!tradeIn) continue;
     tradeInIds.push(tradeIn.id);
 
-    var tSpend = tradeIn.getInt("payout_cash") + tradeIn.getInt("payout_credit");
+    var tSpend =
+      tradeIn.getInt("payout_cash") + tradeIn.getInt("payout_credit") + tradeIn.getInt("part_exchange_value");
     var custId = tradeIn.getString("customer");
     if (custId) {
       if (!topSellers[custId]) topSellers[custId] = { customer: custId, count: 0, spend: 0 };
@@ -184,6 +187,7 @@ function build(app, util, params) {
     avg_offer_pct: offerPctCount > 0 ? query.roundPct(offerPctSum / offerPctCount) : 0,
     cash: totalCash,
     credit: totalCredit,
+    part_exchange: totalPartExchange,
     items_bought: itemsBought,
     items_sold: itemsSold,
     sell_through_ratio: itemsBought > 0 ? query.roundRatio(itemsSold / itemsBought) : 0,

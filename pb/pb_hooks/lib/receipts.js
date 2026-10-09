@@ -151,6 +151,19 @@ function build(app, tradeIn, settingsRecord, fileToken) {
 
   var payoutCash = tradeIn.getInt("payout_cash");
   var payoutCredit = tradeIn.getInt("payout_credit");
+  // A part-exchange (docs/api-contract-epos.md, section 7) also paid towards
+  // a sale at the till: that part is in the total paid, under the sale's
+  // number, and the two payouts are only the surplus.
+  var partExchange = tradeIn.getInt("part_exchange_value");
+  var saleNumber = "";
+  if (tradeIn.getString("sale")) {
+    try {
+      saleNumber = app.findRecordById("sales", tradeIn.getString("sale")).getString("number");
+    } catch (err) {
+      saleNumber = "";
+    }
+  }
+  var payoutTotal = payoutCash + payoutCredit + partExchange;
 
   return {
     shop: {
@@ -170,10 +183,13 @@ function build(app, tradeIn, settingsRecord, fileToken) {
       payout_type: tradeIn.getString("payout_type"),
       payout_cash: payoutCash,
       payout_credit: payoutCredit,
-      payout_total: payoutCash + payoutCredit,
+      part_exchange: partExchange,
+      sale_number: saleNumber,
+      payout_total: payoutTotal,
       payout_cash_display: money.formatGBP(payoutCash),
       payout_credit_display: money.formatGBP(payoutCredit),
-      payout_total_display: money.formatGBP(payoutCash + payoutCredit),
+      part_exchange_display: money.formatGBP(partExchange),
+      payout_total_display: money.formatGBP(payoutTotal),
       total_market: tradeIn.getInt("total_market"),
       total_offer: tradeIn.getInt("total_offer"),
     },
@@ -192,6 +208,11 @@ function build(app, tradeIn, settingsRecord, fileToken) {
       "We keep this receipt, and the seller details on it, for six years. " +
       "Any ID photo is deleted on its own shorter schedule.",
   };
+}
+
+/** "Towards sale GG-S-000123", or "Towards the sale" when the number is gone. */
+function towardsLabel(receipt) {
+  return receipt.trade_in.sale_number ? "Towards sale " + receipt.trade_in.sale_number : "Towards the sale";
 }
 
 /** Plain-text and HTML bodies for the receipt email, from build()'s object. */
@@ -228,6 +249,9 @@ function render(receipt) {
     );
   }
   text.push("");
+  if (receipt.trade_in.part_exchange > 0) {
+    text.push(towardsLabel(receipt) + ": " + receipt.trade_in.part_exchange_display);
+  }
   if (receipt.trade_in.payout_cash > 0) {
     text.push("Cash paid: " + receipt.trade_in.payout_cash_display);
   }
@@ -263,6 +287,14 @@ function render(receipt) {
   }
 
   var payoutRows = "";
+  if (receipt.trade_in.part_exchange > 0) {
+    payoutRows +=
+      "<p style=\"margin:0;\">" +
+      esc(towardsLabel(receipt)) +
+      ": <strong>" +
+      esc(receipt.trade_in.part_exchange_display) +
+      "</strong></p>";
+  }
   if (receipt.trade_in.payout_cash > 0) {
     payoutRows +=
       "<p style=\"margin:0;\">Cash paid: <strong>" +

@@ -729,6 +729,8 @@ routerAdd(
       "Payout type",
       "Cash amount",
       "Credit amount",
+      "Part-exchange amount",
+      "Sale number",
       "Signature reference",
     ]);
     let rows = 0;
@@ -749,6 +751,17 @@ routerAdd(
         );
       } catch (err) {
         lines = [];
+      }
+
+      // A part-exchange (docs/api-contract-epos.md, section 7) also paid
+      // towards a sale; the register names it next to the payouts.
+      let saleNumber = "";
+      if (tradeIn.getString("sale")) {
+        try {
+          saleNumber = e.app.findRecordById("sales", tradeIn.getString("sale")).getString("number");
+        } catch (err) {
+          saleNumber = "";
+        }
       }
 
       for (let l = 0; l < lines.length; l++) {
@@ -792,6 +805,8 @@ routerAdd(
           tradeIn.getString("payout_type"),
           csvLib.pounds(tradeIn.getInt("payout_cash")),
           csvLib.pounds(tradeIn.getInt("payout_credit")),
+          csvLib.pounds(tradeIn.getInt("part_exchange_value")),
+          saleNumber,
           tradeIn.getString("signature"),
         ]);
         rows += 1;

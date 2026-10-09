@@ -268,9 +268,12 @@ routerAdd(
         });
       }
       // A ticket of returns alone made no sale: its client_id is on its
-      // refund's audit row instead.
-      const existingRefund = refundLib.replayByClientId(e.app, clientId);
-      if (existingRefund) return e.json(200, existingRefund);
+      // refund's audit row instead. Only such a ticket (no lines) looks
+      // there, so an ordinary sale never scans the audit log.
+      if (listOf(body.lines).length === 0) {
+        const existingRefund = refundLib.replayByClientId(e.app, clientId);
+        if (existingRefund) return e.json(200, existingRefund);
+      }
     }
 
     // -----------------------------------------------------------------

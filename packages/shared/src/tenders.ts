@@ -62,7 +62,7 @@ export interface RefundTenderRules {
 }
 
 export const SUMUP_GONE = "SumUp is no longer used. Take card payments on the Tide reader."
-export const PART_EXCHANGE_LATER = "Part-exchange is not available yet."
+export const PART_EXCHANGE_PANEL = "Take part-exchange through Trade in on the ticket."
 export const CARD_LAST4 = "Key the last four digits of the card."
 export const NEEDS_CUSTOMER = "Add the customer before using store credit or points."
 export const REFUND_NEEDS_CUSTOMER = "This sale has no customer, so it cannot go back as store credit."
@@ -190,7 +190,7 @@ export function checkSaleTenders(input: unknown, rules: SaleTenderRules): Tender
     }
     const method = textOf(raw.method)
     if (method === "sumup_card") return { ok: false, code: "invalid", message: SUMUP_GONE }
-    if (method === "part_exchange") return { ok: false, code: "invalid", message: PART_EXCHANGE_LATER }
+    if (method === "part_exchange") return { ok: false, code: "invalid", message: PART_EXCHANGE_PANEL }
     if (!SALE_METHODS.includes(method)) {
       return {
         ok: false,

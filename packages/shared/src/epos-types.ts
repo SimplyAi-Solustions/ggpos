@@ -94,7 +94,14 @@ export interface ReceiptLine {
   total: number
   vat_rate: number
   tax_scheme: "margin" | "standard" | "exempt"
-  /** On a part-exchange receipt, the trade lines carry a negative total. */
+  /**
+   * On a sale taken with a part-exchange or an exchange (section 7), the
+   * lines traded in (`trade`) and brought back (`return`) follow the sale's
+   * own lines with negative totals. They sit outside the subtotal, discount,
+   * total and VAT, which stay the sale's own; the `part_exchange` and
+   * `exchange` tenders are how they paid. On a refund's receipt every line is
+   * `return`.
+   */
   kind: "sale" | "return" | "trade"
 }
 
@@ -136,7 +143,7 @@ export interface ReceiptData {
   tenders: Tender[]
   change: number
   refund: null | { of_number: string; reason: string }
-  trade_in: null | { number: string; value: number; payout_cash: number; payout_credit: number }
+  trade_in: null | SaleTradeIn
   header: string
   footer: string
   returns_policy: string
@@ -458,4 +465,8 @@ export interface SaleTicketRefund {
   amount: number
   /** The part that paid for this sale (the `exchange` tender). */
   exchange: number
+  /** The sale the goods came back from, for the refund's own receipt. */
+  sale: { id: string; number: string }
+  /** The refund's tenders as written, the negative `exchange` row included. */
+  tenders: Tender[]
 }

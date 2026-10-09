@@ -136,7 +136,7 @@ export async function getSparklines(days = 30): Promise<SparklineSeries> {
     }),
     buyIns: dates.map((date) => {
       const payout = byDate.get(date)?.buy_in_total_by_payout ?? {}
-      return (payout.cash ?? 0) + (payout.credit ?? 0)
+      return (payout.cash ?? 0) + (payout.credit ?? 0) + (payout.part_exchange ?? 0)
     }),
     cashOut: dates.map((date) => cashByDate.get(date) ?? 0),
     creditIssued: dates.map((date) => byDate.get(date)?.credit_issued ?? 0),

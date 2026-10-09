@@ -2,7 +2,7 @@
 // Source: packages/shared/src. Regenerate with: pnpm --filter @gg/shared build:hooks
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.REFUND_NEEDS_CUSTOMER = exports.NEEDS_CUSTOMER = exports.CARD_LAST4 = exports.PART_EXCHANGE_LATER = exports.SUMUP_GONE = exports.REFUND_TENDERS = exports.MAX_TENDERS = void 0;
+exports.REFUND_NEEDS_CUSTOMER = exports.NEEDS_CUSTOMER = exports.CARD_LAST4 = exports.PART_EXCHANGE_PANEL = exports.SUMUP_GONE = exports.REFUND_TENDERS = exports.MAX_TENDERS = void 0;
 exports.sumProblem = sumProblem;
 exports.changeDue = changeDue;
 exports.amountDue = amountDue;
@@ -34,7 +34,7 @@ exports.MAX_TENDERS = 10;
 /** The methods a refund can go back by. */
 exports.REFUND_TENDERS = ["cash", "card_tide", "store_credit"];
 exports.SUMUP_GONE = "SumUp is no longer used. Take card payments on the Tide reader.";
-exports.PART_EXCHANGE_LATER = "Part-exchange is not available yet.";
+exports.PART_EXCHANGE_PANEL = "Take part-exchange through Trade in on the ticket.";
 exports.CARD_LAST4 = "Key the last four digits of the card.";
 exports.NEEDS_CUSTOMER = "Add the customer before using store credit or points.";
 exports.REFUND_NEEDS_CUSTOMER = "This sale has no customer, so it cannot go back as store credit.";
@@ -142,7 +142,7 @@ function checkSaleTenders(input, rules) {
         if (method === "sumup_card")
             return { ok: false, code: "invalid", message: exports.SUMUP_GONE };
         if (method === "part_exchange")
-            return { ok: false, code: "invalid", message: exports.PART_EXCHANGE_LATER };
+            return { ok: false, code: "invalid", message: exports.PART_EXCHANGE_PANEL };
         if (!SALE_METHODS.includes(method)) {
             return {
                 ok: false,
