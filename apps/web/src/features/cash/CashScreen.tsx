@@ -180,6 +180,11 @@ export function CashScreen() {
         <p data-testid="cash-notice" aria-live="polite" className="mt-10 max-w-[56ch] text-[15px] leading-[1.5] text-foreground">
           {notice}
         </p>
+      ) : !session && (wanted || search.action === "x" || search.action === "z") ? (
+        // The till's menu asked for a step a closed till cannot take.
+        <p data-testid="cash-notice" aria-live="polite" className="mt-10 max-w-[56ch] text-[15px] leading-[1.5] text-foreground">
+          The till is closed. Open it first.
+        </p>
       ) : null}
 
       {session ? (

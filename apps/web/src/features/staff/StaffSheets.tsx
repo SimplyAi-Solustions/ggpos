@@ -287,8 +287,10 @@ function EditForm({
     setSaving(true)
     setDetails(null)
     try {
-      const done = await guarded((token) => updateStaff(member.id, patch, token))
-      if (done !== null) {
+      // `true` rather than the member the route answers with: a 200 with no
+      // body is still a save, and only a closed password prompt is not.
+      const done = await guarded((token) => updateStaff(member.id, patch, token).then(() => true))
+      if (done) {
         onChanged({ id: member.id, ...patch })
         setDetails({
           tone: "done",
