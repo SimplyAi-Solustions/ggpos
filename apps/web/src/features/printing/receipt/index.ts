@@ -2,53 +2,40 @@
  * Receipts, reports and the cash drawer through the counter's receipt
  * printer (docs/api-contract-epos.md, section 6, "The renderer").
  *
- * STUB. The printing package replaces this file with the canvas renderer
- * and the print-job calls; the signatures below are the contract the till
- * and cashing up already call, so they do not change when it lands. Until
- * then every call reports that printing is not set up, which the till shows
- * as one line and carries on.
+ * The till and cashing up import from here and nowhere deeper:
+ *
+ *   renderReceiptImage(receipt, { width, gift })  a sale, gift or refund receipt as a PNG
+ *   renderTillReportImage(report, { width })      an X or Z report as a PNG
+ *   printReceipt / printTillReport / openDrawer   draw, post the job, report what happened
+ *
+ * Receipts are drawn on a canvas in the app's own fonts, black on white and
+ * thresholded to one bit, exactly as wide as the printer's paper (576 dots on
+ * 80 mm, 384 on 58 mm), and the printer collects them from the server (Star
+ * CloudPRNT). The layout is pure data (`receipt-layout.ts`,
+ * `report-layout.ts`) and the canvas painter is thin (`paint.ts`).
+ *
+ * The two render functions load the painter on first use. It carries
+ * bwip-js for the barcode and the QR, which is 900 kB nobody opening the till
+ * should pay for until they print something.
  */
-/* eslint-disable @typescript-eslint/no-unused-vars -- a stub keeps the contract's signatures */
 import type { ReceiptData, TillReport } from "@gg/shared"
 
-export type PrintOutcome = { ok: true; jobId: string } | { ok: false; message: string }
-
-const NOT_READY_MESSAGE =
-  "Receipt printing is not set up yet. Add a printer under Settings, Printers."
-const NOT_READY: PrintOutcome = { ok: false, message: NOT_READY_MESSAGE }
+export { printReceipt, printTillReport, openDrawer, browserReceiptUrl } from "./print"
+export type { PrintOutcome } from "./print"
+export { varianceWords } from "./report-layout"
 
 export async function renderReceiptImage(
-  _receipt: ReceiptData,
-  _opts: { width: 576 | 384; gift?: boolean }
+  receipt: ReceiptData,
+  opts: { width: 576 | 384; gift?: boolean }
 ): Promise<Blob> {
-  throw new Error(NOT_READY_MESSAGE)
+  const { renderReceiptImage: render } = await import("./render")
+  return render(receipt, opts)
 }
 
 export async function renderTillReportImage(
-  _report: TillReport,
-  _opts: { width: 576 | 384 }
+  report: TillReport,
+  opts: { width: 576 | 384 }
 ): Promise<Blob> {
-  throw new Error(NOT_READY_MESSAGE)
-}
-
-export async function printReceipt(_input: {
-  saleId: string
-  register?: string
-  gift?: boolean
-  refundRef?: string
-  drawer?: boolean
-  reprint?: boolean
-}): Promise<PrintOutcome> {
-  return NOT_READY
-}
-
-export async function printTillReport(_input: {
-  reportId: string
-  register?: string
-}): Promise<PrintOutcome> {
-  return NOT_READY
-}
-
-export async function openDrawer(_register?: string): Promise<PrintOutcome> {
-  return NOT_READY
+  const { renderTillReportImage: render } = await import("./render")
+  return render(report, opts)
 }
