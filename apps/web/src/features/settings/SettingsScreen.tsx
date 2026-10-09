@@ -41,6 +41,7 @@ import { CategoriesSection } from "@/features/settings/CategoriesSection"
 import { PermissionsTable } from "@/features/settings/PermissionsTable"
 import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
+import { BookingsSection } from "@/features/settings/BookingsSection"
 import { GuildSettingsSection } from "@/features/settings/GuildSettingsSection"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
@@ -924,6 +925,8 @@ function Editor({
       <CategoriesSection />
       <AgentsSection />
 
+      <BookingsSection admin />
+
       {dock
         ? createPortal(
             <div className="border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
@@ -954,9 +957,10 @@ function ManagerSettings() {
   return (
     <section className="pt-16 sm:pt-24">
       <PageTitle>Settings</PageTitle>
-      <Lede>Tills and categories are yours to set up. The rest of Settings is for admins.</Lede>
+      <Lede>Tills, categories and bookings are yours to set up. The rest of Settings is for admins.</Lede>
       <TillsSection admin={false} />
       <CategoriesSection />
+      <BookingsSection admin={false} />
     </section>
   )
 }

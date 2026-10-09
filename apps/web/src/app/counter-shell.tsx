@@ -60,6 +60,8 @@ import { SetPinSheet } from "@/features/lock/SetPinSheet"
  */
 const NAV: { to: string; label: string }[] = [
   { to: "/counter/till", label: "Till" },
+  // Bookings (package BW, docs/api-contract-launch.md, section 4).
+  { to: "/counter/bookings", label: "Bookings" },
   { to: "/counter/stock", label: "Stock" },
   { to: "/counter/trade", label: "Trade" },
   { to: "/counter/customers", label: "Customers" },
@@ -224,6 +226,7 @@ function MoreSheet({
           <ul className="flex flex-col">
             {[
               { label: "Home", to: "/counter" },
+              { label: "Bookings", to: "/counter/bookings" },
               { label: "Cash up", to: "/counter/cash" },
               { label: "Quotes", to: "/counter/quotes" },
               { label: "Customers", to: "/counter/customers" },

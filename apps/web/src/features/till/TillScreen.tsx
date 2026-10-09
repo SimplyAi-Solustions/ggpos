@@ -106,6 +106,8 @@ import {
 } from "@/features/till/till-store"
 import { tillDisplayPayload, useTillDisplay } from "@/features/till/use-till-display"
 import { useWide } from "@/features/till/use-wide"
+import { TillBookingsSheet } from "@/features/bookings/TillBookingsSheet"
+import { attachBookingCustomer } from "@/features/bookings/till-line"
 import {
   getCustomerForSale,
   getItem,
@@ -262,6 +264,8 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     open: false,
     number: "",
   })
+  /** Today's bookings and the stations (package BW). */
+  const [bookingsOpen, setBookingsOpen] = React.useState(false)
 
   const [receiptPending, setReceiptPending] = React.useState<ReceiptChoice | null>(null)
   const [receiptProblem, setReceiptProblem] = React.useState<string | null>(null)
@@ -370,6 +374,12 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
 
   const chooseProduct = React.useCallback(
     (product: TillCatalogueProduct) => {
+      // A `booking` till product is the Bookings key (package BW): it opens
+      // today's bookings rather than going on the ticket by itself.
+      if ((product.kind as string) === "booking") {
+        setBookingsOpen(true)
+        return
+      }
       if (product.kind === "membership" && !getTill().ticket.customer) {
         setPendingProduct(product)
         setScanNote(`Attach the customer to sell ${product.name}.`)
@@ -382,7 +392,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       }
       addProduct(product)
     },
-    [addProduct]
+    [addProduct, setBookingsOpen]
   )
 
   const chooseItem = React.useCallback(
@@ -1268,6 +1278,14 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         onOpenChange={(open) => setReturns((value) => ({ open, number: open ? value.number : "" }))}
         onExchange={takeExchange}
       />
+      <TillBookingsSheet
+        open={bookingsOpen}
+        onOpenChange={setBookingsOpen}
+        onAdd={(line, customerCode) => {
+          addLine(line)
+          void attachBookingCustomer(customerCode)
+        }}
+      />
     </>
   )
 
@@ -1519,6 +1537,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         onItem={chooseItem}
         onStock={(item) => void chooseStock(item)}
         onBranchItem={(item) => void chooseBranchItem(item)}
+        onBookings={() => setBookingsOpen(true)}
       />
     )
 
@@ -1531,6 +1550,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       onRecall={() => setRecallOpen(true)}
       onReturns={() => openReturns("")}
       onTradeIn={openTrade}
+      onBookings={() => setBookingsOpen(true)}
     />
   )
 

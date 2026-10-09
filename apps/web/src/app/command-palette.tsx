@@ -116,6 +116,7 @@ export function CommandPalette({
       { id: "labels", label: "Label queue", run: () => go("/counter/labels") },
       // --- end Selling and cash ---
       { id: "stock", label: "Stock", run: () => go("/counter/stock") },
+      { id: "bookings", label: "Bookings", run: () => go("/counter/bookings") },
       { id: "customers", label: "Customers", run: () => go("/counter/customers") },
       { id: "reports", label: "Reports", run: () => go("/counter/reports") },
       {

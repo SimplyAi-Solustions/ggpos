@@ -12,6 +12,7 @@
  */
 import * as React from "react"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { CalendarClockIcon } from "lucide-react"
 import {
   displayCode,
   formatGBP,
@@ -37,7 +38,7 @@ import {
 } from "@/components/ui/table"
 import { ProductImage } from "@/components/product-image"
 import { BranchView } from "@/features/till/BranchView"
-import { ItemTile, KeyTile } from "@/features/till/Tile"
+import { ItemTile, KeyTile, Tile } from "@/features/till/Tile"
 import { listItems } from "@/lib/api"
 import { getCategoryItems, searchTillProducts } from "@/lib/api/till"
 import type { ItemSummary } from "@/lib/api/types"
@@ -111,6 +112,8 @@ export interface CataloguePaneProps {
   onStock: (item: ItemSummary) => void
   /** A stock row from a branch: a serialised one through its full record. */
   onBranchItem: (item: TillCatalogueItem) => void
+  /** The Bookings tile at the head of the first category (package BW). */
+  onBookings?: () => void
 }
 
 function CategoryItems({
@@ -289,6 +292,7 @@ export function CataloguePane({
   onItem,
   onStock,
   onBranchItem,
+  onBookings,
 }: CataloguePaneProps) {
   const categories = catalogue?.categories ?? []
   const branches = catalogue?.branches ?? []
@@ -392,10 +396,20 @@ export function CataloguePane({
           </p>
         ) : category.dynamic ? (
           <CategoryItems categoryId={category.id} onItem={onItem} />
-        ) : category.keys.length === 0 ? (
+        ) : category.keys.length === 0 && !(onBookings && category === categories[0]) ? (
           <p className="text-[15px] text-muted-foreground">Nothing is on this one yet.</p>
         ) : (
           <div className={GRID} data-testid="till-tiles">
+            {onBookings && category === categories[0] ? (
+              <Tile
+                title="Bookings"
+                price=""
+                status="Pay or start"
+                Icon={CalendarClockIcon}
+                onPress={onBookings}
+                testId="till-bookings-tile"
+              />
+            ) : null}
             {[...category.keys]
               .sort((a, b) => a.position - b.position)
               .map((key) => (

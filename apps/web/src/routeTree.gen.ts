@@ -17,6 +17,7 @@ import { Route as EstimateRouteImport } from "./routes/estimate"
 import { Route as KitRouteImport } from "./routes/kit"
 import { Route as LoginRouteImport } from "./routes/login"
 import { Route as AccountIndexRouteImport } from "./routes/account.index"
+import { Route as AccountBookingsRouteImport } from "./routes/account.bookings"
 import { Route as AccountCreditRouteImport } from "./routes/account.credit"
 import { Route as AccountEstimateRouteImport } from "./routes/account.estimate"
 import { Route as AccountGuildRouteImport } from "./routes/account.guild"
@@ -27,6 +28,7 @@ import { Route as AccountWantListRouteImport } from "./routes/account.want-list"
 import { Route as AccountWantsRouteImport } from "./routes/account.wants"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
 import { Route as CounterIndexRouteImport } from "./routes/counter.index"
+import { Route as CounterBookingsRouteImport } from "./routes/counter.bookings"
 import { Route as CounterCashRouteImport } from "./routes/counter.cash"
 import { Route as CounterExportsRouteImport } from "./routes/counter.exports"
 import { Route as CounterLabelsRouteImport } from "./routes/counter.labels"
@@ -105,6 +107,11 @@ const AccountIndexRoute = AccountIndexRouteImport.update({
   path: "/",
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountBookingsRoute = AccountBookingsRouteImport.update({
+  id: "/bookings",
+  path: "/bookings",
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountCreditRoute = AccountCreditRouteImport.update({
   id: "/credit",
   path: "/credit",
@@ -153,6 +160,11 @@ const CTokenRoute = CTokenRouteImport.update({
 const CounterIndexRoute = CounterIndexRouteImport.update({
   id: "/",
   path: "/",
+  getParentRoute: () => CounterRoute,
+} as any)
+const CounterBookingsRoute = CounterBookingsRouteImport.update({
+  id: "/bookings",
+  path: "/bookings",
   getParentRoute: () => CounterRoute,
 } as any)
 const CounterCashRoute = CounterCashRouteImport.update({
@@ -351,6 +363,7 @@ export interface FileRoutesByFullPath {
   "/estimate": typeof EstimateRoute
   "/kit": typeof KitRoute
   "/login": typeof LoginRoute
+  "/account/bookings": typeof AccountBookingsRoute
   "/account/credit": typeof AccountCreditRoute
   "/account/estimate": typeof AccountEstimateRoute
   "/account/guild": typeof AccountGuildRoute
@@ -360,6 +373,7 @@ export interface FileRoutesByFullPath {
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
+  "/counter/bookings": typeof CounterBookingsRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
@@ -406,6 +420,7 @@ export interface FileRoutesByTo {
   "/estimate": typeof EstimateRoute
   "/kit": typeof KitRoute
   "/login": typeof LoginRoute
+  "/account/bookings": typeof AccountBookingsRoute
   "/account/credit": typeof AccountCreditRoute
   "/account/estimate": typeof AccountEstimateRoute
   "/account/guild": typeof AccountGuildRoute
@@ -415,6 +430,7 @@ export interface FileRoutesByTo {
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
+  "/counter/bookings": typeof CounterBookingsRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
@@ -464,6 +480,7 @@ export interface FileRoutesById {
   "/estimate": typeof EstimateRoute
   "/kit": typeof KitRoute
   "/login": typeof LoginRoute
+  "/account/bookings": typeof AccountBookingsRoute
   "/account/credit": typeof AccountCreditRoute
   "/account/estimate": typeof AccountEstimateRoute
   "/account/guild": typeof AccountGuildRoute
@@ -473,6 +490,7 @@ export interface FileRoutesById {
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
+  "/counter/bookings": typeof CounterBookingsRoute
   "/counter/cash": typeof CounterCashRoute
   "/counter/exports": typeof CounterExportsRoute
   "/counter/labels": typeof CounterLabelsRoute
@@ -523,6 +541,7 @@ export interface FileRouteTypes {
     | "/estimate"
     | "/kit"
     | "/login"
+    | "/account/bookings"
     | "/account/credit"
     | "/account/estimate"
     | "/account/guild"
@@ -532,6 +551,7 @@ export interface FileRouteTypes {
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
+    | "/counter/bookings"
     | "/counter/cash"
     | "/counter/exports"
     | "/counter/labels"
@@ -578,6 +598,7 @@ export interface FileRouteTypes {
     | "/estimate"
     | "/kit"
     | "/login"
+    | "/account/bookings"
     | "/account/credit"
     | "/account/estimate"
     | "/account/guild"
@@ -587,6 +608,7 @@ export interface FileRouteTypes {
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
+    | "/counter/bookings"
     | "/counter/cash"
     | "/counter/exports"
     | "/counter/labels"
@@ -635,6 +657,7 @@ export interface FileRouteTypes {
     | "/estimate"
     | "/kit"
     | "/login"
+    | "/account/bookings"
     | "/account/credit"
     | "/account/estimate"
     | "/account/guild"
@@ -644,6 +667,7 @@ export interface FileRouteTypes {
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
+    | "/counter/bookings"
     | "/counter/cash"
     | "/counter/exports"
     | "/counter/labels"
@@ -756,6 +780,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AccountIndexRouteImport
       parentRoute: typeof AccountRoute
     }
+    "/account/bookings": {
+      id: "/account/bookings"
+      path: "/bookings"
+      fullPath: "/account/bookings"
+      preLoaderRoute: typeof AccountBookingsRouteImport
+      parentRoute: typeof AccountRoute
+    }
     "/account/credit": {
       id: "/account/credit"
       path: "/credit"
@@ -824,6 +855,13 @@ declare module "@tanstack/react-router" {
       path: "/"
       fullPath: "/counter/"
       preLoaderRoute: typeof CounterIndexRouteImport
+      parentRoute: typeof CounterRoute
+    }
+    "/counter/bookings": {
+      id: "/counter/bookings"
+      path: "/bookings"
+      fullPath: "/counter/bookings"
+      preLoaderRoute: typeof CounterBookingsRouteImport
       parentRoute: typeof CounterRoute
     }
     "/counter/cash": {
@@ -1089,6 +1127,7 @@ declare module "@tanstack/react-router" {
 }
 
 interface AccountRouteChildren {
+  AccountBookingsRoute: typeof AccountBookingsRoute
   AccountCreditRoute: typeof AccountCreditRoute
   AccountEstimateRoute: typeof AccountEstimateRoute
   AccountGuildRoute: typeof AccountGuildRoute
@@ -1108,6 +1147,7 @@ interface AccountRouteChildren {
 }
 
 const AccountRouteChildren: AccountRouteChildren = {
+  AccountBookingsRoute: AccountBookingsRoute,
   AccountCreditRoute: AccountCreditRoute,
   AccountEstimateRoute: AccountEstimateRoute,
   AccountGuildRoute: AccountGuildRoute,
@@ -1130,6 +1170,7 @@ const AccountRouteWithChildren =
   AccountRoute._addFileChildren(AccountRouteChildren)
 
 interface CounterRouteChildren {
+  CounterBookingsRoute: typeof CounterBookingsRoute
   CounterCashRoute: typeof CounterCashRoute
   CounterExportsRoute: typeof CounterExportsRoute
   CounterLabelsRoute: typeof CounterLabelsRoute
@@ -1162,6 +1203,7 @@ interface CounterRouteChildren {
 }
 
 const CounterRouteChildren: CounterRouteChildren = {
+  CounterBookingsRoute: CounterBookingsRoute,
   CounterCashRoute: CounterCashRoute,
   CounterExportsRoute: CounterExportsRoute,
   CounterLabelsRoute: CounterLabelsRoute,
