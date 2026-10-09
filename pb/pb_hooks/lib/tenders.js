@@ -7,6 +7,10 @@
  *   request's `tenders`, or map the legacy `payment` / `payment_split` and
  *   `refund_method` onto tenders for older callers, then run the shared
  *   check. Each returns the checked tenders or `{ status, message }`.
+ * - `ticketTenders(body, rules)` / `ticketRefundTenders(returns, rules)` are
+ *   the same for a ticket carrying a trade-in or returns (section 7): the
+ *   request's tenders come to what is left after the part-exchange and the
+ *   exchange, which the server adds itself.
  * - `writeTenders(txApp, opts)` writes one `sale_tenders` row per tender,
  *   negative for a refund, with the register and session.
  * - `writeCashMovement(txApp, opts)` writes the drawer's movement for the
@@ -182,6 +186,188 @@ function refundTenders(body, rules) {
   return result;
 }
 
+/** A whole number of pence off an untyped value, or null. */
+function wholePence(value) {
+  return typeof value === "number" && isFinite(value) && Math.floor(value) === value ? value : null;
+}
+
+/**
+ * What a ticket leaves to pay once its trade-in and its returns are taken
+ * off, in the words the payments refusal uses: "the trade-in", "the
+ * exchange", or both.
+ */
+function leftAfter(rules) {
+  var parts = [];
+  if (rules.partExchange !== null && rules.partExchange !== undefined) parts.push("the trade-in");
+  if (rules.exchange !== null && rules.exchange !== undefined) parts.push("the exchange");
+  return parts.join(" and ");
+}
+
+/**
+ * The checked tenders for a sale that may carry a part-exchange and an
+ * exchange (docs/api-contract-epos.md, section 7), or `{ status, message }`.
+ *
+ * The server writes the `part_exchange` tender (what the trade-in pays
+ * towards the sale) and the `exchange` tender (what the returned goods pay)
+ * itself, so the request's own tenders only have to come to what is left,
+ * `rules.total`. A till that sends those two tenders as well is taken at its
+ * word only when it names the server's own figure; they are then left to
+ * the server. Without a trade-in or returns on the ticket they go to the
+ * shared rules like any other tender, which refuse them. The two the server
+ * writes come after the request's own, part-exchange first.
+ *
+ * @param {object} body the request body
+ * @param {{ total: number, requireCardLast4: boolean, hasCustomer: boolean,
+ *   partExchange: number|null, exchange: number|null }} rules
+ *   `total` is the sale after discounts less the part-exchange and the
+ *   exchange; `partExchange` and `exchange` are null when the ticket has no
+ *   trade-in or no returns.
+ */
+function ticketTenders(body, rules) {
+  var money = require(__hooks + "/lib/shared/money.js");
+  var px = rules.partExchange === undefined ? null : rules.partExchange;
+  var ex = rules.exchange === undefined ? null : rules.exchange;
+  if (px === null && ex === null) return saleTenders(body, rules);
+
+  var request = {
+    tenders: body.tenders,
+    payment: body.payment,
+    payment_split: body.payment_split,
+    card_last4: body.card_last4,
+  };
+  // The other tenders "may be none" (section 7): a ticket the trade-in or
+  // the returns cover needs no `tenders` at all, unless an older caller
+  // names a `payment` instead.
+  var util = require(__hooks + "/lib/vaultutil.js");
+  if ((body.tenders === undefined || body.tenders === null) && !util.asStr(body.payment)) {
+    request.tenders = [];
+  }
+  var sentPx = 0;
+  var sentEx = 0;
+  var sawPx = false;
+  var sawEx = false;
+  var rest = null;
+  if (body.tenders !== undefined && body.tenders !== null) {
+    var list = plainList(body.tenders);
+    if (list && typeof list === "object" && typeof list.length === "number") {
+      rest = [];
+      for (var i = 0; i < list.length; i++) {
+        var method = list[i] && list[i].method !== undefined ? String(list[i].method).trim() : "";
+        var amount = wholePence(list[i] ? list[i].amount : null);
+        if (method === "part_exchange" && px !== null) {
+          sawPx = true;
+          sentPx += amount === null ? 0 : amount;
+        } else if (method === "exchange" && ex !== null) {
+          sawEx = true;
+          sentEx += amount === null ? 0 : amount;
+        } else {
+          rest.push(list[i]);
+        }
+      }
+      request.tenders = rest;
+    }
+  }
+  if (sawPx && sentPx !== px) {
+    return {
+      ok: false,
+      status: 400,
+      message:
+        "The trade-in pays " +
+        money.formatGBP(px) +
+        " towards this sale, not " +
+        money.formatGBP(sentPx) +
+        ". Reload the ticket and try again.",
+    };
+  }
+  if (sawEx && sentEx !== ex) {
+    return {
+      ok: false,
+      status: 400,
+      message:
+        "The returns pay " +
+        money.formatGBP(ex) +
+        " towards this sale, not " +
+        money.formatGBP(sentEx) +
+        ". Reload the ticket and try again.",
+    };
+  }
+
+  var result = saleTenders(request, rules);
+  if (!result.ok) {
+    // The shared sentence says "the total"; on this ticket what has to be
+    // paid is what is left after the trade-in or the exchange, so say that.
+    if (rest) {
+      var paid = 0;
+      for (var r = 0; r < rest.length; r++) {
+        var p = wholePence(rest[r] ? rest[r].amount : null);
+        paid += p === null ? 0 : p;
+      }
+      if (result.message === shared().sumProblem(paid, rules.total)) {
+        result.message =
+          "The payments come to " +
+          money.formatGBP(paid) +
+          " but " +
+          money.formatGBP(rules.total) +
+          " is left after " +
+          leftAfter(rules) +
+          ".";
+      }
+    }
+    return result;
+  }
+
+  var tenders = result.tenders.slice();
+  if (px !== null && px > 0) {
+    tenders.push({ method: "part_exchange", amount: px, tendered: px, change: 0, card_last4: "", reference: "" });
+  }
+  if (ex !== null && ex > 0) {
+    tenders.push({ method: "exchange", amount: ex, tendered: ex, change: 0, card_last4: "", reference: "" });
+  }
+  return { ok: true, tenders: tenders, paid: result.paid, change: result.change, cash: result.cash };
+}
+
+/**
+ * The checked tenders for the refund half of an exchange: the part of the
+ * returned goods' value the new sale does not take, back as cash, card or
+ * store credit (`returns.tenders`), or `{ status, message }`. An absent list
+ * is no tenders, which is right when nothing is left to give back.
+ * @param {object} returns the request's `returns`
+ * @param {{ amount: number, hasCustomer: boolean, exchange: number }} rules
+ *   `amount` is what is left to give back after the exchange.
+ */
+function ticketRefundTenders(returns, rules) {
+  var money = require(__hooks + "/lib/shared/money.js");
+  var raw = returns && returns.tenders !== undefined && returns.tenders !== null ? returns.tenders : [];
+  var result = refundTenders({ tenders: raw }, { amount: rules.amount, hasCustomer: rules.hasCustomer });
+  if (!result.ok && rules.exchange > 0) {
+    var list = plainList(raw);
+    var paid = 0;
+    if (list && typeof list === "object" && typeof list.length === "number") {
+      for (var i = 0; i < list.length; i++) {
+        var p = wholePence(list[i] ? list[i].amount : null);
+        paid += p === null ? 0 : p;
+      }
+    }
+    // checkRefundTenders' own sentence for tenders that do not come to the
+    // amount (packages/shared/src/tenders.ts).
+    var sumSentence =
+      "The payments back come to " +
+      money.formatGBP(paid) +
+      " but the refund is " +
+      money.formatGBP(rules.amount) +
+      ".";
+    if (result.message === sumSentence) {
+      result.message =
+        "The payments back come to " +
+        money.formatGBP(paid) +
+        " but " +
+        money.formatGBP(rules.amount) +
+        " is left to give back after the exchange.";
+    }
+  }
+  return result;
+}
+
 /** The amount a set of checked tenders puts on one method. */
 function amountFor(tenders, method) {
   var total = 0;
@@ -331,6 +517,8 @@ module.exports = {
   eposSettings: eposSettings,
   saleTenders: saleTenders,
   refundTenders: refundTenders,
+  ticketTenders: ticketTenders,
+  ticketRefundTenders: ticketRefundTenders,
   amountFor: amountFor,
   writeTenders: writeTenders,
   writeCashMovement: writeCashMovement,

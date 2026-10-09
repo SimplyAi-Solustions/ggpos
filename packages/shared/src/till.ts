@@ -289,11 +289,15 @@ export interface TillReportTenderRow {
   refund_ref: string
 }
 
-/** One completed trade-in paid from the session. */
+/**
+ * One completed trade-in on the session, whatever it paid out. On a
+ * part-exchange (docs/api-contract-epos.md, section 7) the two payouts are
+ * the surplus alone.
+ */
 export interface TillReportTradeIn {
   payout_cash: number
   payout_credit: number
-  /** What a part-exchange put against a sale. 0 until wave 2. */
+  /** What a part-exchange put against its sale (`trade_ins.part_exchange_value`); 0 for a buy-in. */
   part_exchange_value?: number
 }
 

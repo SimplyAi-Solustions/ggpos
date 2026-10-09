@@ -14,11 +14,22 @@
  * Signs: a sale receipt's money is positive. On a refund receipt every
  * amount except a line's `unit_price` and `qty` is negative (money going
  * back), so on both kinds `subtotal - discount = total = sum of the line
- * totals` and the tenders add up to the total.
+ * totals of the receipt's own kind` and the tenders add up to the total.
  *
  * A refund's own lines and quantities are read from its `sale_refund` audit
  * row (`meta.ref`, `meta.lines`), the one place they are recorded: the
  * schema keeps only each line's running `refunded_qty`.
+ *
+ * A sale taken in the same ticket as a part-exchange or an exchange
+ * (docs/api-contract-epos.md, section 7) also lists, after its own lines,
+ * the lines brought back (`kind: "return"`, from the refund its audit row
+ * names) and the lines traded in (`kind: "trade"`, from its trade-in), each
+ * with a negative total, and carries the `trade_in` block. Those lines say
+ * what paid: they are not part of the sale's subtotal, discount, total, VAT
+ * or margin note, which stay the sale's own, and the `part_exchange` and
+ * `exchange` tenders are how they paid for it, so the tenders still add up
+ * to the total. Their own money is on the trade-in's receipt and the
+ * refund's receipt.
  *
  * require() this from inside each handler, not at file top level - see
  * pb/README.md on pb_hooks isolation.
@@ -230,6 +241,74 @@ function refundAudit(app, sale, ref) {
 }
 
 /**
+ * A trade-in's accepted lines as receipt lines (`kind: "trade"`): the title
+ * the buy-in receipt gives them, the condition (and a finish other than
+ * normal) under it, the SKU of the stock it became, and a negative total of
+ * offer x qty, in the order the trade-in completed them.
+ */
+function tradeLines(app, tradeInId) {
+  var tradeComplete = require(__hooks + "/lib/tradeincomplete.js");
+  var rows = [];
+  try {
+    rows = tradeComplete.acceptedLines(app, tradeInId);
+  } catch (err) {
+    rows = [];
+  }
+  var itemIds = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i] && rows[i].getString("item")) itemIds.push(rows[i].getString("item"));
+  }
+  var items = byIds(app, "items", itemIds);
+
+  var out = [];
+  for (var j = 0; j < rows.length; j++) {
+    var line = rows[j];
+    if (!line) continue;
+    var item = items[line.getString("item")] || null;
+    var title = line.getString("free_text_title");
+    if (!title && line.getString("card")) {
+      try {
+        var card = app.findRecordById("cards", line.getString("card"));
+        var number = card.getString("number");
+        title = number ? card.getString("name") + " #" + number : card.getString("name");
+      } catch (err) {
+        title = "";
+      }
+    }
+    if (!title && line.getString("retro_title")) {
+      try {
+        title = app.findRecordById("retro_titles", line.getString("retro_title")).getString("name");
+      } catch (err) {
+        title = "";
+      }
+    }
+    if (!title && item) title = item.getString("title");
+    if (!title) title = "Item";
+
+    var detail = [];
+    if (line.getString("condition")) detail.push(line.getString("condition"));
+    var finish = line.getString("finish");
+    if (finish && finish !== "normal") detail.push(finish);
+
+    var qty = Math.max(1, line.getInt("qty"));
+    var offer = line.getInt("offer_price");
+    out.push({
+      title: title,
+      detail: detail.join(" · "),
+      sku: item ? item.getString("sku") : "",
+      qty: qty,
+      unit_price: offer,
+      discount: 0,
+      total: -(offer * qty),
+      vat_rate: 0,
+      tax_scheme: "margin",
+      kind: "trade",
+    });
+  }
+  return out;
+}
+
+/**
  * The `ReceiptData` for a sale, or for one of its refunds.
  * @param {any} app
  * @param {any} sale the `sales` record
@@ -241,6 +320,8 @@ function build(app, sale, opts) {
   var util = require(__hooks + "/lib/vaultutil.js");
   var tendersLib = require(__hooks + "/lib/tenders.js");
   var balances = require(__hooks + "/lib/balances.js");
+  var refundLib = require(__hooks + "/lib/salerefund.js");
+  var tradeComplete = require(__hooks + "/lib/tradeincomplete.js");
   var saleline = require(__hooks + "/lib/shared/saleline.js");
   var vat = require(__hooks + "/lib/shared/vat.js");
 
@@ -267,14 +348,11 @@ function build(app, sale, opts) {
   var servedBy = sale.getString("staff");
   var pointsEarned = sale.getInt("points_earned");
 
-  function pushLine(row, qty, lineTotal, sign, kind) {
-    var about = described[row.id] || { title: "Item", detail: "", sku: "" };
+  /** One receipt line for a sale line, as sold or as refunded. */
+  function lineOf(about, row, qty, lineTotal, sign, kind) {
     var unit = row.getInt("unit_price");
     var gross = unit * qty;
-    var rate = row.getFloat("vat_rate");
-    var scheme = row.getString("tax_scheme") || "margin";
-    if (scheme === "margin") marginScheme = true;
-    lines.push({
+    return {
       title: about.title,
       detail: about.detail,
       sku: about.sku,
@@ -282,14 +360,22 @@ function build(app, sale, opts) {
       unit_price: unit,
       discount: sign * (gross - lineTotal),
       total: sign * lineTotal,
-      vat_rate: rate,
-      tax_scheme: scheme,
+      vat_rate: row.getFloat("vat_rate"),
+      tax_scheme: row.getString("tax_scheme") || "margin",
       kind: kind,
-    });
+    };
+  }
+
+  function pushLine(row, qty, lineTotal, sign, kind) {
+    var about = described[row.id] || { title: "Item", detail: "", sku: "" };
+    var built = lineOf(about, row, qty, lineTotal, sign, kind);
+    var gross = row.getInt("unit_price") * qty;
+    if (built.tax_scheme === "margin") marginScheme = true;
+    lines.push(built);
     subtotal += sign * gross;
     discount += sign * (gross - lineTotal);
     total += sign * lineTotal;
-    return { scheme: scheme, rate: rate, gross: sign * lineTotal };
+    return { scheme: built.tax_scheme, rate: built.vat_rate, gross: sign * lineTotal };
   }
 
   if (!refundRef) {
@@ -309,6 +395,51 @@ function build(app, sale, opts) {
           vat: stored || vat.vatInside(line.gross, line.rate),
         });
       }
+    }
+
+    // Lines brought back in the same ticket (section 7), as the refund the
+    // sale's audit row names returned them, negative and outside the
+    // sale's own totals.
+    var returns = refundLib.returnsOf(app, sale.id);
+    if (returns) {
+      var origin = null;
+      try {
+        origin = app.findRecordById("sales", util.asStr(returns.sale));
+      } catch (err) {
+        origin = null;
+      }
+      var backAudit = origin ? refundAudit(app, origin, util.asStr(returns.ref)) : null;
+      if (backAudit) {
+        var originRows = util.saleLineRows(app, origin.id);
+        var originById = {};
+        for (var o = 0; o < originRows.length; o++) {
+          if (originRows[o]) originById[originRows[o].id] = originRows[o];
+        }
+        var originAbout = describeLines(app, originRows);
+        var backLines = backAudit.meta.lines && backAudit.meta.lines.length ? backAudit.meta.lines : [];
+        for (var b = 0; b < backLines.length; b++) {
+          var gone = backLines[b] || {};
+          var from = originById[gone.sale_line];
+          if (!from) continue;
+          lines.push(
+            lineOf(
+              originAbout[from.id] || { title: "Item", detail: "", sku: "" },
+              from,
+              Math.max(1, util.asInt(gone.qty, 1)),
+              util.asInt(gone.amount, 0),
+              -1,
+              "return"
+            )
+          );
+        }
+      }
+    }
+
+    // Lines traded in towards this sale (section 7), negative, outside the
+    // sale's own totals too.
+    if (sale.getString("trade_in")) {
+      var traded = tradeLines(app, sale.getString("trade_in"));
+      for (var tl = 0; tl < traded.length; tl++) lines.push(traded[tl]);
     }
   } else {
     var found = refundAudit(app, sale, refundRef);
@@ -365,16 +496,12 @@ function build(app, sale, opts) {
     }
   }
 
+  // The part-exchange as the sale's response gave it (`SaleTradeIn`): its
+  // value, what it paid towards the sale and the surplus paid out.
   var tradeIn = null;
   if (sale.getString("trade_in")) {
     try {
-      var t = app.findRecordById("trade_ins", sale.getString("trade_in"));
-      tradeIn = {
-        number: t.getString("number"),
-        value: t.getInt("total_offer"),
-        payout_cash: t.getInt("payout_cash"),
-        payout_credit: t.getInt("payout_credit"),
-      };
+      tradeIn = tradeComplete.saleBlock(app.findRecordById("trade_ins", sale.getString("trade_in")));
     } catch (err) {
       tradeIn = null;
     }
@@ -455,6 +582,22 @@ function ukDateTime(iso) {
   );
 }
 
+/**
+ * The part-exchange's figures for a sale receipt's email: what the trade was
+ * worth, what it paid towards the sale, and any surplus paid out. None on a
+ * refund's receipt, which is about the money going back.
+ */
+function tradeSummary(tradeIn, isRefund) {
+  if (!tradeIn || isRefund) return [];
+  var out = [
+    { label: "Trade-in " + tradeIn.number + " worth", amount: tradeIn.value },
+    { label: "Towards this sale", amount: tradeIn.applied },
+  ];
+  if (tradeIn.payout_credit > 0) out.push({ label: "Paid as store credit", amount: tradeIn.payout_credit });
+  if (tradeIn.payout_cash > 0) out.push({ label: "Paid in cash", amount: tradeIn.payout_cash });
+  return out;
+}
+
 /** Subject, plain-text and HTML email bodies from build()'s receipt. */
 function render(receipt) {
   var money = require(__hooks + "/lib/shared/money.js");
@@ -473,11 +616,30 @@ function render(receipt) {
   text.push("", heading, when);
   if (receipt.refund) text.push("Refund of " + receipt.refund.of_number);
   if (receipt.staff) text.push("Served by " + receipt.staff);
-  text.push("");
-  for (var i = 0; i < receipt.lines.length; i++) {
-    var l = receipt.lines[i];
-    text.push(l.qty + " x " + l.title + "  " + gbp(l.total));
-    if (l.detail) text.push("    " + l.detail);
+
+  // A sale's own lines first; on a ticket with an exchange or a
+  // part-exchange, the lines brought back and the lines traded in follow
+  // under their own headings (section 7). A refund's lines are all its own.
+  var groups = [{ heading: "", lines: [] }];
+  var backGroup = { heading: "Brought back", lines: [] };
+  var tradeGroup = { heading: "Traded in", lines: [] };
+  for (var g = 0; g < receipt.lines.length; g++) {
+    var kind = receipt.lines[g].kind;
+    if (!isRefund && kind === "return") backGroup.lines.push(receipt.lines[g]);
+    else if (!isRefund && kind === "trade") tradeGroup.lines.push(receipt.lines[g]);
+    else groups[0].lines.push(receipt.lines[g]);
+  }
+  if (backGroup.lines.length) groups.push(backGroup);
+  if (tradeGroup.lines.length) groups.push(tradeGroup);
+
+  for (var gi = 0; gi < groups.length; gi++) {
+    text.push("");
+    if (groups[gi].heading) text.push(groups[gi].heading);
+    for (var i = 0; i < groups[gi].lines.length; i++) {
+      var l = groups[gi].lines[i];
+      text.push(l.qty + " x " + l.title + "  " + gbp(l.total));
+      if (l.detail) text.push("    " + l.detail);
+    }
   }
   text.push("");
   if (receipt.discount !== 0) {
@@ -497,6 +659,11 @@ function render(receipt) {
     text.push(tender.label + card + "  " + gbp(tender.amount));
   }
   if (receipt.change > 0) text.push("Change  " + gbp(receipt.change));
+  var tradeRows = tradeSummary(receipt.trade_in, isRefund);
+  if (tradeRows.length) {
+    text.push("");
+    for (var tr = 0; tr < tradeRows.length; tr++) text.push(tradeRows[tr].label + "  " + gbp(tradeRows[tr].amount));
+  }
   if (receipt.customer) {
     text.push("");
     text.push("GG Guild " + receipt.customer.code);
@@ -512,8 +679,18 @@ function render(receipt) {
 
   var muted = "color:#6b6b6b;";
   var rows = "";
-  for (var j = 0; j < receipt.lines.length; j++) {
-    var line = receipt.lines[j];
+  var htmlLines = [];
+  for (var hg = 0; hg < groups.length; hg++) {
+    if (groups[hg].heading) htmlLines.push({ heading: groups[hg].heading });
+    for (var hl = 0; hl < groups[hg].lines.length; hl++) htmlLines.push(groups[hg].lines[hl]);
+  }
+  for (var j = 0; j < htmlLines.length; j++) {
+    var line = htmlLines[j];
+    if (line.heading) {
+      rows +=
+        '<tr><td colspan="3" style="padding:12px 0 2px;font-weight:600;">' + esc(line.heading) + "</td></tr>";
+      continue;
+    }
     rows +=
       "<tr>" +
       '<td style="padding:6px 12px 6px 0;vertical-align:top;">' +
@@ -553,6 +730,9 @@ function render(receipt) {
     totals += pair(td.label + (td.card_last4 ? " ending " + td.card_last4 : ""), gbp(td.amount), false);
   }
   if (receipt.change > 0) totals += pair("Change", gbp(receipt.change), false);
+  for (var tx = 0; tx < tradeRows.length; tx++) {
+    totals += pair(tradeRows[tx].label, gbp(tradeRows[tx].amount), false);
+  }
 
   var customerBlock = "";
   if (receipt.customer) {

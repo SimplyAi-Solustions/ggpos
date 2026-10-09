@@ -15,7 +15,8 @@
  * - tenders: `sale_tenders.session`, sale and refund rows alike, so a refund
  *   given today of last week's sale counts today;
  * - the drawer: `cash_movements.session`;
- * - buy-ins: completed `trade_ins` whose `cash_session` is the session;
+ * - buy-ins: completed `trade_ins` whose `cash_session` is the session,
+ *   whatever they paid out, part-exchanges included;
  * - voids, no sales and overrides: `till_events.session`.
  *
  * Every function takes the app it should read with, so a route inside
@@ -286,13 +287,18 @@ function reportInput(app, session, register, opts) {
     movements.push({ type: movementRows[m].getString("type"), amount: movementRows[m].getInt("amount") });
   }
 
+  // Every completed trade-in on the session, whatever it paid out: a
+  // credit-only buy-in and a part-exchange are linked to the session too
+  // (lib/tradeincomplete.js). On a part-exchange `payout_cash` and
+  // `payout_credit` are the surplus alone and `part_exchange_value` is what
+  // it paid towards the sale (section 7).
   var tradeIns = [];
   var tradeRows = rows(app, "trade_ins", "cash_session = {:s} && status = 'completed'", "completed_at,id", params);
   for (var b = 0; b < tradeRows.length; b++) {
     tradeIns.push({
       payout_cash: tradeRows[b].getInt("payout_cash"),
       payout_credit: tradeRows[b].getInt("payout_credit"),
-      part_exchange_value: 0,
+      part_exchange_value: tradeRows[b].getInt("part_exchange_value"),
     });
   }
 
