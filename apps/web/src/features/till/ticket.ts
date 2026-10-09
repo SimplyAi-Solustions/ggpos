@@ -85,6 +85,12 @@ export interface TicketLine {
   vatRate: number
   discount: Adjustment
   note: string
+  /**
+   * Its home branch in the category tree, when the till knows it: an offer
+   * on a branch matches by the branch's lineage (docs/api-contract-launch.md,
+   * section 2).
+   */
+  category?: string | null
 }
 
 /** A line removed before payment: written as a void with the sale. */
@@ -209,6 +215,7 @@ export function lineFromItem(item: ItemDetail): TicketLine {
     vatRate: 20,
     discount: NO_ADJUSTMENT,
     note: "",
+    category: item.category || null,
   }
 }
 
@@ -243,6 +250,7 @@ export function lineFromCatalogueItem(item: TillCatalogueItem, label?: string): 
     vatRate: 20,
     discount: NO_ADJUSTMENT,
     note: "",
+    category: item.category || null,
   }
 }
 
@@ -280,6 +288,7 @@ export function lineFromProduct(
     vatRate: options.vatRate ?? 20,
     discount: NO_ADJUSTMENT,
     note: "",
+    category: product.category || null,
   }
 }
 
@@ -687,18 +696,41 @@ export function overDiscountLimit(ticket: Ticket, limitPct: number): boolean {
   return totals.manualDiscount > 0 && over(totals.discount, totals.subtotal)
 }
 
-/** The points this sale would earn, through the same evaluator the server runs. */
+/** Whether the ticket sells the Guild Membership, which joins and upgrades whoever buys it. */
+export function sellsMembership(ticket: Ticket): boolean {
+  return ticket.lines.some((line) => line.productKind === "membership")
+}
+
+/**
+ * Whether this sale earns points: its customer is in the Guild, or joins it
+ * with this sale by buying the Guild Membership, as the server decides
+ * (docs/api-contract-launch.md, section 2).
+ */
+export function earnsPoints(ticket: Ticket): boolean {
+  return Boolean(ticket.customer && (ticket.customer.member || sellsMembership(ticket)))
+}
+
+/**
+ * The points this sale would earn, through the same evaluator the server
+ * runs: each line with its branch's lineage (from `lineages`, by branch id),
+ * its item and its product, nothing on a deposit, and nothing at all for a
+ * customer who is not in the Guild.
+ */
 export function pointsPreview(
   ticket: Ticket,
   totals: TicketTotals,
   setup: LoyaltySetup | undefined,
-  paidWithPoints: number
+  paidWithPoints: number,
+  lineages: Record<string, string> = {}
 ): number {
-  if (!setup || !ticket.customer) return 0
+  if (!setup || !ticket.customer || !earnsPoints(ticket)) return 0
   const lines: SaleLineForPoints[] = ticket.lines.map((line, index) => ({
     game: line.game,
     kind: line.kind === "product" ? "other" : line.kind,
-    total: totals.lines[index]?.paid ?? 0,
+    total: line.productKind === "deposit" ? 0 : (totals.lines[index]?.paid ?? 0),
+    lineage: line.category ? (lineages[line.category] ?? "") : "",
+    item: line.itemId,
+    product: line.productId,
   }))
   return evaluateSalePoints(setup.programme, setup.rules, {
     lines,
@@ -707,6 +739,7 @@ export function pointsPreview(
     isBirthdayMonth: false,
     tier: setup.tiers.find((tier) => tier.id === ticket.customer?.tierId) ?? null,
     paidWithPoints,
+    paidMember: ticket.customer.paidMember || sellsMembership(ticket),
   }).total
 }
 

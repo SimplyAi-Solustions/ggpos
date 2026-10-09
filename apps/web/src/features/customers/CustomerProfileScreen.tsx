@@ -489,6 +489,8 @@ export function CustomerProfileScreen({ code }: CustomerProfileScreenProps) {
         customerName={customer.name}
         customerCode={customer.code}
         pointsBalance={priv?.points_balance ?? 0}
+        guildJoinedAt={customer.guild_joined_at}
+        marketingConsent={customer.marketing_consent}
       />
 
       {/* ---- Notes and flags -------------------------------------------- */}

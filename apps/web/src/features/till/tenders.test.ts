@@ -45,6 +45,8 @@ const JASMINE: SaleCustomer = {
   perks: [],
   creditBalance: 1500,
   pointsBalance: 2000,
+  member: true,
+  paidMember: false,
 }
 
 function ok<T>(result: { ok: true; value: T } | { ok: false; message: string }): T {

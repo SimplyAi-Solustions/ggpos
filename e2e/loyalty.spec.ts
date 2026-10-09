@@ -100,33 +100,44 @@ async function confirmPassword(page: Page) {
 }
 
 test.describe("the Guild at the counter", () => {
-  test("prices a rule change in the preview before it is saved", async ({ page }) => {
+  test("edits an offer in its sheet, saves it on its own, and the preview prices it", async ({
+    page,
+  }) => {
     await signIn(page)
     await go(page, "Loyalty")
     await expect(page.getByRole("heading", { name: "Loyalty" })).toBeVisible()
 
     // The seed: £30.00 of sealed on a Saturday, no tier. Ten points a pound
-    // is 300, the Saturday rule doubles it, the sealed bonus adds 250.
+    // is 300, the Saturday offer doubles it, the sealed bonus adds 250.
     const total = page.getByTestId("preview-total")
     await expect(total).toHaveText("850")
     await expect(page.getByTestId("preview-sentence")).toHaveText(
       "A £30.00 sealed sale on a Saturday for a customer with no tier earns 850 points."
     )
 
-    // ---- Edit the Saturday rule in its sheet ----------------------------
-    await page
-      .getByTestId("loyalty-rules")
-      .getByRole("button", { name: /Saturday double points/ })
-      .click()
-    const sheet = page.getByRole("dialog", { name: "Rule" })
+    // Every offer reads as a sentence, with its example under it.
+    const offers = page.getByTestId("loyalty-offers")
+    await expect(offers).toContainText(
+      "250 bonus points when they buy anything, sealed only, on £30.00 or more"
+    )
+
+    // ---- Edit the Saturday offer in its sheet ---------------------------
+    await offers.getByRole("button", { name: /2 times points on Saturdays/ }).click()
+    const sheet = page.getByRole("dialog", { name: "Offer" })
     await expect(sheet).toBeVisible()
-    await sheet.getByLabel("Multiplier").fill("3")
-    await sheet.getByRole("button", { name: "Save rule" }).click()
+    await sheet.getByLabel("Times points").fill("3")
+    // The example answers as the blank is filled in.
+    await expect(sheet.getByTestId("offer-sheet-example")).toHaveText(
+      "A £30.00 sale on a Saturday earns 900 points."
+    )
+    await sheet.getByRole("button", { name: "Save offer" }).click()
     await expect(sheet).toBeHidden()
 
-    // The preview answers for the rule as it is being edited, unsaved.
+    // Saved on its own: the list and the preview both price it now, and
+    // nothing is left waiting on the programme's Save.
+    await expect(offers).toContainText("3 times points on Saturdays")
     await expect(total).toHaveText("1,150")
-    await expect(page.getByTestId("loyalty-dirty")).toBeVisible()
+    await expect(page.getByTestId("loyalty-dirty")).toBeHidden()
 
     // A different day is a different answer, and the sentence says which.
     await page.getByLabel("Day of the week").click()
@@ -134,11 +145,11 @@ test.describe("the Guild at the counter", () => {
     await expect(total).toHaveText("550")
     await expect(page.getByTestId("preview-sentence")).toContainText("on a Tuesday")
 
-    // ---- Save, and the change stands ------------------------------------
-    await primary(page, "Save programme").click()
-    await expect(page.getByTestId("loyalty-saved")).toBeVisible()
-    await expect(page.getByTestId("loyalty-dirty")).toBeHidden()
-    await expect(page.getByTestId("loyalty-rules")).toContainText("x 3")
+    // Switched off from the list, it stops paying at once.
+    await page.getByRole("switch", { name: "3 times points on Saturdays: on" }).click()
+    await page.getByLabel("Day of the week").click()
+    await page.getByRole("option", { name: "Saturday" }).click()
+    await expect(total).toHaveText("550")
   })
 
   test("records a paid plan and pins the customer's tier", async ({ page }) => {

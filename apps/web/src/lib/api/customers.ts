@@ -14,7 +14,6 @@ import { isNotFound } from "@/lib/api/refusal"
 import {
   demoRecordReferral,
   demoResolveReferral,
-  demoWelcomeBonus,
   recomputeTier,
 } from "@/lib/api/demo/loyalty"
 import {
@@ -293,7 +292,8 @@ export async function createCustomer(input: NewCustomerInput): Promise<CustomerR
     const referrer = input.referredBy ? demoResolveReferral(input.referredBy) : null
     const record = demoCreateCustomer(input)
     if (referrer) demoRecordReferral(referrer, record.id)
-    demoWelcomeBonus(record.id)
+    // Not in the Guild yet, so no welcome bonus: that comes with joining
+    // (docs/api-contract-launch.md, section 2).
     return record
   }
 

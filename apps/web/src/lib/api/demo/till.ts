@@ -23,6 +23,7 @@ import { DEMO_STAFF } from "@/lib/api/fixtures"
 import { findDemoCustomer } from "@/lib/api/demo/customers"
 import { demoId, demoSales, ensureSeeded, itemStore } from "@/lib/api/demo/store"
 import { PLATFORMS } from "@/design/platforms"
+import { demoBranchForItem, demoBranchForProduct } from "@/lib/api/demo/branches"
 import { boxArt } from "@/kit/placeholder-art"
 import type { StockItemRecord } from "@/lib/api/types"
 
@@ -125,6 +126,7 @@ function toProduct(product: DemoTillProduct): TillCatalogueProduct {
     open_price: product.open_price,
     image_url: product.image_url,
     tax_scheme: product.tax_scheme,
+    category: demoBranchForProduct(product.id),
   }
 }
 
@@ -245,6 +247,7 @@ function toCatalogueItem(item: StockItemRecord): TillCatalogueItem {
     image_url: ART[item.id] ?? "",
     kind: item.kind,
     status: item.status ?? "in_stock",
+    category: demoBranchForItem(item),
   }
 }
 

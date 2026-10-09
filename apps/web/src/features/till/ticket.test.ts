@@ -66,6 +66,8 @@ const LEGEND: SaleCustomer = {
   perks: SETUP.tiers[0]!.perks,
   creditBalance: 4500,
   pointsBalance: 11400,
+  member: true,
+  paidMember: false,
 }
 
 const VOUCHER: RewardVoucher = {

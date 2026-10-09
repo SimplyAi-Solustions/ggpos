@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query"
 import { displayCode, formatGBP } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Hint } from "@/components/ui/micro-label"
 import {
@@ -27,6 +28,11 @@ export interface CustomerSearchSheetProps {
   onChoose: (customer: SaleCustomer) => void
   title?: string
   description?: string
+  /**
+   * Somebody not on file: the till offers to make them and join them to the
+   * Guild in one step, with what was typed as their name.
+   */
+  onNew?: (query: string) => void
 }
 
 /**
@@ -34,7 +40,13 @@ export interface CustomerSearchSheetProps {
  * only while the sheet is open, so the box is empty again every time it is
  * opened without an effect reaching in to clear it.
  */
-function CustomerSearch({ onChoose }: { onChoose: (customer: SaleCustomer) => void }) {
+function CustomerSearch({
+  onChoose,
+  onNew,
+}: {
+  onChoose: (customer: SaleCustomer) => void
+  onNew?: (query: string) => void
+}) {
   const [query, setQuery] = React.useState("")
   const deferred = React.useDeferredValue(query)
 
@@ -92,6 +104,14 @@ function CustomerSearch({ onChoose }: { onChoose: (customer: SaleCustomer) => vo
               ))}
             </ul>
           )}
+
+          {onNew ? (
+            <div className="mt-8">
+              <Button variant="text" type="button" onClick={() => onNew(query.trim())}>
+                New customer, join the Guild
+              </Button>
+            </div>
+          ) : null}
     </SheetBody>
   )
 }
@@ -102,6 +122,7 @@ export function CustomerSearchSheet({
   onChoose,
   title = "Attach customer",
   description = "Search a name, a phone number or a card code.",
+  onNew,
 }: CustomerSearchSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -115,6 +136,14 @@ export function CustomerSearchSheet({
             onChoose(customer)
             onOpenChange(false)
           }}
+          onNew={
+            onNew
+              ? (query) => {
+                  onOpenChange(false)
+                  onNew(query)
+                }
+              : undefined
+          }
         />
       </SheetContent>
     </Sheet>

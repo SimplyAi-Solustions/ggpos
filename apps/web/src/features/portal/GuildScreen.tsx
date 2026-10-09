@@ -1,7 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { Link } from "@tanstack/react-router"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { displayCode } from "@gg/shared"
 
 import { Badge } from "@/components/ui/badge"
@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button"
 import { SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { getGuild } from "@/lib/api/guild"
+import { getGuild, joinMyGuild } from "@/lib/api/guild"
+import { refusalOrFallback } from "@/lib/api/refusal"
+import { JoinGuildBlock } from "@/features/portal/JoinGuild"
 import { getMe } from "@/lib/api/portal"
 import { usePortalDock } from "@/features/portal/dock"
 import { formatDate } from "@/features/portal/format"
@@ -67,6 +69,27 @@ export function GuildScreen() {
   const shareTarget = React.useMemo(() => browserShareTarget(), [])
   const [shared, setShared] = React.useState<ShareResult | null>(null)
 
+  // Joining, for a customer who signed in but is not in the Guild yet
+  // (docs/api-contract-launch.md, section 2).
+  const queryClient = useQueryClient()
+  const [agreed, setAgreed] = React.useState(false)
+  const [offers, setOffers] = React.useState(false)
+  const [joining, setJoining] = React.useState(false)
+  const [joinError, setJoinError] = React.useState<string | null>(null)
+  async function onJoin() {
+    if (!agreed || joining) return
+    setJoining(true)
+    setJoinError(null)
+    try {
+      await joinMyGuild({ marketing_consent: offers })
+      await queryClient.invalidateQueries({ queryKey: ["portal"] })
+    } catch (cause) {
+      setJoinError(refusalOrFallback(cause, "We could not join you just now. Try again in a minute."))
+    } finally {
+      setJoining(false)
+    }
+  }
+
   if (me.isError || guild.isError) {
     return (
       <LoadFailed
@@ -81,7 +104,19 @@ export function GuildScreen() {
     )
   }
 
-  const primary = (
+  const notMember = guild.data?.member === false
+  const primary = notMember ? (
+    <Button
+      type="button"
+      trailingArrow
+      loading={joining}
+      disabled={!agreed}
+      onClick={() => void onJoin()}
+      data-testid="portal-join-guild"
+    >
+      Join the Guild
+    </Button>
+  ) : (
     <Button render={<Link to="/account/rewards" />} trailingArrow>
       See rewards
     </Button>
@@ -121,6 +156,18 @@ export function GuildScreen() {
     <section className="pt-12 sm:pt-20">
       <PageTitle>GG Guild</PageTitle>
       <Lede>{`${summary.points_name} on what you buy and what you sell us.`}</Lede>
+
+      {notMember ? (
+        <JoinGuildBlock
+          terms={summary.terms ?? ""}
+          welcomeBonus={summary.welcome_bonus ?? 0}
+          agreed={agreed}
+          onAgreed={setAgreed}
+          offers={offers}
+          onOffers={setOffers}
+          error={joinError}
+        />
+      ) : null}
 
       <div className="mt-12 flex flex-col items-start gap-5">
         {summary.tier ? (

@@ -75,6 +75,7 @@ export const DEMO_CUSTOMERS: DemoCustomer[] = [
       marketing_consent: true,
       source: "counter",
       created: daysAgo(412),
+      guild_joined_at: daysAgo(412),
     },
     {
       address: "12 Castle Street, Bolsover, S44 6PP",
@@ -101,6 +102,7 @@ export const DEMO_CUSTOMERS: DemoCustomer[] = [
       marketing_consent: false,
       source: "counter",
       created: daysAgo(203),
+      guild_joined_at: daysAgo(203),
     },
     {
       address: "4 Sherwood Lodge Drive, Chesterfield, S41 9AB",
@@ -121,6 +123,7 @@ export const DEMO_CUSTOMERS: DemoCustomer[] = [
       marketing_consent: false,
       source: "counter",
       created: daysAgo(61),
+      guild_joined_at: daysAgo(61),
     },
     {
       address: "",
@@ -145,6 +148,8 @@ export const DEMO_CUSTOMERS: DemoCustomer[] = [
       marketing_consent: false,
       source: "portal",
       created: daysAgo(19),
+      // Signed in to My Vault but has not joined the Guild yet: the one
+      // demo customer the till and the profile offer "Join the Guild" to.
     },
     {
       address: "",

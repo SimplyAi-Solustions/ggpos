@@ -34,6 +34,9 @@ import { setScanHandler } from "@/app/scan-bus"
 import { OverrideCancelled } from "@/features/lock/override"
 import { openDrawer, printReceipt } from "@/features/printing/receipt"
 import { CustomerSearchSheet } from "@/features/sell/CustomerSearchSheet"
+import { JoinGuildSheet } from "@/features/guild/JoinGuildSheet"
+import { joinedNote } from "@/features/guild/words"
+import { useBranchLineages } from "@/lib/api/offers"
 import {
   EMPTY_CAPTURE,
   idCheckForm,
@@ -79,6 +82,7 @@ import {
   lineFromItem,
   lineFromProduct,
   lineNet,
+  earnsPoints,
   pointsPreview,
   saleLines,
   sameThing,
@@ -212,7 +216,9 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   const paidWithPoints = tenderState.tenders
     .filter((tender) => tender.method === "points")
     .reduce((sum, tender) => sum + tender.amount, 0)
-  const points = pointsPreview(ticket, totals, setup, paidWithPoints)
+  // Each line's branch lineage, for an offer on a branch (launch, section 2).
+  const lineages = useBranchLineages()
+  const points = pointsPreview(ticket, totals, setup, paidWithPoints, lineages)
 
   const registerId = current.data?.register.id ?? currentRegisterId() ?? ""
   const registerName = current.data?.register.name || "Counter"
@@ -424,6 +430,29 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       }
     },
     [pendingProduct, addProduct, pendingTrade, showTrade]
+  )
+
+  // ---- The Guild (docs/api-contract-launch.md, section 2) -------------
+  /** The join sheet: an attached customer who is not a member, or somebody new. */
+  const [joining, setJoining] = React.useState<{ customer: SaleCustomer | null; query: string } | null>(
+    null
+  )
+  /** Attaches whoever joined (or already held the details), as the till reads them now. */
+  const attachByCode = React.useCallback(
+    async (code: string, note: string | null) => {
+      setJoining(null)
+      const fresh = await getCustomerForSale(code).catch(() => null)
+      if (fresh) {
+        attachCustomer(fresh)
+        if (note) {
+          setScanNote(note)
+          setTicketNote(note)
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: ["customer"] })
+      void queryClient.invalidateQueries({ queryKey: ["customer-guild"] })
+    },
+    [attachCustomer, queryClient]
   )
 
   /**
@@ -1110,6 +1139,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
           }
         }}
         onChoose={attachCustomer}
+        onNew={(query) => setJoining({ customer: null, query })}
         description={
           pendingProduct
             ? `${pendingProduct.name} is sold to somebody. Search a name, a phone number or a card code.`
@@ -1117,6 +1147,20 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
               ? "A trade-in needs the customer. Search a name, a phone number or a card code."
               : undefined
         }
+      />
+      <JoinGuildSheet
+        open={joining !== null}
+        onOpenChange={(open) => {
+          if (!open) setJoining(null)
+        }}
+        customer={joining?.customer ?? null}
+        initialName={joining?.query}
+        welcomeBonus={setup?.programme.enabled === false ? 0 : (setup?.programme.welcomeBonus ?? 0)}
+        onJoined={(result) =>
+          void attachByCode(result.customer.code, joinedNote(result.customer.name, result.welcome_points))
+        }
+        onUseExisting={(found) => void attachByCode(found.code, null)}
+        existingLabel={(found) => `Attach ${found.name} instead`}
       />
       <LineSheet
         line={line}
@@ -1207,6 +1251,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       notice={ticketNote}
       clearing={clear.isPending}
       onAddCustomer={() => setCustomerOpen(true)}
+      onJoinGuild={() => setJoining({ customer: ticket.customer, query: "" })}
       onRemoveCustomer={() => {
         if (ticket.trade) {
           setTicketNote(
@@ -1286,7 +1331,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         cashCap={trade.cashCap}
         gate={trade.gate}
         capture={capture}
-        creditPoints={trade.creditPoints(settlement.surplus)}
+        creditPoints={earnsPoints(ticket) ? trade.creditPoints(settlement.surplus) : 0}
         returns={ticket.returns}
         refundMethod={agreed.refundMethod}
         last4={agreed.cardLast4}

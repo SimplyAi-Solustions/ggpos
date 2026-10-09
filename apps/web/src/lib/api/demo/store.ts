@@ -9,14 +9,14 @@
  * `itemStore()` reaches the same array Add stock appends to, so an item added
  * on one screen is sellable on the next.
  */
-import { buildCode } from "@gg/shared"
+import { buildCode, isGuildMember } from "@gg/shared"
 import type {
   LoyaltyProgramme,
   LoyaltyRule,
   LoyaltyTier,
 } from "@gg/shared"
 
-import { DEMO_CUSTOMERS } from "@/lib/api/demo/customers"
+import { DEMO_CUSTOMERS, type DemoCustomer } from "@/lib/api/demo/customers"
 import { DEMO_CARDS } from "@/lib/api/fixtures"
 import { demoItems } from "@/lib/api/demo/items-store"
 import { itemDetailLine, templateForItem } from "@/lib/api/item-shape"
@@ -150,8 +150,8 @@ function perksFor(tierId: string) {
  * Two demo books naming different people under one id made a customer
  * change their name between the Sell screen and their own profile.
  */
-export const DEMO_SALE_CUSTOMERS: SaleCustomer[] = DEMO_CUSTOMERS.map(
-  (entry) => ({
+function toSaleCustomer(entry: DemoCustomer): SaleCustomer {
+  return {
     id: entry.customer.id,
     name: entry.customer.name,
     code: entry.customer.code,
@@ -159,19 +159,41 @@ export const DEMO_SALE_CUSTOMERS: SaleCustomer[] = DEMO_CUSTOMERS.map(
     // evaluated: a plan recorded at the counter re-evaluates the customer's
     // tier, and the till has to price the sale on the tier they hold now.
     get tierId() {
-      return entry.private.tier ?? "tier_member"
+      return entry.private.tier ?? (this.member ? "tier_member" : null)
     },
     get tierName() {
-      return DEMO_TIERS.find((tier) => tier.id === this.tierId)?.name ?? "Member"
+      return DEMO_TIERS.find((tier) => tier.id === this.tierId)?.name ?? null
     },
     get perks() {
-      return perksFor(this.tierId)
+      return this.tierId ? perksFor(this.tierId) : []
     },
     // Balances stay plain fields: the sale and refund paths move them.
     creditBalance: entry.private.credit_balance ?? 0,
     pointsBalance: entry.private.points_balance ?? 0,
-  })
-)
+    // Read as asked, like the tier: joining at the till changes it.
+    get member() {
+      return isGuildMember(entry.customer.guild_joined_at)
+    },
+    // A paid plan pins the demo's one paid tier while it runs.
+    get paidMember() {
+      return DEMO_TIERS.find((tier) => tier.id === entry.private.tier)?.paidPlan === true
+    },
+  }
+}
+
+export const DEMO_SALE_CUSTOMERS: SaleCustomer[] = DEMO_CUSTOMERS.map(toSaleCustomer)
+
+/**
+ * The till's view of a demo customer, added the first time it is asked for:
+ * a customer made and joined at the till is attached straight away.
+ */
+export function ensureDemoSaleCustomer(entry: DemoCustomer): SaleCustomer {
+  const found = DEMO_SALE_CUSTOMERS.find((customer) => customer.id === entry.customer.id)
+  if (found) return found
+  const made = toSaleCustomer(entry)
+  DEMO_SALE_CUSTOMERS.unshift(made)
+  return made
+}
 
 /** One issued voucher, so scanning a GGV code on the Sell screen does something. */
 export const DEMO_VOUCHERS: RewardVoucher[] = [
