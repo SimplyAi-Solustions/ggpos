@@ -57,10 +57,19 @@ const money = (label: string) =>
     .refine((value) => parseDecimalToMinor(value) !== null, MONEY_HINT)
     .refine((value) => (parseDecimalToMinor(value) ?? -1) >= 0, "Amounts cannot be negative.")
 
+/** How the item is sold for VAT: items take margin or standard, never exempt. */
+export const TAX_SCHEMES = [
+  { value: "margin", label: "Margin scheme" },
+  { value: "standard", label: "Standard rate" },
+] as const
+
 export const addStockSchema = z
   .object({
+    /** The branch it is filed in; empty, the server files it by kind and game. */
+    categoryId: z.string().optional(),
     gameId: z.string().min(1, "Choose the game this belongs to."),
     kind: z.enum(["single", "graded", "retro", "sealed", "accessory", "other"]),
+    taxScheme: z.enum(["margin", "standard"]).default("standard"),
     cardId: z.string().optional(),
     title: z.string().trim().optional(),
     setCode: z.string().trim().optional(),

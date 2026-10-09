@@ -182,7 +182,10 @@ export async function createItem(input: NewItemInput): Promise<ItemRecord> {
     notes: input.notes || undefined,
     status: "in_stock" as const,
     source: "supplier" as const,
-    tax_scheme: "standard" as const,
+    tax_scheme: input.taxScheme ?? ("standard" as const),
+    // Left out, the item-create hook files it by kind and game
+    // (docs/api-contract-inventory.md, section 1.2).
+    category: input.categoryId || undefined,
   }
 
   if (isDemo()) {

@@ -67,7 +67,12 @@ export async function getTillCatalogue(): Promise<TillCatalogue> {
   if (isDemo()) return demo.demoCatalogue()
   const result = await pb.send<TillCatalogue>("/api/vault/till/catalogue", { method: "GET" })
   noteNetworkSuccess()
-  return { categories: [...(result.categories ?? [])].sort((a, b) => a.sort - b.sort) }
+  return {
+    categories: [...(result.categories ?? [])].sort((a, b) => a.sort - b.sort),
+    // The tree's top-level branches, already in order (docs/api-contract-
+    // inventory.md, section 1.3); absent from a server before Phase 9.
+    branches: result.branches ?? [],
+  }
 }
 
 export interface CategoryItemsPage {

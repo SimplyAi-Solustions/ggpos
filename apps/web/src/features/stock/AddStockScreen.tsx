@@ -1,7 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "@tanstack/react-router"
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { MinusIcon, PlusIcon } from "lucide-react"
@@ -11,6 +11,7 @@ import {
   formatGBP,
   parseDecimalToMinor,
   type CardCondition,
+  type CategoryBranch,
 } from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
@@ -33,6 +34,8 @@ import { ProductImage } from "@/components/product-image"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
 import { CameraSheet } from "@/features/scan/CameraSheet"
+import { CategoryPicker } from "@/features/categories/CategoryPicker"
+import { branchById } from "@/features/categories/tree"
 import { CardSearchField } from "@/features/stock/CardSearchField"
 import { PriceSources } from "@/features/pricing"
 import { suggestedSellPrice } from "@/features/pricing/suggest"
@@ -45,17 +48,21 @@ import {
   finishesFor,
   KINDS,
   SINGLE_QTY_KINDS,
+  TAX_SCHEMES,
   type AddStockValues,
 } from "@/features/stock/schema"
 import {
   createItem,
   getCardBySetNumber,
+  getItem,
   listGames,
+  listItems,
   listLocations,
   queueLabel,
   type CardHit,
   type ItemRecord,
 } from "@/lib/api"
+import { CATEGORY_TREE_KEY, useCategoryTree } from "@/lib/api/categories"
 import { useCardPrices, usePricingSettings } from "@/lib/api/prices"
 import type { PriceSource } from "@gg/shared"
 
@@ -68,8 +75,10 @@ export interface AddStockScreenProps {
 }
 
 const DEFAULTS: AddStockValues = {
+  categoryId: "",
   gameId: "",
   kind: "single",
+  taxScheme: "standard",
   cardId: undefined,
   title: "",
   setCode: "",
@@ -175,6 +184,12 @@ function Stepper({
   )
 }
 
+/** "kind, game and VAT treatment", for the line under the branch. */
+function listed(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ""
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
+}
+
 /**
  * Add stock, from the Nova reference: one Anton line, label-left fields from
  * 900px, and a single black block to finish. The card preview sits beside the
@@ -185,6 +200,12 @@ function Stepper({
  * the fields, and the sell price the shop's own markup bands suggest from the
  * condition-adjusted figure, which fills the price box until somebody types
  * their own.
+ *
+ * The branch comes first (docs/api-contract-inventory.md, section 1.6):
+ * chosen through the picker, or picked up from the stock line a scanned
+ * barcode already belongs to. Its defaults fill the kind, the game and the
+ * VAT treatment, each still editable, and the item is saved in it. Left
+ * empty, the server files the item by its kind and game.
  */
 export function AddStockScreen({
   initialSet,
@@ -197,9 +218,15 @@ export function AddStockScreen({
   const [saved, setSaved] = React.useState<ItemRecord | null>(null)
   const [labelNote, setLabelNote] = React.useState<string | null>(null)
   const [cameraOpen, setCameraOpen] = React.useState(false)
+  const [branchOpen, setBranchOpen] = React.useState(false)
+  /** What the branch filled in, or where it came from. */
+  const [branchNote, setBranchNote] = React.useState<string | null>(null)
   const searchRef = React.useRef<HTMLInputElement>(null)
   const formRef = React.useRef<HTMLFormElement>(null)
   const dock = useCounterDock()
+  const queryClient = useQueryClient()
+  const tree = useCategoryTree()
+  const branches = React.useMemo(() => tree.data?.branches ?? [], [tree.data])
 
   const { data: games = [] } = useQuery({ queryKey: ["games"], queryFn: listGames })
   const { data: locations = [] } = useQuery({
@@ -221,9 +248,70 @@ export function AddStockScreen({
   const gameId = useWatch({ control, name: "gameId" })
   const finish = useWatch({ control, name: "finish" })
   const condition = useWatch({ control, name: "condition" })
+  const categoryId = useWatch({ control, name: "categoryId" })
+  const ean = useWatch({ control, name: "ean" })
   const gameKey = games.find((game) => game.id === gameId)?.key
   const isCard = CARD_KINDS.has(kind)
   const fixedQty = SINGLE_QTY_KINDS.has(kind)
+  const branch = branchById(branches, categoryId)
+
+  // ---- The branch ---------------------------------------------------------
+  // Its defaults fill the kind, the game and the VAT treatment. A default
+  // platform has nowhere to go here: an item carries no platform of its own.
+  const applyBranch = React.useCallback(
+    (next: CategoryBranch, from?: string) => {
+      const validate = { shouldValidate: formState.isSubmitted }
+      setValue("categoryId", next.id, validate)
+      const filled: string[] = []
+      const defaults = next.defaults
+      if (defaults.kind) {
+        setValue("kind", defaults.kind, validate)
+        if (SINGLE_QTY_KINDS.has(defaults.kind)) setValue("qty", 1, validate)
+        filled.push("kind")
+      }
+      if (defaults.game && games.some((game) => game.id === defaults.game)) {
+        setValue("gameId", defaults.game, validate)
+        filled.push("game")
+      }
+      if (defaults.tax_scheme === "margin" || defaults.tax_scheme === "standard") {
+        setValue("taxScheme", defaults.tax_scheme, validate)
+        filled.push("VAT treatment")
+      }
+      const what = listed(filled)
+      const said = what ? `${what.charAt(0).toUpperCase()}${what.slice(1)} filled from ${next.name}.` : ""
+      setBranchNote([from, said].filter(Boolean).join(" ") || null)
+    },
+    [formState.isSubmitted, games, setValue]
+  )
+
+  // A barcode that is already on a stock line brings that line's branch,
+  // once, while no branch has been chosen.
+  const pickedUp = React.useRef("")
+  React.useEffect(() => {
+    const code = (ean ?? "").trim()
+    if (categoryId || branches.length === 0 || !/^\d{8,14}$/.test(code)) return undefined
+    if (pickedUp.current === code) return undefined
+    const timer = window.setTimeout(() => {
+      pickedUp.current = code
+      void (async () => {
+        try {
+          const page = await listItems({ search: code }, 1)
+          for (const hit of page.items) {
+            if (!hit.categoryId) continue
+            const line = await getItem(hit.sku)
+            const home = branchById(branches, line?.category)
+            if (line?.ean === code && home) {
+              applyBranch(home, `Filed with the ${line.title || "stock"} already on the shelf.`)
+              return
+            }
+          }
+        } catch {
+          // Nothing to pick up; the branch is still there to choose.
+        }
+      })()
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [ean, categoryId, branches, applyBranch])
 
   // ---- What the card is worth ------------------------------------------
   // The chips above the search box set the same field the Game select does,
@@ -323,16 +411,22 @@ export function AddStockScreen({
         ean: values.ean,
         notes: values.notes,
         marketAtIntake: adjustedMarket ?? undefined,
+        categoryId: values.categoryId || undefined,
+        taxScheme: values.taxScheme,
       }),
     onSuccess: (item, values) => {
       setLabelNote(null)
+      void queryClient.invalidateQueries({ queryKey: CATEGORY_TREE_KEY })
       if (binderMode) {
-        // Binder mode stays on the form: game, set and location hold, the
-        // varying fields clear, and focus goes back to the number field.
+        // Binder mode stays on the form: the branch, game, set and location
+        // hold, the varying fields clear, and focus goes back to the number
+        // field.
         reset({
           ...DEFAULTS,
+          categoryId: values.categoryId,
           kind: values.kind,
           gameId: values.gameId,
+          taxScheme: values.taxScheme,
           setCode: values.setCode,
           locationId: values.locationId,
         })
@@ -354,6 +448,8 @@ export function AddStockScreen({
     setSaved(null)
     setLabelNote(null)
     setCard(null)
+    setBranchNote(null)
+    pickedUp.current = ""
     reset(DEFAULTS)
   }
 
@@ -421,11 +517,36 @@ export function AddStockScreen({
               <span className="tnum font-mono text-[13px] text-foreground">
                 {displayCode(saved.sku)}
               </span>{" "}
-              saved. Binder mode kept the game, set and location.
+              saved. Binder mode kept the branch, game, set and location.
             </p>
           ) : null}
 
           <FieldRow>
+            <Field label="Branch" hint={branch ? undefined : "Optional"}>
+              <div data-testid="stock-branch-field">
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 pt-1">
+                  <span
+                    data-testid="stock-branch-path"
+                    className={
+                      branch
+                        ? "min-w-0 text-base text-foreground"
+                        : "min-w-0 text-base text-muted-foreground-2"
+                    }
+                  >
+                    {branch ? branch.path : "Filed by its kind and game"}
+                  </span>
+                  <Button variant="text" type="button" onClick={() => setBranchOpen(true)}>
+                    {branch ? "Change" : "Choose a branch"}
+                  </Button>
+                </div>
+                {branchNote ? (
+                  <p aria-live="polite" className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                    {branchNote}
+                  </p>
+                ) : null}
+              </div>
+            </Field>
+
             <Field label="Game" htmlFor="stock-game" error={errors.gameId?.message}>
               <Controller
                 control={control}
@@ -484,6 +605,37 @@ export function AddStockScreen({
                     </SelectTrigger>
                     <SelectContent>
                       {KINDS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+
+            <Field label="VAT" htmlFor="stock-vat">
+              <Controller
+                control={control}
+                name="taxScheme"
+                render={({ field }) => (
+                  <Select
+                    value={field.value ?? "standard"}
+                    onValueChange={(next) => {
+                      if (next) field.onChange(next)
+                    }}
+                  >
+                    <SelectTrigger id="stock-vat">
+                      <SelectValue>
+                        {(value: string) =>
+                          TAX_SCHEMES.find((option) => option.value === value)?.label ??
+                          "Standard rate"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TAX_SCHEMES.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
@@ -889,6 +1041,18 @@ export function AddStockScreen({
         onResult={(value) =>
           setValue("ean", value.replace(/\D/g, ""), { shouldValidate: true })
         }
+      />
+
+      <CategoryPicker
+        open={branchOpen}
+        onOpenChange={setBranchOpen}
+        title="File it in"
+        description="The branch's kind, game and VAT treatment fill in below, and each can still be changed."
+        initial={categoryId}
+        onChoose={(next) => {
+          if (next) applyBranch(next)
+          setBranchOpen(false)
+        }}
       />
     </section>
   )

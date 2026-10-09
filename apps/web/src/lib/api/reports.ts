@@ -50,6 +50,9 @@ function queryOf(query: ReportQuery): Record<string, string> {
   const params: Record<string, string> = { from: query.from, to: query.to }
   if (query.group) params.group = query.group
   if (query.by) params.by = query.by
+  // Sales by category only: the branch drilled into (docs/api-contract-
+  // inventory.md, section 1.4).
+  if (query.by === "category" && query.branch) params.branch = query.branch
   if (query.compare) params.compare = query.compare
   return params
 }
