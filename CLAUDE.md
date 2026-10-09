@@ -18,6 +18,7 @@ ggpos/
     scripts/             dev.sh, typegen.sh, check.sh
   packages/shared/      types and pure logic shared by the frontend and the hooks: SKU, money, pricing and loyalty evaluators
   services/pricesync/   Node script that streams the Cardmarket and TCGCSV price files nightly
+  services/mcp/         stdio bridge that lets a desktop agent (Gandalf) use GG Vault's MCP endpoint
   deploy/               docker-compose.yml, Caddyfile snippet, backup and restore scripts, runbook
   docs/                 PLAN.md and the documents this file points to
   PRODUCT.md            product truth: audience, jobs to be done, constraints
@@ -35,7 +36,7 @@ Run from the repo root unless noted.
 | `pnpm build` | Builds every package that has a build script. |
 | `pnpm lint` | Lints every package that has a lint script. |
 | `pnpm typecheck` | Type-checks every package that has a typecheck script. |
-| `pnpm test` | Runs every package's own test script (currently Vitest for `packages/shared`, `node --test` for `services/pricesync`; wire in `apps/web`'s suites here as they land). |
+| `pnpm test` | Runs every package's own test script (Vitest for `packages/shared` and `apps/web`, `node --test` for `services/pricesync` and `services/mcp`). |
 | `pnpm pb` | Runs `pb/scripts/dev.sh`: downloads the pinned PocketBase binary on first use and serves it from `pb/pb_data` with the repo's hooks and migrations, on `127.0.0.1:8091`. |
 | `pnpm typegen` | Runs `pb/scripts/typegen.sh`: generates TypeScript types for every collection into `packages/shared/src/pb-types.ts`. Needs `pnpm pb` to have run at least once so the database exists. |
 | `bash pb/scripts/check.sh` | Starts a throwaway PocketBase on a temporary data directory with the repo's hooks and migrations, then asserts every collection exists, the SKU and customer-code hooks work, and the API rules hold for staff and customer tokens. Run it whenever hooks or migrations change. |
