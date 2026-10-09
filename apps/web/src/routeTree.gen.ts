@@ -54,6 +54,7 @@ import { Route as CounterStockSkuRouteImport } from "./routes/counter.stock.$sku
 import { Route as CounterStockNewRouteImport } from "./routes/counter.stock.new"
 import { Route as CounterTradeIndexRouteImport } from "./routes/counter.trade.index"
 import { Route as CounterTradeNewRouteImport } from "./routes/counter.trade.new"
+import { Route as PrintReceiptIdRouteImport } from "./routes/print.receipt.$id"
 import { Route as CounterCustomersCodeIndexRouteImport } from "./routes/counter.customers.$code.index"
 import { Route as CounterCustomersCodeCardRouteImport } from "./routes/counter.customers.$code.card"
 import { Route as CounterStockCountIndexRouteImport } from "./routes/counter.stock.count.index"
@@ -286,6 +287,11 @@ const CounterTradeNewRoute = CounterTradeNewRouteImport.update({
   path: "/trade/new",
   getParentRoute: () => CounterRoute,
 } as any)
+const PrintReceiptIdRoute = PrintReceiptIdRouteImport.update({
+  id: "/print/receipt/$id",
+  path: "/print/receipt/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CounterCustomersCodeIndexRoute =
   CounterCustomersCodeIndexRouteImport.update({
     id: "/customers/$code/",
@@ -357,6 +363,7 @@ export interface FileRoutesByFullPath {
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
+  "/print/receipt/$id": typeof PrintReceiptIdRoute
   "/account/quotes/": typeof AccountQuotesIndexRoute
   "/account/rewards/": typeof AccountRewardsIndexRoute
   "/account/trade-ins/": typeof AccountTradeInsIndexRoute
@@ -408,6 +415,7 @@ export interface FileRoutesByTo {
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
+  "/print/receipt/$id": typeof PrintReceiptIdRoute
   "/account/quotes": typeof AccountQuotesIndexRoute
   "/account/rewards": typeof AccountRewardsIndexRoute
   "/account/trade-ins": typeof AccountTradeInsIndexRoute
@@ -462,6 +470,7 @@ export interface FileRoutesById {
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
+  "/print/receipt/$id": typeof PrintReceiptIdRoute
   "/account/quotes/": typeof AccountQuotesIndexRoute
   "/account/rewards/": typeof AccountRewardsIndexRoute
   "/account/trade-ins/": typeof AccountTradeInsIndexRoute
@@ -517,6 +526,7 @@ export interface FileRouteTypes {
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
+    | "/print/receipt/$id"
     | "/account/quotes/"
     | "/account/rewards/"
     | "/account/trade-ins/"
@@ -568,6 +578,7 @@ export interface FileRouteTypes {
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
+    | "/print/receipt/$id"
     | "/account/quotes"
     | "/account/rewards"
     | "/account/trade-ins"
@@ -621,6 +632,7 @@ export interface FileRouteTypes {
     | "/counter/stock/$sku"
     | "/counter/stock/new"
     | "/counter/trade/new"
+    | "/print/receipt/$id"
     | "/account/quotes/"
     | "/account/rewards/"
     | "/account/trade-ins/"
@@ -647,6 +659,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   CTokenRoute: typeof CTokenRoute
   LabelsPrintRoute: typeof LabelsPrintRoute
+  PrintReceiptIdRoute: typeof PrintReceiptIdRoute
 }
 
 declare module "@tanstack/react-router" {
@@ -966,6 +979,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterTradeNewRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/print/receipt/$id": {
+      id: "/print/receipt/$id"
+      path: "/print/receipt/$id"
+      fullPath: "/print/receipt/$id"
+      preLoaderRoute: typeof PrintReceiptIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/counter/customers/$code/": {
       id: "/counter/customers/$code/"
       path: "/customers/$code"
@@ -1123,6 +1143,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   CTokenRoute: CTokenRoute,
   LabelsPrintRoute: LabelsPrintRoute,
+  PrintReceiptIdRoute: PrintReceiptIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
