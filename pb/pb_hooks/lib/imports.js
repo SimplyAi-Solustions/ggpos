@@ -556,7 +556,41 @@ function resolveReviewRow(txApp, staffId, importRecord, rowNumber, cardId, skip,
  *
  * Returns `{ sold, alreadySold, errors }`.
  */
-function processEbayOrdersRows(txApp, staffId, records, vatRegistered) {
+function processEbayOrdersRows(txApp, staffId, records, vatContext) {
+  var vat = require(__hooks + "/lib/shared/vat.js");
+  var ctx = vatContext || { registration: { registered: false, from: "" }, standardRate: vat.STANDARD_VAT_RATE };
+  var branchVat = {};
+  // A line's scheme and the rate it is charged at, as sales.pb.js works it
+  // (docs/api-contract-launch.md, section 3): the item's own treatment, else
+  // its branch's, and only inside the registration on the order's own date.
+  function lineVatOf(item, at) {
+    var categoryId = item.getString("category");
+    if (categoryId && !Object.prototype.hasOwnProperty.call(branchVat, categoryId)) {
+      var branch = null;
+      try {
+        branch = txApp.findRecordById("categories", categoryId);
+      } catch (err) {
+        branch = null;
+      }
+      branchVat[categoryId] = branch
+        ? { scheme: branch.getString("default_tax_scheme"), rate: branch.getFloat("default_vat_rate") }
+        : null;
+    }
+    var resolved = vat.resolveVat({
+      own: { scheme: item.getString("tax_scheme"), rate: item.getFloat("vat_rate") },
+      branch: categoryId ? branchVat[categoryId] : null,
+      fallback: "margin",
+      standardRate: ctx.standardRate,
+    });
+    return {
+      scheme: resolved.scheme,
+      rate: vat.rateFor({
+        taxScheme: resolved.scheme,
+        rate: resolved.rate,
+        vatRegistered: vat.vatApplies(ctx.registration, at),
+      }),
+    };
+  }
   var errors = [];
   var sold = 0;
   var alreadySold = 0;
@@ -683,7 +717,8 @@ function processEbayOrdersRows(txApp, staffId, records, vatRegistered) {
         var qty = parseInt(String(row.quantity || "").trim(), 10);
         if (!(qty > 0)) qty = 1;
 
-        var taxScheme = item.getString("tax_scheme") || "margin";
+        var soldAt = new Date(String(sale.getString("occurred_at")).replace(" ", "T"));
+        var lineVat = lineVatOf(item, isNaN(soldAt.getTime()) ? new Date() : soldAt);
 
         txApp.save(
           new Record(txApp.findCollectionByNameOrId("sale_lines"), {
@@ -693,8 +728,8 @@ function processEbayOrdersRows(txApp, staffId, records, vatRegistered) {
             unit_price: pricePence,
             discount: 0,
             refunded_qty: 0,
-            vat_rate: vatRegistered && taxScheme === "standard" ? 20 : 0,
-            tax_scheme: taxScheme,
+            vat_rate: lineVat.rate,
+            tax_scheme: lineVat.scheme,
             status: "sold",
           })
         );

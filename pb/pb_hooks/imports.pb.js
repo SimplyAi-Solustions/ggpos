@@ -145,7 +145,14 @@ routerAdd(
     }
 
     const settingsRow = util.settings(e.app);
-    const vatRegistered = settingsRow ? settingsRow.getBool("vat_registered") : false;
+    const vat = require(`${__hooks}/lib/shared/vat.js`);
+    const vatContext = {
+      registration: {
+        registered: settingsRow ? settingsRow.getBool("vat_registered") : false,
+        from: settingsRow ? settingsRow.getString("vat_registered_from") : "",
+      },
+      standardRate: vat.standardRateOf(settingsRow ? settingsRow.getFloat("vat_standard_rate") : 0),
+    };
 
     let result = null;
     try {
@@ -161,7 +168,7 @@ routerAdd(
         record.set("file", $filesystem.fileFromBytes(upload.bytes, `ebay-orders-${Date.now()}.csv`));
         txApp.save(record);
 
-        const outcome = importsLib.processEbayOrdersRows(txApp, staff.id, mapped.records, vatRegistered);
+        const outcome = importsLib.processEbayOrdersRows(txApp, staff.id, mapped.records, vatContext);
 
         record.set("rows_ok", outcome.sold);
         record.set("errors", outcome.errors);

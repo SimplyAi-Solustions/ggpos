@@ -416,6 +416,46 @@ S36_STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/vault/reports/da
 [ "$S36_STATUS" = "401" ] || fail "the dashboard without a token returned $S36_STATUS"
 ok "the dashboard and the return need reports_view and a signed-in member of staff, and refuse a bad range or quarter in words"
 
+# --- 36g. The eBay orders import charges VAT the same way ------------------
+# Two listed items filed under the reduced branch with no scheme of their
+# own: the order dated today is charged the branch's 5 percent, the one
+# dated a week before registration nothing.
+s36_settings "{\"vat_registered\":true,\"vat_registered_from\":\"$S36_TODAY 00:00:00.000Z\"}"
+S36_WEEK_AGO="$(node -e "const d=new Date('$S36_TODAY'+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-7);process.stdout.write(d.toISOString().slice(0,10))")"
+S36_EBAY_NOW="$(s36_item "{\"kind\":\"sealed\",\"game\":\"$S36_GAME\",\"title\":\"S36 eBay today\",\"qty\":1,\"cost\":500,\"price\":2100,\"status\":\"listed_ebay\",\"tax_scheme\":\"\",\"vat_rate\":0,\"source\":\"supplier\",\"ebay_sku\":\"S36-EBAY-NOW\",\"category\":\"$S36_BRANCH\"}")"
+S36_EBAY_EARLY="$(s36_item "{\"kind\":\"sealed\",\"game\":\"$S36_GAME\",\"title\":\"S36 eBay early\",\"qty\":1,\"cost\":500,\"price\":2100,\"status\":\"listed_ebay\",\"tax_scheme\":\"\",\"vat_rate\":0,\"source\":\"supplier\",\"ebay_sku\":\"S36-EBAY-EARLY\",\"category\":\"$S36_BRANCH\"}")"
+[ -n "$S36_EBAY_NOW" ] && [ -n "$S36_EBAY_EARLY" ] || fail "36: the eBay items did not save"
+cat >"$S36_DIR/ebay-orders.csv" <<S36_CSV
+Custom Label,Item Number,Order Number,Sale Date,Sold For,Quantity,Sale Currency
+S36-EBAY-NOW,360000000001,36-00001,$S36_TODAY,21.00,1,GBP
+S36-EBAY-EARLY,360000000002,36-00002,$S36_WEEK_AGO,21.00,1,GBP
+S36_CSV
+S36_STATUS="$(curl -s -o "$S36_DIR/last.json" -w '%{http_code}' -X POST "$BASE/api/vault/imports/ebay-orders" \
+  -H "Authorization: $STAFF_TOKEN" -F "file=@$S36_DIR/ebay-orders.csv;type=text/csv" -F "type=ebay_orders")"
+s36_expect "$S36_STATUS" 200 "" "the eBay orders import inside the registration"
+[ "$(s36_field sold)" = "2" ] || fail "the eBay orders import sold $(s36_field sold) lines, expected 2: $(s36_body)"
+S36_EBAY_LINES="$(s36_list sale_lines "item='$S36_EBAY_NOW' || item='$S36_EBAY_EARLY'")"
+[ "$(echo "$S36_EBAY_LINES" | node -e "
+  const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+  const by = (id) => d.items.find((l) => l.item === id) || {};
+  const now = by('$S36_EBAY_NOW'), early = by('$S36_EBAY_EARLY');
+  process.stdout.write([now.tax_scheme, now.vat_rate, early.tax_scheme, early.vat_rate].join(','));
+")" = "standard,5,standard,0" ] || fail "the eBay order lines carry $(echo "$S36_EBAY_LINES" | node -e "
+  const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+  process.stdout.write(d.items.map((l) => l.tax_scheme + ' ' + l.vat_rate).join(', '));
+"), expected the branch's 5 percent today and nothing before registration"
+# Leave no eBay sales behind for the sections after this one.
+for S36_ID in $(echo "$S36_EBAY_LINES" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(d.items.map((l)=>l.id).join(' '))"); do
+  curl -s -o /dev/null -X DELETE "$BASE/api/collections/sale_lines/records/$S36_ID" -H "Authorization: $SUPER_TOKEN"
+done
+for S36_ID in $(s36_list sales "external_ref='36-00001' || external_ref='36-00002'" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(d.items.map((s)=>s.id).join(' '))"); do
+  curl -s -o /dev/null -X DELETE "$BASE/api/collections/sales/records/$S36_ID" -H "Authorization: $SUPER_TOKEN"
+done
+for S36_ID in "$S36_EBAY_NOW" "$S36_EBAY_EARLY"; do
+  curl -s -o /dev/null -X DELETE "$BASE/api/collections/items/records/$S36_ID" -H "Authorization: $SUPER_TOKEN"
+done
+ok "the eBay orders import charges each line by its own or its branch's treatment, and nothing on an order dated before registration"
+
 # --- cleanup ---------------------------------------------------------------
 s36_settings '{"vat_registered":false,"vat_registered_from":"","vat_standard_rate":20,"vat_period_start_month":1}'
 for S36_ID in "$S36_A" "$S36_B" "$S36_C" "$S36_D" "$S36_F" "$S36_G"; do
