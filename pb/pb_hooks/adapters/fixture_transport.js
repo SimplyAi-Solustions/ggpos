@@ -99,6 +99,48 @@ function resolveNowPlaceholders(json) {
   return json;
 }
 
+/**
+ * A recorded fixture's price dates, moved forward so the newest one is
+ * an hour old now, with every gap between them kept. The TCGdex fixture was
+ * recorded on 19 September 2026; served as recorded, its prices passed the
+ * 72-hour freshness limit three days later and the route checks that
+ * expect a fresh Cardmarket price started failing on the calendar alone.
+ * Only string values under keys named `updated` that parse as dates move;
+ * the file on disk stays exactly as recorded.
+ */
+function rebaseRecordedDates(json) {
+  var newest = 0;
+  function scan(node) {
+    if (!node || typeof node !== "object") return;
+    for (var key in node) {
+      var value = node[key];
+      if (key === "updated" && typeof value === "string") {
+        var t = Date.parse(value);
+        if (!isNaN(t) && t > newest) newest = t;
+      } else if (value && typeof value === "object") {
+        scan(value);
+      }
+    }
+  }
+  function shift(node, delta) {
+    if (!node || typeof node !== "object") return;
+    for (var key in node) {
+      var value = node[key];
+      if (key === "updated" && typeof value === "string") {
+        var t = Date.parse(value);
+        if (!isNaN(t)) node[key] = new Date(t + delta).toISOString();
+      } else if (value && typeof value === "object") {
+        shift(value, delta);
+      }
+    }
+  }
+  scan(json);
+  if (!newest) return json;
+  var delta = Date.now() - 3600 * 1000 - newest;
+  if (delta > 0) shift(json, delta);
+  return json;
+}
+
 // -- The Solo reader fixtures (see the Readers API block in respond()) ---
 
 /**
@@ -296,7 +338,9 @@ function respond(call) {
   if (url.indexOf("api.frankfurter") >= 0) return ok(loadFixture("frankfurter_gbp_latest.json"));
 
   // -- TCGdex (Pokemon): exact card, then free-text search. ------------------
-  if (url.indexOf("api.tcgdex.net/v2/en/sets/") >= 0) return ok(loadFixture("tcgdex_sv151_199.json"));
+  if (url.indexOf("api.tcgdex.net/v2/en/sets/") >= 0) {
+    return ok(rebaseRecordedDates(loadFixture("tcgdex_sv151_199.json")));
+  }
   if (url.indexOf("api.tcgdex.net/v2/en/cards?") >= 0) return ok(loadFixture("tcgdex_search_charizard.json"));
 
   // -- Scryfall (MTG): the exact-card fixture doubles as a one-row search
