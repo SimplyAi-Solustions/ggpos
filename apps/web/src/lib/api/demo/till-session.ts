@@ -132,6 +132,8 @@ interface DemoTradeIn {
   session: string
   cash_paid: number
   credit_issued: number
+  /** What a part-exchange paid towards its sale; 0 for a buy-in. */
+  part_exchange_value?: number
 }
 
 interface Book {
@@ -309,6 +311,20 @@ export function noteDemoTillSale(input: Omit<DemoTillSale, "session" | "at"> & {
   const session = demoTill.session
   if (!session) return
   ensureBook().sales.push({ ...input, session: session.id, at: input.at ?? new Date().toISOString() })
+}
+
+/**
+ * A trade-in the demo till has just completed as part-exchange, so the next
+ * X report counts what it paid towards the sale and any surplus paid out.
+ */
+export function noteDemoTillTradeIn(input: {
+  cash_paid: number
+  credit_issued: number
+  part_exchange_value: number
+}) {
+  const session = demoTill.session
+  if (!session) return
+  ensureBook().tradeIns.push({ session: session.id, ...input })
 }
 
 /** A refund the demo till has just given, so the next X report counts it. */
@@ -493,7 +509,7 @@ function buildDemoReport(
       count: tradeIns.length,
       cash_paid: sum(tradeIns.map((row) => row.cash_paid)),
       credit_issued: sum(tradeIns.map((row) => row.credit_issued)),
-      part_exchange_value: 0,
+      part_exchange_value: sum(tradeIns.map((row) => row.part_exchange_value ?? 0)),
     },
     by_category: [...category.entries()]
       .map(([name, row]) => ({ category: name, net: row.net, count: row.count }))

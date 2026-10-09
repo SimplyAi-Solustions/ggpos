@@ -53,6 +53,7 @@ import {
   DEMO_REGISTER,
   noteDemoTillRefund,
   noteDemoTillSale,
+  noteDemoTillTradeIn,
 } from "@/lib/api/demo/till-session"
 import { demoProduct, demoRecordVoids } from "@/lib/api/demo/till"
 import {
@@ -652,6 +653,11 @@ function completeDemoTrade(
     if (saleCustomer) saleCustomer.pointsBalance += points
   }
   demoRecordVisit(customerId, context.at)
+  noteDemoTillTradeIn({
+    cash_paid: trade.cash,
+    credit_issued: trade.credit,
+    part_exchange_value: trade.applied,
+  })
   demoBuyIns.push({
     id: record.id,
     number,

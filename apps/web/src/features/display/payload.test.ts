@@ -123,6 +123,23 @@ describe("salePayload", () => {
   })
 })
 
+describe("what goes back to the customer", () => {
+  const base = { lines: [], subtotal: 3000, discount: 0, total: 0, pointsToEarn: 0 }
+
+  it("carries a trade's surplus or a return's difference when there is one", () => {
+    expect(salePayload({ ...base, back: 1250 }).back).toBe(1250)
+  })
+
+  it("leaves it out when nothing goes back, and never sends it negative", () => {
+    expect("back" in salePayload(base)).toBe(false)
+    expect("back" in salePayload({ ...base, back: -500 })).toBe(false)
+  })
+
+  it("survives the scrub the route also applies", () => {
+    expect(scrubPayload("sale", { ...salePayload({ ...base, back: 800 }) })).toMatchObject({ back: 800 })
+  })
+})
+
 describe("buyInPayload", () => {
   it("carries the offer, what it is paid as and the credit's points", () => {
     expect(

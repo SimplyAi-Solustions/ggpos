@@ -122,6 +122,10 @@ function sanitise(mode, raw) {
       sale.amount_due = util.asInt(body.amount_due, 0);
     }
     if (body.change !== undefined && body.change !== null) sale.change = util.asInt(body.change, 0);
+    // What goes back to the customer when a trade-in or a return covers
+    // the ticket (section 7): never negative, and only when there is some.
+    var back = util.asInt(body.back, 0);
+    if (back > 0) sale.back = back;
     if (body.points_earned !== undefined && body.points_earned !== null) {
       sale.points_earned = util.asInt(body.points_earned, 0);
     }

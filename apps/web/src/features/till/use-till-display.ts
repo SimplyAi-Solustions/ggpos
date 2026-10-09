@@ -83,6 +83,7 @@ export function tillDisplayPayload(input: {
     discount: off,
     discountLabel: totals.lineDiscounts > 0 ? "Discount" : discountLabel(ticket, totals),
     total: input.settlement ? input.settlement.toPay : totals.total,
+    back: input.settlement ? input.settlement.surplus + input.settlement.refund : 0,
     pointsToEarn: input.points,
     customerName: ticket.customer?.name,
     stage,

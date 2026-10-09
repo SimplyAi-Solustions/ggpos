@@ -70,6 +70,12 @@ export type TillDisplayPayload = DisplaySalePayload & {
   amount_due?: number
   change?: number
   points_earned?: number
+  /**
+   * What goes back to the customer once a trade-in or a return covers the
+   * ticket (docs/api-contract-epos.md, section 7): the trade's surplus and
+   * the return's difference. Only sent when there is some.
+   */
+  back?: number
 }
 
 export interface SalePayloadInput {
@@ -85,6 +91,8 @@ export interface SalePayloadInput {
   amountDue?: number
   change?: number
   pointsEarned?: number
+  /** Pence going back to the customer: a trade's surplus and a return's difference. */
+  back?: number
 }
 
 function isStage(value: unknown): value is SaleStage {
@@ -115,6 +123,8 @@ export function salePayload(input: SalePayloadInput): TillDisplayPayload {
   if (label) payload.discount_label = label
   const name = shortName(input.customerName)
   if (name) payload.customer_name = name
+  const back = Math.max(0, pence(input.back))
+  if (back > 0) payload.back = back
   if (isStage(input.stage)) {
     payload.stage = input.stage
     if (input.stage === "card" || input.stage === "cash") {
@@ -202,6 +212,7 @@ export function scrubPayload(mode: DisplayMode, payload: unknown): DisplayPayloa
       amountDue: Number(raw.amount_due ?? 0),
       change: Number(raw.change ?? 0),
       pointsEarned: Number(raw.points_earned ?? 0),
+      back: Number(raw.back ?? 0),
     })
   }
 

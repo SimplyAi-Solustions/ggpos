@@ -330,7 +330,13 @@ function SaleScreen({ payload }: { payload: TillDisplayPayload }) {
       ) : null}
 
       <div className="mt-10">
-        <Total label="Total" amount={payload.total} testId="display-total" />
+        {(payload.back ?? 0) > 0 ? (
+          // A trade-in or a return covers the ticket: what matters to the
+          // customer is what comes back to them, not a total of nothing.
+          <Total label="Back to you" amount={payload.back ?? 0} testId="display-back" />
+        ) : (
+          <Total label="Total" amount={payload.total} testId="display-total" />
+        )}
         {payload.points_to_earn > 0 ? (
           <p
             data-testid="display-points"

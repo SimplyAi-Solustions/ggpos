@@ -484,6 +484,54 @@ landscape and the Mac at 1440 x 900; a phone at 390 x 844 must still work.
   choices as four `key` buttons, Print, Email, Gift receipt, No receipt; and
   "New sale" as the block. Choosing a receipt starts a new sale.
 
+### Part-exchange and exchanges
+
+- **Trade in** is a `text` action on the ticket beside Park and Discount,
+  and in the till menu so it works on an empty ticket. It needs a customer
+  first. It opens the **Trade-in panel** in the catalogue pane, the way Pay
+  opens the tender pane: "TRADE-IN" as a `MicroLabel`, the customer's name
+  and code, one grey sentence ("Valued at credit rates. What it is worth
+  comes off the ticket."), then the buy-in wizard's own line entry (the kind
+  chips, card search, condition and finish chips, retro fields, bulk lot,
+  sources and the override sheet) and the lines added so far. Each line
+  shows its credit offer, with the cash offer under it as a `Hint` label and
+  a Jost figure. "Back to the items" is the `text` action that closes it.
+- On the **ticket**, the trade is its own group under the lines: "TRADE-IN"
+  as a `MicroLabel` with "Change" on the right, each line's title, its
+  condition, set and number in Space Mono 13px, and its credit offer as a
+  negative figure ("-£75.00"), then "TRADE-IN TOTAL". Goods brought back are
+  the same under "RETURNED", with the original sale's number on the right and
+  the reason in grey under the lines.
+- The Anton total becomes **TO PAY**: the sale less the trade and the return.
+  When the trade or the return is worth more than the ticket, one sentence
+  above it says so ("The trade-in is worth £90.51 more than the ticket.") and
+  the block reads **Settle** (a trade covers it), **Refund** (a return is
+  worth more) or **Exchange** (a return covers it exactly).
+- **Settle** replaces the tender pane. Its Anton line is **TO THE CUSTOMER**,
+  what they walk away with, and one sentence says how the ticket was paid.
+  "PAY THE SURPLUS AS" offers two 72px choices, Store credit and Cash, each
+  with its figure in Jost 500 under it and a `Hint` line ("Earns 453 points.
+  No ID needed.", "At the cash rate. Needs photo ID unless it is on file.").
+  The chosen one fills ink, as a chip does. Cash adds the money keypad with
+  the cash-rate figure suggested and the difference in words ("The £18.45
+  difference stays with the shop."), then the wizard's own ID step unless the
+  customer's ID is verified and in date. Every trade ends with the terms and
+  the signature pad before the block.
+- When something is still left to pay, the tender pane lists the trade-in
+  and the exchange as fixed rows under "TAKEN" ("Part-exchange", "Exchange,
+  Return from GG-S-000456"), which cannot be removed, and adds a **Trade-in**
+  tender key for the terms and signature.
+- **Done** adds one line per outcome in Jost: "Trade-in GG-BI-000123 paid
+  £18.00", how a surplus was paid, and the refund reference with a "Print
+  refund receipt" `text` action.
+- The **customer display** lists trade and return lines after the basket at
+  negative figures and shows what is left to pay; when a trade or a return
+  covers the ticket, its one big figure is **Back to you** instead of a
+  total of nothing.
+- The **printed receipt** keeps the sale's own lines and total, and prints
+  what was brought back and traded in after the tenders, under "BROUGHT
+  BACK" and "PART-EXCHANGE".
+
 ### Lock screen and approval
 
 - **Lock** is a full-screen paper panel over the till, not a dialog over a
