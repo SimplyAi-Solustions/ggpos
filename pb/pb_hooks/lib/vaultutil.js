@@ -321,13 +321,14 @@ function meShapeFor(app, customer) {
 // Cash sessions
 // ---------------------------------------------------------------------
 
-/** The one open cash session, or null. */
-function openCashSession(app) {
-  try {
-    return app.findFirstRecordByFilter("cash_sessions", "closed_at = ''");
-  } catch (err) {
-    return null;
-  }
+/**
+ * The open cash session on a register (the default register when none is
+ * named), or null. Since the EPOS schema there is one per register; see
+ * lib/registers.js.
+ */
+function openCashSession(app, registerId) {
+  var registers = require(__hooks + "/lib/registers.js");
+  return registers.openSession(app, registerId);
 }
 
 /** Every movement on a session, oldest first. */

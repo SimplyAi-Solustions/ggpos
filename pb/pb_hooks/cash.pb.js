@@ -27,6 +27,7 @@ routerAdd(
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
+    const registers = require(`${__hooks}/lib/registers.js`);
 
     const staff = e.auth;
     const body = util.body(e);
@@ -61,9 +62,13 @@ routerAdd(
           throw new Error(halt.message);
         }
 
+        // The legacy route opens the default register's drawer; the till
+        // opens its own through POST /api/vault/till/open.
+        const register = registers.defaultRegister(txApp);
         const session = new Record(txApp.findCollectionByNameOrId("cash_sessions"), {
           opened_by: staff.id,
           float: float,
+          register: register ? register.id : "",
         });
         txApp.save(session);
 
