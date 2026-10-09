@@ -34,7 +34,9 @@ routerAdd(
     // is the old card reader's merchant settings: SumUp is gone
     // (docs/api-contract-epos.md, section 5), and the row keeps them only
     // as history.
-    const DROPPED = ["api_keys", "email", "push", "sumup", "collectionId", "collectionName"];
+    // `agent_webhook` carries the secret the research webhook is signed
+    // with (docs/api-contract-launch.md, section 5).
+    const DROPPED = ["api_keys", "email", "push", "sumup", "agent_webhook", "collectionId", "collectionName"];
 
     function isDropped(name) {
       if (DROPPED.indexOf(name) >= 0) return true;
