@@ -303,11 +303,28 @@ export interface TillReportEvent {
   amount: number
 }
 
-/** The Z's own figures: the count, the Tide total keyed in, the notes. */
+/**
+ * The Z's own figures: the count, the bank drop, the Tide total keyed in, the
+ * notes. Staff count the whole drawer first and then take the bank drop out
+ * of what they counted, so `counts` is the full drawer before the drop and
+ * the report's `cash.counted` is that total less the drop: what is left in
+ * the drawer. The drop is also one of the input's movements (the server
+ * writes it as a `bank_drop` movement before building the Z), so `expected`
+ * is after the drop as well and the variance comes out the same as it would
+ * have before the drop was taken.
+ */
 export interface TillReportClose {
+  /** The full drawer as keyed, before the bank drop. */
   counts: DenominationCounts
+  /** Pence taken out of the counted cash to bank. 0 or absent for none. */
+  bank_drop?: number
   card_reported_total: number | null
   notes: string
+}
+
+/** What is left in the drawer once a Z's bank drop is taken out of the count. */
+export function countedAfterDrop(close: Pick<TillReportClose, "counts" | "bank_drop">): number {
+  return denominationTotal(close.counts) - (close.bank_drop ?? 0)
 }
 
 export interface TillReportInput {
@@ -402,7 +419,8 @@ function byNetThenName<T extends { net: number }>(name: (row: T) => string) {
  * - **refunds**: the negative tender rows, one per refund reference.
  * - **tenders**: per method from the tender rows (`summariseTenders`).
  * - **cash**: the float and the movements (`cashBreakdown`); on a Z the
- *   counted total and counted minus expected.
+ *   counted total less any bank drop taken from it (`countedAfterDrop`) and
+ *   counted minus expected. `counts` stays the full count as keyed.
  * - **card**: the till's net card; on a Z the Tide total keyed in and
  *   reported minus till.
  * - **voids**, **no_sales**, **overrides**: the till events, voids with the
@@ -484,7 +502,7 @@ export function buildTillReport(input: TillReportInput): TillReport {
 
   // --- the drawer ------------------------------------------------------
   const breakdown = cashBreakdown(input.session.float, input.movements)
-  const counted = close ? denominationTotal(close.counts) : null
+  const counted = close ? countedAfterDrop(close) : null
 
   // --- till events -----------------------------------------------------
   let voidCount = 0

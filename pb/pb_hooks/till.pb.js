@@ -4,7 +4,7 @@
  * till.pb.js - till sessions, cashing up and the drawer.
  *
  *   POST /api/vault/till/open          (till_open)
- *   GET  /api/vault/till/current       (staff)
+ *   GET  /api/vault/till/current       (staff; ?running=0 skips the running report)
  *   POST /api/vault/till/x             (x_report)
  *   POST /api/vault/till/z             (z_report)
  *   GET  /api/vault/till/reports       (x_report)
@@ -157,11 +157,14 @@ routerAdd(
     const cache = {};
 
     // `running` is what an X would say right now, unnumbered and unsaved,
-    // so cashing up can show it before anything is committed.
+    // so cashing up can show it before anything is committed. The till
+    // screen polls this only to know whether the till is open, and asks
+    // with `?running=0` to skip building it.
+    const wantRunning = tillLib.query(e, "running") !== "0";
     return e.json(200, {
       register: tillLib.registerRef(register),
       session: session ? tillLib.sessionShape(e.app, session, register, cache) : null,
-      running: session
+      running: session && wantRunning
         ? tillLib.buildReport(e.app, session, register, {
             type: "x",
             number: 0,
@@ -263,6 +266,7 @@ routerAdd(
     const counters = require(`${__hooks}/lib/counters.js`);
     const tillLib = require(`${__hooks}/lib/till.js`);
     const till = require(`${__hooks}/lib/shared/till.js`);
+    const money = require(`${__hooks}/lib/shared/money.js`);
 
     const CARD_TOTAL = "Enter the Tide card total for today from the Tide app.";
     const BANK_DROP_REASON = "Bank drop at cashing up";
@@ -274,9 +278,11 @@ routerAdd(
     const session = tillLib.openSession(e.app, register.id);
     if (!session) throw e.error(409, tillLib.NOT_OPEN, null);
 
-    // The blind count. It is of the drawer as it is left for the night:
-    // the bank drop, when there is one, is written first and comes off the
-    // expected figure, so counted minus expected is the variance either way.
+    // The blind count is of the whole drawer. Staff then take the bank drop,
+    // when there is one, out of what they counted: it is written as a
+    // movement first, so expected is after the drop, and the report's
+    // counted figure is the count less the drop (lib/shared/till.js
+    // countedAfterDrop). The variance is the same either side of the drop.
     const rawCounts = tillLib.plain(body.counts);
     if (!till.hasCounts(rawCounts)) {
       throw e.badRequestError("Count the drawer before closing the till.", null);
@@ -296,6 +302,10 @@ routerAdd(
       throw e.badRequestError("Enter the bank drop as a whole number of pence, 0 or more.", null);
     }
     const bankDrop = dropIn.value;
+    const countedTotal = till.denominationTotal(counts);
+    if (bankDrop > countedTotal) {
+      throw e.badRequestError(`You cannot bank more than the ${money.formatGBP(countedTotal)} you counted.`, null);
+    }
 
     const notes = util.asStr(body.notes);
     if (notes.length > 2000) {
@@ -309,13 +319,6 @@ routerAdd(
     const parked = tillLib.parkedCount(e.app, register.id);
     if (parked > 0) {
       throw e.error(409, till.parkedTicketsMessage(parked, registerName), null);
-    }
-
-    if (bankDrop > 0) {
-      const expectedNow = util.sessionExpected(e.app, session);
-      if (till.takesDrawerBelowZero(expectedNow, -bankDrop)) {
-        throw e.error(409, tillLib.drawerMessage(expectedNow), null);
-      }
     }
 
     const grant = perms.check(e, "z_report");
@@ -344,14 +347,9 @@ routerAdd(
         if (halt) throw new Error(halt.message);
         perms.logOverrides(txApp, grant, { register: register.id, session: live.id, used_for: "z_report" });
 
-        // 1. The bank drop, as a movement, so the report and the expected
-        //    figure both see it.
+        // 1. The bank drop, taken from the counted cash, as a movement, so
+        //    the report and the expected figure both see it.
         if (bankDrop > 0) {
-          const expectedBefore = util.sessionExpected(txApp, live);
-          if (till.takesDrawerBelowZero(expectedBefore, -bankDrop)) {
-            halt = { status: 409, message: tillLib.drawerMessage(expectedBefore) };
-            throw new Error(halt.message);
-          }
           const drop = new Record(txApp.findCollectionByNameOrId("cash_movements"));
           drop.set("session", live.id);
           drop.set("type", "bank_drop");
@@ -371,7 +369,7 @@ routerAdd(
           created: tillLib.now(),
           createdBy: tillLib.staffRef(txApp, staff.id, cache),
           cache: cache,
-          close: { counts: counts, card_reported_total: reported, notes: notes },
+          close: { counts: counts, bank_drop: bankDrop, card_reported_total: reported, notes: notes },
         });
         tillLib.saveReport(txApp, register, live, report);
 

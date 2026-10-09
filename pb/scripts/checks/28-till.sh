@@ -175,7 +175,11 @@ T28_STATUS="$(t28_req GET "/api/vault/till/current?register=$T28_R1" "$T28_STAFF
 t28_status "$T28_STATUS" 200 "the current till"
 t28_match "" "{\"register\":{\"id\":\"$T28_R1\",\"name\":\"Check Till 28\"},\"session\":{\"id\":\"$T28_S1\",\"float\":8503},\"running\":{\"id\":\"\",\"type\":\"x\",\"number\":0,\"session_id\":\"$T28_S1\",\"created_by\":{\"id\":\"$T28_STAFF_ID\",\"name\":\"Till Staff 28\"},\"sales\":{\"count\":0,\"net\":0},\"cash\":{\"opening_float\":8503,\"expected\":8503,\"counted\":null},\"counts\":null}}" \
   "the current till should carry its session and an unnumbered running report"
-ok "the current till carries its session and a running report, numbered 0 and unsaved"
+T28_STATUS="$(t28_req GET "/api/vault/till/current?register=$T28_R1&running=0" "$T28_STAFF")"
+t28_status "$T28_STATUS" 200 "the current till without its running report"
+t28_is session.id "$T28_S1" "the current till without its running report"
+t28_is running "" "the current till asked with running=0"
+ok "the current till carries its session and a running report, numbered 0 and unsaved, or no report with running=0"
 
 T28_STATUS="$(t28_req GET /api/vault/till/current "$T28_STAFF")"
 t28_status "$T28_STATUS" 200 "the current till with no register named"
@@ -454,7 +458,8 @@ t28_refused "$T28_STATUS" 409 "That cash session belongs to another till. Close 
 ok "the legacy routes read a named register's session, the default register's without one, and close only their own"
 
 # --- 28j. The Z report's refusals ------------------------------------------
-T28_Z_COUNTS='{"1000":1,"200":1,"100":1,"5":3,"2":1,"1":1}'
+# The whole drawer, counted before any bank drop: 2000 + 200 + 100 + 15 + 2 + 1 = 2318.
+T28_Z_COUNTS='{"1000":2,"200":1,"100":1,"5":3,"2":1,"1":1}'
 T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T28_R1\",\"card_reported_total\":6800}")"
 t28_refused "$T28_STATUS" 400 "Count the drawer before closing the till." "a Z with no count"
 T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T28_R1\",\"counts\":{},\"card_reported_total\":6800}")"
@@ -475,19 +480,21 @@ T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T2
 t28_refused "$T28_STATUS" 409 "One ticket is parked on Check Till 28. Complete or delete it before closing the till." "a Z with one parked ticket"
 curl -s -o /dev/null -X DELETE "$BASE/api/collections/parked_tickets/records/$T28_PARKED_B" -H "Authorization: $SUPER_TOKEN"
 
-T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T28_R1\",\"counts\":$T28_Z_COUNTS,\"card_reported_total\":6800,\"bank_drop\":2349}")"
-t28_refused "$T28_STATUS" 409 "That is more than the £23.48 the drawer should hold." "a Z with a bank drop of more than the drawer holds"
+T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T28_R1\",\"counts\":$T28_Z_COUNTS,\"card_reported_total\":6800,\"bank_drop\":2319}")"
+t28_refused "$T28_STATUS" 400 "You cannot bank more than the £23.18 you counted." "a Z banking more than was counted"
 T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_STAFF" "{\"register\":\"$T28_R1\",\"counts\":$T28_Z_COUNTS,\"card_reported_total\":6800}")"
 t28_needs_override "$T28_STATUS" z_report "a member of staff running the Z"
 T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T28_R3\",\"counts\":{\"5000\":0},\"notes\":\"$(printf 'n%.0s' $(seq 1 2001))\"}")"
 t28_refused "$T28_STATUS" 400 "Keep the notes to 2,000 characters." "a Z with notes over 2,000 characters"
 [ "$(t28_rows cash_sessions "id = \"$T28_S1\" && closed_at = \"\"" | jval totalItems)" = "1" ] || fail "a refused Z closed the session"
-ok "a Z is refused with no count, a bad count, no Tide total after card sales, parked tickets, too big a bank drop and without z_report"
+ok "a Z is refused with no count, a bad count, no Tide total after card sales, parked tickets, banking more than was counted and without z_report"
 
 # --- 28k. The Z report -----------------------------------------------------
-# A £10.00 bank drop comes out first, so the drawer should hold 2348 - 1000
-# = 1348; it holds 1000 + 200 + 100 + 15 + 2 + 1 = 1318, 30p short. Tide
-# says £68.00 against the till's £67.50 on card, 50p over.
+# The whole drawer counts 2318 against 2348 expected, 30p short. A £10.00
+# bank drop is then taken out of the count: expected becomes 2348 - 1000 =
+# 1348 and 2318 - 1000 = 1318 is left, still 30p short. The count on the
+# report stays the full drawer as keyed. Tide says £68.00 against the
+# till's £67.50 on card, 50p over.
 T28_STATUS="$(t28_req POST /api/vault/till/z "$T28_MANAGER" "{\"register\":\"$T28_R1\",\"counts\":$T28_Z_COUNTS,\"card_reported_total\":6800,\"bank_drop\":1000,\"notes\":\"Counted twice.\"}")"
 t28_status "$T28_STATUS" 201 "the Z report"
 T28_Z1="$(t28_val report.id)"

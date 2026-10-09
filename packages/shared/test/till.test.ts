@@ -7,6 +7,7 @@ import {
   cashBreakdown,
   cashVariance,
   categoryForKind,
+  countedAfterDrop,
   denominationTotal,
   expectedCash,
   hasCounts,
@@ -610,10 +611,7 @@ describe("the report", () => {
           sale({ id: "b", lines: [line({ unit_price: 4000 })] }),
         ],
         tenders: [tender("cash", 2600), tender("card_tide", 4000)],
-        movements: [
-          { type: "cash_sale", amount: 2600 },
-          { type: "bank_drop", amount: -5000 },
-        ],
+        movements: [{ type: "cash_sale", amount: 2600 }],
         close: {
           counts: { "2000": 2, "1000": 1, "500": 1, "100": 1, "50": 1 },
           card_reported_total: 3990,
@@ -621,15 +619,57 @@ describe("the report", () => {
         },
       })
     )
-    // Expected 10000 + 2600 - 5000 = 7600; counted 4000 + 1000 + 500 + 100 + 50 = 5650.
-    expect(report.cash.expected).toBe(7600)
+    // Expected 10000 + 2600 = 12600; counted 4000 + 1000 + 500 + 100 + 50 = 5650.
+    expect(report.cash.expected).toBe(12600)
     expect(report.cash.counted).toBe(5650)
-    expect(report.cash.variance).toBe(-1950)
+    expect(report.cash.variance).toBe(-6950)
     expect(report.card).toEqual({ till_total: 4000, reported_total: 3990, variance: -10 })
     expect(report.counts).toEqual({ "2000": 2, "1000": 1, "500": 1, "100": 1, "50": 1 })
     expect(report.notes).toBe("Counted twice.")
     expect(report.type).toBe("z")
     expect(report.number).toBe(3)
+  })
+
+  it("takes a Z's bank drop out of the full count, leaving the variance as it was before the drop", () => {
+    // The whole drawer is counted first: £126.20 against £126.00 expected,
+    // 20p over. Then £50.00 is banked from it. The server has written that
+    // drop as a movement, so expected is £76.00 and £76.20 is left: 20p over.
+    const full = { "5000": 2, "1000": 2, "500": 1, "100": 1, "20": 1 }
+    const before = buildTillReport(
+      input({
+        type: "z",
+        movements: [{ type: "cash_sale", amount: 2600 }],
+        close: { counts: full, card_reported_total: null, notes: "" },
+      })
+    )
+    const after = buildTillReport(
+      input({
+        type: "z",
+        movements: [
+          { type: "cash_sale", amount: 2600 },
+          { type: "bank_drop", amount: -5000 },
+        ],
+        close: { counts: full, bank_drop: 5000, card_reported_total: null, notes: "" },
+      })
+    )
+    expect(before.cash).toMatchObject({ expected: 12600, counted: 12620, variance: 20, bank_drops: 0 })
+    expect(after.cash).toMatchObject({ expected: 7600, counted: 7620, variance: 20, bank_drops: 5000 })
+    // The count on the report is the drawer as keyed, before the drop.
+    expect(after.counts).toEqual(full)
+  })
+
+  it("leaves the counted figure alone with no bank drop or a drop of nothing", () => {
+    expect(countedAfterDrop({ counts: { "1000": 3 } })).toBe(3000)
+    expect(countedAfterDrop({ counts: { "1000": 3 }, bank_drop: 0 })).toBe(3000)
+    expect(countedAfterDrop({ counts: { "1000": 3 }, bank_drop: 2000 })).toBe(1000)
+  })
+
+  it("ignores a bank drop on an X, which has no count", () => {
+    const report = buildTillReport(
+      input({ type: "x", close: { counts: { "1000": 3 }, bank_drop: 2000, card_reported_total: null, notes: "" } })
+    )
+    expect(report.cash.counted).toBeNull()
+    expect(report.cash.variance).toBeNull()
   })
 
   it("leaves the card variance empty on a Z with no Tide total keyed", () => {

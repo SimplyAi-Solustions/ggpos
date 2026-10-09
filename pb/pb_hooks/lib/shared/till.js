@@ -15,6 +15,7 @@ exports.cashVariance = cashVariance;
 exports.cardVariance = cardVariance;
 exports.categoryForKind = categoryForKind;
 exports.parkedTicketsMessage = parkedTicketsMessage;
+exports.countedAfterDrop = countedAfterDrop;
 exports.summariseTenders = summariseTenders;
 exports.cardTillTotal = cardTillTotal;
 exports.summariseRefunds = summariseRefunds;
@@ -228,6 +229,11 @@ function parkedTicketsMessage(count, registerName) {
     }
     return `${n} tickets are parked on ${registerName}. Complete or delete them before closing the till.`;
 }
+/** What is left in the drawer once a Z's bank drop is taken out of the count. */
+function countedAfterDrop(close) {
+    var _a;
+    return denominationTotal(close.counts) - ((_a = close.bank_drop) !== null && _a !== void 0 ? _a : 0);
+}
 /** A date as an ISO 8601 string, from PocketBase's "2026-10-09 14:00:00.000Z" form too. */
 function iso(value) {
     return value ? value.replace(" ", "T") : "";
@@ -299,7 +305,8 @@ function byNetThenName(name) {
  * - **refunds**: the negative tender rows, one per refund reference.
  * - **tenders**: per method from the tender rows (`summariseTenders`).
  * - **cash**: the float and the movements (`cashBreakdown`); on a Z the
- *   counted total and counted minus expected.
+ *   counted total less any bank drop taken from it (`countedAfterDrop`) and
+ *   counted minus expected. `counts` stays the full count as keyed.
  * - **card**: the till's net card; on a Z the Tide total keyed in and
  *   reported minus till.
  * - **voids**, **no_sales**, **overrides**: the till events, voids with the
@@ -373,7 +380,7 @@ function buildTillReport(input) {
     const reported = close ? close.card_reported_total : null;
     // --- the drawer ------------------------------------------------------
     const breakdown = cashBreakdown(input.session.float, input.movements);
-    const counted = close ? denominationTotal(close.counts) : null;
+    const counted = close ? countedAfterDrop(close) : null;
     // --- till events -----------------------------------------------------
     let voidCount = 0;
     let voidTotal = 0;
