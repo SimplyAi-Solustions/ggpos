@@ -34,6 +34,22 @@
  * exists returns that sale's own body again rather than creating a second
  * sale.
  *
+ * Since wave 2 (section 7) one ticket can also carry a trade-in and lines of
+ * an earlier sale, all in the sale's own transaction:
+ * - `trade_in` + `trade_settlement`: a part-exchange. The trade-in is
+ *   completed exactly as the buy-in route completes one
+ *   (lib/tradeincomplete.js); what it is worth, V, pays A = min(V, S)
+ *   towards the sale as one `part_exchange` tender, and the surplus V - A
+ *   goes out as store credit or cash under the buy-in's own rules.
+ * - `returns`: an exchange. The lines are refunded exactly as the refund
+ *   route refunds them (lib/salerefund.js); their value R pays
+ *   E = min(R, what is left of the sale) as one `exchange` tender, written
+ *   negative on the refund too so the two cancel, and the rest of R goes
+ *   back through `returns.tenders`. A ticket of returns and no new lines is
+ *   simply that refund.
+ * The request's own tenders then come to what is left. A replay returns the
+ * `trade_in` and `refund` blocks as the first answer gave them.
+ *
  * Each registered handler runs in its own isolated goja context, so every
  * require() and helper lives inside the handler body - see pb/README.md.
  */
@@ -81,6 +97,8 @@ routerAdd(
     const registers = require(`${__hooks}/lib/registers.js`);
     const tendersLib = require(`${__hooks}/lib/tenders.js`);
     const quotes = require(`${__hooks}/lib/quotes.js`);
+    const tradeComplete = require(`${__hooks}/lib/tradeincomplete.js`);
+    const refundLib = require(`${__hooks}/lib/salerefund.js`);
     const saleline = require(`${__hooks}/lib/shared/saleline.js`);
     const loyalty = require(`${__hooks}/lib/shared/loyalty.js`);
     const money = require(`${__hooks}/lib/shared/money.js`);
@@ -104,6 +122,87 @@ routerAdd(
     /** Whether a body field was sent at all (0 counts; null and "" do not). */
     function given(value) {
       return value !== undefined && value !== null && value !== "";
+    }
+
+    /**
+     * A nested body object as plain JavaScript data, or null when it is not
+     * an object. A nested object in the body arrives as a Go map, which
+     * reads like an object but is not one; one JSON round trip makes it
+     * ordinary data, lists included.
+     */
+    function plainObject(value) {
+      if (!value || typeof value !== "object") return null;
+      try {
+        const out = JSON.parse(JSON.stringify(value));
+        return out && typeof out === "object" && !Array.isArray(out) ? out : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    /**
+     * The request's `voided`: lines that were on this ticket and removed
+     * before payment, for the X and Z. Thrown 400s for too many or a
+     * negative amount.
+     */
+    function readVoids() {
+      const rawVoids = listOf(body.voided);
+      if (rawVoids.length > MAX_VOIDS) {
+        throw e.badRequestError(`A sale can record up to ${MAX_VOIDS} removed lines.`, null);
+      }
+      const out = [];
+      for (let v = 0; v < rawVoids.length; v++) {
+        const raw = rawVoids[v] && typeof rawVoids[v] === "object" ? rawVoids[v] : {};
+        const amount = util.asInt(raw.amount, 0);
+        if (amount < 0) {
+          throw e.badRequestError("A removed line cannot have a negative amount. Check the voids.", null);
+        }
+        out.push({
+          title: (util.asStr(raw.title) || "Line").slice(0, 120),
+          qty: Math.max(1, util.asInt(raw.qty, 1)),
+          amount: amount,
+        });
+      }
+      return out;
+    }
+
+    /**
+     * Write `void_line` till events for lines removed from this ticket
+     * before payment: the same shape POST /api/vault/till/void writes, which
+     * the X and Z report reads (section 3), the line's value in pence and
+     * its title and quantity.
+     */
+    function writeVoids(txApp, list, ctx) {
+      if (!list.length) return;
+      const events = txApp.findCollectionByNameOrId("till_events");
+      for (let v = 0; v < list.length; v++) {
+        const event = new Record(events, {
+          register: ctx.register,
+          session: ctx.session,
+          kind: "void_line",
+          amount: list[v].amount,
+          detail: { title: list[v].title, qty: list[v].qty },
+          staff: ctx.staff,
+        });
+        if (ctx.approver) event.set("approver", ctx.approver);
+        txApp.save(event);
+      }
+    }
+
+    /** The approver a capability was granted by in a check, or "" when the caller holds it. */
+    function approverIn(result, capability) {
+      const list = result && result.grants ? result.grants : [];
+      for (let g = 0; g < list.length; g++) {
+        if (list[g].capability === capability && list[g].approver) return list[g].approver.id;
+      }
+      return "";
+    }
+
+    /** Whole pence off an untyped value (a number, or a string of digits), or null. */
+    function wholePence(value) {
+      if (typeof value === "number" && isFinite(value) && Math.floor(value) === value) return value;
+      if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value.trim());
+      return null;
     }
 
     // -----------------------------------------------------------------
@@ -135,6 +234,20 @@ routerAdd(
           : { credit: 0, points: 0 };
         const existingSplit = util.jsonField(existingSale, "payment_split", {}) || {};
         const existingTenders = tendersLib.tendersFor(e.app, existingSale, "");
+        // A part-exchange and an exchange come back as they were given:
+        // the trade-in off its own record, the refund off the sale's audit
+        // row (section 7).
+        let existingTrade = null;
+        if (existingSale.getString("trade_in")) {
+          try {
+            existingTrade = tradeComplete.saleBlock(
+              e.app.findRecordById("trade_ins", existingSale.getString("trade_in"))
+            );
+          } catch (err) {
+            existingTrade = null;
+          }
+        }
+        const existingReturns = refundLib.returnsOf(e.app, existingSale.id);
         return e.json(200, {
           sale: {
             id: existingSale.id,
@@ -150,8 +263,14 @@ routerAdd(
           change: tendersLib.changeOf(existingTenders),
           vat_total: existingSale.getInt("vat_total"),
           receipt: { number: existingSale.getString("number") },
+          trade_in: existingTrade,
+          refund: existingReturns ? refundLib.ticketBlock(e.app, existingReturns) : null,
         });
       }
+      // A ticket of returns alone made no sale: its client_id is on its
+      // refund's audit row instead.
+      const existingRefund = refundLib.replayByClientId(e.app, clientId);
+      if (existingRefund) return e.json(200, existingRefund);
     }
 
     // -----------------------------------------------------------------
@@ -201,11 +320,116 @@ routerAdd(
     }
 
     // -----------------------------------------------------------------
+    // A trade-in taken as part-exchange, and lines of an earlier sale
+    // brought back, in the same ticket (section 7)
+    // -----------------------------------------------------------------
+    const tradeInId = util.asStr(body.trade_in);
+    const returnsInput = given(body.returns) ? plainObject(body.returns) : null;
+    if (given(body.returns) && !returnsInput) {
+      throw e.badRequestError("Send the returns as the sale they came from, its lines and a reason.", null);
+    }
+
+    /** The sale lines are brought back from, or a thrown 404. */
+    function returnedSale() {
+      try {
+        return e.app.findRecordById("sales", util.asStr(returnsInput.sale));
+      } catch (err) {
+        throw e.notFoundError("Sale not found. Check the number and try again.", null);
+      }
+    }
+
+    // -----------------------------------------------------------------
     // Lines: stock items and till products
     // -----------------------------------------------------------------
     const rawLines = listOf(body.lines);
     if (rawLines.length === 0) {
-      throw e.badRequestError("Add at least one item to the sale.", null);
+      if (!returnsInput) {
+        throw e.badRequestError("Add at least one item to the sale.", null);
+      }
+      if (tradeInId) {
+        throw e.badRequestError(
+          "There is nothing on the ticket for the trade-in to pay for. Add an item, or complete it as a buy-in.",
+          null
+        );
+      }
+      return completeReturnsOnly();
+    }
+
+    /**
+     * A ticket of returns and no new lines is simply a refund (section 7):
+     * the refund route's own checks and writes (lib/salerefund.js) on this
+     * register's open session, the whole value back through
+     * `returns.tenders`, any lines voided off the ticket on the way, and the
+     * refund route's own body with `refund.exchange` 0. Its client_id goes on
+     * the refund's audit row, since there is no sale to carry it.
+     */
+    function completeReturnsOnly() {
+      const origin = returnedSale();
+      const ready = refundLib.prepare(e.app, origin, { lines: returnsInput.lines, reason: returnsInput.reason });
+      if (!ready.ok) throw e.error(ready.status, ready.message, null);
+      const plan = ready.plan;
+
+      const paidBack = tendersLib.ticketRefundTenders(returnsInput, {
+        amount: plan.amount,
+        hasCustomer: !!plan.customerId,
+        exchange: 0,
+      });
+      if (!paidBack.ok) throw e.error(paidBack.status, paidBack.message, null);
+      if (paidBack.cash > 0) {
+        const expected = util.sessionExpected(e.app, session);
+        if (paidBack.cash > expected) throw e.error(409, refundLib.drawerShort(expected), null);
+      }
+
+      const onlyVoids = readVoids();
+
+      // Capability last, as on the refund route.
+      const onlyGrant = perms.checkAll(e, onlyVoids.length ? ["refund", "void_line"] : ["refund"]);
+      if (!onlyGrant.ok) return perms.refuse(e, onlyGrant);
+
+      let onlyHalt = null;
+      let onlyDone = null;
+      try {
+        e.app.runInTransaction((txApp) => {
+          onlyDone = refundLib.write(txApp, plan, {
+            register: register,
+            session: session,
+            staffId: staff.id,
+            ip: e.realIP(),
+            tenders: paidBack.tenders,
+            cashAmount: paidBack.cash,
+            creditAmount: tendersLib.amountFor(paidBack.tenders, "store_credit"),
+            grant: onlyGrant,
+            consumeGrant: true,
+            clientId: clientId,
+          });
+          if (!onlyDone.ok) {
+            onlyHalt = { status: onlyDone.status, message: onlyDone.message };
+            throw new Error(onlyHalt.message);
+          }
+          writeVoids(txApp, onlyVoids, {
+            register: register.id,
+            session: session.id,
+            staff: staff.id,
+            approver: approverIn(onlyGrant, "void_line"),
+          });
+        });
+      } catch (err) {
+        if (onlyHalt) throw e.error(onlyHalt.status, onlyHalt.message, null);
+        throw err;
+      }
+
+      return e.json(
+        200,
+        refundLib.returnsOnlyBody(e.app, {
+          sale: onlyDone.sale,
+          ref: onlyDone.refundRef,
+          refunded: onlyDone.refunded,
+          refundedAfter: onlyDone.refundedAfter,
+          pointsReversed: onlyDone.pointsReversed,
+          credit: onlyDone.credit,
+          points: onlyDone.points,
+        })
+      );
     }
     if (rawLines.length > MAX_LINES) {
       throw e.badRequestError(`A sale can hold up to ${MAX_LINES} lines. Split it into two sales.`, null);
@@ -423,32 +647,79 @@ routerAdd(
     // -----------------------------------------------------------------
     // Voids: lines that were on this ticket and removed before payment
     // -----------------------------------------------------------------
-    const rawVoids = listOf(body.voided);
-    if (rawVoids.length > MAX_VOIDS) {
-      throw e.badRequestError(`A sale can record up to ${MAX_VOIDS} removed lines.`, null);
-    }
-    const voids = [];
-    for (let v = 0; v < rawVoids.length; v++) {
-      const raw = rawVoids[v] && typeof rawVoids[v] === "object" ? rawVoids[v] : {};
-      const amount = util.asInt(raw.amount, 0);
-      if (amount < 0) {
-        throw e.badRequestError("A removed line cannot have a negative amount. Check the voids.", null);
+    const voids = readVoids();
+
+    // -----------------------------------------------------------------
+    // Part-exchange (section 7): the trade-in must be open, the ticket's
+    // customer's, and have an accepted line. Its value V is what the
+    // accepted lines come to at their credit offers; A = min(V, S) pays
+    // towards this sale as one part_exchange tender, and U = V - A is the
+    // surplus, paid out as credit or cash once the tenders are known good.
+    // -----------------------------------------------------------------
+    let trade = null;
+    if (tradeInId) {
+      if (!customerId) {
+        throw e.badRequestError("Add the customer before taking a trade-in.", null);
       }
-      voids.push({
-        title: (util.asStr(raw.title) || "Line").slice(0, 120),
-        qty: Math.max(1, util.asInt(raw.qty, 1)),
-        amount: amount,
-      });
+      let tradeIn = null;
+      try {
+        tradeIn = e.app.findRecordById("trade_ins", tradeInId);
+      } catch (err) {
+        throw e.notFoundError("That trade-in was not found. Start the trade-in again.", null);
+      }
+      const tradeStatus = tradeIn.getString("status");
+      if (tradeStatus === "completed") {
+        throw e.error(409, "That trade-in has already been completed.", null);
+      }
+      if (tradeStatus !== "draft" && tradeStatus !== "offered" && tradeStatus !== "accepted") {
+        throw e.error(409, `That trade-in is ${tradeStatus}. Start a new one.`, null);
+      }
+      if (tradeIn.getString("customer") !== customerId) {
+        throw e.badRequestError(
+          "That trade-in is for a different customer. Start it again with the customer on the ticket.",
+          null
+        );
+      }
+      const tradeLines = tradeComplete.acceptedLines(e.app, tradeIn.id);
+      if (!tradeLines || tradeLines.length === 0) {
+        throw e.error(422, "Accept at least one line before completing this trade-in.", null);
+      }
+      const value = tradeComplete.totals(tradeLines).offer;
+      const applied = Math.min(value, total);
+      trade = { record: tradeIn, lines: tradeLines, value: value, applied: applied, surplus: value - applied };
     }
+    const partExchange = trade ? trade.applied : 0;
+
+    // -----------------------------------------------------------------
+    // Exchanges (section 7): the returned lines are refunded with the
+    // refund route's own checks (lib/salerefund.js), for a value R. What is
+    // left of this sale after the trade-in takes E = min(R, S - A) of it as
+    // one exchange tender; whatever of R that leaves goes back through
+    // `returns.tenders`.
+    // -----------------------------------------------------------------
+    let back = null;
+    if (returnsInput) {
+      const origin = returnedSale();
+      const ready = refundLib.prepare(e.app, origin, { lines: returnsInput.lines, reason: returnsInput.reason });
+      if (!ready.ok) throw e.error(ready.status, ready.message, null);
+      const exchange = Math.min(ready.plan.amount, total - partExchange);
+      back = { sale: origin, plan: ready.plan, amount: ready.plan.amount, exchange: exchange };
+    }
+    const exchangeAmount = back ? back.exchange : 0;
 
     // -----------------------------------------------------------------
     // Tenders (section 4): the shared rules, then the live limits the
     // shared rules cannot see - the cash cap, the credit and the points.
+    // With a trade-in or returns on the ticket the request's tenders come
+    // to what they leave, and the server adds the part_exchange and
+    // exchange tenders itself (lib/tenders.js).
     // -----------------------------------------------------------------
-    const tenderCheck = tendersLib.saleTenders(body, {
-      total: total,
+    const tenderCheck = tendersLib.ticketTenders(body, {
+      total: total - partExchange - exchangeAmount,
       requireCardLast4: epos.require_card_last4,
       hasCustomer: !!customerId,
+      partExchange: trade ? partExchange : null,
+      exchange: back ? exchangeAmount : null,
     });
     if (!tenderCheck.ok) throw e.error(tenderCheck.status, tenderCheck.message, null);
     const tenders = tenderCheck.tenders;
@@ -625,8 +896,79 @@ routerAdd(
       tier: customerTier,
       paidWithPoints: pointsAmount,
     });
-    // Points belong to a customer. A walk-in sale earns none.
+    // Points belong to a customer. A walk-in sale earns none. A sale that
+    // takes a part-exchange earns them on its whole value like any sale; the
+    // trade-in earns its own only on a credit surplus (EPOS-PLAN decision 5).
     const pointsEarned = customerId ? earn.total : 0;
+
+    // -----------------------------------------------------------------
+    // The part-exchange's settlement (section 7). A surplus is paid as
+    // store credit (all of it) or as cash (`surplus_cash`, 1p to all of it;
+    // what is not paid in cash is left with the shop by agreement). Then
+    // the buy-in's own checks, with this till's open session: the terms,
+    // and for cash the cap, the address, the flags, the ID and its photo,
+    // and 18 or over (lib/tradeincomplete.js).
+    // -----------------------------------------------------------------
+    let tradeReady = null;
+    let surplusCash = 0;
+    let surplusCredit = 0;
+    let tradePayoutType = "part_exchange";
+    if (trade) {
+      const settlement = plainObject(body.trade_settlement) || {};
+      if (trade.surplus > 0) {
+        const choice = util.asStr(settlement.surplus);
+        if (choice === "credit") {
+          surplusCredit = trade.surplus;
+          tradePayoutType = "credit";
+        } else if (choice === "cash") {
+          const cash = wholePence(settlement.surplus_cash);
+          if (cash === null || cash < 1 || cash > trade.surplus) {
+            throw e.badRequestError(
+              `Pay between ${money.formatGBP(1)} and ${money.formatGBP(trade.surplus)} in cash, or pay the surplus as credit.`,
+              null
+            );
+          }
+          surplusCash = cash;
+          tradePayoutType = "cash";
+        } else {
+          throw e.badRequestError("Pay the surplus as credit or cash.", null);
+        }
+      }
+      const ready = tradeComplete.prepare(e.app, {
+        tradeIn: trade.record,
+        customer: customer,
+        priv: priv,
+        lines: trade.lines,
+        payoutCash: surplusCash,
+        payoutCredit: surplusCredit,
+        termsAccepted: util.asBool(settlement.terms_accepted),
+        idCheck: settlement.id_check,
+        signature: settlement.signature,
+        session: session,
+        now: now,
+      });
+      if (!ready.ok) throw e.error(ready.status, ready.message, null);
+      tradeReady = ready.prepared;
+    }
+
+    // -----------------------------------------------------------------
+    // What of the returns this sale does not take goes back as a refund,
+    // through `returns.tenders`: cash only as far as the drawer holds after
+    // any cash this ticket pays out for the trade-in (section 4's rule).
+    // -----------------------------------------------------------------
+    let backTenders = null;
+    if (back) {
+      backTenders = tendersLib.ticketRefundTenders(returnsInput, {
+        amount: back.amount - back.exchange,
+        hasCustomer: !!back.plan.customerId,
+        exchange: back.exchange,
+      });
+      if (!backTenders.ok) throw e.error(backTenders.status, backTenders.message, null);
+      if (backTenders.cash > 0) {
+        const expected = util.sessionExpected(e.app, session) - surplusCash;
+        if (backTenders.cash > expected) throw e.error(409, refundLib.drawerShort(expected), null);
+      }
+    }
 
     // -----------------------------------------------------------------
     // Discounts and prices, checked on the server (section 4). A line
@@ -634,9 +976,10 @@ routerAdd(
     // settings.epos.discount_limit_pct of what it applies to needs
     // discount_over_limit; a unit_price that is not the item's or the
     // priced product's own needs price_override; recording voids needs
-    // void_line. A reward's discount was matched to the reward above, and
-    // the customer's own percent-off perks are worked out here, so only
-    // what is left over counts as manual.
+    // void_line; bringing lines back needs refund (section 7). A reward's
+    // discount was matched to the reward above, and the customer's own
+    // percent-off perks are worked out here, so only what is left over
+    // counts as manual.
     // -----------------------------------------------------------------
     function perkAllowance() {
       if (!customerTier || !customerTier.perks) return 0;
@@ -674,6 +1017,7 @@ routerAdd(
     if (needsPrice) capabilities.push("price_override");
     if (needsDiscount) capabilities.push("discount_over_limit");
     if (voids.length) capabilities.push("void_line");
+    if (back) capabilities.push("refund");
 
     let grant = null;
     if (capabilities.length) {
@@ -683,12 +1027,20 @@ routerAdd(
 
     /** The approver a capability was granted by, or "" when the caller holds it. */
     function approverFor(capability) {
-      const list = grant && grant.grants ? grant.grants : [];
-      for (let g = 0; g < list.length; g++) {
-        if (list[g].capability === capability && list[g].approver) return list[g].approver.id;
-      }
-      return "";
+      return approverIn(grant, capability);
     }
+
+    // The refund's own audit row names the refund's approval only; the
+    // sale spends every approval once, for the whole ticket.
+    const refundGrant =
+      back && grant && grant.grants
+        ? {
+            ok: true,
+            grants: grant.grants.filter(function (g) {
+              return g.capability === "refund";
+            }),
+          }
+        : null;
 
     // -----------------------------------------------------------------
     // Write
@@ -769,6 +1121,8 @@ routerAdd(
         if (customerId) sale.set("customer", customerId);
         if (discountSource) sale.set("discount_source", discountSource);
         if (clientId) sale.set("client_id", clientId);
+        // The part-exchange's two halves point at each other (section 7).
+        if (trade) sale.set("trade_in", trade.record.id);
         txApp.save(sale);
 
         try {
@@ -999,6 +1353,59 @@ routerAdd(
           txApp.save(liveRedemption);
         }
 
+        // The returned lines, refunded exactly as the refund route refunds
+        // them (lib/salerefund.js), before anything else on this ticket
+        // touches the drawer: the part E this sale takes is a negative
+        // exchange tender under the refund's own reference, the rest goes
+        // back as tendered. The approvals were spent for the whole ticket
+        // above.
+        let returnsMeta = null;
+        if (back) {
+          const backDone = refundLib.write(txApp, back.plan, {
+            register: register,
+            session: session,
+            staffId: staff.id,
+            ip: e.realIP(),
+            tenders: backTenders.tenders,
+            cashAmount: backTenders.cash,
+            creditAmount: tendersLib.amountFor(backTenders.tenders, "store_credit"),
+            drawerReserve: surplusCash,
+            grant: refundGrant,
+            consumeGrant: false,
+            exchange: { amount: back.exchange, sale: sale.id, number: number },
+          });
+          if (!backDone.ok) {
+            halt = { status: backDone.status, message: backDone.message };
+            throw new Error(halt.message);
+          }
+          returnsMeta = {
+            sale: back.sale.id,
+            number: back.sale.getString("number"),
+            ref: backDone.refundRef,
+            amount: backDone.refunded,
+            exchange: back.exchange,
+          };
+        }
+
+        // The trade-in, completed exactly as the buy-in route completes one
+        // (lib/tradeincomplete.js), with what it paid towards this sale and
+        // the link back to it.
+        let tradeDone = null;
+        if (trade) {
+          tradeDone = tradeComplete.complete(txApp, tradeReady, {
+            staffId: staff.id,
+            ip: e.realIP(),
+            payoutType: tradePayoutType,
+            completedMessage: "That trade-in has already been completed.",
+            partExchange: { value: partExchange, sale: sale.id, saleNumber: number },
+          });
+          if (!tradeDone.ok) {
+            halt = { status: tradeDone.status, message: tradeDone.message };
+            throw new Error(halt.message);
+          }
+          pending = pending.concat(tradeDone.pending || []);
+        }
+
         // One sale_tenders row per tender, and the drawer moves by the cash
         // tender's amount, never by what was handed over.
         const tenderRows = tendersLib.writeTenders(txApp, {
@@ -1018,25 +1425,12 @@ routerAdd(
         });
 
         // Lines taken off this ticket before payment, for the X and Z.
-        if (voids.length) {
-          const events = txApp.findCollectionByNameOrId("till_events");
-          const voidApprover = approverFor("void_line");
-          for (let v = 0; v < voids.length; v++) {
-            // The same shape POST /api/vault/till/void writes, which the
-            // X and Z report reads (section 3): the line's value in pence,
-            // and its title and quantity.
-            const event = new Record(events, {
-              register: register.id,
-              session: session.id,
-              kind: "void_line",
-              amount: voids[v].amount,
-              detail: { title: voids[v].title, qty: voids[v].qty },
-              staff: staff.id,
-            });
-            if (voidApprover) event.set("approver", voidApprover);
-            txApp.save(event);
-          }
-        }
+        writeVoids(txApp, voids, {
+          register: register.id,
+          session: session.id,
+          staff: staff.id,
+          approver: approverFor("void_line"),
+        });
 
         perms.logOverrides(txApp, grant, {
           register: register.id,
@@ -1072,6 +1466,12 @@ routerAdd(
           meta.discount = saleDiscount;
         }
         if (membershipMeta) meta.membership = membershipMeta;
+        // Identifiers and the shop's own money: the part-exchange as the
+        // response gives it, and which refund the returns were, which the
+        // receipt and a replay read back from here.
+        const tradeBlock = tradeDone ? tradeComplete.saleBlock(tradeDone.record) : null;
+        if (tradeBlock) meta.trade_in = tradeBlock;
+        if (returnsMeta) meta.returns = returnsMeta;
         auditLib.writeAuditLog(txApp, {
           actor: staff.id,
           action: "sale_complete",
@@ -1092,12 +1492,18 @@ routerAdd(
           change: tenderCheck.change,
           vat_total: vatTotal,
           receipt: { number: number },
+          trade_in: tradeBlock,
+          refund: returnsMeta,
         };
       });
     } catch (err) {
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
+
+    // The refund's block reads its tenders back as committed, the same way
+    // a replay does, so the two answers cannot differ.
+    if (result.refund) result.refund = refundLib.ticketBlock(e.app, result.refund);
 
     // After the transaction has committed, never inside it (lib/notify.js).
     notifyLib.sendPending(e.app, pending);
@@ -1200,42 +1606,22 @@ routerAdd(
 
 // ---------------------------------------------------------------------
 // POST /api/vault/sales/{id}/refund   (capability refund)
+//
+// The checks on the lines and the refund itself are lib/salerefund.js,
+// which a ticket bringing lines back through sales/complete shares
+// (docs/api-contract-epos.md, section 7); this route keeps its own order:
+// the sale and its lines, the tenders, the till and its drawer, then the
+// capability.
 // ---------------------------------------------------------------------
 routerAdd(
   "POST",
   "/api/vault/sales/{id}/refund",
   (e) => {
     const util = require(`${__hooks}/lib/vaultutil.js`);
-    const auditLib = require(`${__hooks}/lib/audit.js`);
-    const balances = require(`${__hooks}/lib/balances.js`);
     const perms = require(`${__hooks}/lib/permissions.js`);
     const registers = require(`${__hooks}/lib/registers.js`);
     const tendersLib = require(`${__hooks}/lib/tenders.js`);
-    const saleline = require(`${__hooks}/lib/shared/saleline.js`);
-    const money = require(`${__hooks}/lib/shared/money.js`);
-
-    const MAX_LINES = 100;
-
-    /** The sale's line records by id, beside the shared breakdown of them. */
-    function recordsById(rows) {
-      const map = {};
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i]) map[rows[i].id] = rows[i];
-      }
-      return map;
-    }
-
-    /** A line goes back on the shelf unless the till says it is not fit to (`restock: false`). */
-    function restockOf(value) {
-      if (value === false || value === 0) return false;
-      const s = String(value === undefined || value === null ? "" : value).toLowerCase();
-      return !(s === "false" || s === "0" || s === "no");
-    }
-
-    /** The one wording for a drawer that cannot cover a cash refund. */
-    function drawerShort(expected) {
-      return `The drawer should only hold ${money.formatGBP(Math.max(0, expected))}. Refund the rest to card or store credit.`;
-    }
+    const refundLib = require(`${__hooks}/lib/salerefund.js`);
 
     const staff = e.auth;
     const body = util.body(e);
@@ -1246,69 +1632,12 @@ routerAdd(
     } catch (err) {
       throw e.notFoundError("Sale not found. Check the number and try again.", null);
     }
-    if (sale.getString("status") === "refunded") {
-      throw e.error(409, "This sale has already been refunded in full.", null);
-    }
 
-    const reason = util.asStr(body.reason);
-    if (!reason) {
-      throw e.badRequestError("Say why this is being refunded.", null);
-    }
+    const ready = refundLib.prepare(e.app, sale, { lines: body.lines, reason: body.reason });
+    if (!ready.ok) throw e.error(ready.status, ready.message, null);
+    const plan = ready.plan;
 
-    const rawLines = body.lines && body.lines.length ? body.lines : [];
-    if (rawLines.length === 0) {
-      throw e.badRequestError("Pick at least one line to refund.", null);
-    }
-    if (rawLines.length > MAX_LINES) {
-      throw e.badRequestError(`A refund can take up to ${MAX_LINES} lines at once.`, null);
-    }
-
-    // The as-sold breakdown: unit_price, qty and discount as they were at
-    // completion, plus this line's share of the sale-level discount. The rows
-    // come back in "created,id" order, which is the order the allocation's
-    // rounding remainder is assigned in (lib/vaultutil.js).
-    const soldRows = util.saleLineRows(e.app, sale.id);
-    const soldRecords = recordsById(soldRows);
-    const asSold = saleline.breakdown(util.asSoldLines(soldRows), sale.getInt("discount"));
-
-    const requested = {};
-    const restock = {};
-    const order = [];
-    for (let i = 0; i < rawLines.length; i++) {
-      const raw = rawLines[i] && typeof rawLines[i] === "object" ? rawLines[i] : {};
-      const lineId = util.asStr(raw.sale_line);
-      const entry = asSold.byId[lineId];
-      if (!entry) {
-        throw e.badRequestError("One of those lines is not on this sale.", null);
-      }
-      if (soldRecords[lineId].getString("status") === "refunded") {
-        throw e.error(409, "One of those lines has already been refunded.", null);
-      }
-      const remaining = saleline.remainingQty(entry);
-      const want = Math.max(1, util.asInt(raw.qty, remaining));
-      if (requested[lineId] === undefined) {
-        requested[lineId] = 0;
-        restock[lineId] = true;
-        order.push(lineId);
-      }
-      requested[lineId] += want;
-      if (!restockOf(raw.restock)) restock[lineId] = false;
-      if (requested[lineId] > remaining) {
-        throw e.badRequestError(
-          `Only ${remaining} of that line is still sold. Lower the quantity.`,
-          null
-        );
-      }
-    }
-
-    // What these lines and quantities come to, from the shared breakdown.
-    let amount = 0;
-    for (let i = 0; i < order.length; i++) {
-      amount += saleline.refundAmount(asSold.byId[order[i]], requested[order[i]]);
-    }
-
-    const customerId = sale.getString("customer");
-    const tenderCheck = tendersLib.refundTenders(body, { amount: amount, hasCustomer: !!customerId });
+    const tenderCheck = tendersLib.refundTenders(body, { amount: plan.amount, hasCustomer: !!plan.customerId });
     if (!tenderCheck.ok) throw e.error(tenderCheck.status, tenderCheck.message, null);
     const tenders = tenderCheck.tenders;
     const cashAmount = tenderCheck.cash;
@@ -1323,7 +1652,7 @@ routerAdd(
 
     if (cashAmount > 0) {
       const expected = util.sessionExpected(e.app, session);
-      if (cashAmount > expected) throw e.error(409, drawerShort(expected), null);
+      if (cashAmount > expected) throw e.error(409, refundLib.drawerShort(expected), null);
     }
 
     // Capability last, so a manager is only asked to approve a refund that
@@ -1332,268 +1661,33 @@ routerAdd(
     if (!grant.ok) return perms.refuse(e, grant);
 
     let halt = null;
-    let result = null;
+    let done = null;
 
     try {
       e.app.runInTransaction((txApp) => {
-        const liveSale = txApp.findRecordById("sales", sale.id);
-        if (liveSale.getString("status") === "refunded") {
-          halt = { status: 409, message: "This sale has already been refunded in full." };
-          throw new Error(halt.message);
-        }
-
-        const liveSession = registers.openSession(txApp, register.id);
-        if (!liveSession || liveSession.id !== session.id) {
-          halt = { status: 409, message: "Open the till first." };
-          throw new Error(halt.message);
-        }
-        if (cashAmount > 0) {
-          const liveExpected = util.sessionExpected(txApp, liveSession);
-          if (cashAmount > liveExpected) {
-            halt = { status: 409, message: drawerShort(liveExpected) };
-            throw new Error(halt.message);
-          }
-        }
-
-        // Re-read every line and price from the live refunded_qty, so two
-        // refunds open at once cannot pay the same unit back twice.
-        const liveRows = util.saleLineRows(txApp, liveSale.id);
-        const liveRecords = recordsById(liveRows);
-        const live = saleline.breakdown(util.asSoldLines(liveRows), liveSale.getInt("discount"));
-
-        const plans = [];
-        let refunded = 0;
-        for (let i = 0; i < order.length; i++) {
-          const entry = live.byId[order[i]];
-          if (!entry) {
-            halt = {
-              status: 409,
-              message: "That line is no longer on this sale. Reload it and try again.",
-            };
-            throw new Error(halt.message);
-          }
-          const record = liveRecords[order[i]];
-          const want = requested[order[i]];
-          if (record.getString("status") === "refunded" || saleline.remainingQty(entry) < want) {
-            halt = {
-              status: 409,
-              message: "That line was refunded while this refund was open. Reload the sale and try again.",
-            };
-            throw new Error(halt.message);
-          }
-          const lineAmount = saleline.refundAmount(entry, want);
-          refunded += lineAmount;
-          plans.push({
-            line: record,
-            qty: entry.qty,
-            already: entry.refundedQty,
-            want: want,
-            amount: lineAmount,
-            restock: restock[order[i]],
-          });
-        }
-        // The tenders were checked against the amount worked out before
-        // the transaction; a refund of other units of the same line in the
-        // meantime can move it by a penny of rounding.
-        if (refunded !== amount) {
-          halt = {
-            status: 409,
-            message: "That line was refunded while this refund was open. Reload the sale and try again.",
-          };
-          throw new Error(halt.message);
-        }
-
-        try {
-          perms.consume(txApp, grant, "refund:" + liveSale.id);
-        } catch (err) {
-          halt = { status: 409, message: "That approval has already been used. Ask for it again." };
-          throw err;
-        }
-
-        const count = liveSale.getInt("refund_count") + 1;
-        const refundRef = `${liveSale.getString("number")}-R${count}`;
-
-        let restocked = 0;
-        for (let i = 0; i < plans.length; i++) {
-          const plan = plans[i];
-          const itemId = plan.line.getString("item");
-
-          // A till product has no stock; a damaged return stays as it is.
-          if (itemId && plan.restock) {
-            let item = null;
-            try {
-              item = txApp.findRecordById("items", itemId);
-            } catch (err) {
-              halt = {
-                status: 409,
-                message: "That item has been deleted, so it cannot go back into stock.",
-              };
-              throw new Error(halt.message);
-            }
-            item.set("qty", item.getInt("qty") + plan.want);
-            item.set("status", "in_stock");
-            txApp.save(item);
-            restocked += plan.want;
-          }
-
-          // qty and discount stay as sold for ever; only refunded_qty moves.
-          const after = plan.already + plan.want;
-          plan.line.set("refunded_qty", after);
-          if (after >= plan.qty) plan.line.set("status", "refunded");
-          txApp.save(plan.line);
-        }
-
-        let allRefunded = true;
-        const after = util.saleLineRows(txApp, liveSale.id);
-        for (let i = 0; i < after.length; i++) {
-          if (after[i] && after[i].getString("status") !== "refunded") allRefunded = false;
-        }
-
-        const refundedBefore = liveSale.getInt("refunded_total");
-        const refundedAfter = refundedBefore + refunded;
-        liveSale.set("refunded_total", refundedAfter);
-        liveSale.set("refund_count", count);
-        liveSale.set("status", allRefunded ? "refunded" : "part_refunded");
-        txApp.save(liveSale);
-
-        // Cumulative, from the sale's own earn figure: whatever order the
-        // lines go back in, the points reversed total exactly what the sale
-        // earned once it is fully refunded.
-        const pointsEarned = liveSale.getInt("points_earned");
-        const saleTotal = liveSale.getInt("total");
-        const pointsToReverse =
-          saleline.pointsCum(pointsEarned, saleTotal, refundedAfter) -
-          saleline.pointsCum(pointsEarned, saleTotal, refundedBefore);
-
-        if (creditAmount > 0) {
-          txApp.save(
-            new Record(txApp.findCollectionByNameOrId("credit_ledger"), {
-              customer: customerId,
-              amount: creditAmount,
-              reason: "sale",
-              ref: refundRef,
-              staff: staff.id,
-            })
-          );
-        }
-
-        // Signed: money out of the drawer is negative.
-        tendersLib.writeCashMovement(txApp, {
-          session: session.id,
-          type: "refund",
-          amount: -cashAmount,
-          ref: refundRef,
-          staff: staff.id,
-        });
-
-        const tenderRows = tendersLib.writeTenders(txApp, {
-          sale: liveSale.id,
-          refundRef: refundRef,
-          tenders: tenders,
-          register: register.id,
-          session: session.id,
-          staff: staff.id,
-        });
-
-        if (customerId && pointsToReverse !== 0) {
-          // The points ledger is allowed to go negative here: a customer who
-          // has already spent what a refunded sale earned owes those points
-          // back, and the ledger is the record of that.
-          txApp.save(
-            new Record(txApp.findCollectionByNameOrId("points_ledger"), {
-              customer: customerId,
-              delta: -pointsToReverse,
-              reason: "refund_reverse",
-              ref: refundRef,
-              staff: staff.id,
-            })
-          );
-        }
-
-        // The reason is a staff note against the sale, not audit meta:
-        // audit_log is permanent and superuser-only, and a refund reason is
-        // free text a staff member typed about a named customer.
-        const note = new Record(txApp.findCollectionByNameOrId("notes"), {
-          target_collection: "sales",
-          target_record: liveSale.id,
-          body: reason,
-          author: staff.id,
-        });
-        txApp.save(note);
-
-        perms.logOverrides(txApp, grant, {
-          register: register.id,
-          session: session.id,
-          amount: refunded,
-          detail: { sale: liveSale.getString("number"), ref: refundRef },
-          used_for: "refund:" + liveSale.id,
-        });
-
-        const fresh = customerId
-          ? balances.recompute(txApp, customerId)
-          : { credit: 0, points: 0 };
-
-        // The lines and quantities of this refund live here and nowhere
-        // else: the refund receipt (lib/salereceipt.js) reads them back by
-        // `ref`. Identifiers and the shop's own money only.
-        const lineMeta = [];
-        for (let i = 0; i < plans.length; i++) {
-          lineMeta.push({
-            sale_line: plans[i].line.id,
-            qty: plans[i].want,
-            amount: plans[i].amount,
-            restock: plans[i].restock,
-          });
-        }
-        const tenderMeta = [];
-        for (let t = 0; t < tenders.length; t++) {
-          tenderMeta.push({ method: tenders[t].method, amount: tenders[t].amount });
-        }
-        auditLib.writeAuditLog(txApp, {
-          actor: staff.id,
-          action: "sale_refund",
-          collection: "sales",
-          record: liveSale.id,
-          meta: {
-            number: liveSale.getString("number"),
-            ref: refundRef,
-            lines: lineMeta,
-            refunded: refunded,
-            refunded_total: refundedAfter,
-            tenders: tenderMeta,
-            refund_method: util.asStr(body.refund_method),
-            restocked: restocked,
-            points_reversed: pointsToReverse,
-            note: note.id,
-            register: register.id,
-            session: session.id,
-            approvals: perms.auditMeta(grant),
-          },
+        done = refundLib.write(txApp, plan, {
+          register: register,
+          session: session,
+          staffId: staff.id,
           ip: e.realIP(),
+          tenders: tenders,
+          cashAmount: cashAmount,
+          creditAmount: creditAmount,
+          grant: grant,
+          consumeGrant: true,
+          refundMethod: util.asStr(body.refund_method),
         });
-
-        result = {
-          sale: {
-            id: liveSale.id,
-            number: liveSale.getString("number"),
-            status: liveSale.getString("status"),
-            refunded_total: refundedAfter,
-            refund_count: count,
-          },
-          refund: { ref: refundRef, amount: refunded, tenders: tenderRows },
-          refunded: refunded,
-          refunded_total: refundedAfter,
-          points_reversed: pointsToReverse,
-          credit_balance: fresh.credit,
-          points_balance: fresh.points,
-        };
+        if (!done.ok) {
+          halt = { status: done.status, message: done.message };
+          throw new Error(halt.message);
+        }
       });
     } catch (err) {
       if (halt) throw e.error(halt.status, halt.message, null);
       throw err;
     }
 
-    return e.json(200, result);
+    return e.json(200, refundLib.responseOf(done));
   },
   $apis.requireAuth("staff")
 );
