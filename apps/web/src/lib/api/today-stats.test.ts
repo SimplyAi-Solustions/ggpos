@@ -42,7 +42,7 @@ describe("the day's numbers in live mode", () => {
             number: "GG-S-000455",
             total: 4745,
             refunded_total: 0,
-            payment_split: { sumup_card: 4745 },
+            payment_split: { card_tide: 4745 },
             status: "complete",
             created: "2026-09-20T09:41:00Z",
             expand: { customer: { name: "Ash Ketchum" } },

@@ -476,7 +476,7 @@ export function ProfileScreen() {
                 },
                 {
                   heading: "Who sees it",
-                  body: "Staff who need it to do their job, SumUp for card payments, and our email and text message provider. We do not sell your data.",
+                  body: "Staff who need it to do their job, and our email and text message provider. Card payments in the shop are taken on a Tide card reader, and online payments will go through Stripe. We do not sell your data.",
                 },
                 {
                   heading: "Your rights",

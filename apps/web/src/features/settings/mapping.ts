@@ -12,16 +12,28 @@
  * save.
  */
 import {
+  CAPABILITIES,
+  DEFAULT_PERMISSIONS,
   DEFAULT_RETRO_PRIORITY,
   DEFAULT_TCG_PRIORITY,
   formatGBP,
   parseDecimalToMinor,
+  resolvePermissions,
+  type Capability,
+  type PermissionTable,
   type PriceSource,
   type PricingRule,
+  type Role,
   type RoundingStep,
 } from "@gg/shared"
 
-import type { PricingRuleRow, PricingRuleWrite, SettingsRecord } from "@/lib/api/types"
+import { eposFrom } from "@/lib/api/config"
+import type {
+  EposSettingsRow,
+  PricingRuleRow,
+  PricingRuleWrite,
+  SettingsRecord,
+} from "@/lib/api/types"
 import { formatPercent } from "@/lib/format"
 
 // ---------------------------------------------------------------------------
@@ -351,7 +363,31 @@ export interface SettingsForm {
   shopPhone: string
   shopEmail: string
   vatRegistered: boolean
+  /** Printed on receipts while VAT registered. */
+  vatNumber: string
   receiptTerms: string
+  // The till (settings.epos, docs/api-contract-epos.md, section 1)
+  /** Whole percent: a discount above it needs `discount_over_limit`. */
+  discountLimitPct: string
+  requireCardLast4: boolean
+  /** Whole minutes; zero switches the timer off. */
+  autoLockMinutes: string
+  /** Pence, smallest first: the quick cash notes the tender step offers. */
+  quickCash: number[]
+  /** Pounds, the float the till suggests when it opens. */
+  defaultFloat: string
+  zRequiresCardTotal: boolean
+  /** Each capability's lowest role. The two admin-only ones never move. */
+  permissions: PermissionTable
+  receiptHeader: string
+  receiptFooter: string
+  returnsPolicy: string
+  showPortalQr: boolean
+  /**
+   * `settings.epos` as it was read, so a save keeps anything this screen
+   * does not show (`card_provider`, and whatever a later phase adds).
+   */
+  eposStored: EposSettingsRow
   // Price sources
   sourcePriority: PriceSource[]
   retroSourcePriority: PriceSource[]
@@ -421,7 +457,9 @@ export function recordToForm(record: SettingsRecord): SettingsForm {
     displaySignupUrl: record.display?.signup_url ?? "/estimate",
     shopEmail: record.shop_email ?? "",
     vatRegistered: record.vat_registered === true,
+    vatNumber: record.vat_number ?? "",
     receiptTerms: record.receipt_terms ?? "",
+    ...eposToForm(record.epos),
     sourcePriority: sourceOrder(record.source_priority, DEFAULT_TCG_PRIORITY),
     retroSourcePriority: sourceOrder(record.retro_source_priority, DEFAULT_RETRO_PRIORITY),
     haircutPct: String(haircut ?? DEFAULT_HAIRCUT_PCT),
@@ -476,11 +514,111 @@ export function formToPatch(form: SettingsForm): Partial<SettingsRecord> {
     shop_phone: form.shopPhone.trim(),
     shop_email: form.shopEmail.trim(),
     vat_registered: form.vatRegistered,
+    vat_number: form.vatNumber.trim(),
     receipt_terms: form.receiptTerms,
+    epos: formToEpos(form),
     source_priority: form.sourcePriority,
     retro_source_priority: form.retroSourcePriority,
   }
 }
+
+// ---------------------------------------------------------------------------
+// The till's settings (settings.epos)
+// ---------------------------------------------------------------------------
+
+/** The two capabilities an admin keeps whatever the table says. */
+export const FIXED_CAPABILITIES: readonly Capability[] = ["settings_manage", "staff_manage"]
+
+/** The quick cash notes the shop can choose from, in pence. */
+export const QUICK_CASH_CHOICES = [100, 200, 500, 1000, 2000, 5000] as const
+
+type EposForm = Pick<
+  SettingsForm,
+  | "discountLimitPct"
+  | "requireCardLast4"
+  | "autoLockMinutes"
+  | "quickCash"
+  | "defaultFloat"
+  | "zRequiresCardTotal"
+  | "permissions"
+  | "receiptHeader"
+  | "receiptFooter"
+  | "returnsPolicy"
+  | "showPortalQr"
+  | "eposStored"
+>
+
+/** `settings.epos` into the form, every gap filled with the seed's default. */
+export function eposToForm(stored: EposSettingsRow | undefined): EposForm {
+  const epos = eposFrom(stored)
+  return {
+    discountLimitPct: String(epos.discount_limit_pct),
+    requireCardLast4: epos.require_card_last4,
+    autoLockMinutes: String(epos.auto_lock_minutes),
+    quickCash: [...epos.quick_cash],
+    defaultFloat: penceToPounds(epos.default_float),
+    zRequiresCardTotal: epos.z_requires_card_total,
+    permissions: { ...epos.permissions },
+    receiptHeader: epos.receipt.header,
+    receiptFooter: epos.receipt.footer,
+    returnsPolicy: epos.receipt.returns_policy,
+    showPortalQr: epos.receipt.show_portal_qr,
+    eposStored: { ...(stored ?? {}) },
+  }
+}
+
+/**
+ * Only the rows an admin has moved off the shared defaults: an empty table
+ * means "the defaults", which is how the migration seeds it, so a shop that
+ * never touches the table keeps following the defaults as they change. The
+ * admin-only pair is never stored at all; the shared resolver pins it.
+ */
+export function permissionsToStore(table: PermissionTable): Record<string, Role> {
+  const resolved = resolvePermissions(table)
+  const stored: Record<string, Role> = {}
+  for (const capability of CAPABILITIES) {
+    if (FIXED_CAPABILITIES.includes(capability)) continue
+    if (resolved[capability] !== DEFAULT_PERMISSIONS[capability]) {
+      stored[capability] = resolved[capability]
+    }
+  }
+  return stored
+}
+
+/**
+ * The form back into `settings.epos`, laid over what was stored so nothing
+ * this screen does not show is lost.
+ */
+export function formToEpos(form: EposForm): EposSettingsRow {
+  const stored = form.eposStored ?? {}
+  return {
+    ...stored,
+    permissions: permissionsToStore(form.permissions),
+    discount_limit_pct: parsePercent(form.discountLimitPct) ?? 10,
+    require_card_last4: form.requireCardLast4,
+    auto_lock_minutes: parseCount(form.autoLockMinutes) ?? 5,
+    quick_cash: [...form.quickCash].sort((a, b) => a - b),
+    default_float: poundsToPence(form.defaultFloat) ?? 0,
+    z_requires_card_total: form.zRequiresCardTotal,
+    card_provider: stored.card_provider || "manual_tide",
+    receipt: {
+      ...(stored.receipt ?? {}),
+      header: form.receiptHeader.trim(),
+      footer: form.receiptFooter.trim(),
+      returns_policy: form.returnsPolicy.trim(),
+      show_portal_qr: form.showPortalQr,
+    },
+  }
+}
+
+/** One capability's lowest role, with the admin-only pair left where it is. */
+export function setPermission(table: PermissionTable, capability: Capability, role: Role): PermissionTable {
+  if (FIXED_CAPABILITIES.includes(capability)) return table
+  return { ...table, [capability]: role }
+}
+
+/** The capabilities in the order the permissions table lists them. */
+export const PERMISSION_ORDER: readonly Capability[] = CAPABILITIES
 
 /** The offer settings the preview computes with, from the unsaved form. */
 export function formToOfferSettings(form: SettingsForm) {
@@ -576,6 +714,20 @@ export function validateSettings(form: SettingsForm): FormErrors {
     errors.shopEmail = "That is not an email address. Check it and try again."
   }
   requirePercent(errors, "haircutPct", form.haircutPct)
+  // The till
+  requirePercent(errors, "discountLimitPct", form.discountLimitPct)
+  const lock = parseCount(form.autoLockMinutes)
+  if (lock === null || lock > 120) {
+    errors.autoLockMinutes =
+      "Enter the minutes as a whole number up to 120, for example 5. Zero never locks on a timer."
+  }
+  if (form.quickCash.length === 0) {
+    errors.quickCash = "Choose at least one note for the cash step, for example £10 and £20."
+  }
+  requirePounds(errors, "defaultFloat", form.defaultFloat)
+  if (form.vatNumber.trim().length > 20) {
+    errors.vatNumber = "A VAT number is at most 20 characters. Check it and try again."
+  }
   return errors
 }
 

@@ -1,7 +1,7 @@
 /**
  * The files the shop can take out, in the order the Exports screen lists
- * them: the two that go to somebody else first, then the shop's own records,
- * then the two an admin keeps for HMRC.
+ * them: the one that goes to eBay first, then the shop's own records, then
+ * the two an admin keeps for HMRC.
  *
  * Every path here is a route in docs/api-contract.md's Phase 4 section,
  * except the audit log, which lives with the reports.
@@ -19,11 +19,6 @@ export interface ExportDef {
 }
 
 export const EXPORTS: ExportDef[] = [
-  {
-    key: "sumup",
-    label: "SumUp items",
-    note: "Retro, sealed and accessory lines in stock, in SumUp's own import layout. Downloading marks them as sent.",
-  },
   {
     key: "ebay-listings",
     label: "eBay listing file",
@@ -66,8 +61,6 @@ export const EXPORTS: ExportDef[] = [
 export interface ExportPathInput {
   from: string
   to: string
-  /** SumUp only: also include lines that have changed since the range start. */
-  sumupChanged: boolean
   /** eBay listing file only: the items to write. */
   ids: string[]
 }
@@ -75,12 +68,6 @@ export interface ExportPathInput {
 /** The route and query string one export row calls. */
 export function exportPath(key: ExportKey, input: ExportPathInput): string {
   switch (key) {
-    case "sumup":
-      // Leaving `since` off is the narrowest call: only lines SumUp has
-      // never seen. Adding it widens the file to lines that have changed.
-      return input.sumupChanged
-        ? `/api/vault/exports/sumup.csv?since=${input.from}`
-        : "/api/vault/exports/sumup.csv"
     case "ebay-listings":
       return `/api/vault/exports/ebay-listings.csv?ids=${input.ids.join(",")}`
     case "inventory":

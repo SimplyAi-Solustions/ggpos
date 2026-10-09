@@ -1,6 +1,6 @@
 /**
- * Exports and imports: the files that go out to SumUp and eBay, and the ones
- * that come back.
+ * Exports and imports: the files that go out to eBay and the shop's own
+ * records, and the ones that come back.
  *
  * Two sections under one Anton line. Every export is a route in
  * docs/api-contract.md's Phase 4 section, fetched with the staff token and
@@ -19,12 +19,10 @@ import { Input } from "@/components/ui/input"
 import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { SkeletonText } from "@/components/ui/skeleton"
-import { Switch } from "@/components/ui/switch"
 import { useCounterDock } from "@/app/counter-dock"
 import { useStaff } from "@/lib/auth"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
-  countUnsyncedForSumUp,
   downloadExport,
   endListings as endListingsCall,
   inStockItemIds,
@@ -341,19 +339,12 @@ export function ExportsScreen() {
   const today = useToday()
 
   const [range, setRange] = React.useState(() => resolvePreset("month", today))
-  const [sumupChanged, setSumupChanged] = React.useState(false)
   const [running, setRunning] = React.useState<ExportKey | null>(null)
   const [exportError, setExportError] = React.useState<string | null>(null)
   const [chosen, setChosen] = React.useState<Chosen | null>(null)
   const [result, setResult] = React.useState<CsvImportRecord | null>(null)
   const [summary, setSummary] = React.useState<string | null>(null)
   const [importError, setImportError] = React.useState<string | null>(null)
-
-  const unsynced = useQuery({
-    queryKey: ["sumup-unsynced"],
-    queryFn: countUnsyncedForSumUp,
-    staleTime: 60_000,
-  })
 
   const listings = useQuery({
     queryKey: ["end-listings"],
@@ -367,7 +358,7 @@ export function ExportsScreen() {
     mutationFn: async (def: ExportDef) => {
       setRunning(def.key)
       const ids = def.key === "ebay-listings" ? await inStockItemIds() : []
-      const input = { from: range.from, to: range.to, sumupChanged, ids }
+      const input = { from: range.from, to: range.to, ids }
       await downloadExport({
         key: def.key,
         path: exportPath(def.key, input),
@@ -376,9 +367,6 @@ export function ExportsScreen() {
     },
     onMutate: () => setExportError(null),
     onSettled: () => setRunning(null),
-    onSuccess: () => {
-      void unsynced.refetch()
-    },
     onError: (err) =>
       setExportError(
         refusalOrFallback(err, "That file did not download. Try again.")
@@ -457,7 +445,6 @@ export function ExportsScreen() {
       setSummary(said)
       setChosen(null)
       void listings.refetch()
-      void unsynced.refetch()
       // An import lists cards and sells items, so every stock read the rest
       // of the counter holds is now stale.
       void queryClient.invalidateQueries({ queryKey: ["items"] })
@@ -493,7 +480,7 @@ export function ExportsScreen() {
   return (
     <section className="pt-16 sm:pt-24">
       <PageTitle>Exports and imports</PageTitle>
-      <Lede>The files that go out to SumUp and eBay, and the ones that come back.</Lede>
+      <Lede>The files that go out to eBay and the books, and the ones that come back.</Lede>
 
       {/* ---- Exports ---- */}
       <section className="mt-14">
@@ -536,31 +523,11 @@ export function ExportsScreen() {
             <ExportRow
               key={def.key}
               def={def}
-              detail={
-                def.key === "sumup" && unsynced.data !== undefined
-                  ? `${unsynced.data} waiting · ${when(lastRunOf(def.key))}`
-                  : when(lastRunOf(def.key))
-              }
+              detail={when(lastRunOf(def.key))}
               pending={running === def.key}
               disabled={Boolean(def.dated && rangeProblem)}
               onRun={() => run.mutate(def)}
-            >
-              {def.key === "sumup" ? (
-                <span className="mt-2 flex items-center gap-3">
-                  <Switch
-                    id="sumup-changed"
-                    checked={sumupChanged}
-                    onCheckedChange={(checked: boolean) => setSumupChanged(checked)}
-                    aria-label="Include lines that have changed since the from date"
-                  />
-                  <label htmlFor="sumup-changed" className="text-[13px] text-muted-foreground-2">
-                    {sumupChanged
-                      ? "Everything changed since the from date"
-                      : "Only lines SumUp has never seen"}
-                  </label>
-                </span>
-              ) : null}
-            </ExportRow>
+            />
           ))}
         </ul>
 
@@ -606,11 +573,6 @@ export function ExportsScreen() {
             onFile={(file) => void chooseFile("ebay_orders", file)}
           />
         </div>
-
-        <p className="mt-8 max-w-[64ch] text-[13px] leading-[1.45] text-muted-foreground-2">
-          SumUp sales are not a file. They come in on the hourly pull, and a
-          day's card takings are compared on the Cash screen.
-        </p>
 
         {chosen?.problem ? (
           <p role="alert" className="mt-8 text-[13px] text-destructive">

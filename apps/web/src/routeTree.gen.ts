@@ -35,6 +35,7 @@ import { Route as CounterPasswordRouteImport } from "./routes/counter.password"
 import { Route as CounterScanRouteImport } from "./routes/counter.scan"
 import { Route as CounterSellRouteImport } from "./routes/counter.sell"
 import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
+import { Route as CounterStaffRouteImport } from "./routes/counter.staff"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
 import { Route as AccountQuotesIndexRouteImport } from "./routes/account.quotes.index"
 import { Route as AccountQuotesIdRouteImport } from "./routes/account.quotes.$id"
@@ -191,6 +192,11 @@ const CounterSettingsRoute = CounterSettingsRouteImport.update({
   path: "/settings",
   getParentRoute: () => CounterRoute,
 } as any)
+const CounterStaffRoute = CounterStaffRouteImport.update({
+  id: "/staff",
+  path: "/staff",
+  getParentRoute: () => CounterRoute,
+} as any)
 const LabelsPrintRoute = LabelsPrintRouteImport.update({
   id: "/labels/print",
   path: "/labels/print",
@@ -344,6 +350,7 @@ export interface FileRoutesByFullPath {
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
+  "/counter/staff": typeof CounterStaffRoute
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
@@ -395,6 +402,7 @@ export interface FileRoutesByTo {
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
+  "/counter/staff": typeof CounterStaffRoute
   "/labels/print": typeof LabelsPrintRoute
   "/account": typeof AccountIndexRoute
   "/counter": typeof CounterIndexRoute
@@ -449,6 +457,7 @@ export interface FileRoutesById {
   "/counter/scan": typeof CounterScanRoute
   "/counter/sell": typeof CounterSellRoute
   "/counter/settings": typeof CounterSettingsRoute
+  "/counter/staff": typeof CounterStaffRoute
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
@@ -504,6 +513,7 @@ export interface FileRouteTypes {
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
+    | "/counter/staff"
     | "/labels/print"
     | "/account/"
     | "/counter/"
@@ -555,6 +565,7 @@ export interface FileRouteTypes {
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
+    | "/counter/staff"
     | "/labels/print"
     | "/account"
     | "/counter"
@@ -608,6 +619,7 @@ export interface FileRouteTypes {
     | "/counter/scan"
     | "/counter/sell"
     | "/counter/settings"
+    | "/counter/staff"
     | "/labels/print"
     | "/account/"
     | "/counter/"
@@ -831,6 +843,13 @@ declare module "@tanstack/react-router" {
       path: "/settings"
       fullPath: "/counter/settings"
       preLoaderRoute: typeof CounterSettingsRouteImport
+      parentRoute: typeof CounterRoute
+    }
+    "/counter/staff": {
+      id: "/counter/staff"
+      path: "/staff"
+      fullPath: "/counter/staff"
+      preLoaderRoute: typeof CounterStaffRouteImport
       parentRoute: typeof CounterRoute
     }
     "/labels/print": {
@@ -1061,6 +1080,7 @@ interface CounterRouteChildren {
   CounterScanRoute: typeof CounterScanRoute
   CounterSellRoute: typeof CounterSellRoute
   CounterSettingsRoute: typeof CounterSettingsRoute
+  CounterStaffRoute: typeof CounterStaffRoute
   CounterIndexRoute: typeof CounterIndexRoute
   CounterCustomersNewRoute: typeof CounterCustomersNewRoute
   CounterQuotesIdRoute: typeof CounterQuotesIdRoute
@@ -1090,6 +1110,7 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterScanRoute: CounterScanRoute,
   CounterSellRoute: CounterSellRoute,
   CounterSettingsRoute: CounterSettingsRoute,
+  CounterStaffRoute: CounterStaffRoute,
   CounterIndexRoute: CounterIndexRoute,
   CounterCustomersNewRoute: CounterCustomersNewRoute,
   CounterQuotesIdRoute: CounterQuotesIdRoute,

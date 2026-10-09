@@ -115,8 +115,12 @@ const STAFF = [
   { key: "staff_richard", label: "Richard", weight: 38 },
 ]
 
+// Card on the Tide reader is today's card tender; `sumup_card` is kept for
+// the sales taken before SumUp was removed, labelled the way every report
+// labels it (docs/api-contract-epos.md, section 5).
 const PAYMENTS = [
-  { key: "sumup_card", label: "SumUp card", weight: 58 },
+  { key: "card_tide", label: "Card", weight: 50 },
+  { key: "sumup_card", label: "Card (SumUp)", weight: 8 },
   { key: "cash", label: "Cash", weight: 24 },
   { key: "store_credit", label: "Store credit", weight: 9 },
   { key: "mixed", label: "Mixed", weight: 5 },

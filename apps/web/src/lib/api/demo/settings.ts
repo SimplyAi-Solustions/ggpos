@@ -41,14 +41,26 @@ export const DEMO_SETTINGS_RECORD: SettingsRecord = {
   // The customer-facing screen, off until an admin turns it on, exactly as
   // the Phase 6 migration seeds it.
   display: { enabled: false, ticker: "Game · Trade · Play", signup_url: "/estimate" },
-  // The merchant code the demo Cash screen compares against, and the Solo
-  // the demo counter takes card payments on. Neither is a key: the SumUp
-  // API key stays on the server, in demo mode and out of it.
-  sumup: {
-    merchant_code: "MDEMO001",
-    default_reader_id: "reader_demo_1",
-    default_reader_name: "Counter Solo",
+  // The till's settings, exactly as pb_migrations/1789820800_epos_foundation.js
+  // seeds them: the defaults permissions table, a 10 percent discount limit,
+  // a five-minute auto-lock and a £100 float.
+  epos: {
+    permissions: {},
+    discount_limit_pct: 10,
+    require_card_last4: true,
+    auto_lock_minutes: 5,
+    quick_cash: [500, 1000, 2000, 5000],
+    default_float: 10000,
+    z_requires_card_total: true,
+    card_provider: "manual_tide",
+    receipt: {
+      header: "",
+      footer: "Thank you for shopping with GG Entertainment.",
+      returns_policy: "",
+      show_portal_qr: true,
+    },
   },
+  vat_number: "",
   id_photo_retention_months: 12,
   vat_registered: false,
   shop_name: "GG Entertainment",
@@ -125,7 +137,7 @@ export const DEMO_RULE_ROWS: PricingRuleRow[] = [
   },
 ]
 
-const settings: SettingsRecord = { ...DEMO_SETTINGS_RECORD }
+const settings: SettingsRecord = structuredClone(DEMO_SETTINGS_RECORD)
 const rules: PricingRuleRow[] = DEMO_RULE_ROWS.map((row) => ({ ...row }))
 
 let sequence = 0

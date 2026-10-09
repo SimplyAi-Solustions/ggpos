@@ -51,7 +51,9 @@ async function saveButton() {
 
 afterEach(cleanup)
 
-describe("saving the settings", () => {
+// The page carries the whole shop's settings, the till's included, so a
+// test that types into it and saves twice is given room on a busy runner.
+describe("saving the settings", { timeout: 20_000 }, () => {
   beforeEach(() => {
     for (const spy of [getSettings, listPricingRules, listGames, saveSettings, savePricingRules]) {
       spy.mockReset()

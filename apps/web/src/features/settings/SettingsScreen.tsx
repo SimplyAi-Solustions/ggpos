@@ -1,10 +1,20 @@
 /**
  * Settings: the numbers the whole counter runs on.
  *
- * Admin only. `settings` is one record and `pricing_rules` is a handful of
- * rows, both admin-only collections, so this screen writes them straight
- * through the collection API and then invalidates the config query every
- * other screen reads them through (docs/api-contract.md, "Config").
+ * Admin only, but for Tills: `settings` is one record and `pricing_rules` is
+ * a handful of rows, both admin-only collections, so this screen writes
+ * them straight through the collection API and then invalidates the config
+ * query every other screen reads them through (docs/api-contract.md,
+ * "Config"). A manager registers tills, so a manager sees the Tills section
+ * and nothing else.
+ *
+ * Phase 8 adds the till's settings (`settings.epos`,
+ * docs/api-contract-epos.md, section 1) to the same form and the same Save:
+ * the discount limit, the card's last four digits, the auto-lock, the quick
+ * cash notes, the default float, the Z's Tide total, the permissions
+ * table, the receipt's header, footer and returns policy, the My Vault QR
+ * and the VAT number. Tills and Printers act straight away and sit after
+ * the Save, because nothing in them waits for it.
  *
  * Sections are tracked headings down one page, divided by whitespace the way
  * every other counter screen is. One block button saves the lot, docked in
@@ -25,7 +35,10 @@ import { Lede, PageTitle } from "@/components/ui/page-title"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useCounterDock } from "@/app/counter-dock"
-import { useStaff } from "@/lib/auth"
+import { isManagerUp, useStaffRole } from "@/features/lock/role"
+import { PermissionsTable } from "@/features/settings/PermissionsTable"
+import { PrintersSection } from "@/features/settings/PrintersSection"
+import { TillsSection } from "@/features/settings/TillsSection"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   getSettings,
@@ -39,7 +52,6 @@ import {
   EMAIL_PROVIDER_LABEL,
   pushPublicKeyFrom,
 } from "@/lib/api/notifications"
-import { CardReader } from "@/features/settings/CardReader"
 import { RulesMatrix } from "@/features/settings/RulesMatrix"
 import { SourceOrder } from "@/features/settings/SourceOrder"
 import { OfferPreview, SellPreview } from "@/features/settings/previews"
@@ -53,8 +65,10 @@ import {
   formToPatch,
   formToPricingRule,
   formToRuleWrite,
+  QUICK_CASH_CHOICES,
   recordToForm,
   RETENTION_MONTHS,
+  setPermission,
   ruleChanged,
   ruleRowToForm,
   validateRules,
@@ -64,11 +78,55 @@ import {
   type SettingsForm,
 } from "@/features/settings/mapping"
 import type { GameRecord, PricingRuleRow, SettingsRecord } from "@/lib/api/types"
+import { formatGBP } from "@gg/shared"
 
 /** The same treatment the Sell and Cash screens give a blocked block button. */
 const BLOCKED = "disabled:opacity-100 disabled:bg-surface-3 disabled:text-muted-foreground"
 
 const RECEIPT_TERMS_MAX = 4000
+const RECEIPT_TEXT_MAX = 500
+
+/** A note under a control: what the setting actually does. */
+function Note({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+      {children}
+    </p>
+  )
+}
+
+/** A switch with its state said in words beside it. */
+function SwitchField({
+  label,
+  checked,
+  onChange,
+  on,
+  off,
+  note,
+  testId,
+}: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+  on: string
+  off: string
+  note?: React.ReactNode
+  testId?: string
+}) {
+  return (
+    <Field label={label} layout="auto">
+      <div className="flex items-center gap-4" data-testid={testId}>
+        <Switch
+          checked={checked}
+          onCheckedChange={(next: boolean) => onChange(next)}
+          aria-label={label}
+        />
+        <span className="text-[15px] text-foreground">{checked ? on : off}</span>
+      </div>
+      {note ? <Note>{note}</Note> : null}
+    </Field>
+  )
+}
 
 function Section({
   title,
@@ -545,9 +603,143 @@ function Editor({
         </div>
       </Section>
 
-      {/* ---- Card reader ---- */}
-      <Section title="Card reader">
-        <CardReader settings={settings} />
+      {/* ---- The till ---- */}
+      <Section title="Till">
+        <div className="flex flex-col gap-10">
+          <Field label="Card payments" layout="auto">
+            <p className="pt-2 text-[15px] leading-[1.5] text-foreground" data-testid="card-provider">
+              Tide Card Reader, keyed by hand.
+            </p>
+            <Note>
+              The till shows the amount, staff key it on the reader and confirm
+              it was approved. Nothing is sent to the reader.
+            </Note>
+          </Field>
+          <SwitchField
+            label="Last four digits"
+            checked={form.requireCardLast4}
+            onChange={(checked) => set({ requireCardLast4: checked })}
+            on="Asked for on every card"
+            off="Not asked for"
+            note="The card step asks for the last four digits off the reader's slip, so a payment can be found later."
+          />
+          <PercentField
+            id="discount-limit"
+            label="Discount limit"
+            value={form.discountLimitPct}
+            onChange={(next) => set({ discountLimitPct: next })}
+            error={shown.discountLimitPct}
+            note="A line or ticket discount above this needs somebody allowed to give one, or a manager's PIN."
+          />
+          <CountField
+            id="auto-lock"
+            label="Auto-lock"
+            hint="Minutes"
+            value={form.autoLockMinutes}
+            onChange={(next) => set({ autoLockMinutes: next })}
+            error={shown.autoLockMinutes}
+            note="How long a registered till waits without a touch before it locks to the PIN screen. Zero leaves it to the Lock key."
+          />
+          <Field label="Quick cash" layout="auto">
+            <ChipGroup
+              multiple
+              aria-label="Quick cash notes"
+              value={form.quickCash.map(String)}
+              onValueChange={(next: string[]) =>
+                set({
+                  quickCash: next
+                    .map(Number)
+                    .filter((pence) => Number.isInteger(pence) && pence > 0)
+                    .sort((a, b) => a - b),
+                })
+              }
+            >
+              {[...new Set<number>([...QUICK_CASH_CHOICES, ...form.quickCash])]
+                .sort((a, b) => a - b)
+                .map((pence) => (
+                  <Chip key={pence} value={String(pence)}>
+                    {formatGBP(pence).replace(/\.00$/, "")}
+                  </Chip>
+                ))}
+            </ChipGroup>
+            {shown.quickCash ? (
+              <p role="alert" className="mt-2 text-[13px] leading-[1.45] text-destructive">
+                {shown.quickCash}
+              </p>
+            ) : null}
+            <Note>The notes the cash step offers beside Exact, smallest first.</Note>
+          </Field>
+          <PoundsField
+            id="default-float"
+            label="Default float"
+            value={form.defaultFloat}
+            onChange={(next) => set({ defaultFloat: next })}
+            error={shown.defaultFloat}
+            note="What the till suggests when it opens, for a shop that starts each day on the same float."
+          />
+          <SwitchField
+            label="Tide total at the Z"
+            checked={form.zRequiresCardTotal}
+            onChange={(checked) => set({ zRequiresCardTotal: checked })}
+            on="Needed to close"
+            off="Optional"
+            note="The Z asks for the day's card total from the Tide app whenever the till took card, so the two can be compared."
+          />
+        </div>
+      </Section>
+
+      {/* ---- Permissions ---- */}
+      <Section title="Permissions">
+        <PermissionsTable
+          value={form.permissions}
+          onChange={(capability, role) =>
+            set({ permissions: setPermission(form.permissions, capability, role) })
+          }
+        />
+      </Section>
+
+      {/* ---- Receipts ---- */}
+      <Section title="Receipts">
+        <div className="flex flex-col gap-10">
+          <Field label="Header" htmlFor="receipt-header">
+            <Textarea
+              id="receipt-header"
+              maxLength={RECEIPT_TEXT_MAX}
+              placeholder="A line under the shop's name and address"
+              trailingHint={`${form.receiptHeader.length} / ${RECEIPT_TEXT_MAX}`}
+              value={form.receiptHeader}
+              onChange={(event) => set({ receiptHeader: event.target.value })}
+            />
+          </Field>
+          <Field label="Footer" htmlFor="receipt-footer">
+            <Textarea
+              id="receipt-footer"
+              maxLength={RECEIPT_TEXT_MAX}
+              placeholder="Thank you for shopping with GG Entertainment."
+              trailingHint={`${form.receiptFooter.length} / ${RECEIPT_TEXT_MAX}`}
+              value={form.receiptFooter}
+              onChange={(event) => set({ receiptFooter: event.target.value })}
+            />
+          </Field>
+          <Field label="Returns policy" htmlFor="receipt-returns">
+            <Textarea
+              id="receipt-returns"
+              maxLength={RECEIPT_TEXT_MAX * 2}
+              placeholder="What a customer can bring back, and for how long"
+              trailingHint={`${form.returnsPolicy.length} / ${RECEIPT_TEXT_MAX * 2}`}
+              value={form.returnsPolicy}
+              onChange={(event) => set({ returnsPolicy: event.target.value })}
+            />
+          </Field>
+          <SwitchField
+            label="My Vault QR"
+            checked={form.showPortalQr}
+            onChange={(checked) => set({ showPortalQr: checked })}
+            on="At the foot of every receipt"
+            off="Left off"
+            note="A QR code a customer scans to open My Vault and see their points."
+          />
+        </div>
       </Section>
 
       {/* ---- Shop ---- */}
@@ -615,6 +807,15 @@ function Editor({
               either way. New supplier stock is standard rated.
             </p>
           </Field>
+          <TextField
+            id="vat-number"
+            label="VAT number"
+            maxLength={20}
+            value={form.vatNumber}
+            onChange={(next) => set({ vatNumber: next })}
+            error={shown.vatNumber}
+            note="Printed on receipts while the shop is VAT registered."
+          />
         </div>
       </Section>
 
@@ -708,6 +909,14 @@ function Editor({
         </div>
       </div>
 
+      {/* ---- Acting straight away, outside the Save ---- */}
+      <TillsSection admin />
+
+      <section className="mt-24" aria-labelledby="printers-heading">
+        <SectionHeading id="printers-heading">Printers</SectionHeading>
+        <PrintersSection />
+      </section>
+
       {dock
         ? createPortal(
             <div className="border-t border-hairline-soft bg-background px-5 py-3 min-[900px]:hidden">
@@ -730,9 +939,20 @@ function AdminsOnly() {
   )
 }
 
+/** A manager registers tills: the Tills section, and a line about the rest. */
+function ManagerSettings() {
+  return (
+    <section className="pt-16 sm:pt-24">
+      <PageTitle>Settings</PageTitle>
+      <Lede>Tills are yours to set up. The rest of Settings is for admins.</Lede>
+      <TillsSection admin={false} />
+    </section>
+  )
+}
+
 export function SettingsScreen() {
-  const staff = useStaff()
-  const admin = staff?.role === "admin"
+  const role = useStaffRole()
+  const admin = role === "admin"
 
   const settings = useQuery({
     queryKey: ["settings"],
@@ -753,7 +973,7 @@ export function SettingsScreen() {
     staleTime: 5 * 60_000,
   })
 
-  if (!admin) return <AdminsOnly />
+  if (!admin) return isManagerUp(role) ? <ManagerSettings /> : <AdminsOnly />
 
   if (settings.error || rules.error || games.error) {
     return (

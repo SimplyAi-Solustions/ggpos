@@ -4,12 +4,11 @@
  * Every export route answers with `Content-Disposition: attachment` and needs
  * a staff token, so a plain `<a href>` cannot fetch one: the call carries the
  * token as a header and the blob is handed to the browser here
- * (docs/api-contract.md, "Phase 4: exports, imports and SumUp").
+ * (docs/api-contract.md, "Phase 4: exports, imports and SumUp"; the SumUp
+ * item file went with SumUp, docs/api-contract-epos.md, section 5).
  *
- * When an export was last taken is not on the server for most of these, so
- * it is remembered per browser instead and labelled as exactly that. The one
- * figure that is on the server is how many stock lines SumUp has never seen,
- * which is read straight off `items`.
+ * When an export was last taken is not on the server, so it is remembered
+ * per browser instead and labelled as exactly that.
  */
 import { ClientResponseError } from "pocketbase"
 
@@ -97,17 +96,6 @@ export async function downloadExport(call: ExportCall): Promise<void> {
   const blob = await response.blob()
   handOver(blob, filenameFrom(response.headers.get("Content-Disposition"), call.filename))
   noteRun(call.key)
-}
-
-/** How many stock lines SumUp has never been told about. */
-export async function countUnsyncedForSumUp(): Promise<number> {
-  if (isDemo()) return demo.unsyncedCount()
-  const page = await pb.collection("items").getList(1, 1, {
-    filter:
-      'status = "in_stock" && sumup_synced_at = "" && (kind = "retro" || kind = "sealed" || kind = "accessory" || kind = "other")',
-    fields: "id",
-  })
-  return page.totalItems
 }
 
 /**

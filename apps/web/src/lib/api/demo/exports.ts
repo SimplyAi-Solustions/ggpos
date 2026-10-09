@@ -6,8 +6,6 @@
  * screen downloads a real file with no server behind it. Every cell goes
  * through the same formula-injection guard the server uses.
  */
-import { displayCode } from "@gg/shared"
-
 import { buildCsv, poundsCell, type CsvColumn } from "@/features/reports/csv"
 import { demoItems } from "@/lib/api/demo/items-store"
 import { demoSales, ensureSeeded } from "@/lib/api/demo/store"
@@ -23,34 +21,6 @@ function items(): StockItemRecord[] {
 
 function column<Row>(label: string, value: (row: Row) => string | number): CsvColumn<Row> {
   return { label, value }
-}
-
-function sumupFile(): string {
-  const rows = items().filter(
-    (item) =>
-      item.status === "in_stock" &&
-      ["retro", "sealed", "accessory", "other"].includes(item.kind)
-  )
-  return buildCsv<StockItemRecord>(
-    [
-      column("Item name", (item) => `${displayCode(item.sku)} ${item.title ?? ""}`.trim()),
-      column("Description", (item) => [item.set_code, item.condition].filter(Boolean).join(" ")),
-      column("Category", (item) => item.kind),
-      column("Price", (item) => poundsCell(item.price ?? 0)),
-      column("SKU", (item) => item.sku),
-      column("Barcode", (item) => item.ean || item.sku),
-      column("Quantity", (item) => item.qty ?? 0),
-      column("Tax rate (%)", () => 0),
-      column("Variations", () => ""),
-      column("Option set 1", () => ""),
-      column("Option set 2", () => ""),
-      column("Option set 3", () => ""),
-      column("Option set 4", () => ""),
-      column("Modifiers", () => ""),
-      column("Display colour", () => ""),
-    ],
-    rows
-  )
 }
 
 function inventoryFile(): string {
@@ -166,7 +136,6 @@ function registerFile(): string {
 }
 
 const FILES: Record<ExportKey, () => string> = {
-  sumup: sumupFile,
   "ebay-listings": ebayListingFile,
   inventory: inventoryFile,
   sales: salesFile,
@@ -197,15 +166,6 @@ const FILES: Record<ExportKey, () => string> = {
 export function exportFile(key: ExportKey): Blob {
   const text = FILES[key]?.() ?? ""
   return new Blob([`\ufeff${text}`], { type: "text/csv;charset=utf-8" })
-}
-
-/** How many stock lines SumUp has never seen, in the demo shop. */
-export function unsyncedCount(): number {
-  return items().filter(
-    (item) =>
-      item.status === "in_stock" &&
-      ["retro", "sealed", "accessory", "other"].includes(item.kind)
-  ).length
 }
 
 /** The ids the eBay listing file would be built from. */

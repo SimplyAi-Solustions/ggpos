@@ -9,7 +9,9 @@ import { Kbd } from "@/components/ui/kbd"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { ProductImage } from "@/components/product-image"
 import { useTheme } from "@/components/theme-provider"
-import { logout, useStaff } from "@/lib/auth"
+import { logout } from "@/lib/auth"
+import { lockCounter } from "@/features/lock/lock-store"
+import { isManagerUp, useStaffRole } from "@/features/lock/role"
 import { searchCards, type CardHit } from "@/lib/api"
 
 type PaletteAction = {
@@ -71,7 +73,9 @@ export function CommandPalette({
   const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   const [query, setQuery] = React.useState("")
-  const admin = useStaff()?.role === "admin"
+  const role = useStaffRole()
+  const admin = role === "admin"
+  const manager = isManagerUp(role)
 
   // Reset on the way out rather than in an effect, so the query never lags a
   // frame behind the panel it belongs to.
@@ -95,12 +99,20 @@ export function CommandPalette({
 
   const actions = React.useMemo<PaletteAction[]>(
     () => [
+      { id: "till", label: "Till", hint: "T", run: () => go("/counter/till") },
       { id: "scan", label: "Scan", hint: "S", run: () => go("/counter/scan") },
       { id: "add", label: "Add stock", hint: "N", run: () => go("/counter/stock/new") },
       { id: "buyin", label: "New buy-in", hint: "B", run: () => go("/counter/trade") },
       // --- Selling and cash ---
-      { id: "sell", label: "Sell", run: () => go("/counter/sell") },
-      { id: "cash", label: "Cash session", run: () => go("/counter/cash") },
+      { id: "cash", label: "Cash up", run: () => go("/counter/cash") },
+      {
+        id: "x-report",
+        label: "X report",
+        run: () => {
+          close()
+          void navigate({ to: "/counter/cash", search: { action: "x" } })
+        },
+      },
       { id: "labels", label: "Label queue", run: () => go("/counter/labels") },
       // --- end Selling and cash ---
       { id: "stock", label: "Stock", run: () => go("/counter/stock") },
@@ -128,6 +140,15 @@ export function CommandPalette({
           close()
         },
       },
+      {
+        id: "lock",
+        label: "Lock",
+        run: () => {
+          close()
+          lockCounter()
+        },
+      },
+      { id: "password", label: "Change password", run: () => go("/counter/password") },
       {
         id: "signout",
         label: "Sign out",
@@ -157,20 +178,25 @@ export function CommandPalette({
   // --- end Customers and trade ---
 
   // --- Stock counts and settings ---
-  // Settings is an admin screen and says so to anybody else, so the palette
-  // does not offer it to a staff member in the first place. Counts are for
-  // everybody: staff run them, an admin closes them.
+  // Settings is an admin screen, with only its Tills part open to a
+  // manager, and says so to anybody else, so the palette does not offer it
+  // to a member of staff in the first place; Loyalty and Staff are an
+  // admin's alone. Counts are for everybody: staff run them, an admin
+  // closes them.
   const countActions = React.useMemo<PaletteAction[]>(
     () => [
       { id: "stock-count", label: "Stock count", run: () => go("/counter/stock/count") },
       ...(admin
         ? [
             { id: "loyalty", label: "Loyalty", run: () => go("/counter/loyalty") },
-            { id: "settings", label: "Settings", run: () => go("/counter/settings") },
+            { id: "staff", label: "Staff", run: () => go("/counter/staff") },
           ]
         : []),
+      ...(manager
+        ? [{ id: "settings", label: "Settings", run: () => go("/counter/settings") }]
+        : []),
     ],
-    [admin, go]
+    [admin, manager, go]
   )
   // --- end Stock counts and settings ---
 
@@ -271,7 +297,7 @@ export function CommandPalette({
             {/* --- Stock counts and settings --- */}
             {visibleCountActions.length > 0 ? (
               <Command.Group
-                heading={admin ? "Counts and settings" : "Counts"}
+                heading={manager ? "Counts and settings" : "Counts"}
                 className="[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pt-4 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:tracking-[0.16em] [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group-heading]]:uppercase"
               >
                 {visibleCountActions.map((action) => (
