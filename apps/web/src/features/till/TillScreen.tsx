@@ -56,6 +56,7 @@ import {
   lineNet,
   pointsPreview,
   saleLines,
+  sameThing,
   stockIds,
   summarise,
   voucherProblem,
@@ -266,21 +267,14 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         return
       }
       const existing =
-        now.phase === "done"
-          ? undefined
-          : now.ticket.lines.find((row) =>
-              line.itemId ? row.itemId === line.itemId : row.key === line.key
-            )
+        now.phase === "done" ? undefined : now.ticket.lines.find((row) => sameThing(row, line))
       if (existing && existing.qty >= existing.maxQty) {
         setScanNote(`${line.title} is already on the ticket.`)
         pulse(existing.key)
         return
       }
       dispatchTill({ type: "add", line })
-      const added = getTill().ticket.lines.find((row) =>
-        line.itemId ? row.itemId === line.itemId : row.productId === line.productId
-      )
-      pulse(added?.key ?? line.key)
+      pulse(existing?.key ?? line.key)
       setScanError(null)
       setScanNote(`${line.title} added`)
       setTicketNote(null)
@@ -606,7 +600,8 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     const register = currentRegisterId()
     try {
       if (choice === "print" || choice === "gift") {
-        handled.current = true
+        // The receipt job carries the drawer kick for a cash sale, so the
+        // drawer is only taken care of once the printer has the job.
         const outcome = await printReceipt({
           saleId: done.saleId,
           register,
@@ -617,6 +612,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
           setReceiptProblem(outcome.message)
           return
         }
+        handled.current = true
         startNext(
           `${choice === "gift" ? "Gift receipt" : "Receipt"} for ${done.number} sent to the printer.`
         )
@@ -625,7 +621,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       if (choice === "email") {
         try {
           const sent = await emailReceipt(done.saleId, email)
-          handled.current = true
+          // An emailed receipt opens no drawer: leaving the done view does.
           startNext(`Receipt for ${done.number} sent to ${sent.sent_to}.`)
         } catch (error) {
           if (error instanceof ClientResponseError && error.status === 400) setAskEmail(true)
@@ -649,16 +645,31 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     }
   }
 
-  function newSale() {
-    // "New sale" with no receipt chosen is no receipt: the drawer opens for
-    // the cash all the same, and a drawer that will not is said on the next
-    // ticket rather than holding this one.
-    if (done?.cash && !handled.current) {
-      handled.current = true
-      void openDrawer(currentRegisterId()).then((outcome) => {
-        if (!outcome.ok) setScanNote(`The drawer did not open. ${outcome.message}`)
-      })
+  /**
+   * Leaving a cash sale without choosing a receipt (New sale, or simply
+   * scanning the next customer's first item) is no receipt: the drawer
+   * opens for the cash all the same. A drawer that will not is said on the
+   * next ticket rather than holding this one.
+   */
+  const leftDone = React.useRef<DoneSale | null>(null)
+  React.useEffect(() => {
+    if (phase === "done" && done) {
+      leftDone.current = done
+      return
     }
+    const left = leftDone.current
+    leftDone.current = null
+    if (!left?.cash || handled.current) return
+    handled.current = true
+    void openDrawer(currentRegisterId()).then((outcome) => {
+      if (outcome.ok) return
+      const drawer = `The drawer did not open. ${outcome.message}`
+      // After whatever the receipt choice said, not instead of it.
+      setScanNote((said) => (said ? `${said} ${drawer}` : drawer))
+    })
+  }, [phase, done])
+
+  function newSale() {
     startNext(null)
   }
 
@@ -734,7 +745,16 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         }
         throw error
       }
-      return { entry, ticket: { ...getTill().ticket, ...payload, lines: payload.lines } as Ticket }
+      // The customer's balances as they are now, not as they were when the
+      // ticket was parked: points and credit may have moved since.
+      let customer = payload.customer ?? null
+      if (customer?.code) {
+        customer = (await getCustomerForSale(customer.code).catch(() => null)) ?? customer
+      }
+      return {
+        entry,
+        ticket: { ...getTill().ticket, ...payload, lines: payload.lines, customer } as Ticket,
+      }
     },
     onSuccess: ({ entry, ticket: recalled }) => {
       dispatchTill({ type: "recall", ticket: recalled })
@@ -995,7 +1015,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   }
 
   // Below 900px: two tabs, the total and Pay docked under both.
-  const count = ticket.lines.reduce((sum, entry) => sum + entry.qty, 0)
+  const count = ticket.lines.length
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="till" data-phase={phase}>
       {header}
@@ -1005,10 +1025,10 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         className="flex min-h-0 flex-1 flex-col gap-0"
       >
         <TabsList className="flex w-full shrink-0 gap-0 px-3">
-          <TabsTrigger value="items" className="h-14 flex-1 pb-0">
+          <TabsTrigger value="items" className="min-h-14 flex-1 justify-center pt-5 pb-4">
             {phase === "paying" ? "Pay" : phase === "done" ? "Done" : "Items"}
           </TabsTrigger>
-          <TabsTrigger value="ticket" className="h-14 flex-1 pb-0" data-testid="till-ticket-tab">
+          <TabsTrigger value="ticket" className="min-h-14 flex-1 justify-center pt-5 pb-4" data-testid="till-ticket-tab">
             Ticket <span className="tnum">{count}</span>
           </TabsTrigger>
         </TabsList>

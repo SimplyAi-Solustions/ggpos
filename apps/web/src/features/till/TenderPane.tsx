@@ -99,6 +99,13 @@ function StepBlock({
   )
 }
 
+/*
+ * No step takes money on Enter. The money pad listens to the whole page so
+ * the Mac's keyboard can type into it, and a customer card scanned in the
+ * middle of the cash step arrives as digits and an Enter: that must never
+ * be what takes the cash. The block does.
+ */
+
 function CashStep({
   total,
   taken,
@@ -137,7 +144,6 @@ function CashStep({
           setDigits(next)
           setError(null)
         }}
-        onEnter={() => take(digitsToPence(digits) || left)}
         invalid={Boolean(error)}
         placeholder={formatGBP(left)}
         testId="till-cash-amount"
@@ -268,7 +274,6 @@ function BalanceStep({
           setDigits(next)
           setError(null)
         }}
-        onEnter={take}
         invalid={Boolean(error)}
         actions={
           <>
@@ -420,14 +425,13 @@ export function TenderPane({
             {formatGBP(left)}
           </span>
         </div>
-        <Button
-          variant="text"
-          className="min-h-14"
-          disabled={completing}
-          onClick={onBack}
-        >
-          Back to the ticket
-        </Button>
+        {/* Once a payment is taken the ticket is what it was paid for:
+            changing it means taking the payment off first. */}
+        {state.tenders.length === 0 ? (
+          <Button variant="text" className="min-h-14" disabled={completing} onClick={onBack}>
+            Back to the ticket
+          </Button>
+        ) : null}
       </div>
 
       <div

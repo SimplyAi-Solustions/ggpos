@@ -6,7 +6,7 @@
  * whole of its chrome.
  */
 import { Link, useNavigate } from "@tanstack/react-router"
-import { LockIcon, MenuIcon } from "lucide-react"
+import { ClipboardListIcon, LockIcon, MenuIcon } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -99,7 +99,10 @@ export function TillHeader({
           onClick={onRecall}
         >
           <span className="sr-only">Parked tickets: </span>
-          <span aria-hidden="true">Parked</span>
+          <ClipboardListIcon aria-hidden="true" className="sm:hidden" />
+          <span aria-hidden="true" className="max-sm:hidden">
+            Parked
+          </span>
           <span className="tnum">{parked}</span>
         </Button>
         <Avatar className="max-sm:hidden" title={staff ? `Signed in as ${staff.name}` : undefined}>
@@ -127,21 +130,21 @@ export function TillHeader({
               {CASH_ACTIONS.map((entry) => (
                 <MenuItem
                   key={entry.action}
-                  className="min-h-12"
+                  className="min-h-14"
                   onClick={() => go(`/counter/cash?action=${entry.action}`)}
                 >
                   {entry.label}
                 </MenuItem>
               ))}
-              <MenuItem className="min-h-12" onClick={onReturns}>
+              <MenuItem className="min-h-14" onClick={onReturns}>
                 Returns
               </MenuItem>
-              <MenuItem className="min-h-12" onClick={() => go("/counter/cash")}>
+              <MenuItem className="min-h-14" onClick={() => go("/counter/cash")}>
                 Reports
               </MenuItem>
             </MenuPrimitive.Group>
             <MenuSeparator />
-            <MenuItem className="min-h-12" onClick={() => go("/counter")}>
+            <MenuItem className="min-h-14" onClick={() => go("/counter")}>
               Back to the counter
             </MenuItem>
           </MenuContent>

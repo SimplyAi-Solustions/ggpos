@@ -290,7 +290,7 @@ function clampLine(line: TicketLine): TicketLine {
 }
 
 /** Whether a new line is more of one already on the ticket. */
-function sameThing(a: TicketLine, b: TicketLine): boolean {
+export function sameThing(a: TicketLine, b: TicketLine): boolean {
   if (a.itemId && b.itemId) return a.itemId === b.itemId
   // An open-price key is a new line every time: two single cards at
   // different prices are two lines, not one line of two.
