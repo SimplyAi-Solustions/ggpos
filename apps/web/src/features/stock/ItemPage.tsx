@@ -72,6 +72,8 @@ import { useVaultConfig } from "@/lib/api/config"
 import { assignCategory, CATEGORY_TREE_KEY } from "@/lib/api/categories"
 import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { OverrideCancelled } from "@/features/lock/override"
+import { WebsiteRow } from "@/features/online/WebsiteRow"
+import { PhotoStrip } from "@/features/photos/PhotoStrip"
 import type { ItemDetail, ItemStatus } from "@/lib/api/types"
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
@@ -616,7 +618,12 @@ export function ItemPage({ sku }: { sku: string }) {
         {/* The hold is said once, in the line under the status, where it
             can carry a link to the customer. A second row here said the
             same thing again, further down. */}
+        {/* Launch (docs/api-contract-launch.md, section 6): on the website. */}
+        <WebsiteRow item={item} onChanged={settle} />
       </div>
+
+      {/* Launch, section 6: the photos, the first one the website's. */}
+      <PhotoStrip item={item} onChanged={settle} />
 
       {item.card || item.retro_title ? (
         <section className="mt-16" aria-label="Market">

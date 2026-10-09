@@ -11,7 +11,11 @@
  *  - Enter commits. A buffer shorter than `minLength` is dropped, which keeps
  *    a stray Enter on the page from firing a scan.
  *  - An optional `prefix` character (set per shop in settings, none by
- *    default) must open the buffer and is stripped before committing.
+ *    default) must open the buffer and is stripped before committing. With
+ *    none set, one leading character that is not a letter or a digit is
+ *    dropped: nothing the shop scans starts with one (GG codes, EANs, the
+ *    customer card's address), so a scanner still set up with a prefix
+ *    such as "~" keeps working (deploy/README.md, "Barcode scanners").
  *  - While a text field, textarea or contenteditable has focus the listener
  *    stays out of the way, with one exception: the scan field itself, which
  *    commits its own value on Enter at any typing speed, so staff can type a
@@ -68,6 +72,8 @@ export function createWedgeListener(options: WedgeOptions): () => void {
     if (prefix) {
       if (!value.startsWith(prefix)) return
       value = value.slice(prefix.length)
+    } else if (/^[^\p{L}\p{N}]/u.test(value)) {
+      value = value.slice(1)
     }
     if (value.length < minLength) return
     onScan(value)

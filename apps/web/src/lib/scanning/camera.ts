@@ -8,6 +8,19 @@
  *
  * Nothing here throws on a device with no camera: `cameraSupport()` says so
  * first and the sheet shows a sentence instead.
+ *
+ * Launch checks (docs/api-contract-launch.md, section 6; deploy/README.md,
+ * "Barcode scanners"): the Android tablet's Chrome and Chrome on the Mac have
+ * `BarcodeDetector`, Safari on the Mac does not and takes zxing-wasm. So:
+ * - the wasm is served from this origin, not the jsDelivr address the
+ *   package defaults to, which the site's Content-Security-Policy refuses
+ *   (and which is not there when the shop's connection is down);
+ * - the native detector is only used when this device says it reads QR
+ *   codes (`getSupportedFormats`): a tablet without the Play services
+ *   barcode module has the class but reads nothing, and silently never
+ *   scanning is worse than the fallback; a detector that throws hands over
+ *   to zxing on the next frame;
+ * - one frame is decoded at a time, so a slow device never queues them up.
  */
 
 const BARCODE_FORMATS = [
@@ -38,6 +51,48 @@ function detectorCtor(): BarcodeDetectorConstructor | null {
   const ctor = (globalThis as { BarcodeDetector?: BarcodeDetectorConstructor })
     .BarcodeDetector
   return typeof ctor === "function" ? ctor : null
+}
+
+/**
+ * The formats to ask the native detector for, from what this device says it
+ * reads, or null when it cannot read a QR code (every GG label is one) and
+ * zxing should do the work instead.
+ */
+export function nativeFormats(supported: readonly string[] | null | undefined): string[] | null {
+  if (!supported || !supported.includes("qr_code")) return null
+  return BARCODE_FORMATS.filter((format) => supported.includes(format))
+}
+
+async function nativeDetector(ctor: BarcodeDetectorConstructor): Promise<BarcodeDetectorLike | null> {
+  try {
+    const supported = ctor.getSupportedFormats ? await ctor.getSupportedFormats() : [...BARCODE_FORMATS]
+    const formats = nativeFormats(supported)
+    return formats ? new ctor({ formats }) : null
+  } catch {
+    return null
+  }
+}
+
+/** zxing-wasm's reader, with its wasm fetched from this origin. Loaded once. */
+type ReadBarcodes = (input: ImageData, opts: Record<string, unknown>) => Promise<{ text: string }[]>
+let zxingReader: Promise<ReadBarcodes> | null = null
+
+function loadZxing(): Promise<ReadBarcodes> {
+  zxingReader ??= Promise.all([
+    import("zxing-wasm/reader"),
+    import("zxing-wasm/reader/zxing_reader.wasm?url"),
+  ]).then(([module, wasm]) => {
+    module.prepareZXingModule({
+      overrides: {
+        locateFile: (path: string, prefix: string) => (path.endsWith(".wasm") ? wasm.default : prefix + path),
+      },
+    })
+    return module.readBarcodes as unknown as ReadBarcodes
+  })
+  zxingReader.catch(() => {
+    zxingReader = null
+  })
+  return zxingReader
 }
 
 export interface CameraSupport {
@@ -82,9 +137,7 @@ export function createCameraScanner(options: CameraScannerOptions): CameraScanne
   let torchOn = false
   let canvas: HTMLCanvasElement | null = null
   let detector: BarcodeDetectorLike | null = null
-  let readBarcodes:
-    | ((input: ImageData, opts: Record<string, unknown>) => Promise<{ text: string }[]>)
-    | null = null
+  let busy = false
 
   function track(): MediaStreamTrack | null {
     return stream?.getVideoTracks()[0] ?? null
@@ -105,16 +158,20 @@ export function createCameraScanner(options: CameraScannerOptions): CameraScanne
 
   async function decode(video: HTMLVideoElement): Promise<string | null> {
     if (detector) {
-      const found = await detector.detect(video)
-      return found[0]?.rawValue ?? null
+      try {
+        const found = await detector.detect(video)
+        return found[0]?.rawValue ?? null
+      } catch {
+        // The native reader is there but will not work on this device:
+        // zxing reads the next frame.
+        detector = null
+        return null
+      }
     }
     const image = frame(video)
     if (!image) return null
-    if (!readBarcodes) {
-      const module = await import("zxing-wasm/reader")
-      readBarcodes = module.readBarcodes as unknown as typeof readBarcodes
-    }
-    const results = await readBarcodes!(image, {
+    const readBarcodes = await loadZxing()
+    const results = await readBarcodes(image, {
       formats: ZXING_FORMATS,
       tryHarder: true,
       maxNumberOfSymbols: 1,
@@ -147,9 +204,14 @@ export function createCameraScanner(options: CameraScannerOptions): CameraScanne
     await video.play().catch(() => undefined)
 
     const Detector = detectorCtor()
-    if (Detector) detector = new Detector({ formats: BARCODE_FORMATS })
+    detector = Detector ? await nativeDetector(Detector) : null
+    // Fetch the fallback while the first frames arrive, not on the first frame.
+    if (!detector) void loadZxing().catch(() => undefined)
+    if (stopped) return
 
     timer = window.setInterval(() => {
+      if (busy || stopped) return
+      busy = true
       void decode(video)
         .then((value) => {
           if (!value || stopped) return
@@ -159,6 +221,9 @@ export function createCameraScanner(options: CameraScannerOptions): CameraScanne
         })
         .catch(() => {
           // A frame that will not decode is the normal case, not an error.
+        })
+        .finally(() => {
+          busy = false
         })
     }, intervalMs)
   }

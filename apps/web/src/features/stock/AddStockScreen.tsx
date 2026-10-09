@@ -34,6 +34,7 @@ import { ProductImage } from "@/components/product-image"
 import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
 import { CameraSheet } from "@/features/scan/CameraSheet"
+import { PhotoSheet } from "@/features/photos/PhotoSheet"
 import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { branchById } from "@/features/categories/tree"
 import { CardSearchField } from "@/features/stock/CardSearchField"
@@ -218,6 +219,9 @@ export function AddStockScreen({
   const [saved, setSaved] = React.useState<ItemRecord | null>(null)
   const [labelNote, setLabelNote] = React.useState<string | null>(null)
   const [cameraOpen, setCameraOpen] = React.useState(false)
+  /** Launch, section 6: Take photo on the saved item. */
+  const [photoOpen, setPhotoOpen] = React.useState(false)
+  const [photoNote, setPhotoNote] = React.useState<string | null>(null)
   const [branchOpen, setBranchOpen] = React.useState(false)
   /** What the branch filled in, or where it came from. */
   const [branchNote, setBranchNote] = React.useState<string | null>(null)
@@ -447,6 +451,7 @@ export function AddStockScreen({
   function startAnother() {
     setSaved(null)
     setLabelNote(null)
+    setPhotoNote(null)
     setCard(null)
     setBranchNote(null)
     pickedUp.current = ""
@@ -488,6 +493,25 @@ export function AddStockScreen({
           </Button>
           {labelNote ? <Hint aria-live="polite">{labelNote}</Hint> : null}
         </div>
+
+        {/* Launch (docs/api-contract-launch.md, section 6): a photo of
+            what was just added, the first being the website's. */}
+        <div className="mt-8 flex flex-wrap items-center gap-8">
+          <Button variant="text" onClick={() => setPhotoOpen(true)}>
+            Take photo
+          </Button>
+          {photoNote ? (
+            <Hint aria-live="polite" data-testid="saved-photo-note">
+              {photoNote}
+            </Hint>
+          ) : null}
+        </div>
+        <PhotoSheet
+          open={photoOpen}
+          onOpenChange={setPhotoOpen}
+          item={saved}
+          onSaved={(names) => setPhotoNote(names.length === 1 ? "Photo saved" : `${names.length} photos saved`)}
+        />
       </section>
     )
   }

@@ -43,6 +43,7 @@ import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
 import { BookingsSection } from "@/features/settings/BookingsSection"
 import { GuildSettingsSection } from "@/features/settings/GuildSettingsSection"
+import { WebsiteSection } from "@/features/settings/WebsiteSection"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import {
   getSettings,
@@ -926,6 +927,7 @@ function Editor({
       <AgentsSection />
 
       <BookingsSection admin />
+      <WebsiteSection />
 
       {dock
         ? createPortal(

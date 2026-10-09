@@ -528,17 +528,11 @@ and the app installed as a PWA.
    Zebra DS2208, or a cheaper Eyoyo/NETUM 2D model) as long as it can be
    configured as a "keyboard wedge" (it types the scanned code followed
    by a key, exactly as if someone had typed it and pressed a key
-   themselves). Using the scanner's own configuration guide (usually a
-   small booklet of barcodes to scan in sequence, sometimes a piece of
-   software), set:
-   - a **prefix character** before the scanned text (this is how the app
-     tells "someone typed this" apart from "a scanner produced this"),
-   - **Enter** as the **suffix** after the scanned text (so the app
-     receives the code and acts on it immediately, the same as pressing
-     Enter after typing it).
+   themselves). The settings are in section 15, "Barcode scanners": in
+   short, keyboard (HID) mode, **Enter** as the suffix, no prefix needed
+   (the app tells a scanner from a person by how fast the keys arrive).
    Test it by opening a plain text editor and scanning any barcode: you
-   should see the prefix character, then the code, then the cursor drop
-   to a new line.
+   should see the code, then the cursor drop to a new line.
 4. **Install the PWA.** Open `https://ggpos.ggentertainment.co.uk` in
    Chrome, then use Chrome's install icon in the address bar (or the
    three-dot menu > "Install GG Vault..."). This gives the counter its
@@ -605,6 +599,133 @@ SumUp is no longer used. Its old transactions stay in the database and in
 the reports, labelled "Card (SumUp)", and nothing else of it remains: no
 key, merchant code or reader needs setting up.
 
+## 15. Stock on the website, item photos and barcode scanners
+
+The launch work (`docs/api-contract-launch.md`, section 6).
+
+### The stock feed and Caddy
+
+The shop's website (ggentertainment.co.uk) reads GG Vault's public feed in
+the visitor's browser: `GET /api/public/stock`, `/api/public/stock/{sku}`
+and `/api/public/categories` on `https://ggpos.ggentertainment.co.uk`.
+Nothing needs adding to Caddy for them: they go through the snippet's
+existing `handle` block to PocketBase like every other `/api/` call.
+PocketBase itself, for everything under `/api/public/` (the bookings
+availability and events too):
+
+- answers cross-origin reads for `https://ggentertainment.co.uk` and
+  `https://www.ggentertainment.co.uk` only (`pb_hooks/public_api.pb.js`).
+  If the website ever moves to another address, add it to
+  `PUBLIC_ORIGINS` in `packages/shared/src/online.ts`, rebuild the hooks
+  copy and redeploy;
+- lets browsers cache each answer for a minute;
+- limits each visitor to 180 reads a minute (Settings > Application > Rate
+  limiting in `/_/`, the `/api/public/` rule). The shop's Wi-Fi shares one
+  address, so if the website ever says it cannot reach the stock on the
+  shop's own Wi-Fi on a busy day, raise that number there.
+
+**The Content-Security-Policy changed** in `deploy/Caddyfile.snippet`: it
+now carries `script-src 'self' 'wasm-unsafe-eval'`. Safari has no built-in
+barcode reader, so the camera scanner on the Mac uses a WebAssembly reader
+(served from GG Vault itself), and a browser only compiles WebAssembly when
+the policy allows it. Without it the camera scanner in Safari opens and
+never reads anything. When updating an existing VPS, copy that one line
+into the live Caddyfile, then validate and reload Caddy as in section 2.
+
+If the **website's** own Caddy block sets a Content-Security-Policy, it
+must allow the feed and its pictures: `connect-src` and `img-src` need
+`https://ggpos.ggentertainment.co.uk`, and `img-src` also
+`https://assets.tcgdex.net https://cards.scryfall.io https://cards.lorcast.com`
+(card pictures the shop has not photographed itself). The website's
+`DEPLOY.md` says the same from its side.
+
+What shows is set in GG Vault: **Settings, Website** (the switch, the
+minimum price, whether quantities show, and the branches whose new stock
+starts shown), the **Website** switch on an item's page, and **Show
+online** or **Take offline** on ticked rows in **Stock**. Sold and reserved
+stock leaves the website on the next read.
+
+### Item photos
+
+**Take photo** is on every item's page (Photos) and on Add stock's Saved
+screen. The first photo is the one the website shows; **Show first**
+changes it. Photos are cropped to the item's frame (a card is 63:88, a
+boxed game its box), resized to 1,600 pixels and re-encoded on the device,
+so no location data is ever uploaded.
+
+- **The tablet (Chrome):** Take photo opens the rear camera with a frame
+  drawn over it; fill the frame, plain background, straight on, then Take
+  photo. **Use the camera app** opens Android's own camera instead (full
+  resolution, no frame: the middle is kept). Chrome asks once for the
+  camera; if it was refused: the padlock in the address bar, Site
+  settings, Camera, Allow.
+- **The Mac:** Take photo uses the webcam with the same frame, or
+  **Choose a file** for a photo taken on a phone. The first time, macOS
+  must allow the browser to use the camera: System Settings, Privacy and
+  Security, Camera, switch on Safari or Google Chrome. In Safari also
+  Safari, Settings, Websites, Camera, `ggpos.ggentertainment.co.uk`,
+  Allow.
+
+### Barcode scanners
+
+The app takes a scan two ways: the device's camera (**Use camera** on Scan,
+Add stock and the buy-in's customer step), and a scanner that works as a keyboard
+(USB on the Mac, Bluetooth on the tablet), which works on any counter
+screen with nothing clicked first.
+
+**Settings for any scanner** (from its own manual's setup barcodes):
+
+- **Keyboard mode**: "USB HID keyboard" on the Mac, "Bluetooth HID" on
+  the tablet. Not "serial", "SPP", "virtual COM" or "BLE data": those do
+  not type.
+- **Suffix: Enter** (CR). Not Tab: a Tab moves the cursor into a field
+  and the code lands in it instead.
+- **Prefix: none.** The app tells a scanner from a person by how fast the
+  keys arrive, not by a prefix. A scanner that already sends one symbol in
+  front (such as `~`) still works; never `/`, `?` or Tab, which are
+  keyboard shortcuts or move the cursor on the counter.
+- **Transmission speed: fast** (no delay between characters). The app
+  treats keys more than 50 ms apart as somebody typing.
+- **Keyboard language: UK or US English.** GG codes are letters and
+  digits, and the customer card's address only uses `:` and `/`, so
+  either works. Keep Caps Lock off.
+- Symbologies: **QR** (every GG label and the Guild card) and EAN-13,
+  EAN-8 and UPC (retail barcodes on sealed product) on. A 1D-only laser
+  scanner cannot read the labels.
+
+**The Mac (USB).** Plug it in. If macOS opens the Keyboard Setup
+Assistant, close it (or let it identify the scanner as an ANSI keyboard);
+it is the scanner introducing itself. Works the same in Safari and Chrome.
+
+**The tablet (Bluetooth).** Put the scanner in Bluetooth HID mode, then on
+the tablet: Settings, Connected devices, Pair new device, choose the
+scanner. Android then treats it as a physical keyboard and hides the
+on-screen keyboard; to keep typing on screen, Settings, System, Keyboard
+(or Languages and input), Physical keyboard, switch on **Use on-screen
+keyboard**. A Bluetooth scanner sleeps after a few idle minutes: the first
+press wakes and reconnects it, and that first scan can be lost, so scan
+again if nothing happens.
+
+**The camera.** Chrome on the tablet and on the Mac reads codes with its
+built-in reader where the device has one; Safari, and any device whose
+built-in reader cannot read QR codes, uses the WebAssembly reader
+instead. Both read GG labels, the Guild card and EANs. Hold the code
+inside the frame, 10 to 20 cm away; the 11 mm QR on the small labels
+needs good light (the torch button shows where the device has one).
+
+**What has been checked** (`e2e/scanning.spec.ts`, `e2e/online.spec.ts`,
+`apps/web/src/lib/scanning/*.test.ts`): in Chromium, a scan through a fake
+camera filming a GG label, read by the WebAssembly reader served from GG
+Vault itself (the Safari path), by the built-in reader, and by the
+fallback when the built-in reader cannot read QR codes; a keyboard
+scanner's burst with and without a prefix; the webcam photo inside the
+frame. In WebKit (Safari's engine) on Linux: the camera starts, the
+WebAssembly reader loads from GG Vault, the keyboard scanner's burst, a
+photo from a file and from the camera. Not checked by machine, so worth
+five minutes before opening: a real Bluetooth scanner paired to the
+tablet, a real USB scanner on the Mac, and a real label in front of each
+camera.
+
 ## Before go-live checklist
 
 - [ ] A full restore rehearsal (`deploy/restore.md`) has been completed
@@ -623,6 +744,12 @@ key, merchant code or reader needs setting up.
       1789819980_batch_api_settings.js` turns this on for you as part of
       the schema migrations, so this is a check, not a step; see
       "pricesync configuration" above
+- [ ] The live Caddyfile carries `script-src 'self' 'wasm-unsafe-eval'`
+      (section 15), and Use camera reads a GG label in Safari on the Mac
+- [ ] A USB scanner on the Mac and a Bluetooth scanner on the tablet each
+      open an item from its label, from the Home screen (section 15)
+- [ ] An item switched on under Settings, Website or its page shows on
+      the website's Shop page, with its photo
 - [ ] VAPID keys are generated, the private key and subject are in `.env`,
       the public key is in `settings.push.vapid_public_key`, and
       `docker compose logs notify` shows a pass completing rather than a

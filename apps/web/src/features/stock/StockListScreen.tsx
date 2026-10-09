@@ -40,6 +40,7 @@ import { OverrideCancelled } from "@/features/lock/override"
 import { listItems } from "@/lib/api"
 import { assignCategory, CATEGORY_TREE_KEY } from "@/lib/api/categories"
 import { refusalOrFallback } from "@/lib/api/refusal"
+import { ONLINE_FEED_KEY, setItemsOnline } from "@/lib/api/online"
 import type { ItemStatus } from "@/lib/api/types"
 
 const FILTERS: { value: ItemStatus; label: string }[] = [
@@ -119,6 +120,22 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
     },
   })
 
+  // Launch (docs/api-contract-launch.md, section 6): the ticked rows shown
+  // on the website, or taken off it, in one go.
+  const online = useMutation({
+    mutationFn: (on: boolean) => setItemsOnline(ticked, on),
+    onSuccess: (count, on) => {
+      setChosen([])
+      setNote(
+        `${count} ${count === 1 ? "row" : "rows"} ${on ? "shown on the website" : "taken off the website"}.`
+      )
+      void queryClient.invalidateQueries({ queryKey: ["items"] })
+      void queryClient.invalidateQueries({ queryKey: ["item"] })
+      void queryClient.invalidateQueries({ queryKey: ONLINE_FEED_KEY })
+    },
+    onError: (err) => setNote(refusalOrFallback(err, "Those rows did not change. Try again.")),
+  })
+
   function toggle(id: string, on: boolean) {
     setNote(null)
     setChosen((now) => (on ? [...now.filter((entry) => entry !== id), id] : now.filter((entry) => entry !== id)))
@@ -190,6 +207,12 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
               </span>
               <Button variant="text" onClick={() => setPicking("file")}>
                 File in a branch
+              </Button>
+              <Button variant="text" loading={online.isPending && online.variables} onClick={() => online.mutate(true)}>
+                Show online
+              </Button>
+              <Button variant="text" loading={online.isPending && !online.variables} onClick={() => online.mutate(false)}>
+                Take offline
               </Button>
               <Button variant="text" onClick={() => setChosen([])}>
                 Clear
