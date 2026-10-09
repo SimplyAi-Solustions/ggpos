@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { SaleLookup, Tender } from "@gg/shared"
+import { displayCode, type SaleLookup, type Tender } from "@gg/shared"
 
 import {
   defaultRefundMethod,
@@ -7,6 +7,7 @@ import {
   originalCardLast4,
   refundTenders,
   refundTotal,
+  ticketReturnFrom,
 } from "@/features/till/returns"
 
 function tender(over: Partial<Tender>): Tender {
@@ -144,6 +145,51 @@ describe("where the money goes back", () => {
     expect(refundTenders(["store_credit"], {}, 1532, "", false)).toEqual({
       ok: false,
       message: "Store credit needs the customer on the sale. Refund it another way.",
+    })
+  })
+})
+
+describe("an exchange in the ticket", () => {
+  it("brings the chosen lines on at what they come back at", () => {
+    const built = ticketReturnFrom(SALE, { line_a: 2, line_b: 0 }, "  Wrong set  ", false)
+    expect(built).toEqual({
+      ok: true,
+      returns: {
+        saleId: "sale_1",
+        saleNumber: "GG-S-000456",
+        customer: { id: "cust_1", name: "Jasmine Okafor", code: "GGC4K7M2S" },
+        lines: [
+          {
+            saleLine: "line_a",
+            title: "Booster pack",
+            // The code as a receipt prints it (this fixture's is not a
+            // valid one, so it reads back as it stands).
+            detail: displayCode("GGP5N2W8H"),
+            qty: 2,
+            amount: refundTotal(SALE, { line_a: 2 }),
+          },
+        ],
+        reason: "Wrong set",
+        restock: false,
+        refundMethod: "card_tide",
+        cardLast4: "4242",
+      },
+    })
+  })
+
+  it("never brings more back than is left to refund", () => {
+    const built = ticketReturnFrom(SALE, { line_b: 5 }, "Faulty", true)
+    expect(built.ok && built.returns.lines[0]?.qty).toBe(1)
+  })
+
+  it("wants something coming back and a reason", () => {
+    expect(ticketReturnFrom(SALE, { line_a: 0 }, "Faulty", true)).toEqual({
+      ok: false,
+      message: "Choose what is coming back.",
+    })
+    expect(ticketReturnFrom(SALE, { line_a: 1 }, " ", true)).toEqual({
+      ok: false,
+      message: "Say why it is coming back.",
     })
   })
 })

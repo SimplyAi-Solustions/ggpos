@@ -50,8 +50,26 @@ const STEPS: { step: TenderStep; label: string }[] = [
   { step: "voucher", label: "Voucher" },
 ]
 
+/** A trade-in or a return set against the sale: a fixed row above the tenders taken. */
+export interface AppliedCredit {
+  /** "Part-exchange" or "Exchange". */
+  label: string
+  amount: number
+  /** One grey line under it: whether it is signed, which sale it came back from. */
+  note: string
+}
+
 export interface TenderPaneProps {
+  /** What the tenders have to cover: the sale less any trade-in or return. */
   total: number
+  /** The whole sale, which points can pay a share of. Defaults to `total`. */
+  pointsTotal?: number
+  /** The part-exchange and the exchange already set against the sale. */
+  applied?: AppliedCredit[]
+  /** The Trade-in step's own content: its key leads the row when there is one. */
+  tradeStep?: React.ReactNode
+  /** Why a settled ticket is still waiting, such as an unsigned trade-in. */
+  waiting?: string | null
   taken: TakenTender[]
   state: TenderState
   step: TenderStep | null
@@ -376,6 +394,10 @@ function VoucherStep({
 
 export function TenderPane({
   total,
+  pointsTotal,
+  applied = [],
+  tradeStep = null,
+  waiting = null,
   taken,
   state,
   step,
@@ -398,6 +420,8 @@ export function TenderPane({
   const [declined, setDeclined] = React.useState(false)
   const left = state.left
   const settled = left === 0 && state.over === 0
+  const steps = tradeStep ? [{ step: "trade" as TenderStep, label: "Trade-in" }, ...STEPS] : STEPS
+  const sale = pointsTotal ?? total
 
   const needsCustomer = (
     <div className="flex max-w-[560px] flex-col items-start gap-4">
@@ -437,15 +461,18 @@ export function TenderPane({
       <div
         role="group"
         aria-label="Take payment by"
-        className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 min-[90rem]:grid-cols-5"
+        className={cn(
+          "mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3",
+          steps.length > 5 ? "min-[90rem]:grid-cols-6" : "min-[90rem]:grid-cols-5"
+        )}
       >
-        {STEPS.map(({ step: key, label }) => (
+        {steps.map(({ step: key, label }) => (
           <Button
             key={key}
             variant="key"
             size="till"
             aria-pressed={step === key}
-            disabled={completing || (settled && key !== "voucher")}
+            disabled={completing || (settled && key !== "voucher" && key !== "trade")}
             onClick={() => {
               setDeclined(false)
               onStep(step === key ? null : key)
@@ -461,6 +488,8 @@ export function TenderPane({
           <p role="status" className="text-[16px] text-muted-foreground">
             Completing the sale.
           </p>
+        ) : step === "trade" && tradeStep ? (
+          tradeStep
         ) : step === "cash" && !settled ? (
           <CashStep
             total={total}
@@ -508,9 +537,9 @@ export function TenderPane({
               balanceLine={`${customer.pointsBalance.toLocaleString("en-GB")} points, ${formatGBP(
                 pointsToPence(customer.pointsBalance, programme)
               )}`}
-              most={maxPoints(taken, left, total, customer, programme)}
+              most={maxPoints(taken, left, sale, customer, programme)}
               onTake={(amount) => {
-                const result = takePoints(taken, left, total, amount, customer, programme)
+                const result = takePoints(taken, left, sale, amount, customer, programme)
                 if (!result.ok) return result.message
                 onTenders(result.value)
                 return null
@@ -525,17 +554,38 @@ export function TenderPane({
           <p role="status" className="text-[16px] leading-[1.5] text-foreground">
             Declined on the reader. Try the card again, or take it another way.
           </p>
+        ) : waiting && settled ? (
+          <p role="status" data-testid="till-waiting" className="max-w-[56ch] text-[16px] leading-[1.5] text-foreground">
+            {waiting}
+          </p>
         ) : state.tenders.length === 0 ? (
           <p className="text-[16px] text-muted-foreground">Choose how they are paying.</p>
         ) : null}
       </div>
 
-      {state.tenders.length > 0 ? (
+      {state.tenders.length > 0 || applied.length > 0 ? (
         <div className="mt-10">
           <MicroLabel tone="ink" className="mb-2">
             Taken
           </MicroLabel>
           <ul data-testid="till-tenders">
+            {applied.map((credit) => (
+              <li
+                key={credit.label}
+                data-testid="till-tender-applied"
+                className="flex min-h-14 items-center gap-4 border-b border-hairline-soft first:border-t"
+              >
+                <span className="flex min-w-0 flex-1 flex-col py-2">
+                  <span className="text-[16px] text-foreground">{credit.label}</span>
+                  <span className="text-[13px] text-muted-foreground">{credit.note}</span>
+                </span>
+                <span className="tnum text-[16px] font-medium text-foreground">
+                  {formatGBP(credit.amount)}
+                </span>
+                {/* Not removable here: it comes off by going back to the ticket. */}
+                <span aria-hidden="true" className="size-14 shrink-0" />
+              </li>
+            ))}
             {state.tenders.map((tender) => (
               <li
                 key={tender.id}

@@ -21,6 +21,9 @@ export type ReceiptChoice = "print" | "email" | "gift" | "none"
 
 export interface DonePaneProps {
   done: DoneSale
+  /** The refund receipt of an exchange, printed on its own; a ticket of returns alone prints it as its receipt. */
+  onPrintRefund?: () => void
+  printingRefund?: boolean
   /** Which choice is on its way, while it is. */
   pending: ReceiptChoice | null
   /** One line under the choices: why a print or an email did not go. */
@@ -38,12 +41,19 @@ export function DonePane({
   askEmail,
   onChoose,
   onNewSale,
+  onPrintRefund,
+  printingRefund = false,
 }: DonePaneProps) {
   const seal = useMotionVariants(sealIn)
   const [email, setEmail] = React.useState("")
-  const busy = pending !== null
+  const busy = pending !== null || printingRefund
   // A sale still in the offline queue has no record yet to print from.
   const waiting = done.queued
+  // Returns and nothing new: there is no sale, only the refund's receipt.
+  const refundOnly = done.refundOnly === true
+  const payout = done.payout ?? 0
+  const trade = done.tradeIn ?? null
+  const refund = done.refund ?? null
 
   return (
     <section
@@ -56,14 +66,16 @@ export function DonePane({
       </motion.div>
 
       <div className="mt-8 flex flex-col gap-2" aria-live="polite">
-        {done.change > 0 ? (
+        {done.change > 0 || payout > 0 ? (
           <>
-            <MicroLabel tone="ink">Change</MicroLabel>
+            {/* The one figure read across the counter: change for cash
+                handed over, or the cash the customer is given. */}
+            <MicroLabel tone="ink">{done.change > 0 ? "Change" : "Cash to the customer"}</MicroLabel>
             <span
-              data-testid="till-change"
+              data-testid={done.change > 0 ? "till-change" : "till-payout"}
               className="tnum font-display text-[32px] leading-none tracking-[0.01em] text-foreground min-[900px]:text-[40px]"
             >
-              {formatGBP(done.change)}
+              {formatGBP(done.change > 0 ? done.change : payout)}
             </span>
             <span className="tnum mt-1 font-mono text-[13px] text-muted-foreground-2">
               {done.number}
@@ -71,7 +83,7 @@ export function DonePane({
           </>
         ) : (
           <>
-            <MicroLabel>Sold</MicroLabel>
+            <MicroLabel>{refundOnly ? "Refunded" : "Sold"}</MicroLabel>
             <span
               data-testid="till-sale-number"
               className="tnum font-mono text-[20px] leading-[1.2] text-foreground"
@@ -80,6 +92,38 @@ export function DonePane({
             </span>
           </>
         )}
+        {trade ? (
+          <div data-testid="till-done-trade" className="mt-3 flex flex-col gap-1">
+            <p className="text-[16px] leading-[1.5] text-foreground">
+              Trade-in <span className="tnum font-mono text-[15px]">{trade.number}</span> paid{" "}
+              <span className="tnum font-medium">{formatGBP(trade.applied)}</span>
+            </p>
+            {trade.payoutCredit > 0 ? (
+              <p className="text-[15px] leading-[1.5] text-muted-foreground">
+                Surplus <span className="tnum">{formatGBP(trade.payoutCredit)}</span> added as store
+                credit
+              </p>
+            ) : trade.payoutCash > 0 ? (
+              <p className="text-[15px] leading-[1.5] text-muted-foreground">
+                Surplus paid in cash, <span className="tnum">{formatGBP(trade.payoutCash)}</span>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {refund ? (
+          <div data-testid="till-done-refund" className="mt-3 flex flex-col gap-1">
+            <p className="text-[16px] leading-[1.5] text-foreground">
+              Refund <span className="tnum font-mono text-[15px]">{refund.ref}</span>,{" "}
+              <span className="tnum font-medium">{formatGBP(refund.amount)}</span>
+            </p>
+            {refund.amount > refund.exchange ? (
+              <p className="text-[15px] leading-[1.5] text-muted-foreground">
+                <span className="tnum">{formatGBP(refund.amount - refund.exchange)}</span> back{" "}
+                {refund.to}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {done.pointsEarned > 0 ? (
           <p data-testid="till-points-earned" className="mt-2 text-[16px] text-foreground">
             Earned {done.pointsEarned.toLocaleString("en-GB")} points
@@ -110,7 +154,7 @@ export function DonePane({
           variant="key"
           size="till"
           loading={pending === "email"}
-          disabled={busy || waiting}
+          disabled={busy || waiting || refundOnly}
           onClick={() => onChoose("email")}
         >
           Email
@@ -119,7 +163,7 @@ export function DonePane({
           variant="key"
           size="till"
           loading={pending === "gift"}
-          disabled={busy || waiting}
+          disabled={busy || waiting || refundOnly}
           onClick={() => onChoose("gift")}
         >
           Gift receipt
@@ -161,6 +205,18 @@ export function DonePane({
             Send receipt
           </Button>
         </div>
+      ) : null}
+
+      {refund && !refundOnly && onPrintRefund ? (
+        <Button
+          variant="text"
+          className="mt-6 min-h-14"
+          loading={printingRefund}
+          disabled={busy && !printingRefund}
+          onClick={onPrintRefund}
+        >
+          Print refund receipt
+        </Button>
       ) : null}
 
       <FieldError>{problem}</FieldError>

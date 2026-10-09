@@ -49,6 +49,7 @@ export function TillHeader({
   parked,
   onRecall,
   onReturns,
+  onTradeIn,
 }: {
   registerName: string
   /** ISO time the session opened. */
@@ -57,6 +58,8 @@ export function TillHeader({
   parked: number
   onRecall: () => void
   onReturns: () => void
+  /** The Trade-in panel, for a customer who trades before they choose. */
+  onTradeIn: () => void
 }) {
   const staff = useStaff()
   const navigate = useNavigate()
@@ -138,6 +141,9 @@ export function TillHeader({
               ))}
               <MenuItem className="min-h-14" onClick={onReturns}>
                 Returns
+              </MenuItem>
+              <MenuItem className="min-h-14" onClick={onTradeIn}>
+                Trade in
               </MenuItem>
               <MenuItem className="min-h-14" onClick={() => go("/counter/cash")}>
                 Reports

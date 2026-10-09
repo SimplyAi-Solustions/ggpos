@@ -7,6 +7,12 @@
  * While the ticket is being paid for it stays where it is, read only, so
  * staff and customer can both still see what is being paid for; its total
  * drops to Jost and the Anton line moves to the tender pane.
+ *
+ * A part-exchange and a return (docs/api-contract-epos.md, section 7) are
+ * groups of their own under the lines, each line a negative figure, and
+ * the Anton total becomes what is left to pay once they are set against
+ * the sale. When either is worth more than the ticket, it says so, and Pay
+ * becomes Settle (a trade's surplus) or Refund (a return's difference).
  */
 import * as React from "react"
 import { displayCode, formatGBP } from "@gg/shared"
@@ -19,17 +25,36 @@ import { Button } from "@/components/ui/button"
 import { MicroLabel } from "@/components/ui/micro-label"
 import { underlineGrow, useMotionVariants, type ScanPulse } from "@/design/motion"
 import {
+  payLabel,
+  surplusSentence,
+  type TicketSettlement,
+  type TicketTradeLine,
+} from "@/features/till/exchange"
+import {
   discountLabel,
   lineDiscount,
   lineNet,
+  ticketIsEmpty,
   type Ticket,
   type TicketLine,
+  type TicketReturn,
   type TicketTotals,
 } from "@/features/till/ticket"
+
+/** The trade group as the ticket draws it. */
+export interface TicketTradeGroup {
+  lines: TicketTradeLine[]
+  /** V: everything the trade is worth at credit rates. */
+  value: number
+}
 
 export interface TicketPaneProps {
   ticket: Ticket
   totals: TicketTotals
+  /** The part-exchange on the ticket, priced, or null. */
+  trade: TicketTradeGroup | null
+  /** What the trade or the return leaves to pay, and how the ticket is finished. */
+  settlement: TicketSettlement
   /** Points the sale earns, for the customer on it. */
   points: number
   /** Paying or done: no editing, and the total is not the Anton line. */
@@ -47,9 +72,149 @@ export interface TicketPaneProps {
   onQty: (line: TicketLine, qty: number) => void
   onPark: () => void
   onDiscount: () => void
+  /** Opens the Trade-in panel, asking for the customer first when there is none. */
+  onTradeIn: () => void
+  /** Takes the returned lines off the ticket. */
+  onRemoveReturns: () => void
   onClear: () => void
   onPay: () => void
   clearing?: boolean
+}
+
+/** A negative line in the trade or return group: what it is, and what it takes off. */
+function CreditRow({
+  title,
+  detail,
+  qty,
+  amount,
+  testId,
+}: {
+  title: string
+  detail: string
+  qty?: number
+  amount: number
+  testId: string
+}) {
+  return (
+    <li
+      data-testid={testId}
+      className="flex min-h-14 items-center gap-2 border-b border-hairline-soft py-2 first:border-t"
+    >
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="line-clamp-2 text-[16px] leading-[1.35] text-foreground">{title}</span>
+        {detail ? (
+          <span className="truncate font-mono text-[13px] leading-[1.3] text-muted-foreground-2">
+            {detail}
+          </span>
+        ) : null}
+      </span>
+      {qty && qty > 1 ? (
+        <span className="tnum shrink-0 px-2 text-[15px] text-muted-foreground">&times;{qty}</span>
+      ) : null}
+      <span className="tnum shrink-0 pl-1 text-[16px] leading-[1.3] font-medium text-foreground">
+        -{formatGBP(amount)}
+      </span>
+    </li>
+  )
+}
+
+/** The part-exchange: "Trade-in", its lines at their credit offers, and its total. */
+function TradeGroup({
+  trade,
+  readOnly,
+  onOpen,
+}: {
+  trade: TicketTradeGroup
+  readOnly: boolean
+  onOpen: () => void
+}) {
+  return (
+    <section aria-label="Trade-in" data-testid="ticket-trade" className="mt-6">
+      <div className="flex min-h-12 items-center justify-between gap-4">
+        <MicroLabel tone="ink">Trade-in</MicroLabel>
+        {readOnly ? null : (
+          <Button variant="text" className="min-h-12" onClick={onOpen}>
+            Change
+          </Button>
+        )}
+      </div>
+      {trade.lines.length === 0 ? (
+        <p className="border-t border-hairline-soft py-3 text-[15px] text-muted-foreground-2">
+          Nothing on the trade-in yet.
+        </p>
+      ) : (
+        <ul>
+          {trade.lines.map((line) => (
+            <CreditRow
+              key={line.key}
+              title={line.title}
+              detail={line.detail}
+              amount={line.credit}
+              testId="ticket-trade-line"
+            />
+          ))}
+        </ul>
+      )}
+      <div className="flex items-baseline justify-between gap-6 py-2">
+        <MicroLabel>Trade-in total</MicroLabel>
+        <span data-testid="ticket-trade-total" className="tnum text-[15px] text-foreground">
+          -{formatGBP(trade.value)}
+        </span>
+      </div>
+    </section>
+  )
+}
+
+/** Lines of an earlier sale coming back: "Returned", the lines as negatives, the reason under them. */
+function ReturnGroup({
+  returns,
+  readOnly,
+  onRemove,
+}: {
+  returns: TicketReturn
+  readOnly: boolean
+  onRemove: () => void
+}) {
+  return (
+    <section aria-label="Returned" data-testid="ticket-returns" className="mt-6">
+      <div className="flex min-h-12 items-center justify-between gap-4">
+        <MicroLabel tone="ink">Returned</MicroLabel>
+        <span className="flex items-center gap-1">
+          <span className="tnum font-mono text-[13px] text-muted-foreground-2">
+            {returns.saleNumber}
+          </span>
+          {readOnly ? null : (
+            <Button
+              variant="ghost-icon"
+              className="size-12"
+              aria-label="Take the return off the ticket"
+              onClick={onRemove}
+            >
+              <XIcon />
+            </Button>
+          )}
+        </span>
+      </div>
+      <ul>
+        {returns.lines.map((line) => (
+          <CreditRow
+            key={line.saleLine}
+            title={line.title}
+            detail={line.detail}
+            qty={line.qty}
+            amount={line.amount}
+            testId="ticket-return-line"
+          />
+        ))}
+      </ul>
+      <p
+        data-testid="ticket-return-reason"
+        className="pt-2 text-[13px] leading-[1.45] text-muted-foreground"
+      >
+        {returns.reason}
+      </p>
+    </section>
+  )
 }
 
 function CustomerRow({
@@ -240,6 +405,8 @@ function SummaryRow({
 export function TicketPane({
   ticket,
   totals,
+  trade,
+  settlement,
   points,
   readOnly,
   vatRegistered,
@@ -253,11 +420,17 @@ export function TicketPane({
   onQty,
   onPark,
   onDiscount,
+  onTradeIn,
+  onRemoveReturns,
   onClear,
   onPay,
   clearing = false,
 }: TicketPaneProps) {
-  const empty = ticket.lines.length === 0
+  const empty = ticketIsEmpty(ticket)
+  const surplus = surplusSentence(settlement, ticket.lines.length)
+  // "To pay" once a trade or a return is set against the sale, so the
+  // figure is never read as what the things on the ticket cost.
+  const totalLabel = settlement.kind === "none" ? "Total" : "To pay"
 
   return (
     <section aria-label="Ticket" className="flex h-full min-h-0 flex-col">
@@ -275,7 +448,7 @@ export function TicketPane({
           <p data-testid="ticket-empty" className="pt-8 text-[16px] text-muted-foreground">
             Scan an item or tap a tile
           </p>
-        ) : (
+        ) : ticket.lines.length > 0 ? (
           <ul data-testid="ticket-lines">
             {ticket.lines.map((line) => (
               <LineRow
@@ -288,7 +461,11 @@ export function TicketPane({
               />
             ))}
           </ul>
-        )}
+        ) : null}
+        {trade ? <TradeGroup trade={trade} readOnly={readOnly} onOpen={onTradeIn} /> : null}
+        {ticket.returns ? (
+          <ReturnGroup returns={ticket.returns} readOnly={readOnly} onRemove={onRemoveReturns} />
+        ) : null}
         {clash ? (
           <p role="status" className="mt-4 text-[13px] leading-[1.45] text-destructive">
             {clash}
@@ -313,40 +490,49 @@ export function TicketPane({
           {vatRegistered ? (
             <SummaryRow label="VAT" value={formatGBP(totals.vat)} testId="ticket-vat" />
           ) : null}
-          {ticket.customer ? (
+          {ticket.customer && ticket.lines.length > 0 ? (
             <SummaryRow
               label="Earns"
               value={`${points.toLocaleString("en-GB")} points`}
               testId="ticket-points"
             />
           ) : null}
+          {surplus ? (
+            <p
+              data-testid="ticket-surplus"
+              className="py-1.5 text-[15px] leading-[1.45] text-foreground"
+            >
+              {surplus}
+            </p>
+          ) : null}
 
           {docked ? null : readOnly ? (
             <div className="flex items-baseline justify-between gap-6 pt-3">
-              <MicroLabel tone="ink">Total</MicroLabel>
+              <MicroLabel tone="ink">{totalLabel}</MicroLabel>
               <span
                 data-testid="ticket-total"
                 className="tnum text-[20px] leading-none font-medium text-foreground"
               >
-                {formatGBP(totals.total)}
+                {formatGBP(settlement.toPay)}
               </span>
             </div>
           ) : (
             <>
               <div className="flex items-end justify-between gap-6 pt-3">
                 <MicroLabel tone="ink" className="pb-1">
-                  Total
+                  {totalLabel}
                 </MicroLabel>
                 <span
                   data-testid="ticket-total"
                   className="tnum font-display text-[32px] leading-none tracking-[0.01em] text-foreground min-[900px]:text-[40px]"
                 >
-                  {formatGBP(totals.total)}
+                  {formatGBP(settlement.toPay)}
                 </span>
               </div>
               <TicketActions
                 onPark={onPark}
                 onDiscount={onDiscount}
+                onTradeIn={onTradeIn}
                 onClear={onClear}
                 clearing={clearing}
                 className="mt-3"
@@ -358,7 +544,7 @@ export function TicketPane({
                 trailingArrow
                 onClick={onPay}
               >
-                Pay
+                {payLabel(settlement)}
               </Button>
             </>
           )}
@@ -366,6 +552,7 @@ export function TicketPane({
             <TicketActions
               onPark={onPark}
               onDiscount={onDiscount}
+              onTradeIn={onTradeIn}
               onClear={onClear}
               clearing={clearing}
               className="mt-2"
@@ -380,12 +567,14 @@ export function TicketPane({
 function TicketActions({
   onPark,
   onDiscount,
+  onTradeIn,
   onClear,
   clearing,
   className,
 }: {
   onPark: () => void
   onDiscount: () => void
+  onTradeIn: () => void
   onClear: () => void
   clearing: boolean
   className?: string
@@ -418,12 +607,15 @@ function TicketActions({
   }
 
   return (
-    <div className={cn("flex items-center gap-8", className)}>
+    <div className={cn("flex flex-wrap items-center gap-x-5", className)}>
       <Button variant="text" className="min-h-14" onClick={onPark}>
         Park
       </Button>
       <Button variant="text" className="min-h-14" onClick={onDiscount}>
         Discount
+      </Button>
+      <Button variant="text" className="min-h-14" data-testid="till-trade-in" onClick={onTradeIn}>
+        Trade in
       </Button>
       <Button variant="text" className="ml-auto min-h-14" onClick={() => setAsking(true)}>
         Clear ticket

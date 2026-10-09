@@ -16,6 +16,7 @@ import {
   EMPTY_CAPTURE,
   idCaptureProblem,
   idCheckForm,
+  idCheckFrom,
   type IdCaptureValues,
 } from "@/features/tradein/id-capture"
 import { IdStep } from "@/features/tradein/steps/IdStep"
@@ -345,14 +346,7 @@ export function BuyInWizard({ initial }: BuyInWizardProps) {
           already ??
           (await submitIdCheck(state.customer.id, idCheckForm(capture))).id_document
         storedDocument.current = { customer: state.customer.id, id: documentId }
-        idCheck = {
-          id_type: capture.idType,
-          id_expiry: capture.idExpiry,
-          id_ref_last4: capture.idRefLast4,
-          dob: capture.dob,
-          address: capture.address.trim(),
-          id_document: documentId,
-        }
+        idCheck = idCheckFrom(capture, documentId)
       }
 
       const session = cashRequired ? await currentCashSessionId() : null

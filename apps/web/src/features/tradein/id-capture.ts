@@ -1,6 +1,6 @@
 import { ageAt, type IdGate } from "@/features/tradein/machine"
 import { photoFileName } from "@/features/tradein/id-photo"
-import type { IdType } from "@/lib/api"
+import type { IdCheckPayload, IdType } from "@/lib/api"
 
 /**
  * What the ID step collects, what is still missing from it, and the
@@ -82,4 +82,21 @@ export function idCheckForm(values: IdCaptureValues): FormData {
   form.append("dob", values.dob)
   form.append("address", values.address.trim())
   return form
+}
+
+/**
+ * The `id_check` a cash payout carries, once the photo has been stored by
+ * the ID check route and `documentId` names it. The buy-in's completion and
+ * the till's part-exchange send exactly this (docs/api-contract-epos.md,
+ * section 7: "exactly the buy-in's id_check").
+ */
+export function idCheckFrom(values: IdCaptureValues, documentId: string | null): IdCheckPayload {
+  return {
+    id_type: values.idType,
+    id_expiry: values.idExpiry,
+    id_ref_last4: values.idRefLast4,
+    dob: values.dob,
+    address: values.address.trim(),
+    id_document: documentId,
+  }
 }

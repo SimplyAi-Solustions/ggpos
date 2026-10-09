@@ -3,8 +3,6 @@ import { formatGBP } from "@gg/shared"
 
 import { Button } from "@/components/ui/button"
 import { Hint, MicroLabel, SectionHeading } from "@/components/ui/micro-label"
-import { Switch } from "@/components/ui/switch"
-import { PRIVACY_SENTENCE } from "@/features/customers/format"
 import {
   handoffSentence,
   handoffSettled,
@@ -12,6 +10,7 @@ import {
 } from "@/features/display/handoff"
 import { MoneyField } from "@/features/tradein/MoneyField"
 import { SignaturePad } from "@/features/tradein/SignaturePad"
+import { TradeTerms } from "@/features/tradein/TradeTerms"
 import {
   cashBlock,
   type Payout,
@@ -202,17 +201,7 @@ export function OfferStep({
       {/* ---- Terms and signature ---------------------------------------- */}
       <div className="mt-24">
         <SectionHeading className="mt-0">Terms</SectionHeading>
-        <div className="flex items-start gap-4">
-          <Switch
-            checked={termsAccepted}
-            onCheckedChange={onTerms}
-            aria-label="The customer has heard the terms and agrees to them"
-          />
-          <p className="max-w-[56ch] text-[15px] leading-[1.5] text-muted-foreground">
-            The customer confirms the items are theirs to sell and agrees to the
-            buy-in terms. {PRIVACY_SENTENCE}
-          </p>
-        </div>
+        <TradeTerms accepted={termsAccepted} onChange={onTerms} />
 
         {handoff === "off" ? null : (
           <div className="mt-10">

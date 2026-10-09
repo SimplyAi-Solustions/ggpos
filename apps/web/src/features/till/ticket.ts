@@ -26,6 +26,13 @@ import {
 } from "@gg/shared"
 
 import { formatPercent } from "@/lib/format"
+import {
+  initialState as tradeInitialState,
+  reducer as tradeReducer,
+  type TradeLine,
+  type WizardAction,
+} from "@/features/tradein/machine"
+import type { RefundMethod } from "@/features/till/returns"
 import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
 import type {
   DiscountSource,
@@ -87,6 +94,50 @@ export interface VoidedLine {
   amount: number
 }
 
+/**
+ * A part-exchange on the ticket (docs/api-contract-epos.md, section 7): the
+ * buy-in wizard's own lines, saved to a draft trade-in for the ticket's
+ * customer as they change. It belongs to that customer and nobody else, so
+ * the customer cannot change while it is on the ticket.
+ */
+export interface TicketTrade {
+  customerId: string
+  customerName: string
+  /** The draft `trade_ins` id, once it has been written. */
+  tradeInId: string | null
+  lines: TradeLine[]
+}
+
+/** A line of an earlier sale coming back in this ticket. */
+export interface TicketReturnLine {
+  /** The `sale_lines` id on the original sale. */
+  saleLine: string
+  title: string
+  /** The code, or "Till product": the grey line under the title. */
+  detail: string
+  qty: number
+  /** What these units come back at, from the shared breakdown. */
+  amount: number
+}
+
+/**
+ * Lines of one earlier sale brought back in this ticket, shown as negative
+ * lines and sent as `returns` with the sale.
+ */
+export interface TicketReturn {
+  saleId: string
+  saleNumber: string
+  /** Who the original sale was rung up to: a store credit refund goes to them. */
+  customer: { id: string; name: string; code: string } | null
+  lines: TicketReturnLine[]
+  reason: string
+  restock: boolean
+  /** Where the original was mostly paid, which a refund of the difference defaults to. */
+  refundMethod: RefundMethod
+  /** The card it was paid on, to refund back to. */
+  cardLast4: string
+}
+
 export interface Ticket {
   lines: TicketLine[]
   customer: SaleCustomer | null
@@ -94,10 +145,25 @@ export interface Ticket {
   discount: Adjustment
   voucher: RewardVoucher | null
   voided: VoidedLine[]
+  trade: TicketTrade | null
+  returns: TicketReturn | null
 }
 
 export function emptyTicket(): Ticket {
-  return { lines: [], customer: null, discount: NO_ADJUSTMENT, voucher: null, voided: [] }
+  return {
+    lines: [],
+    customer: null,
+    discount: NO_ADJUSTMENT,
+    voucher: null,
+    voided: [],
+    trade: null,
+    returns: null,
+  }
+}
+
+/** Nothing on it at all: no lines, no trade-in and no return. */
+export function ticketIsEmpty(ticket: Ticket): boolean {
+  return ticket.lines.length === 0 && !ticket.trade && !ticket.returns
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +331,17 @@ export type TicketAction =
   | { type: "applyVoucher"; voucher: RewardVoucher | null }
   | { type: "load"; ticket: Ticket }
   | { type: "clear" }
+  | { type: "startTrade"; customerId: string; customerName: string }
+  | { type: "trade"; action: TradeLineAction }
+  | { type: "dropTrade" }
+  | { type: "rebaseTrade" }
+  | { type: "setReturns"; returns: TicketReturn | null }
+
+/** The wizard machine's line actions, which the ticket's trade takes as they are. */
+export type TradeLineAction = Extract<
+  WizardAction,
+  { type: "add-line" | "update-line" | "remove-line" | "adopt-line-ids" | "set-draft" }
+>
 
 /**
  * A manual amount off never outlives the ticket it was typed against: when
@@ -360,6 +437,9 @@ export function ticketReducer(ticket: Ticket, action: TicketAction): Ticket {
       })
     }
     case "attachCustomer": {
+      // A trade-in is drafted for one customer and completed against the
+      // sale's customer, so the two cannot come apart (section 7).
+      if (ticket.trade && action.customer?.id !== ticket.trade.customerId) return ticket
       // A voucher belongs to the customer who earned it.
       const voucher =
         ticket.voucher && ticket.voucher.customer !== action.customer?.id ? null : ticket.voucher
@@ -377,6 +457,50 @@ export function ticketReducer(ticket: Ticket, action: TicketAction): Ticket {
       return action.ticket
     case "clear":
       return emptyTicket()
+    case "startTrade": {
+      // One part-exchange a ticket. A return can sit beside it: the trade
+      // applies to the sale first, then the return (section 7).
+      if (ticket.trade) return ticket
+      return {
+        ...ticket,
+        trade: {
+          customerId: action.customerId,
+          customerName: action.customerName,
+          tradeInId: null,
+          lines: [],
+        },
+      }
+    }
+    case "trade": {
+      const trade = ticket.trade
+      if (!trade) return ticket
+      // The buy-in wizard's own reducer, so a line is added, changed and
+      // adopted on the till exactly as it is in the wizard.
+      const next = tradeReducer(
+        { ...tradeInitialState, tradeInId: trade.tradeInId, lines: trade.lines },
+        action.action
+      )
+      if (next.lines === trade.lines && next.tradeInId === trade.tradeInId) return ticket
+      return { ...ticket, trade: { ...trade, tradeInId: next.tradeInId, lines: next.lines } }
+    }
+    case "dropTrade":
+      return ticket.trade ? { ...ticket, trade: null } : ticket
+    case "rebaseTrade": {
+      // The draft has gone from under the ticket: its lines are written
+      // again to a new one.
+      const trade = ticket.trade
+      if (!trade) return ticket
+      return {
+        ...ticket,
+        trade: {
+          ...trade,
+          tradeInId: null,
+          lines: trade.lines.map((line) => ({ ...line, id: undefined })),
+        },
+      }
+    }
+    case "setReturns":
+      return { ...ticket, returns: action.returns }
     default:
       return ticket
   }

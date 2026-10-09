@@ -17,14 +17,20 @@ import {
   formatGBP,
   type Capability,
   type SaleLookup,
+  type SaleTicketRefund,
+  type SaleTradeIn,
+  type Tender,
+  type TicketReturnsInput,
   type TillCatalogue,
   type TillCatalogueItem,
   type TillCatalogueProduct,
+  type TradeSettlementInput,
 } from "@gg/shared"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
-import { noteNetworkSuccess } from "@/lib/offline/net"
+import { isOffline, noteNetworkSuccess } from "@/lib/offline/net"
+import { OfflineQueuedError } from "@/lib/offline/errors"
 import { completeSaleQueued } from "@/lib/api/offline"
 import {
   refundSale,
@@ -35,6 +41,7 @@ import {
   type TillVoidedLine,
 } from "@/lib/api/sales"
 import { currentRegisterId } from "@/lib/api/till-session"
+import type { SaleStatus } from "@/lib/api/types"
 import { withOverride } from "@/features/lock/override"
 import * as demo from "@/lib/api/demo/till"
 import * as demoSales from "@/lib/api/demo/sales"
@@ -153,6 +160,80 @@ export async function completeTillSale(
   const register = payload.register ?? currentRegisterId()
   const body: TillSalePayload = register ? { ...payload, register } : payload
   return withOverride((headers) => completeSaleQueued(body, headers), { describe })
+}
+
+/**
+ * A ticket that carries a part-exchange or a return
+ * (docs/api-contract-epos.md, section 7): the sale's own fields plus the
+ * draft trade-in, how its surplus is settled, and the lines of an earlier
+ * sale coming back.
+ */
+export interface TillTicketPayload extends TillSalePayload {
+  trade_in?: string
+  trade_settlement?: TradeSettlementInput
+  returns?: TicketReturnsInput
+}
+
+/**
+ * A return's refund as the sale route answers it: the shared
+ * `SaleTicketRefund` plus the original sale, which the refund's own receipt
+ * prints from, and its tenders. Optional here because a ticket of returns
+ * alone answers with the refund route's body, which carries no `sale`.
+ */
+export interface TillTicketRefund extends Pick<SaleTicketRefund, "ref" | "amount" | "exchange"> {
+  sale?: { id: string; number: string }
+  tenders?: Tender[]
+}
+
+/**
+ * What such a ticket answers with: the sale's own body plus `trade_in` and
+ * `refund`, each null when unused. A ticket of returns and nothing new
+ * makes no sale ("then it is simply a refund"): it answers with the refund
+ * route's body (`sale` is then the original sale, `{ id, status }`) and
+ * `refund.exchange` of 0, so its sale figures are all optional here.
+ */
+export interface TillTicketResult extends Partial<Omit<TillSaleResult, "sale">> {
+  sale: { id: string; number?: string; total?: number; status?: SaleStatus } | null
+  trade_in?: SaleTradeIn | null
+  refund?: TillTicketRefund | null
+}
+
+/** Why a trade-in or a return is never queued. */
+export const OFFLINE_TICKET_MESSAGE =
+  "Trade-ins and returns need the server. Reconnect and try again."
+
+/**
+ * Completes a ticket. A plain one goes the way every sale goes, through
+ * the offline queue. One with a trade-in or a return is never queued: the
+ * trade-in's completion writes the seller snapshot, the ID gate, the items
+ * and the payout, and a return refunds an earlier sale, all in the sale's
+ * own transaction on the server, so with the line down it is refused out
+ * loud instead. A manager's approval is asked for as for any sale (a
+ * return needs `refund`).
+ */
+export async function completeTillTicket(
+  payload: TillTicketPayload,
+  describe: (capability: Capability) => string,
+  context?: { sale?: string; amount?: number; reason?: string }
+): Promise<TillTicketResult> {
+  if (!payload.trade_in && !payload.returns) return completeTillSale(payload, describe)
+  const register = payload.register ?? currentRegisterId()
+  const body: TillTicketPayload = register ? { ...payload, register } : payload
+  if (isDemo()) {
+    return withOverride(async () => demoSales.completeTicket(body), { describe, context })
+  }
+  if (isOffline()) throw new OfflineQueuedError(OFFLINE_TICKET_MESSAGE)
+  const result = await withOverride(
+    (headers) =>
+      pb.send<TillTicketResult>("/api/vault/sales/complete", {
+        method: "POST",
+        body,
+        headers,
+      }),
+    { describe, context }
+  )
+  noteNetworkSuccess()
+  return { ...result, sale: result.sale ?? null }
 }
 
 /**

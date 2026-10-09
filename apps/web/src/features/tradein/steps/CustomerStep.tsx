@@ -19,6 +19,7 @@ import {
 } from "@/features/customers/format"
 import { customerSchema } from "@/features/customers/schema"
 import type { WizardCustomer } from "@/features/tradein/machine"
+import { toWizardCustomer } from "@/features/tradein/wizard-customer"
 import {
   createCustomer,
   findCustomerByScan,
@@ -26,28 +27,7 @@ import {
   qrTokenFrom,
   refusalOrFallback,
   searchCustomers,
-  type CustomerProfile,
-  type IdStatus,
 } from "@/lib/api"
-
-function toWizardCustomer(profile: CustomerProfile): WizardCustomer {
-  return {
-    id: profile.customer.id,
-    name: profile.customer.name,
-    code: profile.customer.code,
-    email: profile.customer.email ?? "",
-    phone: profile.customer.phone ?? "",
-    creditBalance: profile.private?.credit_balance ?? 0,
-    facts: {
-      flags: profile.private?.flags ?? [],
-      idStatus: (profile.private?.id_status ?? "none") as IdStatus,
-      idType: profile.private?.id_type,
-      idExpiry: profile.private?.id_expiry,
-      dob: profile.private?.dob,
-      address: profile.private?.address,
-    },
-  }
-}
 
 export interface CustomerStepProps {
   customer: WizardCustomer | null

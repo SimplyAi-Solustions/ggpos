@@ -9,6 +9,7 @@
  * back already. Pure.
  */
 import {
+  displayCode,
   formatGBP,
   refundAmount,
   type LineBreakdown,
@@ -16,6 +17,7 @@ import {
   type SaleLookupLine,
 } from "@gg/shared"
 
+import type { TicketReturn } from "@/features/till/ticket"
 import type { TillRefundTender } from "@/lib/api/sales"
 
 export type RefundMethod = TillRefundTender["method"]
@@ -87,6 +89,47 @@ export function originalCardLast4(sale: SaleLookup): string {
         tender.card_last4
     )?.card_last4 ?? ""
   )
+}
+
+/**
+ * The chosen lines as a return on the ticket ("Exchange in this ticket"),
+ * each at what the shared breakdown says those units come back at, or the
+ * sentence that says what is missing.
+ */
+export function ticketReturnFrom(
+  sale: SaleLookup,
+  chosen: Record<string, number>,
+  reason: string,
+  restock: boolean
+): { ok: true; returns: TicketReturn } | { ok: false; message: string } {
+  const lines = sale.lines.flatMap((line) => {
+    const qty = Math.min(chosen[line.id] ?? 0, line.refundable_qty)
+    if (qty <= 0) return []
+    return [
+      {
+        saleLine: line.id,
+        title: line.title,
+        detail: line.sku ? displayCode(line.sku) : "Till product",
+        qty,
+        amount: refundAmount(asBreakdown(line), qty),
+      },
+    ]
+  })
+  if (lines.length === 0) return { ok: false, message: "Choose what is coming back." }
+  if (!reason.trim()) return { ok: false, message: "Say why it is coming back." }
+  return {
+    ok: true,
+    returns: {
+      saleId: sale.id,
+      saleNumber: sale.number,
+      customer: sale.customer,
+      lines,
+      reason: reason.trim(),
+      restock,
+      refundMethod: defaultRefundMethod(sale),
+      cardLast4: originalCardLast4(sale),
+    },
+  }
 }
 
 /**

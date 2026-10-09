@@ -34,14 +34,39 @@ import { setScanHandler } from "@/app/scan-bus"
 import { OverrideCancelled } from "@/features/lock/override"
 import { openDrawer, printReceipt } from "@/features/printing/receipt"
 import { CustomerSearchSheet } from "@/features/sell/CustomerSearchSheet"
+import {
+  EMPTY_CAPTURE,
+  idCheckForm,
+  idCheckFrom,
+  type IdCaptureValues,
+} from "@/features/tradein/id-capture"
+import type { TradeLine } from "@/features/tradein/machine"
 import { CataloguePane } from "@/features/till/CataloguePane"
 import { DonePane, type ReceiptChoice } from "@/features/till/DonePane"
 import { ReturnsSheet } from "@/features/till/ReturnsSheet"
+import { RefundPane, SettlePane, TradeStep } from "@/features/till/SettlePane"
 import { TenderPane } from "@/features/till/TenderPane"
 import { TicketPane } from "@/features/till/TicketPane"
 import { TillHeader } from "@/features/till/TillHeader"
+import { TradeInPanel } from "@/features/till/TradeInPanel"
 import { useEposSettings } from "@/features/till/epos-settings"
+import {
+  agreementProblem,
+  leftProblem,
+  needsIdStep,
+  payLabel,
+  refundDestination,
+  refundProblem,
+  refundTender,
+  returnsInput,
+  returnsValue,
+  settleTicket,
+  surplusCash,
+  tradeProblem,
+  tradeSettlementInput,
+} from "@/features/till/exchange"
 import { readTillScan, worthSearching } from "@/features/till/scan"
+import { useTillTrade } from "@/features/till/use-trade"
 import {
   KeyPriceSheet,
   LineSheet,
@@ -59,22 +84,21 @@ import {
   sameThing,
   stockIds,
   summarise,
+  ticketIsEmpty,
   voucherProblem,
   type Ticket,
   type TicketLine,
+  type TicketReturn,
   type TicketTotals,
 } from "@/features/till/ticket"
-import {
-  resolveTenders,
-  tenderInputs,
-  tendersProblem,
-} from "@/features/till/tenders"
+import { resolveTenders, tenderInputs } from "@/features/till/tenders"
 import {
   dispatchTill,
   getTill,
   tillClientId,
   useTill,
   type DoneSale,
+  type TillSettlement,
 } from "@/features/till/till-store"
 import { tillDisplayPayload, useTillDisplay } from "@/features/till/use-till-display"
 import { useWide } from "@/features/till/use-wide"
@@ -84,12 +108,13 @@ import {
   getVoucher,
   isQueuedSaleId,
   listItems,
+  submitIdCheck,
 } from "@/lib/api"
 import { useCounterConfig } from "@/lib/api/config"
 import { getVoucherByCode } from "@/lib/api/loyalty"
 import { isNotFound, refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
 import {
-  completeTillSale,
+  completeTillTicket,
   deleteParkedTicket,
   emailReceipt,
   getTillCatalogue,
@@ -98,7 +123,7 @@ import {
   tillProductByBarcode,
   voidTicketLines,
   type ParkedTicket,
-  type TillSalePayload,
+  type TillTicketPayload,
 } from "@/lib/api/till"
 import { currentRegisterId, useTillCurrent } from "@/lib/api/till-session"
 import type { ItemDetail, ItemSummary, SaleCustomer } from "@/lib/api/types"
@@ -132,6 +157,8 @@ function productKey(productId: string): string {
 /** One line saying what a manager is being asked to approve. */
 function approvalLine(capability: Capability, ticket: Ticket, totals: TicketTotals): string {
   switch (capability) {
+    case "refund":
+      return `Give a refund of ${formatGBP(returnsValue(ticket.returns))}`
     case "discount_over_limit":
       return `A discount of ${formatGBP(totals.lineDiscounts + totals.discount)} on a ticket of ${formatGBP(totals.gross)}`
     case "price_override": {
@@ -161,6 +188,7 @@ export interface TillScreenProps {
 export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   const till = useTill()
   const { ticket, phase, tenders, step, done } = till
+  const agreed = till.settlement
   const wide = useWide()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -172,7 +200,15 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   const current = useTillCurrent({ running: false })
 
   const totals = summarise(ticket)
-  const tenderState = resolveTenders(totals.total, tenders)
+  // A part-exchange or a return set against the sale (section 7): what is
+  // left to pay, and whether the ticket is paid, settled or refunded.
+  const trade = useTillTrade(ticket.trade, { cashChosen: agreed.surplus === "cash" })
+  const settlement = settleTicket(totals.total, {
+    trade: ticket.trade ? (trade.figures?.credit ?? 0) : null,
+    returns: ticket.returns ? returnsValue(ticket.returns) : null,
+  })
+  const tenderState = resolveTenders(settlement.toPay, tenders)
+  const tradeReady = !ticket.trade || (agreed.terms && Boolean(agreed.signature))
   const paidWithPoints = tenderState.tenders
     .filter((tender) => tender.method === "points")
     .reduce((sum, tender) => sum + tender.amount, 0)
@@ -194,6 +230,18 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
 
   const [customerOpen, setCustomerOpen] = React.useState(false)
   const [pendingProduct, setPendingProduct] = React.useState<TillCatalogueProduct | null>(null)
+  /** The customer search was opened for a trade-in, which needs somebody first. */
+  const [pendingTrade, setPendingTrade] = React.useState(false)
+  /** The Trade-in panel is in the catalogue's place. */
+  const [tradeOpen, setTradeOpen] = React.useState(false)
+  /**
+   * The ID step's photo and fields for a cash surplus. Kept here rather
+   * than with the ticket: a photo is not something to keep in storage.
+   */
+  const [capture, setCapture] = React.useState<IdCaptureValues>(EMPTY_CAPTURE)
+  /** The ID document this ticket has stored, so a retry does not store a second photo. */
+  const storedDocument = React.useRef<{ customer: string; id: string } | null>(null)
+  const [printingRefund, setPrintingRefund] = React.useState(false)
   const [lineKey, setLineKey] = React.useState<string | null>(null)
   const [discountOpen, setDiscountOpen] = React.useState(false)
   const [keyPrice, setKeyPrice] = React.useState<TillCatalogueProduct | null>(null)
@@ -239,6 +287,10 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       ["till-category"],
       ["till-catalogue"],
       ["till-search-stock"],
+      // A part-exchange moves the seller's record, their ID and the buy-ins.
+      ["customer"],
+      ["id-document"],
+      ["trade-ins"],
     ]) {
       void queryClient.invalidateQueries({ queryKey: key })
     }
@@ -254,6 +306,8 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     step,
     left: tenderState.left,
     done,
+    trade: trade.lines,
+    settlement,
   })
   useTillDisplay(config?.display.enabled === true, displayPayload)
 
@@ -338,17 +392,103 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     [addItemDetail]
   )
 
+  /** The panel in the catalogue's place, starting the trade for the ticket's customer. */
+  const showTrade = React.useCallback((customer: SaleCustomer) => {
+    if (!getTill().ticket.trade) {
+      dispatchTill({ type: "startTrade", customerId: customer.id, customerName: customer.name })
+    }
+    setTradeOpen(true)
+    setTab("items")
+  }, [setTab])
+
   const attachCustomer = React.useCallback(
     (customer: SaleCustomer) => {
+      // A trade-in is drafted for one customer and completed against the
+      // sale's (section 7), so the two never come apart.
+      const tradeFor = getTill().ticket.trade
+      if (tradeFor && tradeFor.customerId !== customer.id) {
+        setScanError(
+          `The trade-in is ${tradeFor.customerName}'s. Take it off before changing the customer.`
+        )
+        return
+      }
       dispatchTill({ type: "attachCustomer", customer })
       setScanNote(`${customer.name} attached`)
       if (pendingProduct) {
         addProduct(pendingProduct)
         setPendingProduct(null)
       }
+      if (pendingTrade) {
+        setPendingTrade(false)
+        showTrade(customer)
+      }
     },
-    [pendingProduct, addProduct]
+    [pendingProduct, addProduct, pendingTrade, showTrade]
   )
+
+  /**
+   * A trade line's change, from its chips, its market field or its price
+   * lookup. Stable, because the line row applies a looked-up price in an
+   * effect keyed on it.
+   */
+  const updateTradeLine = React.useCallback((key: string, patch: Partial<TradeLine>) => {
+    dispatchTill({ type: "trade", action: { type: "update-line", key, patch } })
+  }, [])
+
+  /** "Trade in": the panel, once there is a customer to trade with. */
+  const openTrade = React.useCallback(() => {
+    const now = getTill()
+    if (now.phase === "paying") {
+      setTicketNote("Finish taking payment, or go back to the ticket first.")
+      return
+    }
+    const customer = now.phase === "done" ? null : now.ticket.customer
+    if (!customer) {
+      setPendingTrade(true)
+      setCustomerOpen(true)
+      return
+    }
+    setTicketNote(null)
+    showTrade(customer)
+  }, [showTrade])
+
+  /**
+   * "Exchange in this ticket" from the returns sheet: the chosen lines come
+   * onto the ticket as a return, set against what the customer buys.
+   */
+  const takeExchange = React.useCallback((incoming: TicketReturn): string | null => {
+    const now = getTill()
+    if (now.phase === "paying") {
+      return "Finish taking payment on the till first, then take the exchange."
+    }
+    const ticketNow = now.phase === "done" ? null : now.ticket
+    if (ticketNow?.returns && ticketNow.returns.saleId !== incoming.saleId) {
+      return `This ticket already has a return from ${ticketNow.returns.saleNumber}. Finish that one first.`
+    }
+    dispatchTill({ type: "setReturns", returns: incoming })
+    // The customer the original was sold to comes onto a ticket that has
+    // nobody yet, so a store credit refund and the new sale's points are
+    // theirs. Staff can take them off.
+    const owner = incoming.customer
+    if (owner && !getTill().ticket.customer) {
+      void getCustomerForSale(owner.code)
+        .then((customer) => {
+          if (customer && !getTill().ticket.customer) {
+            dispatchTill({ type: "attachCustomer", customer })
+          }
+        })
+        .catch(() => undefined)
+    }
+    setReturns({ open: false, number: "" })
+    setScanError(null)
+    const first = incoming.lines[0]
+    setScanNote(
+      incoming.lines.length === 1 && first
+        ? `${first.title} from ${incoming.saleNumber} is on the ticket`
+        : `${incoming.lines.length} lines from ${incoming.saleNumber} are on the ticket`
+    )
+    return null
+  }, [])
 
   /** A reward voucher: the refusal to show, or null once it is on the ticket. */
   const applyVoucher = React.useCallback(async (code: string): Promise<string | null> => {
@@ -459,7 +599,8 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     return () => window.clearTimeout(timer)
   }, [typed])
 
-  const showCatalogue = phase === "ticket" && (wide || tab === "items")
+  const tradePanel = phase === "ticket" && tradeOpen && Boolean(ticket.trade)
+  const showCatalogue = phase === "ticket" && !tradePanel && (wide || tab === "items")
   React.useEffect(() => {
     const field = scanRef.current
     if (!field || !showCatalogue) return undefined
@@ -518,31 +659,138 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   const sell = useMutation({
     mutationFn: async () => {
       const state = getTill()
-      const sums = summarise(state.ticket)
-      const paid = resolveTenders(sums.total, state.tenders)
-      const problem = tendersProblem(sums.total, paid)
-      if (problem) throw new Error(problem)
-      const payload: TillSalePayload = {
+      const sold = state.ticket
+      const sums = summarise(sold)
+      const agreement = state.settlement
+      const owed = settleTicket(sums.total, {
+        trade: sold.trade ? (trade.figures?.credit ?? 0) : null,
+        returns: sold.returns ? returnsValue(sold.returns) : null,
+      })
+      const paid = resolveTenders(owed.toPay, state.tenders)
+      if (owed.mode === "pay") {
+        const problem = leftProblem(owed, paid.covered, paid.over)
+        if (problem) throw new Error(problem)
+      }
+
+      // ---- The part-exchange: the buy-in's rules, then its lines saved ----
+      const choice = agreement.surplus
+      const cash = surplusCash(agreement.surplusCash, owed, trade.figures ?? { credit: 0, cash: 0 })
+      let tradePart: Pick<TillTicketPayload, "trade_in" | "trade_settlement"> = {}
+      if (sold.trade) {
+        const problem =
+          (trade.figures ? tradeProblem(sold.trade, trade.figures, sold.lines.length) : null) ??
+          agreementProblem({
+            settlement: owed,
+            choice,
+            cash,
+            terms: agreement.terms,
+            signature: agreement.signature,
+            customer: trade.seller,
+            cashCap: trade.cashCap,
+            gate: trade.gate,
+            capture,
+          })
+        if (problem) throw new Error(problem)
+        const tradeInId = await trade.flush()
+        let idCheck = null
+        if (needsIdStep(owed, choice) && trade.gate.needed) {
+          // The photo goes to the ID check route first, as the wizard sends
+          // it, and a retry reuses the document rather than storing the
+          // customer's ID twice.
+          const customerId = sold.trade.customerId
+          const already =
+            storedDocument.current?.customer === customerId ? storedDocument.current.id : null
+          const documentId =
+            already ?? (await submitIdCheck(customerId, idCheckForm(capture))).id_document
+          storedDocument.current = { customer: customerId, id: documentId }
+          idCheck = idCheckFrom(capture, documentId)
+        }
+        tradePart = {
+          trade_in: tradeInId,
+          trade_settlement: tradeSettlementInput({
+            settlement: owed,
+            choice,
+            cash,
+            terms: agreement.terms,
+            signature: agreement.signature,
+            idCheck,
+          }),
+        }
+      }
+
+      // ---- The return: its lines, and where the rest goes back -------------
+      const method = agreement.refundMethod
+      let returnsPart: Pick<TillTicketPayload, "returns"> = {}
+      if (sold.returns) {
+        if (owed.refund > 0) {
+          const problem = refundProblem(method, sold.returns, agreement.cardLast4)
+          if (problem) throw new Error(problem)
+        }
+        returnsPart = {
+          returns: returnsInput(
+            sold.returns,
+            owed.refund > 0 && method ? refundTender(method, owed.refund, agreement.cardLast4) : null
+          ),
+        }
+      }
+
+      const payload: TillTicketPayload = {
         client_id: tillClientId(),
-        lines: saleLines(state.ticket),
+        lines: saleLines(sold),
         discount: sums.discount,
         discount_source: sums.discountSource,
-        reward_code: state.ticket.voucher?.code ?? null,
-        customer: state.ticket.customer?.id ?? null,
+        reward_code: sold.voucher?.code ?? null,
+        customer: sold.customer?.id ?? null,
         tenders: tenderInputs(paid),
-        ...(state.ticket.voided.length ? { voided: state.ticket.voided } : {}),
+        ...(sold.voided.length ? { voided: sold.voided } : {}),
+        ...tradePart,
+        ...returnsPart,
       }
-      const result = await completeTillSale(payload, (capability) =>
-        approvalLine(capability, state.ticket, sums)
+      const result = await completeTillTicket(
+        payload,
+        (capability) => approvalLine(capability, sold, sums),
+        sold.returns
+          ? { sale: sold.returns.saleId, amount: returnsValue(sold.returns), reason: sold.returns.reason }
+          : undefined
       )
+      const payout = result.trade_in?.payout_cash ?? 0
+      const refundCash = sold.returns && method === "cash" ? owed.refund : 0
+      // A ticket of returns alone makes no sale: the server answers with the
+      // refund route's body, and the receipt is the refund's, printed from
+      // the original sale.
+      const refundOnly = sold.lines.length === 0 && Boolean(result.refund)
+      const original = result.refund?.sale?.id ?? sold.returns?.saleId ?? ""
       const sale: DoneSale = {
-        saleId: result.sale.id,
-        number: result.sale.number,
-        total: result.sale.total,
+        saleId: refundOnly ? original : (result.sale?.id ?? original),
+        number: refundOnly ? (result.refund?.ref ?? "") : (result.sale?.number ?? ""),
+        total: refundOnly ? 0 : (result.sale?.total ?? 0),
         change: result.change ?? paid.change,
         pointsEarned: result.points_earned ?? 0,
-        cash: paid.tenders.some((tender) => tender.method === "cash" && tender.amount > 0),
-        queued: isQueuedSaleId(result.sale.id),
+        cash:
+          paid.tenders.some((tender) => tender.method === "cash" && tender.amount > 0) ||
+          payout > 0 ||
+          refundCash > 0,
+        queued: !refundOnly && result.sale ? isQueuedSaleId(result.sale.id) : false,
+        tradeIn: result.trade_in
+          ? {
+              number: result.trade_in.number,
+              applied: result.trade_in.applied,
+              payoutCash: result.trade_in.payout_cash,
+              payoutCredit: result.trade_in.payout_credit,
+            }
+          : null,
+        refund:
+          result.refund && sold.returns
+            ? {
+                ref: result.refund.ref,
+                amount: result.refund.amount,
+                exchange: result.refund.exchange,
+                saleId: original,
+                to: method ? refundDestination(method, agreement.cardLast4) : "",
+              }
+            : null,
+        payout: payout + refundCash,
+        refundOnly,
       }
       return sale
     },
@@ -551,6 +799,10 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       setReceiptProblem(null)
       setAskEmail(false)
       setSaleError(null)
+      // The photo, the date of birth and the address belong to the person
+      // who has just been paid.
+      setCapture(EMPTY_CAPTURE)
+      storedDocument.current = null
       dispatchTill({ type: "completed", done: sale })
       settle()
     },
@@ -565,14 +817,19 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
 
   // When nothing is left to pay, the sale completes on its own, once for
   // each set of tenders. A refusal leaves "Try again" on the screen rather
-  // than sending the same thing again by itself.
+  // than sending the same thing again by itself. A trade or a return that
+  // covers the sale is finished with its own block (Settle or Refund),
+  // never on its own, and a trade that pays part of the sale waits for the
+  // terms and the signature too.
   const ready =
     phase === "paying" &&
+    settlement.mode === "pay" &&
     ticket.lines.length > 0 &&
     tenderState.left === 0 &&
     tenderState.over === 0 &&
-    (tenders.length > 0 || totals.total === 0)
-  const readyKey = ready ? JSON.stringify([totals.total, tenders]) : null
+    (tenders.length > 0 || settlement.toPay === 0) &&
+    tradeReady
+  const readyKey = ready ? JSON.stringify([settlement.toPay, tenders, tradeReady]) : null
   const attempted = React.useRef<string | null>(null)
   const { mutate: complete, isPending: completing } = sell
   React.useEffect(() => {
@@ -591,7 +848,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     setTicketNote(null)
     setSearch(null)
     setTab("items")
-  }, [])
+  }, [setTab])
 
   async function chooseReceipt(choice: ReceiptChoice, email?: string) {
     if (!done) return
@@ -602,11 +859,13 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       if (choice === "print" || choice === "gift") {
         // The receipt job carries the drawer kick for a cash sale, so the
         // drawer is only taken care of once the printer has the job.
+        // A ticket of returns alone has only the refund's receipt.
         const outcome = await printReceipt({
           saleId: done.saleId,
           register,
           gift: choice === "gift",
           drawer: done.cash,
+          ...(done.refundOnly && done.refund ? { refundRef: done.refund.ref } : {}),
         })
         if (!outcome.ok) {
           setReceiptProblem(outcome.message)
@@ -673,6 +932,55 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     startNext(null)
   }
 
+  /** An exchange's refund receipt, printed beside the sale's own. */
+  async function printRefundReceipt() {
+    const refund = done?.refund
+    if (!refund) return
+    setPrintingRefund(true)
+    setReceiptProblem(null)
+    try {
+      const outcome = await printReceipt({
+        saleId: refund.saleId,
+        register: currentRegisterId(),
+        refundRef: refund.ref,
+      })
+      setReceiptProblem(outcome.ok ? null : outcome.message)
+    } finally {
+      setPrintingRefund(false)
+    }
+  }
+
+  /**
+   * Pay, Settle or Refund: what is left to take, a trade's surplus to pay
+   * out, or a return's difference to give back. A trade that is not ready
+   * says why on the ticket rather than in the tender pane.
+   */
+  function startPaying() {
+    const now = getTill()
+    const sold = now.ticket
+    if (sold.trade) {
+      const problem = trade.figures ? tradeProblem(sold.trade, trade.figures, sold.lines.length) : null
+      if (problem) {
+        setTicketNote(problem)
+        setTab("ticket")
+        return
+      }
+    }
+    setScanNote(null)
+    setTicketNote(null)
+    setTradeOpen(false)
+    dispatchTill({ type: "pay" })
+    if (sold.returns && settlement.refund > 0) {
+      dispatchTill({
+        type: "settlement",
+        patch: { refundMethod: sold.returns.refundMethod, cardLast4: sold.returns.cardLast4 },
+      })
+    }
+    // The trade's terms and signature come first when it pays part of the sale.
+    if (sold.trade && settlement.mode === "pay") dispatchTill({ type: "openStep", step: "trade" })
+    setTab("items")
+  }
+
   // ---- Clearing, parking and recalling ------------------------------------
 
   const clear = useMutation({
@@ -710,13 +1018,13 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
     mutationFn: async (label: string) => {
       if (!registerId) throw new Error("The till's register is not known yet. Try again in a moment.")
       const state = getTill()
-      const sums = summarise(state.ticket)
       await parkTicket({
         register: registerId,
         label,
         customer: state.ticket.customer?.id ?? null,
         payload: state.ticket,
-        total: sums.total,
+        // What is left to pay once a trade or a return is set against it.
+        total: settlement.toPay,
         itemIds: stockIds(state.ticket),
       })
       return label
@@ -753,7 +1061,15 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       }
       return {
         entry,
-        ticket: { ...getTill().ticket, ...payload, lines: payload.lines, customer } as Ticket,
+        ticket: {
+          ...getTill().ticket,
+          ...payload,
+          lines: payload.lines,
+          customer,
+          // A ticket parked before part-exchange existed has neither.
+          trade: payload.trade ?? null,
+          returns: payload.returns ?? null,
+        } as Ticket,
       }
     },
     onSuccess: ({ entry, ticket: recalled }) => {
@@ -788,13 +1104,18 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         open={customerOpen}
         onOpenChange={(open) => {
           setCustomerOpen(open)
-          if (!open) setPendingProduct(null)
+          if (!open) {
+            setPendingProduct(null)
+            setPendingTrade(false)
+          }
         }}
         onChoose={attachCustomer}
         description={
           pendingProduct
             ? `${pendingProduct.name} is sold to somebody. Search a name, a phone number or a card code.`
-            : undefined
+            : pendingTrade
+              ? "A trade-in needs the customer. Search a name, a phone number or a card code."
+              : undefined
         }
       />
       <LineSheet
@@ -851,7 +1172,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         }}
         tickets={parkedTickets}
         loading={parked.isPending}
-        blocked={phase !== "ticket" || ticket.lines.length > 0}
+        blocked={phase !== "ticket" || !ticketIsEmpty(ticket)}
         pendingId={recall.isPending ? (recall.variables?.id ?? null) : null}
         error={recall.error ? refusalOrFallback(recall.error, "That ticket could not be recalled. Try again.") : null}
         onRecall={(entry) => recall.mutate(entry)}
@@ -860,6 +1181,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         open={returns.open}
         number={returns.number}
         onOpenChange={(open) => setReturns((value) => ({ open, number: open ? value.number : "" }))}
+        onExchange={takeExchange}
       />
     </>
   )
@@ -867,10 +1189,15 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   // ---- The panes --------------------------------------------------------------
 
   const readOnly = phase !== "ticket"
+  const tradeGroup = ticket.trade
+    ? { lines: trade.lines, value: trade.figures?.credit ?? 0 }
+    : null
   const ticketPane = (docked: boolean) => (
     <TicketPane
       ticket={ticket}
       totals={totals}
+      trade={tradeGroup}
+      settlement={settlement}
       points={points}
       readOnly={readOnly}
       vatRegistered={settings.vatRegistered}
@@ -880,19 +1207,59 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       notice={ticketNote}
       clearing={clear.isPending}
       onAddCustomer={() => setCustomerOpen(true)}
-      onRemoveCustomer={() => dispatchTill({ type: "attachCustomer", customer: null })}
+      onRemoveCustomer={() => {
+        if (ticket.trade) {
+          setTicketNote(
+            `The trade-in is ${ticket.trade.customerName}'s. Take it off before changing the customer.`
+          )
+          return
+        }
+        dispatchTill({ type: "attachCustomer", customer: null })
+      }}
       onOpenLine={(target) => setLineKey(target.key)}
       onQty={(target, qty) => dispatchTill({ type: "setQty", key: target.key, qty })}
       onPark={() => setParkOpen(true)}
       onDiscount={() => setDiscountOpen(true)}
-      onClear={() => clear.mutate()}
-      onPay={() => {
-        setScanNote(null)
-        dispatchTill({ type: "pay" })
-        setTab("items")
+      onTradeIn={openTrade}
+      onRemoveReturns={() => {
+        dispatchTill({ type: "setReturns", returns: null })
+        setTicketNote(null)
       }}
+      onClear={() => clear.mutate()}
+      onPay={startPaying}
     />
   )
+
+  const patchAgreement = (patch: Partial<TillSettlement>) => {
+    setSaleError(null)
+    dispatchTill({ type: "settlement", patch })
+  }
+  const backToTicket = () => {
+    setSaleError(null)
+    dispatchTill({ type: "backToTicket" })
+  }
+
+  // What the trade and the return already pay, above the tenders taken.
+  const appliedCredits = [
+    ...(ticket.trade && settlement.applied > 0
+      ? [
+          {
+            label: "Part-exchange",
+            amount: settlement.applied,
+            note: tradeReady ? "Trade-in, signed" : "Trade-in, needs the terms and a signature",
+          },
+        ]
+      : []),
+    ...(ticket.returns && settlement.exchange > 0
+      ? [
+          {
+            label: "Exchange",
+            amount: settlement.exchange,
+            note: `Return from ${ticket.returns.saleNumber}`,
+          },
+        ]
+      : []),
+  ]
 
   const leftPane =
     phase === "done" && done ? (
@@ -904,10 +1271,75 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         askEmail={askEmail}
         onChoose={(choice, email) => void chooseReceipt(choice, email)}
         onNewSale={newSale}
+        onPrintRefund={() => void printRefundReceipt()}
+        printingRefund={printingRefund}
+      />
+    ) : phase === "paying" && settlement.mode === "settle" && ticket.trade && trade.figures ? (
+      <SettlePane
+        settlement={settlement}
+        figures={trade.figures}
+        choice={agreed.surplus}
+        cashDigits={agreed.surplusCash}
+        terms={agreed.terms}
+        signature={agreed.signature}
+        seller={trade.seller}
+        cashCap={trade.cashCap}
+        gate={trade.gate}
+        capture={capture}
+        creditPoints={trade.creditPoints(settlement.surplus)}
+        returns={ticket.returns}
+        refundMethod={agreed.refundMethod}
+        last4={agreed.cardLast4}
+        completing={completing}
+        error={saleError}
+        onMethod={(refundMethod) => patchAgreement({ refundMethod })}
+        onLast4={(cardLast4) => patchAgreement({ cardLast4 })}
+        onChoice={(choice) => patchAgreement({ surplus: choice })}
+        onCashDigits={(digits) => patchAgreement({ surplusCash: digits })}
+        onTerms={(terms) => patchAgreement({ terms })}
+        onSignature={(signature) => patchAgreement({ signature })}
+        onCapture={(patch) => {
+          setSaleError(null)
+          setCapture((value) => ({ ...value, ...patch }))
+        }}
+        onComplete={() => complete()}
+        onBack={backToTicket}
+      />
+    ) : phase === "paying" && settlement.mode === "refund" && ticket.returns ? (
+      <RefundPane
+        settlement={settlement}
+        returns={ticket.returns}
+        saleLines={ticket.lines.length}
+        method={agreed.refundMethod}
+        last4={agreed.cardLast4}
+        completing={completing}
+        error={saleError}
+        onMethod={(refundMethod) => patchAgreement({ refundMethod })}
+        onLast4={(cardLast4) => patchAgreement({ cardLast4 })}
+        onComplete={() => complete()}
+        onBack={backToTicket}
       />
     ) : phase === "paying" ? (
       <TenderPane
-        total={totals.total}
+        total={settlement.toPay}
+        pointsTotal={totals.total}
+        applied={appliedCredits}
+        tradeStep={
+          ticket.trade ? (
+            <TradeStep
+              applied={settlement.applied}
+              terms={agreed.terms}
+              signature={agreed.signature}
+              onTerms={(terms) => patchAgreement({ terms })}
+              onSignature={(signature) => patchAgreement({ signature })}
+            />
+          ) : null
+        }
+        waiting={
+          tradeReady
+            ? null
+            : "The trade-in needs the terms and the customer's signature before the sale completes. Open Trade-in."
+        }
         taken={tenders}
         state={tenderState}
         step={step}
@@ -931,11 +1363,30 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
         onApplyVoucher={applyVoucher}
         onRemoveVoucher={() => dispatchTill({ type: "applyVoucher", voucher: null })}
         onAddCustomer={() => setCustomerOpen(true)}
-        onBack={() => {
-          setSaleError(null)
-          dispatchTill({ type: "backToTicket" })
-        }}
+        onBack={backToTicket}
         onRetry={() => complete()}
+      />
+    ) : tradePanel && ticket.trade && trade.figures ? (
+      <TradeInPanel
+        trade={ticket.trade}
+        customerCode={ticket.customer?.code ?? ""}
+        pricing={trade.pricing}
+        figures={trade.figures}
+        rulesMissing={trade.rulesMissing}
+        saveError={trade.saveError}
+        onAdd={(line: TradeLine) =>
+          dispatchTill({ type: "trade", action: { type: "add-line", line } })
+        }
+        onUpdate={updateTradeLine}
+        onRemoveLine={(key) =>
+          dispatchTill({ type: "trade", action: { type: "remove-line", key } })
+        }
+        onClose={() => setTradeOpen(false)}
+        onRemove={() => {
+          dispatchTill({ type: "dropTrade" })
+          setTradeOpen(false)
+          setScanNote("Trade-in taken off")
+        }}
       />
     ) : (
       <CataloguePane
@@ -975,6 +1426,7 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       parked={parkedTickets.length}
       onRecall={() => setRecallOpen(true)}
       onReturns={() => openReturns("")}
+      onTradeIn={openTrade}
     />
   )
 
@@ -1015,7 +1467,10 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
   }
 
   // Below 900px: two tabs, the total and Pay docked under both.
-  const count = ticket.lines.length
+  const count =
+    ticket.lines.length +
+    (ticket.trade?.lines.length ?? 0) +
+    (ticket.returns?.lines.length ?? 0)
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="till" data-phase={phase}>
       {header}
@@ -1026,7 +1481,13 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
       >
         <TabsList className="flex w-full shrink-0 gap-0 px-3">
           <TabsTrigger value="items" className="min-h-14 flex-1 justify-center pt-5 pb-4">
-            {phase === "paying" ? "Pay" : phase === "done" ? "Done" : "Items"}
+            {phase === "paying"
+              ? payLabel(settlement)
+              : phase === "done"
+                ? "Done"
+                : tradePanel
+                  ? "Trade-in"
+                  : "Items"}
           </TabsTrigger>
           <TabsTrigger value="ticket" className="min-h-14 flex-1 justify-center pt-5 pb-4" data-testid="till-ticket-tab">
             Ticket <span className="tnum">{count}</span>
@@ -1036,15 +1497,15 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
           {tab === "items" ? leftPane : ticketPane(phase === "ticket")}
         </div>
       </Tabs>
-      {phase === "ticket" && ticket.lines.length > 0 ? (
+      {phase === "ticket" && !ticketIsEmpty(ticket) ? (
         <div className="flex shrink-0 items-center gap-4 border-t border-hairline-soft bg-background px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           <span className="flex flex-col gap-1">
-            <MicroLabel tone="ink">Total</MicroLabel>
+            <MicroLabel tone="ink">{settlement.kind === "none" ? "Total" : "To pay"}</MicroLabel>
             <span
               data-testid="till-dock-total"
               className="tnum font-display text-[32px] leading-none tracking-[0.01em] text-foreground"
             >
-              {formatGBP(totals.total)}
+              {formatGBP(settlement.toPay)}
             </span>
           </span>
           <Button
@@ -1052,13 +1513,9 @@ export function TillScreen({ voucher: incomingVoucher }: TillScreenProps = {}) {
             data-testid="till-pay"
             className="min-w-0 flex-1"
             trailingArrow
-            onClick={() => {
-              setScanNote(null)
-              dispatchTill({ type: "pay" })
-              setTab("items")
-            }}
+            onClick={startPaying}
           >
-            Pay
+            {payLabel(settlement)}
           </Button>
         </div>
       ) : null}
