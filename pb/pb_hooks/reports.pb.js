@@ -103,7 +103,10 @@ routerAdd(
     const by = queryParam("by");
     const compare = queryParam("compare") || "none";
 
-    const params = { from: from, to: to, group: group, by: by };
+    // `branch` is the sales report's category drill-down (by=category); the
+    // other reports ignore it.
+    const branch = queryParam("branch");
+    const params = { from: from, to: to, group: group, by: by, branch: branch };
     const result = builder.build(e.app, util, params);
 
     // --- compare=previous: only the totals keys the builder itself has
@@ -124,7 +127,13 @@ routerAdd(
       const hasAnyScopedTotal = Object.keys(result.totals || {}).some((k) => periodScoped[k]);
       const scopedTotals = {};
       if (hasAnyScopedTotal) {
-        const prevResult = builder.build(e.app, util, { from: prev.from, to: prev.to, group: group, by: by });
+        const prevResult = builder.build(e.app, util, {
+          from: prev.from,
+          to: prev.to,
+          group: group,
+          by: by,
+          branch: branch,
+        });
         Object.keys(prevResult.totals || {}).forEach((k) => {
           if (periodScoped[k]) scopedTotals[k] = prevResult.totals[k];
         });

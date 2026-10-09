@@ -13,11 +13,65 @@
  * so this can never disagree with either of them about what a line
  * actually made.
  *
+ * `by=category` (docs/api-contract-inventory.md, section 1.4) groups the
+ * lines by their home branch in the category tree, one level at a time:
+ * the top-level branches, or with `branch=<id>` that branch's child
+ * branches plus an "In <name> itself" row for lines homed on the branch
+ * itself, each row saying whether it has branches beneath it (`has_children`)
+ * so the screen can drill down. A line's home is its till product's branch
+ * or its stock line's.
+ *
  * require() this from inside reports.pb.js's handler (or another report
  * that reuses it) - see pb/README.md on pb_hooks isolation.
  */
 
-var VALID_BY = { game: true, kind: true, staff: true, payment: true };
+var VALID_BY = { game: true, kind: true, staff: true, payment: true, category: true };
+
+/**
+ * What `by=category` needs to place a line: the tree, and the branch being
+ * drilled into (null for the top level, also for a `branch` that no longer
+ * exists, the way an unknown `by` falls back rather than failing a saved view).
+ */
+function categoryView(app, branchId) {
+  var categories = require(`${__hooks}/lib/categories.js`);
+  var tree = categories.loadTree(app);
+  return { tree: tree, branch: branchId ? tree.byId[branchId] || null : null };
+}
+
+/**
+ * `{ key, label, path, has_children }` for a node as a row of the table. The
+ * "In <name> itself" row (given its label) is the current level, so there is
+ * nothing beneath it to drill into.
+ */
+function branchRow(node, label) {
+  return {
+    key: node.row.id,
+    label: label || node.row.name,
+    path: label ? node.path + " (itself)" : node.path,
+    has_children: label ? false : node.children.length > 0,
+  };
+}
+
+/**
+ * The table row a line belongs to given its home branch id, or null when the
+ * line is outside the branch being drilled into. At the top level a line with
+ * no home branch at all is "(none)"; inside a branch every row is a child of
+ * it, or the branch itself.
+ */
+function categoryRowFor(view, homeId) {
+  var shared = require(`${__hooks}/lib/shared/categories.js`);
+  var node = homeId ? view.tree.byId[homeId] : null;
+  if (!view.branch) {
+    if (!node) return { key: "", label: "(none)", path: "", has_children: false };
+    var top = view.tree.byId[node.lineage.split("|")[1]];
+    return branchRow(top);
+  }
+  if (!node || !shared.isWithin(node.lineage, view.branch.row.id)) return null;
+  if (node.row.id === view.branch.row.id) return branchRow(node, "In " + node.row.name + " itself");
+  // The ancestor one level below the branch: lineage is "|a|b|c|", depth counts from 0.
+  var childId = node.lineage.split("|")[view.branch.depth + 2];
+  return branchRow(view.tree.byId[childId]);
+}
 
 function build(app, util, params) {
   var dates = require(`${__hooks}/lib/reports/dates.js`);
@@ -104,7 +158,9 @@ function build(app, util, params) {
   // --- by=<dimension> table: net-of-discount, net-of-refund per line -----
   var staffLookup = query.cachedLookup(app, "staff");
   var itemLookup = query.cachedLookup(app, "items");
+  var productLookup = query.cachedLookup(app, "till_products");
   var gameLookup = query.cachedLookup(app, "games");
+  var categoryTree = by === "category" ? categoryView(app, params.branch || "") : null;
 
   var linesInRange = [];
   try {
@@ -153,6 +209,18 @@ function build(app, util, params) {
       key = held.sale.getString("staff") || "";
       var staffRow = staffLookup(key);
       label2 = staffRow ? staffRow.getString("name") : "(unassigned)";
+    } else if (by === "category") {
+      var homeRecord = line.getString("product")
+        ? productLookup(line.getString("product"))
+        : itemLookup(line.getString("item"));
+      var home = categoryRowFor(categoryTree, homeRecord ? homeRecord.getString("category") : "");
+      if (!home) continue;
+      var homeBucket = groups.get(home.key, home.label);
+      homeBucket.path = home.path;
+      homeBucket.has_children = home.has_children;
+      homeBucket.revenue = (homeBucket.revenue || 0) + soldNet;
+      homeBucket.count = (homeBucket.count || 0) + 1;
+      continue;
     } else {
       var item = itemLookup(line.getString("item"));
       if (by === "kind") {
@@ -177,15 +245,32 @@ function build(app, util, params) {
     heatmap: heatmap,
   };
 
-  return {
-    series: series,
-    table: groups.rows(),
-    totals: totals,
-    csvColumns: [
-      { key: "label", label: "Group" },
+  var table = groups.rows();
+  var csvColumns = [
+    { key: "label", label: "Group" },
+    { key: "revenue", label: "Revenue", money: true },
+    { key: "count", label: "Lines" },
+  ];
+  if (by === "category") {
+    // Largest first, each row also carrying `net` (the contract's name for
+    // the figure the other dimensions call `revenue`), and a CSV that names
+    // each branch by its full path.
+    for (var t = 0; t < table.length; t++) table[t].net = table[t].revenue;
+    table.sort(function (a, b) {
+      return b.net - a.net || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+    });
+    csvColumns = [
+      { key: "path", label: "Branch" },
       { key: "revenue", label: "Revenue", money: true },
       { key: "count", label: "Lines" },
-    ],
+    ];
+  }
+
+  return {
+    series: series,
+    table: table,
+    totals: totals,
+    csvColumns: csvColumns,
   };
 }
 

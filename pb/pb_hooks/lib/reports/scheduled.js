@@ -154,7 +154,15 @@ function sendBySchedule(app, schedule, now) {
     }
 
     var filters = util.jsonField(saved, "filters", {}) || {};
-    var params = { from: period.from, to: period.to, group: filters.group || "day", by: filters.by || "" };
+    // `branch` is the sales report's category drill-down, kept with a saved view
+    // (docs/api-contract-inventory.md, section 1.4).
+    var params = {
+      from: period.from,
+      to: period.to,
+      group: filters.group || "day",
+      by: filters.by || "",
+      branch: filters.branch || "",
+    };
 
     var result;
     try {
