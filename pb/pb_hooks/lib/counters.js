@@ -20,6 +20,16 @@ var PREFIXES = {
   redemption: "GG-V-",
 };
 
+/**
+ * Counters that are plain integers rather than formatted numbers: the X and
+ * Z reports are numbered 1, 2, 3 (docs/api-contract-epos.md, section 3,
+ * "till_reports").
+ */
+var PLAIN_KEYS = {
+  x_report: true,
+  z_report: true,
+};
+
 var PAD_WIDTH = 6;
 
 function pad(n) {
@@ -28,15 +38,8 @@ function pad(n) {
   return s;
 }
 
-/**
- * Atomically increment the named counter and return its formatted number.
- * @param {any} app - $app or a txApp.
- * @param {"trade_in"|"sale"|"redemption"} key
- */
-function nextNumber(app, key) {
-  var prefix = PREFIXES[key];
-  if (!prefix) throw new Error("Unknown counter key: " + key);
-
+/** Increment the counter row for `key` (created at zero if missing) and return the new value. */
+function bump(app, key) {
   var collection = app.findCollectionByNameOrId("counters");
   var record;
   try {
@@ -50,7 +53,31 @@ function nextNumber(app, key) {
   record.set("value", next);
   app.save(record);
 
-  return prefix + pad(next);
+  return next;
 }
 
-module.exports = { nextNumber: nextNumber, PREFIXES: PREFIXES };
+/**
+ * Atomically increment the named counter and return its formatted number.
+ * @param {any} app - $app or a txApp.
+ * @param {"trade_in"|"sale"|"redemption"} key
+ */
+function nextNumber(app, key) {
+  var prefix = PREFIXES[key];
+  if (!prefix) throw new Error("Unknown counter key: " + key);
+  return prefix + pad(bump(app, key));
+}
+
+/**
+ * Atomically increment a plain integer counter and return the new value.
+ * Bump it in the same transaction as the record it numbers, as nextNumber.
+ * @param {any} app - $app or a txApp.
+ * @param {"x_report"|"z_report"} key
+ */
+function nextValue(app, key) {
+  if (!Object.prototype.hasOwnProperty.call(PLAIN_KEYS, key)) {
+    throw new Error("Unknown counter key: " + key);
+  }
+  return bump(app, key);
+}
+
+module.exports = { nextNumber: nextNumber, nextValue: nextValue, PREFIXES: PREFIXES };
