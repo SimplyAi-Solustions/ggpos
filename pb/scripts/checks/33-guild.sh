@@ -419,6 +419,35 @@ S33_STATUS="$(s33_sell "$S33_NIA" "[{\"item\":\"$(s33_item "S33 Plain buy" 1000)
 s33_offer_off "$S33_PAID_ONLY"
 ok "an offer kept for paid-plan members applies to Guild+ and not to a plain member"
 
+# --- 33h. A referral pays only once both sides are in the Guild ---------
+# Gus joined in 33b. Rae is carded with his code but has not joined: her
+# sale leaves the referral pending and pays nobody; once she joins, her
+# next sale pays both sides.
+S33_GUS_CODE="$(s33_rec customers "$S33_GUS" code)"
+S33_RAE="$(curl -s -X POST "$BASE/api/collections/customers/records" \
+  -H "Authorization: $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"name\":\"Rae Referred\",\"email\":\"rae-referred@local.test\",\"source\":\"counter\",\"referred_by\":\"$S33_GUS_CODE\"}" | jval id)"
+[ -n "$S33_RAE" ] || fail "could not card the referred customer"
+S33_RAE_REFERRAL="$(s33_list referrals "referee='$S33_RAE'" | jval "items.0.id")"
+[ -n "$S33_RAE_REFERRAL" ] || fail "carding a customer with a member's code wrote no referral"
+S33_STATUS="$(s33_sell "$S33_RAE" "[{\"item\":\"$(s33_item "S33 Referred before joining" 1500)\",\"qty\":1}]" 1500)"
+s33_expect "$S33_STATUS" 200 "" "a sale to a referred customer who has not joined"
+[ "$(s33_rec referrals "$S33_RAE_REFERRAL" status)" = "pending" ] \
+  || fail "a non-member's sale moved their referral to '$(s33_rec referrals "$S33_RAE_REFERRAL" status)', expected pending"
+[ "$(s33_count points_ledger "reason='referral' && ref='$S33_RAE_REFERRAL'")" = "0" ] \
+  || fail "a non-member's sale paid referral points"
+S33_STATUS="$(s33_post "$STAFF_TOKEN" "/api/vault/guild/join" "{\"customer\":\"$S33_RAE\",\"marketing_consent\":false}")"
+s33_expect "$S33_STATUS" 200 "" "joining the referred customer"
+S33_STATUS="$(s33_sell "$S33_RAE" "[{\"item\":\"$(s33_item "S33 Referred after joining" 1500)\",\"qty\":1}]" 1500)"
+s33_expect "$S33_STATUS" 200 "" "the referred customer's first sale as a member"
+[ "$(s33_rec referrals "$S33_RAE_REFERRAL" status)" = "earned" ] \
+  || fail "a member's first sale left their referral '$(s33_rec referrals "$S33_RAE_REFERRAL" status)', expected earned"
+[ "$(s33_count points_ledger "reason='referral' && ref='$S33_RAE_REFERRAL' && customer='$S33_GUS'")" = "1" ] \
+  || fail "the referrer was not paid once the referee joined"
+[ "$(s33_count points_ledger "reason='referral' && ref='$S33_RAE_REFERRAL' && customer='$S33_RAE'")" = "1" ] \
+  || fail "the referee was not paid once they joined"
+ok "a referral stays pending through a non-member's sale and pays both sides on their first sale after joining"
+
 # --- teardown --------------------------------------------------------------
 while read -r S33_ID; do
   [ -n "$S33_ID" ] && curl -s -o /dev/null -X DELETE "$BASE/api/collections/loyalty_rules/records/$S33_ID" -H "Authorization: $SUPER_TOKEN"

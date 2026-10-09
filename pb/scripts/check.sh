@@ -1564,6 +1564,19 @@ curl -s -o /dev/null -X POST "$BASE/api/collections/push_subscriptions/records" 
   -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
   -d "{\"customer\":\"$DUPE_ID\",\"endpoint\":\"https://push.example.test/merge-check\"}"
 
+# bookings has no create rule (every write goes through the booking routes),
+# so this one goes in as the superuser.
+DUPE_BOOKING_ID="$(curl -s -X POST "$BASE/api/collections/bookings/records" \
+  -H "Authorization: $SUPER_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"kind\":\"resource\",\"customer\":\"$DUPE_ID\",\"status\":\"held\",\"starts_at\":\"2026-11-07 14:00:00.000Z\",\"ends_at\":\"2026-11-07 16:00:00.000Z\"}" | jval id)"
+[ -n "$DUPE_BOOKING_ID" ] || fail "could not seed the merge check's booking"
+
+# Staff joining stamps now, so the duplicate, carded first, joined first.
+DUPE_JOINED="$(curl -s "$BASE/api/collections/customers/records/$DUPE_ID" -H "Authorization: $STAFF_TOKEN" | jval guild_joined_at)"
+KEEP_JOINED_BEFORE="$(curl -s "$BASE/api/collections/customers/records/$KEEP_ID" -H "Authorization: $STAFF_TOKEN" | jval guild_joined_at)"
+[ -n "$DUPE_JOINED" ] && [[ "$DUPE_JOINED" < "$KEEP_JOINED_BEFORE" ]] \
+  || fail "the merge check's duplicate joined the Guild at '$DUPE_JOINED', not before the kept customer's '$KEEP_JOINED_BEFORE'"
+
 # perk_usage has a unique index on (customer, perk_type, period): the shared
 # September row has to be summed into the kept record's, and the row it has
 # no counterpart for has to move across whole.
@@ -1626,7 +1639,17 @@ DUPE_AFTER="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/cust
 [ "$DUPE_AFTER" = "404" ] || fail "the duplicate customer is still there after the merge (got $DUPE_AFTER)"
 MERGED_TRADE_CUSTOMER="$(curl -s "$BASE/api/collections/trade_ins/records/$DUPE_TRADE_ID" -H "Authorization: $STAFF_TOKEN" | jval customer)"
 [ "$MERGED_TRADE_CUSTOMER" = "$KEEP_ID" ] || fail "the duplicate's trade-in still points at '$MERGED_TRADE_CUSTOMER'"
+MERGED_BOOKING_CUSTOMER="$(curl -s "$BASE/api/collections/bookings/records/$DUPE_BOOKING_ID" -H "Authorization: $STAFF_TOKEN" | jval customer)"
+[ "$MERGED_BOOKING_CUSTOMER" = "$KEEP_ID" ] || fail "the duplicate's booking points at '$MERGED_BOOKING_CUSTOMER' after the merge, expected the kept customer"
+# Section 34 expects to find no bookings it did not make.
+curl -s -o /dev/null -X DELETE "$BASE/api/collections/bookings/records/$DUPE_BOOKING_ID" -H "Authorization: $SUPER_TOKEN"
 ok "a merge re-points every relation and deletes the duplicate"
+
+KEEP_JOINED="$(curl -s "$BASE/api/collections/customers/records/$KEEP_ID" -H "Authorization: $STAFF_TOKEN" | jval guild_joined_at)"
+[ "$KEEP_JOINED" = "$DUPE_JOINED" ] \
+  || fail "the kept customer joined the Guild at '$KEEP_JOINED' after the merge, expected the duplicate's earlier '$DUPE_JOINED'"
+
+ok "a merge keeps the earlier of the two Guild join dates"
 
 MERGE_SELF_REFERRAL_AFTER="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/collections/referrals/records/$MERGE_SELF_REFERRAL" -H "Authorization: $STAFF_TOKEN")"
 [ "$MERGE_SELF_REFERRAL_AFTER" = "404" ] \

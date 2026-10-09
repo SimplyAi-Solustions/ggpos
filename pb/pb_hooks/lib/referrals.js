@@ -91,6 +91,16 @@ function createPending(app, referrerId, refereeId) {
   return record;
 }
 
+/** Whether the customer with this id is in the Guild; false when there is none. */
+function memberById(app, guildLib, customerId) {
+  if (!customerId) return false;
+  try {
+    return guildLib.isMember(app.findRecordById("customers", customerId));
+  } catch (err) {
+    return false;
+  }
+}
+
 /**
  * Called from the sale and trade-in completion routes, inside their own
  * transaction, with the customer who just completed one. A `pending`
@@ -99,9 +109,11 @@ function createPending(app, referrerId, refereeId) {
  * never pays twice.
  *
  * @param {any} app - the caller's txApp.
+ * @param {{member?: boolean}} [opts] - `member`: whether the referee is in
+ *   the Guild, when the caller knows better than their saved record.
  * @returns {{earned: boolean, referral: string, pending: Array}}
  */
-function onFirstCompletion(app, customerId, staffId, ref) {
+function onFirstCompletion(app, customerId, staffId, ref, opts) {
   var out = { earned: false, referral: "", pending: [] };
   if (!customerId) return out;
 
@@ -125,7 +137,16 @@ function onFirstCompletion(app, customerId, staffId, ref) {
   // programme back on is meant to honour it.
   if (!programme.enabled) return out;
 
+  // Points belong to members (docs/api-contract-launch.md, section 2): a
+  // referral pays only once both sides are in the Guild. Until then it
+  // stays pending, and the referee's next completion after that pays it.
+  // `opts.member` is the caller's answer for the referee, for a sale that
+  // joins them in the same transaction (the Guild Membership product).
+  var guildLib = require(`${__hooks}/lib/guild.js`);
   var referrerId = referral.getString("referrer");
+  var refereeMember = opts && typeof opts.member === "boolean" ? opts.member : memberById(app, guildLib, customerId);
+  if (!refereeMember || !memberById(app, guildLib, referrerId)) return out;
+
   referral.set("status", "earned");
   referral.set("earned_at", new Date().toISOString());
   app.save(referral);

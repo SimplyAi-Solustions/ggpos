@@ -101,6 +101,9 @@ routerAdd(
       { collection: "id_documents", field: "customer" },
       { collection: "items", field: "reserved_for" },
       { collection: "customers", field: "referred_by" },
+      { collection: "quote_messages", field: "customer" },
+      { collection: "parked_tickets", field: "customer" },
+      { collection: "bookings", field: "customer" },
     ];
 
     const staff = e.auth;
@@ -165,6 +168,15 @@ routerAdd(
             n += 1;
           }
           count(rel.collection, n);
+        }
+
+        // The Guild: the record kept is a member if either was, from the
+        // earlier of the two join dates.
+        const duplicateJoined = duplicate.getString("guild_joined_at");
+        const targetJoined = target.getString("guild_joined_at");
+        if (duplicateJoined && (!targetJoined || duplicateJoined < targetJoined)) {
+          target.set("guild_joined_at", duplicateJoined);
+          txApp.save(target);
         }
 
         // referrals: both ends move, except a row that would end up with

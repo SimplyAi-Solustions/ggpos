@@ -101,6 +101,8 @@ The editor ("Offers" in Loyalty) starts from templates, each a sentence with bla
 - The members-only switch is the condition key `paidMembersOnly`; a paid member is anyone with an active membership. "Guild+" sits between Regular and Legend (5% off sealed, 1.25 times points, two free entries a month, members' event prices, early release booking).
 - The Guild card is the existing card page and label; no PDF is emailed (the mailer sends plain text), the welcome email carries the code and the My Vault link.
 - The till catalogue's item and product shapes carry `category`, so the till's points preview matches branch offers.
+- A referral pays only once both sides are members. Until then it stays pending, and the referee's next sale or buy-in after that pays both sides.
+- Merging two customers keeps the earlier of their two join dates, and moves the duplicate's bookings, parked tickets and quote messages with everything else.
 
 ### Bookings (BK)
 

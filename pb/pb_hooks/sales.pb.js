@@ -1310,7 +1310,9 @@ routerAdd(
         // (lib/referrals.js). A walk-in sale, or a customer with no
         // pending referral, is a no-op.
         if (customerId) {
-          const referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number);
+          const referralOutcome = referralsLib.onFirstCompletion(txApp, customerId, staff.id, number, {
+            member: guildMember,
+          });
           pending = pending.concat(referralOutcome.pending || []);
         }
 

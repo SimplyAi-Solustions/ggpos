@@ -219,7 +219,8 @@ export function NewCustomerScreen({
             />
             <p className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
               The code on the card of whoever sent them in. Both of them earn
-              points when this customer first buys or sells something.
+              points on this customer&apos;s first sale or buy-in once they are
+              both in the Guild.
             </p>
           </Field>
 
