@@ -113,7 +113,7 @@ test.describe("stock online", () => {
     await expect(section.getByTestId("website-preview-item")).toContainText("Charizard ex")
 
     // Switched off, nothing shows.
-    await section.getByRole("switch", { name: "Website" }).click()
+    await section.getByRole("switch", { name: "Show stock" }).click()
     await section.getByRole("button", { name: "Save website settings" }).click()
     await expect(section.getByTestId("website-saved")).toBeVisible()
     await expect(section.getByTestId("website-total")).toHaveText("0 items")

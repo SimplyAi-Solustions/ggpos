@@ -215,9 +215,9 @@ function PhotoForm({
         )}
 
         {live ? (
-          <Hint className="mt-4 block normal-case tracking-normal">
+          <p className="mt-4 text-[15px] leading-[1.5] text-muted-foreground">
             Plain background, straight on, fill the frame.
-          </Hint>
+          </p>
         ) : null}
 
         <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-3">

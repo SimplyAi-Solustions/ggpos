@@ -122,7 +122,7 @@ function FeedForm({ row }: { row: OnlineSettingsRow }) {
   return (
     <div className="flex flex-col gap-10">
       <Toggle
-        label="Website"
+        label="Show stock"
         testId="website-enabled"
         checked={form.enabled}
         onChange={(next) => set({ enabled: next })}
