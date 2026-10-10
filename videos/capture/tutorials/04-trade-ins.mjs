@@ -127,11 +127,11 @@ export default async function capture({ baseURL }) {
     value: "Priya Sandhu",
     zoom: true,
   })
-  await step("Phone and email are optional, so a name is enough. Save the card and carry on.", page.getByRole("button", { name: "Save and carry on" }), {
+  await step("Phone and email are optional, so a name is enough. Press Save and carry on.", page.getByRole("button", { name: "Save and carry on" }), {
     zoom: true,
     then: () => page.getByText("ID Not on file").waitFor(),
   })
-  await show("The customer is chosen. Their ID shows as Not on file, so a cash buy-in will need the full ID check.", page.getByText("ID Not on file"), {
+  await show("The new card is made and chosen. Their ID shows as Not on file, so a cash buy-in will need the full ID check.", page.getByText("ID Not on file"), {
     zoom: true,
   })
   await step("Press Add items.", primary("Add items"), {
