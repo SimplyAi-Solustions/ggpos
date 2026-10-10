@@ -184,7 +184,8 @@ export default async function capture({ baseURL }) {
   await step("Refund it.", returns().getByTestId("returns-refund"), {
     then: () => returns().getByTestId("returns-done").waitFor(),
   })
-  await show("Done: the refund has its own number, the card is back in stock and the drawer is updated.", returns().getByTestId("returns-done"), {
+  // Zoom to the refund line and its number, not the whole (mostly empty) panel.
+  await show("Done: the refund has its own number, the card is back in stock and the drawer is updated.", returns().getByTestId("returns-done").locator(".font-mono"), {
     zoom: true,
     hold: 5,
   })
