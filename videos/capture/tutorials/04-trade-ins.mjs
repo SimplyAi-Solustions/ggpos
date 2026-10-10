@@ -45,13 +45,13 @@ export default async function capture({ baseURL }) {
       slug: "trade-ins",
       number: 4,
       title: "Trade-ins with the ID check",
-      subtitle: "Buy items from a customer, check their ID, and take a trade-in against a sale.",
+      subtitle: "Buy items from a customer, do the ID check for cash, and take a trade-in at the till.",
       outline: [
-        "Start a buy-in and find or card the customer",
-        "Add the items with their condition and see the offers",
-        "Cash or store credit, the terms and the signature",
-        "The ID check a cash buy-in needs, and why",
-        "Complete it, then trade in against a sale at the till",
+        "Start a buy-in and find the customer",
+        "Add items and see the offers",
+        "Cash or store credit, terms and signature",
+        "The ID check for a cash buy-in",
+        "Finish it, then trade in against a sale",
       ],
       next: "Getting market values",
     },
@@ -127,12 +127,7 @@ export default async function capture({ baseURL }) {
     value: "Priya Sandhu",
     zoom: true,
   })
-  await step("Phone and email are optional, but a phone number makes them easy to find next time.", page.getByLabel("Phone"), {
-    action: "type",
-    value: "07700 900321",
-    zoom: true,
-  })
-  await step("Save the card and carry on.", page.getByRole("button", { name: "Save and carry on" }), {
+  await step("Phone and email are optional, so a name is enough. Save the card and carry on.", page.getByRole("button", { name: "Save and carry on" }), {
     zoom: true,
     then: () => page.getByText("ID Not on file").waitFor(),
   })
@@ -164,15 +159,15 @@ export default async function capture({ baseURL }) {
       await centre(cardLine())
     },
   })
-  await show("The card is on the buy-in. Market is its value, with a note of where it came from, and the cash and store credit offers sit beside it.", cardLine(), {
+  await show("The card is on the buy-in with its market value, and the cash and store credit offers beside it.", cardLine(), {
     zoom: true,
     hold: 5,
   })
-  await step("Set its condition. This one is Lightly Played, so choose LP.", cardLine().getByRole("button", { name: "LP", exact: true }), {
+  await step("Set its condition, from NM down to DMG. This one is Lightly Played, so choose LP.", cardLine().getByRole("button", { name: "LP", exact: true }), {
     zoom: true,
     then: () => t.settle(700),
   })
-  await show("The offers are worked out again for the new condition.", cardLine(), { zoom: true })
+  await show("The cash and store credit offers have dropped for the lower condition.", cardLine(), { zoom: true })
 
   await step("Now a sealed box. Choose Sealed.", page.getByRole("button", { name: "Sealed", exact: true }), {
     zoom: true,
@@ -203,7 +198,7 @@ export default async function capture({ baseURL }) {
 
   // --- The offer --------------------------------------------------------------------
   await show("Show the customer both offers. Cash needs photo ID. Store credit does not.", page.getByTestId("tile-cash").locator("xpath=.."), {
-    section: "Cash or credit",
+    section: "The offer",
     zoom: true,
   })
   await step("This customer wants cash. Choose Cash.", page.getByTestId("tile-cash"), {
@@ -218,7 +213,7 @@ export default async function capture({ baseURL }) {
     zoom: true,
   })
   await centre(page.getByTestId("signature-pad"))
-  await step("The customer signs on the screen with a finger, a stylus or the mouse.", page.getByTestId("signature-pad"), {
+  await step("The customer signs on the screen with a finger or a stylus.", page.getByTestId("signature-pad"), {
     action: sign,
   })
   await step("Once they have signed, press Check ID.", primary("Check ID"), {
@@ -229,14 +224,14 @@ export default async function capture({ baseURL }) {
   })
 
   // --- The ID check -------------------------------------------------------------------
-  await show("A cash buy-in is the shop's record of who sold it these items. The law expects it. Read this notice to the customer.", page.getByText("We photograph the ID"), {
+  await show("This is the law's record of who sold the shop these items for cash. Read the notice to the customer.", page.getByText("We photograph the ID"), {
     section: "Check their ID",
     zoom: true,
     hold: 6,
   })
   const photo = () => page.getByTestId("id-photo-input")
   await hug(photo())
-  await step("Take a photo of the customer's original ID. The photo is resized when it is saved, so no location data is kept.", photo(), {
+  await step("Take a photo of the customer's original ID with Choose file. It is resized when saved, so no location data is kept.", photo(), {
     action: (input) => input.setInputFiles(ID_PHOTO),
     zoom: true,
     then: () => page.getByTestId("id-photo-preview").waitFor(),
@@ -299,17 +294,15 @@ export default async function capture({ baseURL }) {
       await toTop()
     },
   })
-  await show("The receipt records who sold the items: their name and address, and the ID they showed.", page.getByText("Identity", { exact: true }).locator("xpath=ancestor::section[1]"), {
+  await show("The receipt records who sold the items: their name and address, and the ID they showed. Print it for the customer.", page.getByText("Identity", { exact: true }).locator("xpath=ancestor::section[1]"), {
     zoom: true,
-  })
-  await show("Press Print to give the customer their copy. The signature and the terms are on it.", page.getByRole("button", { name: "Print" }), {
-    zoom: true,
+    hold: 5,
   })
 
 
   // --- Part-exchange at the till ----------------------------------------------------
   await step("A customer can also put what they are selling towards what they are buying. Open the till.", page.getByRole("link", { name: "Till", exact: true }).first(), {
-    section: "Trade in at the till",
+    section: "Part-exchange",
     then: () => page.getByTestId("till").waitFor(),
   })
   await scan(JASMINE, "Scan their Guild card first. A trade-in needs the customer on the ticket.")
@@ -342,7 +335,7 @@ export default async function capture({ baseURL }) {
   await step("Press Pay.", page.getByTestId("till-pay").filter({ visible: true }), {
     then: () => page.getByTestId("till-trade-step").waitFor(),
   })
-  await step("The trade-in pays towards this sale. Read the terms to the customer and tick the box.", page.getByRole("switch", { name: TERMS }), {
+  await step("The trade-in pays part of the bill. Read the terms to the customer, then tick the box.", page.getByRole("switch", { name: TERMS }), {
     zoom: true,
   })
   await centre(page.getByTestId("signature-pad"))

@@ -71,7 +71,7 @@ export default async function capture({ baseURL }) {
   // --- Where the value comes from -------------------------------------------
   await show(
     "Here is the card and its market value in pounds. The shop's offer is worked out from this figure.",
-    page.getByTestId("price-check-market").locator("xpath=.."),
+    page.getByTestId("price-check-market"),
     { section: "Where it comes from", zoom: true }
   )
   await show(
@@ -244,7 +244,10 @@ export default async function capture({ baseURL }) {
   )
   await step("Press the line under the market value to see every source.", page.getByTestId("market-source"), {
     zoom: true,
-    then: () => line().getByTestId("price-sources").waitFor(),
+    then: async () => {
+      await line().getByTestId("price-sources").waitFor()
+      await scrollTo(line().locator("div.mt-6").first(), 300)
+    },
   })
   await show(
     "For retro games the order is UK sold comp, PriceCharting PAL, eBay UK asking, then PriceCharting NTSC. Search eBay sold and Ask an agent are here too.",
