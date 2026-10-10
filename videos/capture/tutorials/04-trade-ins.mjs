@@ -224,7 +224,7 @@ export default async function capture({ baseURL }) {
   })
 
   // --- The ID check -------------------------------------------------------------------
-  await show("This is the law's record of who sold the shop these items for cash. Read the notice to the customer.", page.getByText("We photograph the ID"), {
+  await show("Cash needs an ID check. The notice says why the shop photographs the ID and how long it is kept. Read it to the customer.", page.getByText("We photograph the ID"), {
     section: "Check their ID",
     zoom: true,
     hold: 6,
