@@ -148,7 +148,9 @@ else
 fi
 
 # --- 5. Port check and the stack --------------------------------------------
-if ss -ltn 2>/dev/null | grep -q '127.0.0.1:8091 ' && ! docker ps --format '{{.Names}}' | grep -q '^ggvault-pocketbase$'; then
+# grep without -q reads all its input, so the command before it is never
+# killed by SIGPIPE, which pipefail would count as no match.
+if ss -ltn 2>/dev/null | grep '127.0.0.1:8091 ' >/dev/null && ! docker ps --format '{{.Names}}' | grep '^ggvault-pocketbase$' >/dev/null; then
   echo "Something other than GG Vault is already listening on 127.0.0.1:8091; change the port mapping in docker-compose.yml and the Caddy snippet, then run this again." >&2
   exit 1
 fi
@@ -200,7 +202,7 @@ if [ -f "$CADDYFILE" ] && systemctl is-active --quiet caddy; then
       exit 1
     fi
   fi
-elif command -v caddy >/dev/null 2>&1 || docker ps --format '{{.Image}}' | grep -qi caddy; then
+elif command -v caddy >/dev/null 2>&1 || docker ps --format '{{.Image}}' | grep -i caddy >/dev/null; then
   echo "Caddy is present but not as a systemd service with $CADDYFILE; add the block from $DEST/deploy/Caddyfile.snippet to its configuration by hand. The app is up on 127.0.0.1:8091." >&2
   exit 1
 else

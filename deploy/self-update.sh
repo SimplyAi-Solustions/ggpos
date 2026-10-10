@@ -53,7 +53,11 @@ git fetch -q origin "$BRANCH"
 # that came in through a merge (a package built on its own branch) holds
 # that package alone, never the whole app, so it is never deployed by
 # itself; the merge commit that brings it in is.
-TARGET="$(git log --first-parent -n 300 --format='%H%x09%s' "origin/$BRANCH" | awk -F'\t' '$2 !~ /^WIP/ { print $1; exit }')"
+# awk reads to the end rather than stopping at the first match: if it
+# stopped, git log would be killed by SIGPIPE mid-write, pipefail would make
+# the pipeline fail with 141, and set -e would end this script before it
+# logged a word, every run, whenever the target is near the top.
+TARGET="$(git log --first-parent -n 300 --format='%H%x09%s' "origin/$BRANCH" | awk -F'\t' '!found && $2 !~ /^WIP/ { print $1; found = 1 }')"
 if [ -z "$TARGET" ]; then exit 0; fi
 LOCAL="$(git rev-parse HEAD)"
 if [ "$LOCAL" = "$TARGET" ]; then exit 0; fi
