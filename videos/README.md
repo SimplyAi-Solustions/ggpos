@@ -27,6 +27,11 @@ npm run render               # every tutorial
 npm run render -- 03-selling # just this one
 ```
 
+```sh
+# 5. Make copies under 30 MB in out/share/, for chat apps and email.
+npm run share
+```
+
 `npm run studio` opens Remotion Studio to scrub through a tutorial before rendering.
 
 Screenshots, the music bed and the rendered videos are not committed. Run the steps above to make them again.

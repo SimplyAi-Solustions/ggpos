@@ -8,7 +8,8 @@
     "studio": "remotion studio",
     "render": "node render.mjs",
     "music": "node music/make-bed.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "share": "node share.mjs"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.534",
