@@ -34,6 +34,15 @@ export default async function capture({ baseURL }) {
   const finishChips = () => page.locator('[data-slot="chip-group"][aria-label="Finish"]')
   const sheet = () => page.getByRole("dialog")
   const line = () => page.getByTestId("trade-line")
+  const offerHeading = () => page.getByTestId("price-check").getByText("What we would offer", { exact: true })
+
+  /** Scrolls so the top of `target` sits `top` pixels down the screen, ready for the next step. */
+  async function scrollTo(target, top) {
+    const box = await target.first().boundingBox()
+    if (!box) return
+    await page.evaluate((dy) => window.scrollBy(0, dy), box.y - top)
+    await page.waitForTimeout(250)
+  }
 
   // --- Price check ----------------------------------------------------------
   await step("A customer asks what a card is worth. From the home screen, open Scan.", page.getByRole("link", { name: "Scan", exact: true }).filter({ visible: true }).first(), {
@@ -41,7 +50,7 @@ export default async function capture({ baseURL }) {
     zoom: true,
     then: () => page.getByRole("heading", { name: "Scan" }).waitFor(),
   })
-  await step("Scan is for item codes and cards. Choose Price check to look a card up without adding anything to stock.", page.getByRole("button", { name: "Price check", exact: true }), {
+  await step("This screen scans item codes, customer cards and barcodes. Choose Price check to look a card up without adding anything to stock.", page.getByRole("button", { name: "Price check", exact: true }), {
     zoom: true,
     then: () => page.getByText("Nothing is added to stock.").waitFor(),
   })
@@ -62,13 +71,13 @@ export default async function capture({ baseURL }) {
   // --- Where the value comes from -------------------------------------------
   await show(
     "Here is the card and its market value in pounds. The shop's offer is worked out from this figure.",
-    page.getByTestId("price-check-name").locator("xpath=.."),
+    page.getByTestId("price-check-market").locator("xpath=.."),
     { section: "Where it comes from", zoom: true }
   )
   await show(
     "The value is for one finish at a time. Normal is chosen here, so choose holo if the customer's card is holo.",
-    finishChips(),
-    { zoom: true }
+    finishChips().getByRole("button", { name: /^normal$/i }),
+    { zoom: true, then: () => scrollTo(page.getByTestId("price-check-name"), 110) }
   )
   await show(
     "Under Sources, the shop tries four places in order. First is a UK sold price that staff have entered, and this card has none.",
@@ -81,7 +90,7 @@ export default async function capture({ baseURL }) {
     { zoom: true }
   )
   await show(
-    "Third is Cardmarket. It is the first fresh figure, so it is marked Chosen. It is priced in euros, so the pounds come first, with the euro price and the rate underneath.",
+    "Third is Cardmarket, the first fresh figure, so it is marked Chosen. It is priced in euros, so the pounds come first, with the euros and the rate underneath.",
     source("cardmarket"),
     { zoom: true, hold: 9 }
   )
@@ -91,9 +100,9 @@ export default async function capture({ baseURL }) {
     { zoom: true }
   )
   await show(
-    "Check how old a figure is. Each line ends with a date, Stale marks one that is too old, and a note warns when the exchange rate is old. Press Refresh for newer prices.",
+    "Each line ends with a date, and Stale marks a figure that is too old. The note warns when the exchange rate is old, and Refresh asks for newer prices.",
     page.getByTestId("price-sources"),
-    { hold: 9 }
+    { hold: 9, then: () => scrollTo(offerHeading(), 140) }
   )
 
   // --- The offer and condition ---------------------------------------------
@@ -135,7 +144,7 @@ export default async function capture({ baseURL }) {
     zoom: true,
   })
   await show("The sale date starts as today. Change it if the card sold earlier.", sheet().getByLabel("Sold on"), { zoom: true })
-  await step("Save the comp.", sheet().getByRole("button", { name: "Save comp" }), {
+  await step("Press Save comp.", sheet().getByRole("button", { name: "Save comp" }), {
     then: async () => {
       await sheet().waitFor({ state: "hidden" })
       await page.locator('[data-testid="price-source"][data-source="uk_sold_manual"][data-chosen="true"]').waitFor()
@@ -167,7 +176,10 @@ export default async function capture({ baseURL }) {
     page.getByTestId("research-result"),
     {
       zoom: true,
-      then: () => page.getByTestId("research-status").filter({ hasText: "found 3 sold" }).waitFor({ timeout: 15_000 }),
+      then: async () => {
+        await page.getByTestId("research-status").filter({ hasText: "found 3 sold" }).waitFor({ timeout: 15_000 })
+        await scrollTo(source("uk_sold_manual"), 260)
+      },
     }
   )
   await show(
@@ -176,7 +188,7 @@ export default async function capture({ baseURL }) {
     { hold: 8 }
   )
   await show(
-    "These sales are saved as UK sold comps, so UK sold comp now leads the sources for the holo version.",
+    "These sales are now UK sold comps, so UK sold comp leads the sources and the newest sale sets the market value.",
     source("uk_sold_manual"),
     { zoom: true }
   )
@@ -222,6 +234,7 @@ export default async function capture({ baseURL }) {
     then: async () => {
       await line().waitFor()
       await page.getByTestId("market-source").filter({ hasText: "PriceCharting PAL" }).waitFor()
+      await scrollTo(line(), 80)
     },
   })
   await show(
@@ -235,7 +248,7 @@ export default async function capture({ baseURL }) {
   })
   await show(
     "For retro games the order is UK sold comp, PriceCharting PAL, eBay UK asking, then PriceCharting NTSC. Search eBay sold and Ask an agent are here too.",
-    line().getByTestId("price-sources"),
+    line().locator("div.mt-6").first(),
     { hold: 9 }
   )
   await step("How complete the game is changes its value. Choose Loose for the cartridge on its own.", line().getByRole("button", { name: "Loose", exact: true }), {
@@ -243,7 +256,7 @@ export default async function capture({ baseURL }) {
     then: () => page.getByText("from PriceCharting PAL $24.00").waitFor(),
   })
   await show(
-    "Loose is worth £18.00, against £70.50 complete in box. The offers fall to £8.00 in cash or £11.00 in credit.",
+    "Loose is worth £18.00, against £70.50 for CIB, which is complete in box. The offers fall to £8.00 in cash or £11.00 in credit.",
     line().locator("div.items-end.flex-wrap").first(),
     { hold: 7 }
   )

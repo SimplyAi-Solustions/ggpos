@@ -118,11 +118,11 @@ export default async function capture({ baseURL }) {
   await show("Anyone who matches is listed underneath. Choose a name to use their card.", page.getByRole("list", { name: "Matching customers" }), {
     zoom: true,
   })
-  await step("Not on the list? Then they have no card yet. Press New customer to make one.", page.getByRole("button", { name: "New customer" }), {
+  await step("If the customer is not listed, they have no card yet. Press New customer to make one.", page.getByRole("button", { name: "New customer" }), {
     zoom: true,
     then: () => page.getByRole("button", { name: "Save and carry on" }).waitFor(),
   })
-  await step("Type their full name.", page.getByLabel("Name", { exact: true }), {
+  await step("The name you searched for is filled in. Type their full name instead.", page.getByLabel("Name", { exact: true }), {
     action: "type",
     value: "Priya Sandhu",
     zoom: true,
@@ -164,7 +164,7 @@ export default async function capture({ baseURL }) {
       await centre(cardLine())
     },
   })
-  await show("The card is on the buy-in with its market value, and the cash and store credit offers beside it.", cardLine(), {
+  await show("The card is on the buy-in. Market is its value, with a note of where it came from, and the cash and store credit offers sit beside it.", cardLine(), {
     zoom: true,
     hold: 5,
   })
@@ -212,6 +212,7 @@ export default async function capture({ baseURL }) {
   })
   await show("Choosing cash has added an ID check to the steps along the top.", page.getByRole("navigation", { name: "Buy-in progress" }), {
     zoom: true,
+    settle: 1200,
   })
   await step("Read the terms to the customer. Tick the box once they have heard them and agree.", page.getByRole("switch", { name: TERMS }), {
     zoom: true,
@@ -283,19 +284,81 @@ export default async function capture({ baseURL }) {
     zoom: true,
   })
   await hug(page.getByLabel("Items now in stock"))
-  await show("The items are now in stock, each with its own code, and their labels are queued for the counter printer.", page.getByLabel("Items now in stock"), {
+  await show("Both items are now in stock, each with its own code.", page.getByLabel("Items now in stock"), {
     zoom: true,
-    hold: 5,
+  })
+  await show("A label for each is queued for the counter printer.", page.getByText(/labels? queued for the counter printer/), {
+    zoom: true,
   })
   await step("Press Receipt for the customer's paperwork.", page.getByRole("button", { name: "Receipt", exact: true }), {
     zoom: true,
     then: async () => {
+      await page.getByText("Identity", { exact: true }).waitFor()
       await page.getByRole("button", { name: "Print" }).waitFor()
+      await t.settle(700)
       await toTop()
     },
   })
-  await show("The receipt has the buy-in number, the seller and the ID they showed, the items and what was paid. Print it for them.", page.getByRole("button", { name: "Print" }), {
+  await show("The receipt records who sold the items: their name and address, and the ID they showed.", page.getByText("Identity", { exact: true }).locator("xpath=ancestor::section[1]"), {
     zoom: true,
+  })
+  await show("Press Print to give the customer their copy. The signature and the terms are on it.", page.getByRole("button", { name: "Print" }), {
+    zoom: true,
+  })
+
+
+  // --- Part-exchange at the till ----------------------------------------------------
+  await step("A customer can also put what they are selling towards what they are buying. Open the till.", page.getByRole("link", { name: "Till", exact: true }).first(), {
+    section: "Trade in at the till",
+    then: () => page.getByTestId("till").waitFor(),
+  })
+  await scan(JASMINE, "Scan their Guild card first. A trade-in needs the customer on the ticket.")
+  await scan(CHARIZARD, "Scan what they are buying.")
+  await step("Press Trade in, under the ticket.", page.getByTestId("till-trade-in").filter({ visible: true }), {
+    zoom: true,
+    then: () => page.getByTestId("till-trade-panel").waitFor(),
+  })
+  const panel = () => page.getByTestId("till-trade-panel")
+  await step("Add what they are selling the same way as in a buy-in. Here a card: type sv151 205.", panel().getByLabel("Set and number"), {
+    action: "type",
+    value: "sv151 205",
+    zoom: true,
+    then: () => page.getByRole("option", { name: /Mew ex/ }).waitFor(),
+  })
+  await step("Choose the card.", page.getByRole("option", { name: /Mew ex/ }), {
+    zoom: true,
+    then: async () => {
+      await panel().getByTestId("trade-line").first().waitFor()
+      await t.settle(900)
+    },
+  })
+  await show("At the till a trade-in is valued at credit rates, because its value comes off the bill. The cash offer shows underneath.", panel().getByTestId("trade-line").first(), {
+    zoom: true,
+    hold: 5,
+  })
+  await show("On the ticket the trade-in has its own group, and its value comes off the total.", page.getByTestId("ticket-trade"), {
+    zoom: true,
+  })
+  await step("Press Pay.", page.getByTestId("till-pay").filter({ visible: true }), {
+    then: () => page.getByTestId("till-trade-step").waitFor(),
+  })
+  await step("The trade-in pays towards this sale. Read the terms to the customer and tick the box.", page.getByRole("switch", { name: TERMS }), {
+    zoom: true,
+  })
+  await centre(page.getByTestId("signature-pad"))
+  await step("The customer signs here too.", page.getByTestId("signature-pad"), {
+    action: sign,
+  })
+  await step("The customer pays the rest as in any sale. Choose Cash.", page.getByRole("button", { name: "Cash", exact: true }), {
+    zoom: true,
+  })
+  await step("Press Exact if they hand over the right money.", page.getByRole("button", { name: "Exact" }), {
+    zoom: true,
+    then: () => page.getByTestId("till-done").waitFor(),
+  })
+  await show("Paid. The sale has its number, and the trade-in has its own buy-in number.", page.getByTestId("till-done-trade"), {
+    zoom: true,
+    hold: 5,
   })
 
   await t.finish()

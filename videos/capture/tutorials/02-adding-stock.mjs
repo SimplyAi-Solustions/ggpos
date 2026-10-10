@@ -103,10 +103,10 @@ export default async function capture({ baseURL }) {
       title: "Adding stock",
       subtitle: "Put a card or a box on the shelf, price it, label it, photograph it and find it again.",
       outline: [
-        "Add a card single, priced from the market",
+        "Add a card single and read its market price",
         "File it in the category tree and print its label",
-        "Add sealed product from its barcode",
-        "Take a photo for the website",
+        "Add sealed product from a barcode, with a quantity",
+        "Take a photo and switch it on for the website",
         "Find your stock again in Stock",
       ],
       next: "Selling at the till",
@@ -127,6 +127,9 @@ export default async function capture({ baseURL }) {
       .filter({ has: page.getByText(name, { exact: true }) })
   /** Brings a control to the middle of the screen, so it is not on the edge of the picture. */
   const centre = (locator) => locator.evaluate((el) => el.scrollIntoView({ block: "center" }))
+  /** Scrolls so the control sits `offset` pixels from the top of the screen. */
+  const toTop = (locator, offset = 100) =>
+    locator.evaluate((el, off) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - off), offset)
   /** The box of the text itself, for a block element that would otherwise draw a full-width box. */
   const tight = (locator) => ({
     waitFor: (options) => locator.waitFor(options),
@@ -179,7 +182,7 @@ export default async function capture({ baseURL }) {
   })
 
   // --- Price it ------------------------------------------------------------
-  await show("The Price box is already filled in with the suggested price, which is shown beside its label.", page.getByLabel("Price"), {
+  await show("The Price box is already filled in with the suggested price, which is shown under its label.", page.getByLabel("Price"), {
     section: "Price it",
     zoom: true,
   })
@@ -226,7 +229,7 @@ export default async function capture({ baseURL }) {
   await show("The label is in the queue for the label printer.", page.getByText("Label queued"), { zoom: true })
 
   // --- Sealed product ----------------------------------------------------------
-  await step("Now a box of sealed product, added from its barcode. Go back to the home screen with the GG Vault logo.", logo(), {
+  await step("Now a pack of sealed product, added from its barcode. Press the GG Vault logo to go back to the home screen.", logo(), {
     section: "Add sealed product",
     then: () => heading("Today").waitFor(),
   })
@@ -243,7 +246,7 @@ export default async function capture({ baseURL }) {
       await t.settle(700)
     },
   })
-  await step("Add stock opens and keeps the barcode. Say what the product is by pressing Choose a branch.", page.getByRole("button", { name: "Choose a branch" }), {
+  await step("Add stock opens. Say what the product is by pressing Choose a branch.", page.getByRole("button", { name: "Choose a branch" }), {
     zoom: true,
     then: () => picker().waitFor(),
   })
@@ -253,14 +256,15 @@ export default async function capture({ baseURL }) {
     zoom: true,
     then: () => picker().getByTestId("category-picker-results").waitFor(),
   })
-  await step("Choose Pokémon, Sealed, Booster packs.", picker().getByTestId("category-picker-results").getByRole("button").filter({ hasText: "Pokémon" }).first(), {
+  await step("Choose the first result: Trading cards, Pokémon, Sealed, Booster packs.", picker().getByTestId("category-picker-results").getByRole("button").filter({ hasText: "Pokémon" }).first(), {
     zoom: true,
   })
   await step("Press Choose this branch.", picker().getByRole("button", { name: "Choose this branch" }), {
     zoom: true,
     then: () => picker().waitFor({ state: "hidden" }),
   })
-  await show("The branch has filled in the kind, the game and the VAT. The barcode is in the EAN box.", page.getByLabel("EAN"), {
+  await toTop(page.getByTestId("stock-branch-field"), 120)
+  await show("The branch has filled in the kind, the game and the VAT. There is no card to search for, so Title takes its place.", page.getByTestId("stock-branch-field"), {
     zoom: true,
     hold: 5,
   })
@@ -280,19 +284,20 @@ export default async function capture({ baseURL }) {
     value: "5.49",
     zoom: true,
   })
+  await show("The barcode you scanned is already in the EAN box.", page.getByLabel("EAN"), { zoom: true })
   await step("Press Save item.", saveButton(), {
     then: () => heading("Saved").waitFor(),
   })
 
   // --- Take a photo ------------------------------------------------------------
-  await step("Back to the card for its photo. Go to the home screen with the logo.", logo(), {
+  await step("The packs are saved as one line, with one code. Now a photo of the card: go back to the home screen with the logo.", logo(), {
     section: "Take a photo",
     then: () => heading("Today").waitFor(),
   })
   await step("Press Scan.", page.getByRole("link", { name: "Scan", exact: true }), {
     then: () => scanField().waitFor(),
   })
-  await step("Scan the label you printed. It opens the item.", scanField(), {
+  await step("Scan the label you printed. It opens the item. Typing the code works too.", scanField(), {
     action: "type",
     value: charizardCode,
     zoom: true,
@@ -326,13 +331,12 @@ export default async function capture({ baseURL }) {
   })
 
   // --- The item page ------------------------------------------------------------
-  await page.evaluate(() => window.scrollTo(0, 0))
-  await show("At the top of the item page is the price. Press Edit to change it.", page.getByTestId("item-price").locator("xpath=.."), {
+  await toTop(page.getByTestId("item-price").locator("xpath=../.."), 100)
+  await show("The price is at the top of the item page. Edit changes it.", page.getByTestId("item-price").locator("xpath=../.."), {
     section: "The item page",
     zoom: true,
   })
-  await centre(page.getByTestId("item-branch"))
-  await show("Branch says where it is filed in the tree. Press Change to move it somewhere else.", page.getByTestId("item-branch").locator("xpath=../.."), {
+  await show("Branch says where it is filed in the tree. Change moves it somewhere else.", page.getByTestId("item-branch").locator("xpath=../.."), {
     zoom: true,
   })
   await step("The Website switch decides whether the item is listed on the shop's website. Switch it on.", page.getByRole("switch", { name: "Show on the website" }), {
@@ -354,11 +358,11 @@ export default async function capture({ baseURL }) {
   })
   await step("Start with Trading cards.", pickRow("Trading cards"), { zoom: true })
   await step("Then Pokémon.", pickRow("Pokémon"), { zoom: true })
-  await step("Press Choose this branch. The list keeps everything in Pokémon, and everything beneath it.", picker().getByRole("button", { name: "Choose this branch" }), {
+  await step("Press Choose this branch. The list shows everything in Pokémon, and every branch beneath it.", picker().getByRole("button", { name: "Choose this branch" }), {
     zoom: true,
     then: () => picker().waitFor({ state: "hidden" }),
   })
-  await step("Now narrow it further in the search box. It takes a title, a code, a set or a barcode.", page.getByLabel("Search stock"), {
+  await step("Narrow it further in the search box. It takes a title, a code, a set or a barcode.", page.getByLabel("Search stock"), {
     action: "type",
     value: "charizard",
     zoom: true,
@@ -367,9 +371,8 @@ export default async function capture({ baseURL }) {
       await t.settle(600)
     },
   })
-  await show("Each row shows the item, its code, category, condition, price and status. Press a row to open it.", page.getByTestId("stock-row").first(), {
-    zoom: true,
-    hold: 5,
+  await show("Both Charizards are listed, each with its code, category, condition, price and status. Press a row to open the item.", page.locator("table"), {
+    hold: 6,
   })
 
   await t.finish()
