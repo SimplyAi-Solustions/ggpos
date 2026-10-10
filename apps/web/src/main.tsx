@@ -5,6 +5,11 @@ import { createRouter, RouterProvider } from "@tanstack/react-router"
 import "./index.css"
 import { routeTree } from "./routeTree.gen"
 import { resolveDataMode } from "@/lib/api/mode"
+import { watchForStaleBuild } from "@/lib/stale-build"
+
+// Before anything can lazy-load a screen: a page left open across an update
+// reloads onto the new build instead of failing to open a screen.
+watchForStaleBuild()
 
 const router = createRouter({
   routeTree,
