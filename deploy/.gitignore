@@ -1,0 +1,8 @@
+# Runtime state that only ever lives on the VPS, never in git.
+data/
+logs/
+
+# Belt and braces: the root .gitignore already ignores .env and
+# deploy/.env specifically, but this keeps deploy/ safe to inspect in
+# isolation too.
+.env

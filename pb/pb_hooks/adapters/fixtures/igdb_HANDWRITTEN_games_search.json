@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1074,
+    "name": "Super Mario Kart",
+    "platforms": [{ "id": 19, "name": "Super Nintendo Entertainment System" }],
+    "cover": { "id": 88742, "image_id": "co1zst" }
+  },
+  {
+    "id": 1075,
+    "name": "Super Mario World",
+    "platforms": [{ "id": 19, "name": "Super Nintendo Entertainment System" }],
+    "cover": { "id": 88743, "image_id": "co1zsu" }
+  }
+]

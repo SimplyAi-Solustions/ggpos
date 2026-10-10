@@ -1,0 +1,298 @@
+/* GG Vault design tokens.
+   Light is the counter default, dark is "counter night mode".
+   Brand source: ggentertainment.co.uk (paper, ink, volt, pop, Anton, Space Mono).
+   Every colour is oklch; the hex it came from is noted beside it. */
+
+@import "@fontsource/anton/400.css";
+@import "@fontsource/space-mono/400.css";
+@import "@fontsource/space-mono/700.css";
+@import "@fontsource-variable/jost";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* --- brand literals, identical in both modes --- */
+  --gg-ink: oklch(0.1496 0 0); /* #0b0b0b */
+  --gg-paper: oklch(1 0 0); /* #ffffff */
+  --gg-canvas: oklch(0.9878 0.0013 106.42); /* #fbfbfa */
+  --volt: oklch(0.9018 0.1868 99.02); /* #fedf01 */
+  --volt-deep: oklch(0.8281 0.1716 98.97); /* #e3c700 */
+  --pop: oklch(0.6545 0.2388 11.23); /* #ff2e6b */
+
+  /* --- light mode --- */
+  --background: oklch(0.9878 0.0013 106.42); /* #fbfbfa canvas */
+  --foreground: oklch(0.1496 0 0); /* #0b0b0b ink */
+
+  --card: oklch(0.9878 0.0013 106.42); /* canvas, never a grey tile */
+  --card-foreground: oklch(0.1496 0 0);
+  --popover: oklch(0.9878 0.0013 106.42);
+  --popover-foreground: oklch(0.1496 0 0);
+
+  --primary: oklch(0.1496 0 0); /* the black block */
+  --primary-foreground: oklch(1 0 0); /* paper */
+  --primary-hover: oklch(0.2385 0.0037 106.68); /* #1f1f1d */
+
+  --secondary: oklch(0.963 0.0053 106.5); /* #f3f3ef paper-2 */
+  --secondary-foreground: oklch(0.1496 0 0);
+
+  --muted: oklch(0.963 0.0053 106.5); /* #f3f3ef */
+  --muted-foreground: oklch(0.359 0.0051 106.65); /* #3d3d3a ink-2 */
+  /* Placeholders and hints. The brand's #7a7a74 is 4.17:1 on the canvas,
+     so it is darkened to #73736d (4.61:1) to clear WCAG AA. */
+  --muted-foreground-2: oklch(0.5537 0.0091 106.69); /* #73736d ink-3 */
+
+  --accent: oklch(0.9018 0.1868 99.02); /* volt */
+  --accent-foreground: oklch(0.1496 0 0); /* ink on yellow, always */
+
+  --destructive: oklch(0.5308 0.2013 12.03); /* #c4174c, AA as text */
+  --destructive-foreground: oklch(1 0 0);
+
+  --border: oklch(0.1496 0 0 / 0.24); /* ink 24%: the input underline */
+  --input: oklch(0.1496 0 0 / 0.24);
+  --hairline: oklch(0.1496 0 0 / 0.24);
+  --hairline-soft: oklch(0.1496 0 0 / 0.12); /* table rows */
+  --hairline-faint: oklch(0.1496 0 0 / 0.06); /* dividers, silhouettes */
+  --ring: oklch(0.9018 0.1868 99.02); /* volt */
+
+  --surface-2: oklch(0.963 0.0053 106.5); /* #f3f3ef */
+  --surface-3: oklch(0.9293 0.008 106.55); /* #e8e8e2, switch track off */
+  --row-hover: oklch(0.963 0.0053 106.5); /* #f3f3ef */
+  --silhouette: oklch(0.1496 0 0 / 0.04); /* image placeholder */
+  --product-edge: oklch(0.1496 0 0 / 0.12); /* box art stroke */
+  --product-edge-offset: oklch(0.1496 0 0 / 0.2); /* printed-card edge */
+
+  --chart-1: oklch(0.1496 0 0); /* ink */
+  --chart-2: oklch(0.359 0.0051 106.65); /* #3d3d3a */
+  --chart-3: oklch(0.5537 0.0091 106.69); /* #73736d */
+  --chart-4: oklch(0.9293 0.008 106.55); /* #e8e8e2 */
+  --chart-5: oklch(0.9018 0.1868 99.02); /* volt */
+
+  --radius: 4px;
+  --ease-gg: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-panel:
+    0 1px 2px rgba(11, 11, 11, 0.04), 0 24px 48px rgba(11, 11, 11, 0.08);
+  --grain-opacity: 0.03;
+}
+
+.dark {
+  /* counter night mode: ink canvas, paper text, greys inverted, volt unchanged */
+  --background: oklch(0.1496 0 0); /* #0b0b0b */
+  --foreground: oklch(0.9878 0.0013 106.42); /* #fbfbfa */
+
+  --card: oklch(0.1496 0 0);
+  --card-foreground: oklch(0.9878 0.0013 106.42);
+  --popover: oklch(0.1496 0 0);
+  --popover-foreground: oklch(0.9878 0.0013 106.42);
+
+  --primary: oklch(0.9878 0.0013 106.42); /* the block inverts to paper */
+  --primary-foreground: oklch(0.1496 0 0);
+  --primary-hover: oklch(0.9293 0.008 106.55); /* #e8e8e2 */
+
+  --secondary: oklch(0.2385 0.0037 106.68); /* #1f1f1d */
+  --secondary-foreground: oklch(0.9878 0.0013 106.42);
+
+  --muted: oklch(0.2385 0.0037 106.68);
+  --muted-foreground: oklch(0.8339 0.0096 106.61); /* #c9c9c2, 11.8:1 */
+  --muted-foreground-2: oklch(0.6479 0.0102 106.68); /* #8f8f88, 6.1:1 */
+
+  --accent: oklch(0.9018 0.1868 99.02);
+  --accent-foreground: oklch(0.1496 0 0);
+
+  --destructive: oklch(0.6545 0.2388 11.23); /* pop, 5.5:1 on ink */
+  --destructive-foreground: oklch(0.1496 0 0);
+
+  --border: oklch(1 0 0 / 0.26);
+  --input: oklch(1 0 0 / 0.26);
+  --hairline: oklch(1 0 0 / 0.26);
+  --hairline-soft: oklch(1 0 0 / 0.14);
+  --hairline-faint: oklch(1 0 0 / 0.08);
+  --ring: oklch(0.9018 0.1868 99.02);
+
+  --surface-2: oklch(0.2385 0.0037 106.68); /* #1f1f1d */
+  --surface-3: oklch(0.2675 0.0054 106.76); /* #262623, switch track off */
+  --row-hover: oklch(0.2385 0.0037 106.68);
+  --silhouette: oklch(1 0 0 / 0.06);
+  --product-edge: oklch(1 0 0 / 0.14);
+  --product-edge-offset: oklch(1 0 0 / 0.22);
+
+  --chart-1: oklch(0.9878 0.0013 106.42);
+  --chart-2: oklch(0.8339 0.0096 106.61);
+  --chart-3: oklch(0.6479 0.0102 106.68);
+  --chart-4: oklch(0.359 0.0051 106.65);
+  --chart-5: oklch(0.9018 0.1868 99.02);
+
+  --shadow-panel:
+    0 1px 2px rgba(0, 0, 0, 0.5), 0 24px 48px rgba(0, 0, 0, 0.55);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted-foreground-2: var(--muted-foreground-2);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-volt: var(--volt);
+  --color-volt-deep: var(--volt-deep);
+  --color-pop: var(--pop);
+  --color-gg-ink: var(--gg-ink);
+  --color-gg-paper: var(--gg-paper);
+  --color-gg-canvas: var(--gg-canvas);
+
+  --color-hairline: var(--hairline);
+  --color-hairline-soft: var(--hairline-soft);
+  --color-hairline-faint: var(--hairline-faint);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-row-hover: var(--row-hover);
+  --color-silhouette: var(--silhouette);
+  --color-product-edge: var(--product-edge);
+  --color-product-edge-offset: var(--product-edge-offset);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --font-display: "Anton", "Anton Fallback", sans-serif;
+  --font-sans: "Jost Variable", "Jost", ui-sans-serif, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, monospace;
+  --font-heading: var(--font-display);
+
+  /* 4px is the whole radius system: chips, panels, images. Every shadcn
+     rounded-* step collapses onto it so nothing arrives with a pill box. */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 4px;
+  --radius-3xl: 4px;
+  --radius-4xl: 4px;
+
+  --shadow-panel: var(--shadow-panel);
+  --ease-gg: var(--ease-gg);
+
+  --animate-ring-spin: ring-spin 720ms linear infinite;
+
+  @keyframes ring-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--border);
+  }
+
+  html {
+    background-color: var(--background);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100svh;
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Paper grain: fixed feTurbulence noise, 3 percent, both modes. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    background-repeat: repeat;
+    background-size: 200px 200px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+  }
+
+  ::selection {
+    background-color: var(--volt);
+    color: var(--gg-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--volt);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--muted-foreground-2);
+    opacity: 1;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: 0;
+    font-weight: inherit;
+  }
+
+  /* Firefox keeps a dotted inner ring on buttons. */
+  ::-moz-focus-inner {
+    border: 0;
+  }
+
+  /* Scrollbars are part of the design, not a browser default. */
+  * {
+    scrollbar-color: var(--hairline) transparent;
+    scrollbar-width: thin;
+  }
+}
+
+@layer utilities {
+  /* Money, counts, SKUs and timestamps line up in columns. */
+  .tnum {
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

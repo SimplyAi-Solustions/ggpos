@@ -1,0 +1,97 @@
+import * as React from "react"
+import { formatGBP, parseDecimalToMinor } from "@gg/shared"
+
+import { Input } from "@/components/ui/input"
+
+export interface MoneyFieldProps {
+  id: string
+  /** Integer GBP pence. */
+  value: number
+  onChange: (pence: number) => void
+  label?: string
+  invalid?: boolean
+  placeholder?: string
+  className?: string
+}
+
+/** Pence as the plain "12.50" a staff member types, with no group commas. */
+function pounds(pence: number): string {
+  return pence ? formatGBP(pence).replace("£", "").replace(/,/g, "") : ""
+}
+
+/**
+ * An amount in pounds and pence with the pound sign as its leading glyph.
+ *
+ * The field holds the string the staff member is typing so a half-typed
+ * "12." is not swallowed, and only hands back pence. Leaving the field tidies
+ * 4.5 into 4.50, so a column of offers lines up without anybody retyping.
+ */
+export function MoneyField({
+  id,
+  value,
+  onChange,
+  label,
+  invalid,
+  placeholder = "0.00",
+  className,
+}: MoneyFieldProps) {
+  const [draft, setDraft] = React.useState(() => pounds(value))
+  /**
+   * Two figures, not one: the last one this field reported upwards, and the
+   * last prop it reacted to. A figure changed from outside (an override, a
+   * prefill) replaces what is in the box; one that has merely come back down
+   * after being typed here does not, or a half-typed "12." would be wiped
+   * mid-keystroke. Adjusted during render rather than in an effect, so the
+   * box never paints once with the old number first.
+   */
+  const [reported, setReported] = React.useState(value)
+  const [incoming, setIncoming] = React.useState(value)
+  if (value !== incoming) {
+    setIncoming(value)
+    if (value !== reported) setDraft(pounds(value))
+  }
+
+  // An amount nobody can read is not silently ignored: the underline turns
+  // pop while it is unreadable, and leaving the field puts back the last
+  // figure that did parse rather than leaving a number nobody agreed to.
+  const unreadable = draft.trim() !== "" && parseDecimalToMinor(draft) === null
+
+  return (
+    <Input
+      id={id}
+      inputMode="decimal"
+      autoComplete="off"
+      aria-label={label}
+      aria-invalid={invalid || unreadable || undefined}
+      className={className ? `tnum ${className}` : "tnum"}
+      leadingIcon={
+        <span aria-hidden="true" className="text-[18px] leading-none">
+          &pound;
+        </span>
+      }
+      placeholder={placeholder}
+      value={draft}
+      onChange={(event) => {
+        const next = event.target.value
+        setDraft(next)
+        const pence = parseDecimalToMinor(next)
+        // Record what this field is about to report, so the value coming
+        // back down does not look like an outside change and overwrite the
+        // half-typed "12." still in the box.
+        if (pence !== null) {
+          setReported(pence)
+          onChange(pence)
+        } else if (next.trim() === "") {
+          setReported(0)
+          onChange(0)
+        }
+      }}
+      onBlur={() => {
+        const pence = parseDecimalToMinor(draft)
+        // An amount that cannot be read never becomes a figure: the box goes
+        // back to the last one that did, which is the one already reported.
+        setDraft(pence !== null ? pounds(pence) : pounds(reported))
+      }}
+    />
+  )
+}

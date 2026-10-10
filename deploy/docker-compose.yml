@@ -1,0 +1,168 @@
+# GG Vault - Docker Compose file for the VPS.
+#
+# Run every command below from this directory (deploy/), so the relative
+# paths here (../pb, ../services/pricesync, ./data/pb_data) resolve
+# correctly:
+#   docker compose up -d --build
+#
+# Three services:
+#   pocketbase - the app itself: the PocketBase API, its realtime
+#                websocket/SSE endpoints, and the built React PWA served
+#                straight out of pb_public.
+#   pricesync  - a Node script that streams the nightly Cardmarket and
+#                TCGCSV price files into PocketBase, then exits. See the
+#                comment on that service below for how it is scheduled.
+#   notify     - a small, persistent Node sidecar that sends Web Push for
+#                notifications rows PocketBase has not pushed yet. See the
+#                comment on that service below.
+#
+# All three read their secrets and settings from .env - copy .env.example
+# to .env and fill it in before the first `docker compose up` (see
+# deploy/README.md).
+
+name: ggvault
+
+services:
+  pocketbase:
+    build:
+      context: ../pb
+      args:
+        # Lets PocketBase be upgraded by bumping PB_VERSION in .env,
+        # instead of editing this file or pb/Dockerfile.
+        PB_VERSION: ${PB_VERSION:-0.40.4}
+    image: ggvault-pocketbase
+    container_name: ggvault-pocketbase
+    restart: unless-stopped
+    ports:
+      # Bound to localhost only. The existing Caddy on this VPS reverse
+      # proxies to this port from the outside world (see
+      # Caddyfile.snippet) - PocketBase itself is never reachable
+      # directly from the internet.
+      - "127.0.0.1:8091:8090"
+    volumes:
+      # Everything PocketBase writes at runtime: the SQLite database and
+      # every uploaded file (ID photos, product photos, quote photos).
+      # This is the one directory deploy/backup.sh backs up.
+      - ./data/pb_data:/pb/pb_data
+    env_file:
+      - .env
+    healthcheck:
+      # Assumes pb/Dockerfile's base image ships `wget` (true of the
+      # common alpine-based PocketBase images). If that image turns out
+      # to be a shell-less/distroless build, this check will always
+      # report "unhealthy" even though PocketBase itself is fine - either
+      # add an equivalent HEALTHCHECK to pb/Dockerfile using a tool that
+      # image actually has, or delete this block and rely on
+      # `docker compose ps` plus the /api/health check in
+      # deploy/README.md instead.
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8090/api/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - ggvault
+
+  pricesync:
+    build:
+      context: ../services/pricesync
+    image: ggvault-pricesync
+    container_name: ggvault-pricesync
+    # pricesync is a run-once script (docs/PLAN.md, "pricesync sidecar"),
+    # not a long-running server, so it must never be auto-restarted after
+    # it exits.
+    restart: "no"
+    volumes:
+      # The ETag/If-Modified-Since disk cache for the Cardmarket and
+      # TCGCSV files (src/lib/http.mjs's fetchCachedStream/fetchCachedJson)
+      # - without this, /app/cache is an anonymous volume that `docker
+      # compose run --rm` (how this service is actually invoked - see
+      # "Scheduling" below) throws away with the container on every run,
+      # so nothing is ever cached and every file is downloaded in full
+      # every night. Bind-mounted (like pocketbase's pb_data) rather than
+      # left as a named volume so it survives an image rebuild the same
+      # way, and so its ownership is visible and fixable from the host if
+      # it is ever wrong (see the Dockerfile's own chown to the "node"
+      # user this container runs as).
+      - ./data/pricesync-cache:/app/cache
+    env_file:
+      - .env
+    environment:
+      # Internal address on the ggvault network below: always port 8090
+      # (the container's own port), never the host-mapped 8091. This is
+      # fixed on purpose rather than read from .env - it can only ever be
+      # this value while both services share this one compose file.
+      PB_URL: http://pocketbase:8090
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    networks:
+      - ggvault
+    # --- Scheduling ---------------------------------------------------
+    # This service is defined here so `docker compose build` builds its
+    # image and so it can be triggered on demand, but it is deliberately
+    # NOT kept running. It is scheduled with a plain host cron entry
+    # (also documented in deploy/README.md):
+    #
+    #   0 4 * * * mkdir -p /path/to/ggpos/deploy/logs && cd /path/to/ggpos/deploy && docker compose run --rm pricesync >> /path/to/ggpos/deploy/logs/pricesync.log 2>&1
+    #
+    # The output redirect matters here in a way it would not for a
+    # long-running service: `docker compose run --rm` deletes the
+    # container (and, with it, `docker compose logs pricesync`'s only
+    # copy of what it printed) the moment it exits, so without this the
+    # run's own log line - counts per game, or which exit code it used -
+    # is gone the instant cron's job finishes. deploy/backup.sh avoids the
+    # same problem by writing deploy/logs/backup.log itself; pricesync has
+    # no such wrapper script, so the cron line does the redirecting
+    # instead.
+    #
+    # A host cron line was chosen over adding an in-compose scheduler
+    # (e.g. an ofelia sidecar container): this VPS only has two scheduled
+    # jobs in total (this one and the 03:00 backup in backup.sh), so one
+    # fewer moving part matters more than a shared scheduler would help,
+    # and it reuses the exact mechanism the backup already relies on -
+    # only one scheduling approach to remember, not two.
+    #
+    # Note: `docker compose up -d` (for example, during a deploy) also
+    # starts this service once, since `restart: "no"` only means "don't
+    # restart it after it exits", not "don't start it". That is harmless:
+    # the price upsert is idempotent, so an extra run at deploy time just
+    # means slightly fresher prices, never duplicate or corrupted data.
+
+  notify:
+    build:
+      context: ../services/notify
+    image: ggvault-notify
+    container_name: ggvault-notify
+    # Unlike pricesync, this is a long-running process: services/notify's
+    # own src/index.mjs polls PocketBase every 60 seconds for the life of
+    # the container, rather than running once and exiting - so, unlike
+    # pricesync, it is restarted after a crash or a host reboot the same
+    # way pocketbase itself is, and there is no cron line for it in
+    # deploy/README.md.
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Internal address on the ggvault network, always port 8090 - the
+      # same fixed-on-purpose value pricesync's own PB_URL uses above, for
+      # the same reason (only ever this value while both containers share
+      # this one compose file).
+      PB_URL: http://pocketbase:8090
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    networks:
+      - ggvault
+
+networks:
+  ggvault:
+    name: ggvault

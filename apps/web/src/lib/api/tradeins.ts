@@ -1,0 +1,529 @@
+/**
+ * Trade-ins: the draft, its lines, the pricing inputs, completion, the ID
+ * check, the receipt and the admin ID-photo view.
+ *
+ * Drafts and lines go through the collection API; completion, the ID check
+ * and the receipt are the custom routes in `docs/api-contract.md`, because
+ * each of them has to be transactional, gated or audited.
+ */
+import { ClientResponseError } from "pocketbase"
+import { DEFAULT_OFFER_SETTINGS, type OfferSettings, type PricingRule } from "@gg/shared/pricing"
+import type {
+  LoyaltyProgramme,
+  LoyaltyRule,
+  LoyaltyRuleType,
+} from "@gg/shared/loyalty"
+
+import { pb } from "@/lib/pb"
+import { isDemo } from "@/lib/api/mode"
+import { isNotFound } from "@/lib/api/refusal"
+import { isOffline } from "@/lib/offline/net"
+import { OfflineQueuedError, OFFLINE_BUY_IN_MESSAGE } from "@/lib/offline/errors"
+import {
+  DEMO_OFFER_LIMITS,
+  DEMO_OFFER_SETTINGS,
+  DEMO_PRICING_RULE_ROWS,
+  DEMO_PROGRAMME as SEED_PROGRAMME,
+  DEMO_PROGRAMME_ROW,
+  DEMO_RECEIPT_TERMS,
+  DEMO_SHOP,
+  demoCompleteTradeIn,
+  demoCreateDraft,
+  demoGetLines,
+  demoGetTradeIn,
+  demoListTradeIns,
+  demoReceipt,
+  demoSaveLines,
+  demoIdDocuments,
+  demoSubmitIdCheck,
+  demoTradeInsFor,
+} from "@/lib/api/demo/tradeins"
+import type {
+  CompleteTradeInPayload,
+  CompleteTradeInResult,
+  CustomerRecord,
+  IdCheckResult,
+  IdDocumentSummary,
+  OfferLimits,
+  PricingRuleRow,
+  ReceiptEmailResult,
+  ReceiptPayload,
+  StaffRecord,
+  TradeInLineInput,
+  TradeInLineRecord,
+  TradeInRecord,
+  TradeInSummary,
+  TradeInStatus,
+  VaultConfig,
+} from "@/lib/api/types"
+import { escapeFilter } from "@/lib/api/filter"
+
+
+// ---------------------------------------------------------------------------
+// The shop's own configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything the counter needs to price a buy-in, in one staff-readable read.
+ *
+ * `pricing_rules`, `settings` and the loyalty collections behind it are
+ * admin-only, so the wizard goes through `/api/vault/config` instead of
+ * touching them: ordinary staff get the real offer bands, and no secret ever
+ * leaves the server. Screens read it through one TanStack query for the
+ * session rather than calling the three helpers below separately.
+ */
+export async function getVaultConfig(): Promise<VaultConfig> {
+  if (isDemo()) {
+    return {
+      settings: {
+        cash_cap: DEMO_OFFER_LIMITS.cashCap,
+        offer: { ...DEMO_OFFER_SETTINGS },
+        shop_name: DEMO_SHOP.name,
+        shop_address: DEMO_SHOP.address,
+        shop_town: DEMO_SHOP.town,
+        shop_postcode: DEMO_SHOP.postcode,
+        shop_phone: DEMO_SHOP.phone,
+        shop_email: DEMO_SHOP.email,
+        receipt_terms: DEMO_RECEIPT_TERMS,
+        id_photo_retention_months: 12,
+        vat_registered: false,
+      },
+      pricing_rules: DEMO_PRICING_RULE_ROWS,
+      loyalty: { programme: DEMO_PROGRAMME_ROW, rules: [], tiers: [] },
+    }
+  }
+  return pb.send<VaultConfig>("/api/vault/config", { method: "GET" })
+}
+
+function toRule(record: PricingRuleRow): PricingRule {
+  const step = record.rounding ?? 25
+  return {
+    id: record.id,
+    game: record.game || null,
+    kind: record.kind || null,
+    condition: record.condition || null,
+    finish: record.finish || null,
+    rarity: record.rarity || null,
+    bandMin: record.band_min ?? 0,
+    bandMax: record.band_max ?? null,
+    cashPct: record.cash_pct ?? 0,
+    creditPct: record.credit_pct ?? 0,
+    rounding: step === 50 || step === 100 ? step : 25,
+    priority: record.priority ?? 0,
+    active: record.active !== false,
+  }
+}
+
+/** The live offer bands, in the shared evaluator's shape. */
+export function rulesFrom(config: VaultConfig): PricingRule[] {
+  return config.pricing_rules.filter((row) => row.active !== false).map(toRule)
+}
+
+/**
+ * `settings.offer` plus the cash cap, with the shared defaults filling in
+ * anything the shop has not set.
+ */
+export function offerSettingsFrom(config: VaultConfig): OfferSettings & OfferLimits {
+  const fallback = { ...DEFAULT_OFFER_SETTINGS, cashCap: 800_000 }
+  const offer = config.settings.offer ?? {}
+  return {
+    bulkThreshold: offer.bulkThreshold ?? fallback.bulkThreshold,
+    bulkCash: offer.bulkCash ?? fallback.bulkCash,
+    bulkCredit: offer.bulkCredit ?? fallback.bulkCredit,
+    minimumOffer: offer.minimumOffer ?? fallback.minimumOffer,
+    cashCap: config.settings.cash_cap ?? fallback.cashCap,
+  }
+}
+
+/**
+ * The GG Guild programme in the shared evaluator's shape, so the counter's
+ * points preview and the server's `points_ledger` row are computed from the
+ * same numbers. A shop that has not opened the loyalty editor yet gets the
+ * seed's figures, which are what its database holds anyway.
+ */
+export function programmeFrom(config: VaultConfig): LoyaltyProgramme {
+  const row = config.loyalty.programme
+  if (!row) return SEED_PROGRAMME
+  return {
+    enabled: row.enabled !== false,
+    earnPerPoundSales: row.earn_per_pound_sales ?? SEED_PROGRAMME.earnPerPoundSales,
+    earnPerPoundTradeInCredit:
+      row.earn_on_trade_in_credit ?? SEED_PROGRAMME.earnPerPoundTradeInCredit,
+    pointsPerPoundRedemption:
+      row.points_per_pound_redemption ?? SEED_PROGRAMME.pointsPerPoundRedemption,
+    minRedeemPoints: row.min_redeem_points ?? SEED_PROGRAMME.minRedeemPoints,
+    maxPointsShareOfSale:
+      row.max_points_share_of_sale ?? SEED_PROGRAMME.maxPointsShareOfSale,
+    expiryMonthsInactive:
+      row.expiry_months_inactive ?? SEED_PROGRAMME.expiryMonthsInactive,
+    tierWindowMonths: row.tier_window_months ?? SEED_PROGRAMME.tierWindowMonths,
+    welcomeBonus: row.welcome_bonus ?? SEED_PROGRAMME.welcomeBonus,
+    referralBonusReferrer:
+      row.referral_bonus_referrer ?? SEED_PROGRAMME.referralBonusReferrer,
+    referralBonusReferee:
+      row.referral_bonus_referee ?? SEED_PROGRAMME.referralBonusReferee,
+  }
+}
+
+/**
+ * The live loyalty rules. Only the shapes the shared evaluator understands
+ * survive: a rule whose type it does not know would silently change nobody's
+ * points, and a wrong preview is worse than none.
+ */
+const LOYALTY_RULE_TYPES = new Set<LoyaltyRuleType>([
+  "multiplier",
+  "fixed_bonus",
+  "first_purchase",
+  "birthday_month",
+  "trade_in_credit_bonus",
+  "event_checkin",
+  "day_of_week",
+])
+
+export function loyaltyRulesFrom(config: VaultConfig): LoyaltyRule[] {
+  return config.loyalty.rules
+    .filter((row) => row.active !== false && LOYALTY_RULE_TYPES.has(row.type as LoyaltyRuleType))
+    .map((row) => ({
+      id: row.id,
+      name: row.name ?? "",
+      type: row.type as LoyaltyRuleType,
+      conditions: (row.conditions ?? {}) as LoyaltyRule["conditions"],
+      value: row.value ?? 0,
+      active: true,
+      priority: row.priority ?? 0,
+      startsAt: row.starts_at || null,
+      endsAt: row.ends_at || null,
+    }))
+}
+
+/** For callers that want one of the three on their own. */
+export async function getPricingRules(): Promise<PricingRule[]> {
+  return rulesFrom(await getVaultConfig())
+}
+
+export async function getOfferSettings(): Promise<OfferSettings & OfferLimits> {
+  return offerSettingsFrom(await getVaultConfig())
+}
+
+export async function getLoyaltyProgramme(): Promise<LoyaltyProgramme> {
+  return programmeFrom(await getVaultConfig())
+}
+
+/**
+ * The open cash session, which a cash payout cannot happen without.
+ *
+ * Read through the Phase 2 route rather than the collection so the wizard
+ * sees exactly what the completion route will check against.
+ */
+export async function currentCashSessionId(): Promise<string | null> {
+  if (isDemo()) return "cash_demo_session"
+  try {
+    const result = await pb.send<{ session: { id: string } | null }>(
+      "/api/vault/cash-sessions/current",
+      { method: "GET" }
+    )
+    return result.session?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Drafts and lines
+// ---------------------------------------------------------------------------
+
+/**
+ * A draft carries no number: `trade_ins.number` is optional behind a partial
+ * unique index, and `GG-BI-000123` is drawn from `counters.trade_in` inside
+ * the completion transaction, so an abandoned draft never burns one.
+ */
+export async function createDraftTradeIn(customerId: string): Promise<TradeInRecord> {
+  if (isDemo()) return demoCreateDraft(customerId)
+
+  return pb.collection("trade_ins").create<TradeInRecord>({
+    customer: customerId,
+    channel: "counter",
+    status: "draft",
+    total_market: 0,
+    total_offer: 0,
+    payout_cash: 0,
+    payout_credit: 0,
+  })
+}
+
+export async function getTradeIn(id: string): Promise<TradeInRecord | null> {
+  if (isDemo()) return demoGetTradeIn(id)
+  try {
+    return await pb.collection("trade_ins").getOne<TradeInRecord>(id)
+  } catch (error) {
+    if (isNotFound(error)) return null
+    throw error
+  }
+}
+
+export async function getTradeInLines(id: string): Promise<TradeInLineRecord[]> {
+  if (isDemo()) return demoGetLines(id)
+  return pb.collection("trade_in_lines").getFullList<TradeInLineRecord>({
+    filter: `trade_in = "${escapeFilter(id)}"`,
+    sort: "created",
+  })
+}
+
+function toLineBody(tradeInId: string, line: TradeInLineInput) {
+  return {
+    trade_in: tradeInId,
+    kind: line.kind,
+    game: line.gameId || undefined,
+    card: line.cardId || undefined,
+    retro_title: line.retroTitleId || undefined,
+    free_text_title: line.title || undefined,
+    finish: line.finish || undefined,
+    condition: line.condition || undefined,
+    completeness: line.completeness || undefined,
+    cosmetic_grade: line.cosmeticGrade || undefined,
+    qty: line.qty,
+    market_price: line.marketPrice,
+    market_currency: "GBP" as const,
+    market_source: line.marketSource || undefined,
+    offer_pct: line.offerPct,
+    offer_price: line.offerPrice,
+    // Zero is how the columns say "no override was made", which is also how
+    // PocketBase round-trips an unset integer field.
+    override_cash: line.overrideCash ?? 0,
+    override_credit: line.overrideCredit ?? 0,
+    override_reason: line.overrideReason || undefined,
+    accepted: line.accepted,
+  }
+}
+
+/**
+ * Write the wizard's lines over the draft's: new lines are created, known
+ * ones updated, and anything the wizard no longer holds is removed. One
+ * batch, so a half-written offer is not possible; a server with the batch
+ * API switched off falls back to a request per line.
+ */
+export async function saveTradeInLines(
+  tradeInId: string,
+  lines: TradeInLineInput[]
+): Promise<TradeInLineRecord[]> {
+  if (isDemo()) return demoSaveLines(tradeInId, lines)
+
+  const existing = await pb
+    .collection("trade_in_lines")
+    .getFullList<{ id: string }>({
+      filter: `trade_in = "${escapeFilter(tradeInId)}"`,
+      fields: "id",
+    })
+  const keep = new Set(lines.map((line) => line.id).filter(Boolean) as string[])
+  const remove = existing.filter((row) => !keep.has(row.id))
+
+  const totals = lines.reduce(
+    (sum, line) => ({
+      market: sum.market + line.marketPrice * line.qty,
+      offer: sum.offer + (line.accepted ? line.offerPrice * line.qty : 0),
+    }),
+    { market: 0, offer: 0 }
+  )
+
+  async function oneAtATime() {
+    for (const row of remove) {
+      await pb.collection("trade_in_lines").delete(row.id)
+    }
+    for (const line of lines) {
+      const body = toLineBody(tradeInId, line)
+      if (line.id) await pb.collection("trade_in_lines").update(line.id, body)
+      else await pb.collection("trade_in_lines").create(body)
+    }
+    await pb.collection("trade_ins").update(tradeInId, {
+      total_market: totals.market,
+      total_offer: totals.offer,
+    })
+  }
+
+  try {
+    const batch = pb.createBatch()
+    for (const row of remove) batch.collection("trade_in_lines").delete(row.id)
+    for (const line of lines) {
+      const body = toLineBody(tradeInId, line)
+      if (line.id) batch.collection("trade_in_lines").update(line.id, body)
+      else batch.collection("trade_in_lines").create(body)
+    }
+    batch.collection("trade_ins").update(tradeInId, {
+      total_market: totals.market,
+      total_offer: totals.offer,
+    })
+    await batch.send()
+  } catch (error) {
+    if (error instanceof ClientResponseError && error.status === 400) {
+      await oneAtATime()
+    } else {
+      throw error
+    }
+  }
+
+  return getTradeInLines(tradeInId)
+}
+
+// ---------------------------------------------------------------------------
+// The custom routes
+// ---------------------------------------------------------------------------
+
+/**
+ * A buy-in is never queued.
+ *
+ * Completion writes the seller snapshot, the ID gate, the items, the cash
+ * movement and both ledgers in one transaction on the server
+ * (docs/api-contract.md, "Trade-ins"), so there is nothing sensible for the
+ * counter to do with it on its own. It is refused out loud instead, in the
+ * words `lib/api/offline.ts` keeps for it.
+ */
+export async function completeTradeIn(
+  id: string,
+  payload: CompleteTradeInPayload
+): Promise<CompleteTradeInResult> {
+  if (isDemo()) return demoCompleteTradeIn(id, payload)
+  if (isOffline()) throw new OfflineQueuedError(OFFLINE_BUY_IN_MESSAGE)
+  return pb.send<CompleteTradeInResult>(`/api/vault/trade-ins/${id}/complete`, {
+    method: "POST",
+    body: payload,
+  })
+}
+
+export async function submitIdCheck(
+  customerId: string,
+  form: FormData
+): Promise<IdCheckResult> {
+  if (isDemo()) return demoSubmitIdCheck(customerId, form)
+  return pb.send<IdCheckResult>(`/api/vault/customers/${customerId}/id-check`, {
+    method: "POST",
+    body: form,
+  })
+}
+
+export async function getReceipt(tradeInId: string): Promise<ReceiptPayload> {
+  if (isDemo()) return demoReceipt(tradeInId)
+  return pb.send<ReceiptPayload>(`/api/vault/trade-ins/${tradeInId}/receipt`, {
+    method: "GET",
+  })
+}
+
+export async function emailReceipt(
+  tradeInId: string
+): Promise<ReceiptEmailResult> {
+  if (isDemo()) return { sent: true }
+  return pb.send<ReceiptEmailResult>(
+    `/api/vault/trade-ins/${tradeInId}/receipt/email`,
+    { method: "POST" }
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+// ---------------------------------------------------------------------------
+
+type ExpandedTradeIn = TradeInRecord & {
+  expand?: { customer?: CustomerRecord; staff?: StaffRecord }
+}
+
+function toSummary(record: ExpandedTradeIn): TradeInSummary {
+  return {
+    id: record.id,
+    number: record.number,
+    status: (record.status ?? "draft") as TradeInStatus,
+    customerId: record.customer,
+    customerName: record.expand?.customer?.name ?? record.seller_name ?? "",
+    customerCode: record.expand?.customer?.code ?? "",
+    payoutType: record.payout_type ?? null,
+    totalMarket: record.total_market ?? 0,
+    totalOffer: record.total_offer ?? 0,
+    payoutCash: record.payout_cash ?? 0,
+    payoutCredit: record.payout_credit ?? 0,
+    staffName: record.expand?.staff?.name ?? "",
+    at: record.completed_at || record.created || "",
+  }
+}
+
+export async function listTradeIns(): Promise<TradeInSummary[]> {
+  if (isDemo()) return demoListTradeIns()
+  const page = await pb.collection("trade_ins").getList<ExpandedTradeIn>(1, 50, {
+    sort: "-created",
+    expand: "customer,staff",
+  })
+  return page.items.map(toSummary)
+}
+
+export async function getCustomerTradeIns(
+  customerId: string
+): Promise<TradeInSummary[]> {
+  if (isDemo()) return demoTradeInsFor(customerId)
+  const page = await pb.collection("trade_ins").getList<ExpandedTradeIn>(1, 50, {
+    filter: `customer = "${escapeFilter(customerId)}"`,
+    sort: "-created",
+    expand: "customer,staff",
+  })
+  return page.items.map(toSummary)
+}
+
+// ---------------------------------------------------------------------------
+// The ID photo (admin, step-up)
+// ---------------------------------------------------------------------------
+
+/**
+ * The decrypted ID photo as an object URL, for an admin who has just
+ * confirmed their password. The caller revokes the URL when the sheet closes.
+ *
+ * `id_documents` has every collection rule set to null, so the app cannot
+ * look a customer's document up: the id comes from the ID check made in this
+ * session. Opening an older customer's photo needs a route that names their
+ * latest document, which Phase 2's contract does not yet have; the profile
+ * says so rather than showing a button that cannot work.
+ */
+export async function fetchIdPhoto(
+  idDocumentId: string,
+  stepUpToken: string
+): Promise<string> {
+  if (isDemo()) return demoIdPhoto()
+
+  const response = await fetch(pb.buildURL(`/api/vault/id-photo/${idDocumentId}`), {
+    headers: {
+      Authorization: pb.authStore.token,
+      "X-Step-Up": stepUpToken,
+    },
+  })
+  if (!response.ok) {
+    throw new ClientResponseError({
+      status: response.status,
+      response: await response.json().catch(() => ({})),
+    })
+  }
+  return URL.createObjectURL(await response.blob())
+}
+
+/** A drawn stand-in, so demo mode never ships a photograph of anybody. */
+function demoIdPhoto(): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400">
+<rect width="640" height="400" fill="#fbfbfa"/>
+<rect x="24" y="24" width="592" height="352" fill="none" stroke="#0b0b0b" stroke-opacity="0.24"/>
+<text x="56" y="120" font-family="monospace" font-size="20" letter-spacing="4" fill="#3d3d3a">ID PHOTO</text>
+<text x="56" y="168" font-family="sans-serif" font-size="22" fill="#0b0b0b">Demo mode holds no photograph.</text>
+<text x="56" y="204" font-family="sans-serif" font-size="18" fill="#73736d">A real photo is decrypted for this view only.</text>
+</svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+/**
+ * The newest ID document for a customer whose photo is still on disk.
+ *
+ * `id_documents` has every collection rule set to null, so the app cannot
+ * read it directly; this route answers for the one document the photo view
+ * needs, and returns null once the retention cron has purged it.
+ */
+export async function latestIdDocument(customerId: string): Promise<string | null> {
+  if (isDemo()) return demoIdDocuments.get(customerId) ?? null
+  const result = await pb.send<{ document: IdDocumentSummary | null }>(
+    `/api/vault/customers/${customerId}/id-document`,
+    { method: "GET" }
+  )
+  return result.document?.id ?? null
+}
+

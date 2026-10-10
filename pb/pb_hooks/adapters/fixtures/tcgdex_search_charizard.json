@@ -1,0 +1,29 @@
+[
+  {
+    "id": "2024sv-1",
+    "localId": "1",
+    "name": "Charizard"
+  },
+  {
+    "id": "30th-c-001",
+    "localId": "001",
+    "name": "Charizard"
+  },
+  {
+    "id": "pl4-1",
+    "localId": "1",
+    "name": "Charizard",
+    "image": "https://assets.tcgdex.net/en/pl/pl4/1"
+  },
+  {
+    "id": "gym2-2",
+    "localId": "2",
+    "name": "Blaine's Charizard",
+    "image": "https://assets.tcgdex.net/en/gym/gym2/2"
+  },
+  {
+    "id": "sm7.5-3",
+    "localId": "3",
+    "name": "Charizard"
+  }
+]
