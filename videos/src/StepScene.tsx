@@ -248,12 +248,15 @@ export const StepScene: React.FC<{
       {/* The caption band */}
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: BAND, background: C.ink }}>
         <div style={{ position: "absolute", left: 0, top: 0, height: 5, width: `${progress * 100}%`, background: C.volt }} />
-        <div style={{ position: "absolute", left: SCREEN_X, right: 300, top: 22, opacity: captionIn, transform: `translateY(${(1 - captionIn) * 8}px)` }}>
+        {/* Stops short of the logo and step count on the right; a long caption steps down a size so it stays on two lines. */}
+        <div style={{ position: "absolute", left: SCREEN_X, right: SCREEN_X + 210, top: 22, opacity: captionIn, transform: `translateY(${(1 - captionIn) * 8}px)` }}>
           <Micro color={C.volt} size={15}>
             {chapterNumber > 0 ? `Part ${String(chapterNumber).padStart(2, "0")} · ` : ""}
             {step.chapter || m.title}
           </Micro>
-          <div style={{ fontFamily: FONT.sans, fontSize: 32, color: C.paper, marginTop: 10, lineHeight: 1.2, fontWeight: 400 }}>{step.caption}</div>
+          <div style={{ fontFamily: FONT.sans, fontSize: step.caption.length > 130 ? 29 : 32, color: C.paper, marginTop: 10, lineHeight: 1.2, fontWeight: 400 }}>
+            {step.caption}
+          </div>
         </div>
         <div style={{ position: "absolute", right: SCREEN_X, top: 26, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 14 }}>
           <Logo height={26} />
