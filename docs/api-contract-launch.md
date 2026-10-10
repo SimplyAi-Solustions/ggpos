@@ -122,7 +122,7 @@ The editor ("Offers" in Loyalty) starts from templates, each a sentence with bla
 - Asking for research on something with an open request returns that request (`existing: true`). Comps must be GBP, each with an ebay.co.uk item link and sold within 30 days, because they go through the UK comp rule; the eBay link adds UK sellers only (`LH_PrefLoc=1`).
 - The research webhook is sent after the request's transaction commits, with a 3 second timeout, and carries `X-GG-Signature` plus the Hermes webhook headers (`X-Webhook-Signature`, `X-Webhook-Signature-V2`, `X-Webhook-Timestamp`). For it to reach Gandalf, the VPS must be able to reach the Mac Mini (Tailscale, for example).
 - MCP tool calls loop back to `GG_LOOPBACK_URL`, else the request's own host when it is this machine, else `http://127.0.0.1:8090`; each call is audited as `mcp_call` with the tool name only. `GET /api/vault/config` no longer carries `agent_webhook`.
-- `docs/agents.md` is the setup guide for Gandalf and any other Hermes agent.
+- `docs/agents.md` is the setup guide for Gandalf (Claude Code on the Mac Mini, connected with `claude mcp add`) and for a Hermes agent.
 
 ### Reports, Excel and VAT (RV)
 

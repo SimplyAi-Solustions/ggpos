@@ -1,6 +1,6 @@
 # Agents in GG Vault
 
-GG Vault gives an AI agent the same access an admin has, through its own token, so Gandalf (the shop's Hermes agent on Buzz, running on the Mac Mini) can look things up, price cards, research UK sold comps, run reports and manage bookings for the shop. This file is the how-to: creating an agent, connecting Hermes to GG Vault both ways, what every tool does, and waking an agent when a member of staff asks for research.
+GG Vault gives an AI agent the same access an admin has, through its own token, so Gandalf (the shop's agent on the Mac Mini, Claude Code run through Buzz) can look things up, price cards, research UK sold comps, run reports and manage bookings for the shop. This file is the how-to: creating an agent, connecting Claude Code or Hermes to GG Vault, what every tool does, and waking an agent when a member of staff asks for research.
 
 The contract is `docs/api-contract-launch.md`, section 5. The server side is `pb/pb_hooks/agents.pb.js`, `mcp.pb.js` and `research.pb.js` with their `lib/` modules; the bridge is `services/mcp/stdio.mjs`.
 
@@ -18,6 +18,18 @@ The contract is `docs/api-contract-launch.md`, section 5. The server side is `pb
 3. The token is shown **once**, with a Copy button and the Hermes `config.yaml` block ready to paste. Copy it now: GG Vault keeps no copy it can show again.
 
 **New token** issues a fresh one and stops the old one at that moment (use it if a token may have leaked, or once a year). **Switch off** stops the agent at once; switching it back on does not bring the old token back, so give it a new one.
+
+## Connecting Claude Code (Gandalf)
+
+Add GG Vault once, for every project on the Mac Mini, with the token from Settings, Agents:
+
+```bash
+claude mcp add --transport http --scope user ggvault \
+  https://ggpos.ggentertainment.co.uk/api/vault/mcp \
+  --header "Authorization: Bearer <the agent's token>"
+```
+
+Start a new Claude Code session and run `/mcp`: `ggvault` should show as connected, and its tools arrive as `mcp__ggvault__stock_search` and so on. To check it worked, ask "what is in the GG Vault research list?"; it should call `mcp__ggvault__research_list`. Claude Code has no webhook receiver of its own, so rather than being woken it checks the research list on a schedule (every few minutes in opening hours); see "Research and waking an agent" below.
 
 ## Connecting Hermes
 
