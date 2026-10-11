@@ -40,6 +40,7 @@ import { Route as CounterSellRouteImport } from "./routes/counter.sell"
 import { Route as CounterSettingsRouteImport } from "./routes/counter.settings"
 import { Route as CounterStaffRouteImport } from "./routes/counter.staff"
 import { Route as CounterTillRouteImport } from "./routes/counter.till"
+import { Route as CounterTutorialsRouteImport } from "./routes/counter.tutorials"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
 import { Route as AccountQuotesIndexRouteImport } from "./routes/account.quotes.index"
 import { Route as AccountQuotesIdRouteImport } from "./routes/account.quotes.$id"
@@ -223,6 +224,11 @@ const CounterTillRoute = CounterTillRouteImport.update({
   path: "/till",
   getParentRoute: () => CounterRoute,
 } as any)
+const CounterTutorialsRoute = CounterTutorialsRouteImport.update({
+  id: "/tutorials",
+  path: "/tutorials",
+  getParentRoute: () => CounterRoute,
+} as any)
 const LabelsPrintRoute = LabelsPrintRouteImport.update({
   id: "/labels/print",
   path: "/labels/print",
@@ -391,6 +397,7 @@ export interface FileRoutesByFullPath {
   "/counter/settings": typeof CounterSettingsRoute
   "/counter/staff": typeof CounterStaffRoute
   "/counter/till": typeof CounterTillRoute
+  "/counter/tutorials": typeof CounterTutorialsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
@@ -449,6 +456,7 @@ export interface FileRoutesByTo {
   "/counter/settings": typeof CounterSettingsRoute
   "/counter/staff": typeof CounterStaffRoute
   "/counter/till": typeof CounterTillRoute
+  "/counter/tutorials": typeof CounterTutorialsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/account": typeof AccountIndexRoute
   "/counter": typeof CounterIndexRoute
@@ -510,6 +518,7 @@ export interface FileRoutesById {
   "/counter/settings": typeof CounterSettingsRoute
   "/counter/staff": typeof CounterStaffRoute
   "/counter/till": typeof CounterTillRoute
+  "/counter/tutorials": typeof CounterTutorialsRoute
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
@@ -572,6 +581,7 @@ export interface FileRouteTypes {
     | "/counter/settings"
     | "/counter/staff"
     | "/counter/till"
+    | "/counter/tutorials"
     | "/labels/print"
     | "/account/"
     | "/counter/"
@@ -630,6 +640,7 @@ export interface FileRouteTypes {
     | "/counter/settings"
     | "/counter/staff"
     | "/counter/till"
+    | "/counter/tutorials"
     | "/labels/print"
     | "/account"
     | "/counter"
@@ -690,6 +701,7 @@ export interface FileRouteTypes {
     | "/counter/settings"
     | "/counter/staff"
     | "/counter/till"
+    | "/counter/tutorials"
     | "/labels/print"
     | "/account/"
     | "/counter/"
@@ -953,6 +965,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterTillRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/counter/tutorials": {
+      id: "/counter/tutorials"
+      path: "/tutorials"
+      fullPath: "/counter/tutorials"
+      preLoaderRoute: typeof CounterTutorialsRouteImport
+      parentRoute: typeof CounterRoute
+    }
     "/labels/print": {
       id: "/labels/print"
       path: "/labels/print"
@@ -1201,6 +1220,7 @@ interface CounterRouteChildren {
   CounterSettingsRoute: typeof CounterSettingsRoute
   CounterStaffRoute: typeof CounterStaffRoute
   CounterTillRoute: typeof CounterTillRoute
+  CounterTutorialsRoute: typeof CounterTutorialsRoute
   CounterIndexRoute: typeof CounterIndexRoute
   CounterCustomersNewRoute: typeof CounterCustomersNewRoute
   CounterQuotesIdRoute: typeof CounterQuotesIdRoute
@@ -1235,6 +1255,7 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterSettingsRoute: CounterSettingsRoute,
   CounterStaffRoute: CounterStaffRoute,
   CounterTillRoute: CounterTillRoute,
+  CounterTutorialsRoute: CounterTutorialsRoute,
   CounterIndexRoute: CounterIndexRoute,
   CounterCustomersNewRoute: CounterCustomersNewRoute,
   CounterQuotesIdRoute: CounterQuotesIdRoute,

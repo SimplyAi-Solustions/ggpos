@@ -44,6 +44,11 @@ services:
       # every uploaded file (ID photos, product photos, quote photos).
       # This is the one directory deploy/backup.sh backs up.
       - ./data/pb_data:/pb/pb_data
+      # The tutorial videos, straight from the checkout and read-only. They
+      # are left out of the image (pb/.dockerignore) so a deploy does not
+      # add another 130 MB to the server's disk each time; this folder is
+      # updated by the deploy's own git reset, and its path never moves.
+      - ../apps/web/public/tutorials:/pb/pb_public/tutorials:ro
     env_file:
       - .env
     healthcheck:

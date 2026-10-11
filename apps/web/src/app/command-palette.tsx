@@ -133,6 +133,7 @@ export function CommandPalette({
           onShowShortcuts()
         },
       },
+      { id: "tutorials", label: "Tutorials", run: () => go("/counter/tutorials") },
       {
         id: "night",
         label: "Toggle night mode",

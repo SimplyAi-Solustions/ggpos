@@ -1,0 +1,9 @@
+# The build context is pb/. Neither of these belongs in the image:
+#
+# - pb_data is the database and every uploaded file. On the server it lives in
+#   deploy/data/pb_data and is mounted; a local one must never be baked in.
+# - pb_public/tutorials is about 130 MB of tutorial video. Built into the
+#   image, every deploy would add another copy to the server's disk, so
+#   deploy/docker-compose.yml mounts it from the checkout instead.
+pb_data
+pb_public/tutorials

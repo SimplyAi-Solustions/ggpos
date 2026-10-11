@@ -129,7 +129,7 @@ jobs:
           # brand new VPS_PATH; a no-op on every later deploy.
           ssh -i "$HOME/.ssh/deploy_key" -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$VPS_USER@$VPS_HOST" \
-            "mkdir -p '$VPS_PATH/pb/pb_hooks' '$VPS_PATH/pb/pb_migrations' '$VPS_PATH/pb/pb_public' '$VPS_PATH/services/pricesync' '$VPS_PATH/deploy/data'"
+            "mkdir -p '$VPS_PATH/pb/pb_hooks' '$VPS_PATH/pb/pb_migrations' '$VPS_PATH/pb/pb_public' '$VPS_PATH/services/pricesync' '$VPS_PATH/deploy/data' '$VPS_PATH/apps/web/public/tutorials'"
 
           # pb/: hooks, migrations, the pb_public we just built, and the
           # Dockerfile. Never pb_data - that's runtime state that only
@@ -138,6 +138,11 @@ jobs:
           rsync -az --delete -e "$SSH_CMD" pb/pb_migrations/ "$DEST/pb/pb_migrations/"
           rsync -az --delete -e "$SSH_CMD" pb/pb_public/     "$DEST/pb/pb_public/"
           rsync -az          -e "$SSH_CMD" pb/Dockerfile     "$DEST/pb/Dockerfile"
+          rsync -az          -e "$SSH_CMD" pb/.dockerignore  "$DEST/pb/.dockerignore"
+
+          # The tutorial videos: deploy/docker-compose.yml mounts this folder
+          # into pb_public rather than building it into the image.
+          rsync -az --delete -e "$SSH_CMD" apps/web/public/tutorials/ "$DEST/apps/web/public/tutorials/"
 
           # services/pricesync/: the whole service. node_modules is
           # excluded - it's installed inside the image during the build.

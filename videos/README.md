@@ -30,6 +30,12 @@ npm run render -- 03-selling # just this one
 ```sh
 # 5. Make copies under 30 MB in out/share/, for chat apps and email.
 npm run share
+
+# 6. Put them in the counter's Tutorials page: copies out/share/ into
+#    apps/web/public/tutorials/ with a poster each, and writes the chapter
+#    and step times to apps/web/src/features/tutorials/catalogue.gen.ts.
+#    Commit both; the next deploy puts them on the till.
+npm run publish-to-app
 ```
 
 `npm run studio` opens Remotion Studio to scrub through a tutorial before rendering.

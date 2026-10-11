@@ -15,6 +15,12 @@
  *   own page, which a browser refuses as a script ("'text/html' is not a
  *   valid JavaScript MIME type"), and a 404 is the honest answer that lets
  *   the app's reload (apps/web/src/lib/stale-build.ts) take over.
+ * - `/tutorials/` holds the tutorial videos and their posters
+ *   (apps/web/public/tutorials, mounted read-only on the server by
+ *   deploy/docker-compose.yml). A missing one is a 404 for the same reason,
+ *   since a video player handed the app's page just says it cannot play.
+ *   The app asks for each with `?v=` from the file's own contents, so that
+ *   address is kept for a year; a bare address is checked each time.
  * - `/api/` (which sets its own caching where it wants any) and the `/_/`
  *   dashboard are left alone.
  *
@@ -31,7 +37,9 @@ routerUse(
       if (path === "/api" || path.indexOf("/api/") === 0) return e.next();
       if (path === "/_" || path.indexOf("/_/") === 0) return e.next();
 
-      if (path.indexOf("/assets/") === 0) {
+      const assets = path.indexOf("/assets/") === 0;
+      const tutorials = path.indexOf("/tutorials/") === 0;
+      if (assets || tutorials) {
         const publicDir = `${__hooks}/../pb_public`;
         let served = false;
         try {
@@ -49,7 +57,10 @@ routerUse(
           }
         }
         if (!present) return e.string(404, "Not found");
-        e.response.header().set("Cache-Control", "public, max-age=31536000, immutable");
+        const versioned = assets || String(e.request.url.query().get("v") || "") !== "";
+        e.response
+          .header()
+          .set("Cache-Control", versioned ? "public, max-age=31536000, immutable" : "no-cache");
         return e.next();
       }
 

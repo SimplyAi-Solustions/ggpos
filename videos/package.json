@@ -9,7 +9,8 @@
     "render": "node render.mjs",
     "music": "node music/make-bed.mjs",
     "typecheck": "tsc --noEmit",
-    "share": "node share.mjs"
+    "share": "node share.mjs",
+    "publish-to-app": "node --experimental-strip-types publish-to-app.mjs"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.534",

@@ -441,6 +441,15 @@ cd <repo>/deploy
 docker compose up -d --build
 ```
 
+**The tutorial videos** (the counter's Tutorials page) are about 130 MB, so
+they are not built into the PocketBase image: `deploy/docker-compose.yml`
+mounts `apps/web/public/tutorials` from the checkout, read-only, at
+`/pb/pb_public/tutorials`, and `pb/.dockerignore` keeps them out of the
+image. The self-updater's `git reset` brings new ones in, and the GitHub
+Actions deploy copies that folder over with everything else. If the page
+says a video did not load, check the folder is there on the server and has
+the five `.mp4` files and their `.jpg` posters.
+
 **Never set `VITE_DEMO` or `VITE_DEMO_SWITCH` on a shop build.** A plain
 `pnpm --filter web build`, which is what the deploy workflow runs, produces
 an app that ignores `?demo=1` entirely: the query switch only exists in a

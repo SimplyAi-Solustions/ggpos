@@ -749,6 +749,33 @@ alone, and a server refusal is shown as the server's own sentence.
   use `zxing-wasm`, loaded on first use from the app's own origin. With no
   camera or no permission the sheet is one sentence.
 
+### Tutorials
+
+- `/counter/tutorials`, for every member of staff, from the account menu,
+  More on a phone and the command palette; `?t=<slug>` opens one video.
+- The one Anton line and a lede, then the chosen video full column width in
+  the browser's own player: 16:9, the 4px radius and a hairline-soft edge,
+  its poster the video's own title card. Under it the tutorial's number and
+  length in `MicroLabel`, the title in Jost 20px medium (never a second
+  Anton line) and its one-line subtitle.
+- "In this video" lists the chapters as hairline rows: the start in Space
+  Mono 13px, the chapter in Jost 15px. Pressing one jumps the video there and
+  plays it. The chapter on screen carries `aria-current` and is the only one
+  in ink at medium weight; volt never marks it.
+- "Show every step" (a `text` button) opens every caption in the video under
+  its chapter's `MicroLabel`, each with its time and the same jump. The
+  videos have no voice, so this is the whole video as text.
+- "All tutorials" is a hairline row each: the poster at 16:9 (112px wide on a
+  phone, 176px from 640px), number and length, title, and the subtitle from
+  640px. The one on screen says "On screen" in `Hint`; choosing another
+  scrolls back to the player and starts it.
+- One grey 13px line ends the page: the videos are filmed on the demo shop.
+  A video that fails says why in one line under the player: the connection,
+  or a browser that cannot play MP4.
+- The videos come from `videos/` (Remotion): `npm run publish-to-app` there
+  copies them into `apps/web/public/tutorials` and writes
+  `features/tutorials/catalogue.gen.ts`.
+
 ### Reports dashboard, Excel and VAT
 
 - The **dashboard** is the first thing under Reports, below the page title

@@ -137,6 +137,7 @@ function AvatarMenu({ onSetPin }: { onSetPin: () => void }) {
               Settings
             </MenuItem>
           ) : null}
+          <MenuItem onClick={() => void navigate({ to: "/counter/tutorials" })}>Tutorials</MenuItem>
           {demo ? (
             <MenuItem onClick={() => setSimulatedOffline(!net.simulated)}>
               <span>Simulate offline</span>
@@ -240,6 +241,7 @@ function MoreSheet({
               ...(isManagerUp(role) ? [{ label: "Settings", to: "/counter/settings" }] : []),
               { label: "My Vault", to: "/account" },
               { label: "Change password", to: "/counter/password" },
+              { label: "Tutorials", to: "/counter/tutorials" },
             ].map((entry) => (
               <li key={entry.to} className="border-b border-hairline-soft">
                 <button
