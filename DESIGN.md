@@ -394,9 +394,10 @@ landscape and the Mac at 1440 x 900; a phone at 390 x 844 must still work.
 - **Till header**, 64px, hairline-soft bottom edge: the G mark (`GMark`,
   24px) linking back to Home; the register and session in Space Mono
   ("COUNTER" and "OPEN SINCE 09:02", or "CLOSED"); on the right the parked
-  tickets count, the staff member's initials in an `Avatar`, a Lock key
-  (`LockIcon`, 56px target) and a `Menu` for X report, Cash up, No sale,
-  Paid in or out, Returns, Reports and Back to the counter.
+  tickets count, the staff member's initials opening the same account menu
+  as every counter screen (`AccountMenu`, hidden below 640px for room), a
+  Lock key (`LockIcon`, 56px target) and a `Menu` for X report, Cash up, No
+  sale, Paid in or out, Returns, Reports, Tutorials and Back to the counter.
 - From 900px: **two panes**. The catalogue on the left takes the rest; the
   ticket on the right is 400px wide (440px from 1280px), divided from it by
   one vertical hairline-soft rule, full height. No panel colour: both panes
@@ -751,8 +752,10 @@ alone, and a server refusal is shown as the server's own sentence.
 
 ### Tutorials
 
-- `/counter/tutorials`, for every member of staff, from the account menu,
-  More on a phone and the command palette; `?t=<slug>` opens one video.
+- `/counter/tutorials`, for every member of staff, from the account menu
+  under their initials (on every counter screen, the till included), the
+  till's own menu, More on a phone and the command palette; `?t=<slug>`
+  opens one video.
 - The one Anton line and a lede, then the chosen video full column width in
   the browser's own player: 16:9, the 4px radius and a hairline-soft edge,
   its poster the video's own title card. Under it the tutorial's number and

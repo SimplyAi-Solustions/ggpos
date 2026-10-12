@@ -9,20 +9,10 @@ import {
 } from "lucide-react"
 import { cn } from "cn"
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { BarcodeGlyph } from "@/components/ui/icons"
 import { Hint } from "@/components/ui/micro-label"
-import {
-  Menu,
-  MenuContent,
-  MenuItem,
-  MenuLabel,
-  MenuPrimitive,
-  MenuSeparator,
-  MenuTrigger,
-} from "@/components/ui/menu"
 import {
   Sheet,
   SheetBody,
@@ -32,6 +22,8 @@ import {
 } from "@/components/ui/sheet"
 import { Wordmark } from "@/components/ui/wordmark"
 import { useTheme } from "@/components/theme-provider"
+import { AccountMenu } from "@/app/account-menu"
+import { SetPinContext } from "@/app/set-pin-context"
 import { CommandPalette } from "@/app/command-palette"
 import { CounterDockContext } from "@/app/counter-dock"
 import { dispatchScan, makeScanFallback } from "@/app/scan-bus"
@@ -40,9 +32,8 @@ import { PageMain } from "@/app/page-transition"
 import { ShortcutOverlay } from "@/app/shortcut-overlay"
 import { isScanField } from "@/app/focus-registry"
 import { createWedgeListener } from "@/lib/scanning/wedge"
-import { initials, logout, useStaff } from "@/lib/auth"
-import { isDemo, isServerUnreachable, setSimulatedOffline } from "@/lib/api"
-import { netSnapshot, subscribeNet } from "@/lib/offline/net"
+import { logout } from "@/lib/auth"
+import { isDemo, isServerUnreachable } from "@/lib/api"
 import { OfflineStrip } from "@/lib/offline/OfflineStrip"
 import { ServerUnreachable } from "@/app/server-unreachable"
 import { CounterLock } from "@/features/lock/CounterLock"
@@ -83,82 +74,6 @@ const BAR: {
   { to: "/counter/stock", label: "Stock", exact: false, Icon: LayersIcon },
   { to: "/counter/trade", label: "Trade", exact: false, Icon: ArrowLeftRightIcon },
 ]
-
-function AvatarMenu({ onSetPin }: { onSetPin: () => void }) {
-  const staff = useStaff()
-  const role = useStaffRole()
-  const navigate = useNavigate()
-  const { theme, setTheme } = useTheme()
-  // Demo mode only: one switch so the offline queue can be walked, shown to
-  // staff and tested without unplugging anything.
-  const demo = isDemo()
-  const net = React.useSyncExternalStore(subscribeNet, netSnapshot)
-
-  return (
-    <Menu>
-      <MenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label={staff ? `Account menu for ${staff.name}` : "Account menu"}
-            className="rounded-full outline-none"
-          />
-        }
-      >
-        <Avatar>
-          <AvatarFallback>{initials(staff?.name ?? "")}</AvatarFallback>
-        </Avatar>
-      </MenuTrigger>
-      <MenuContent>
-        {/* The signed-in name is a group label, and Base UI refuses one
-            outside a group: without this the menu throws the moment it
-            opens. */}
-        <MenuPrimitive.Group>
-          <MenuLabel>{staff?.name ?? "Signed in"}</MenuLabel>
-          <MenuItem onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            <span>Night mode</span>
-            <Hint>{theme === "dark" ? "On" : "Off"}</Hint>
-          </MenuItem>
-          <MenuItem onClick={() => void navigate({ to: "/account" })}>My Vault</MenuItem>
-          {/* Everybody's own: the password goes through
-              POST /api/vault/staff/me/password, which works for every role,
-              and the PIN is the one the lock screen takes. */}
-          <MenuItem onClick={onSetPin}>Set PIN</MenuItem>
-          <MenuItem onClick={() => void navigate({ to: "/counter/password" })}>
-            Change password
-          </MenuItem>
-          {role === "admin" ? (
-            <MenuItem onClick={() => void navigate({ to: "/counter/staff" })}>Staff</MenuItem>
-          ) : null}
-          {/* A manager registers tills, so a manager sees the Tills part of
-              Settings; everything else there stays an admin's. */}
-          {isManagerUp(role) ? (
-            <MenuItem onClick={() => void navigate({ to: "/counter/settings" })}>
-              Settings
-            </MenuItem>
-          ) : null}
-          <MenuItem onClick={() => void navigate({ to: "/counter/tutorials" })}>Tutorials</MenuItem>
-          {demo ? (
-            <MenuItem onClick={() => setSimulatedOffline(!net.simulated)}>
-              <span>Simulate offline</span>
-              <Hint>{net.simulated ? "On" : "Off"}</Hint>
-            </MenuItem>
-          ) : null}
-        </MenuPrimitive.Group>
-        <MenuSeparator />
-        <MenuItem onClick={() => lockCounter()}>Lock</MenuItem>
-        <MenuItem
-          onClick={() => {
-            logout()
-            void navigate({ to: "/login" })
-          }}
-        >
-          Sign out
-        </MenuItem>
-      </MenuContent>
-    </Menu>
-  )
-}
 
 /**
  * How many quotes are waiting on somebody at the counter.
@@ -374,9 +289,11 @@ export function CounterShell() {
   // The till is the one full-bleed counter screen (DESIGN.md, "The till",
   // "Frame"): no header, nav, footer, thumb bar or column, because it draws
   // its own header and fills the tablet edge to edge. The wedge listener,
-  // the palette, the shortcuts and the lock stay.
+  // the palette, the shortcuts, the lock and the account menu (in the till's
+  // own header, with the Set PIN sheet it opens) stay.
   if (tillMode) {
     return (
+      <SetPinContext.Provider value={openPin}>
       <CounterDockContext.Provider value={null}>
         <div className="flex min-h-svh w-full flex-col bg-background">
           <OfflineStrip />
@@ -389,14 +306,17 @@ export function CounterShell() {
             onShowShortcuts={openShortcuts}
           />
           <ShortcutOverlay open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+          <SetPinSheet open={pinOpen} onOpenChange={setPinOpen} />
           <OverrideHost />
           <CounterLock />
         </div>
       </CounterDockContext.Provider>
+      </SetPinContext.Provider>
     )
   }
 
   return (
+    <SetPinContext.Provider value={openPin}>
     <CounterDockContext.Provider value={dockSlot}>
     <div className="flex min-h-svh w-full flex-col bg-background">
       <header className="mx-auto flex w-full max-w-[1040px] items-center justify-between gap-6 px-5 py-7 sm:px-10">
@@ -422,7 +342,7 @@ export function CounterShell() {
             ))}
           </ul>
           {demo ? <Badge variant="outline">Demo</Badge> : null}
-          <AvatarMenu onSetPin={openPin} />
+          <AccountMenu />
         </nav>
       </header>
 
@@ -502,5 +422,6 @@ export function CounterShell() {
       <CounterLock />
     </div>
     </CounterDockContext.Provider>
+    </SetPinContext.Provider>
   )
 }

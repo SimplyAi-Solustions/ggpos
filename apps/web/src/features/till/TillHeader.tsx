@@ -8,7 +8,7 @@
 import { Link, useNavigate } from "@tanstack/react-router"
 import { ClipboardListIcon, LockIcon, MenuIcon } from "lucide-react"
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { AccountMenu } from "@/app/account-menu"
 import { Button } from "@/components/ui/button"
 import { MicroLabel } from "@/components/ui/micro-label"
 import {
@@ -21,7 +21,6 @@ import {
 } from "@/components/ui/menu"
 import { GMark } from "@/components/ui/wordmark"
 import { lockCounter } from "@/features/lock/lock-store"
-import { initials, useStaff } from "@/lib/auth"
 
 /**
  * Where the menu goes. The cashing-up screen reads `?action=` and opens that
@@ -64,7 +63,6 @@ export function TillHeader({
   /** Today's bookings and the stations (package BW). */
   onBookings?: () => void
 }) {
-  const staff = useStaff()
   const navigate = useNavigate()
   const go = (href: string) => void navigate({ href })
 
@@ -111,9 +109,10 @@ export function TillHeader({
           </span>
           <span className="tnum">{parked}</span>
         </Button>
-        <Avatar className="max-sm:hidden" title={staff ? `Signed in as ${staff.name}` : undefined}>
-          <AvatarFallback>{initials(staff?.name ?? "")}</AvatarFallback>
-        </Avatar>
+        {/* The same account menu as every other counter screen: the
+            tutorials, the PIN and the password are a tap from the till.
+            Hidden on a phone for room; the till menu carries Tutorials. */}
+        <AccountMenu className="max-sm:hidden" />
         <Button
           variant="ghost-icon"
           className="size-14"
@@ -158,6 +157,9 @@ export function TillHeader({
               </MenuItem>
             </MenuPrimitive.Group>
             <MenuSeparator />
+            <MenuItem className="min-h-14" onClick={() => go("/counter/tutorials")}>
+              Tutorials
+            </MenuItem>
             <MenuItem className="min-h-14" onClick={() => go("/counter")}>
               Back to the counter
             </MenuItem>

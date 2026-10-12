@@ -51,6 +51,38 @@ test("opens from the menu on the first video, and switches to another", async ({
   await expect(page.getByTestId("tutorial-chapters")).toContainText("Take payment")
 })
 
+test("the till has the same account menu, with Tutorials and Set PIN", async ({ page }, testInfo) => {
+  await signIn(page)
+  await page.goto("/counter/till")
+  await expect(page.getByTestId("till")).toBeVisible()
+
+  if (testInfo.project.name === "phone") {
+    // No room for the initials on a phone's till header: the till menu
+    // carries Tutorials instead.
+    await expect(page.getByRole("button", { name: /^Account menu/ })).toBeHidden()
+    await page.getByRole("button", { name: "Till menu" }).click()
+    await page.getByRole("menuitem", { name: "Tutorials" }).click()
+    await expect(page.getByRole("heading", { name: "Tutorials", level: 1 })).toBeVisible()
+    return
+  }
+
+  await page.getByRole("button", { name: /^Account menu/ }).click()
+  await page.getByRole("menuitem", { name: "Set PIN" }).click()
+  await expect(page.getByRole("dialog")).toContainText("Set your PIN")
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("dialog")).toBeHidden()
+
+  await page.getByRole("button", { name: /^Account menu/ }).click()
+  await page.getByRole("menuitem", { name: "Tutorials" }).click()
+  await expect(page.getByRole("heading", { name: "Tutorials", level: 1 })).toBeVisible()
+
+  // And from the till menu too.
+  await page.goto("/counter/till")
+  await page.getByRole("button", { name: "Till menu" }).click()
+  await page.getByRole("menuitem", { name: "Tutorials" }).click()
+  await expect(page.getByRole("heading", { name: "Tutorials", level: 1 })).toBeVisible()
+})
+
 test("shows every step as text, and hides it again", async ({ page }) => {
   await signIn(page)
   await page.goto("/counter/tutorials?t=selling")
