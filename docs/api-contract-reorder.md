@@ -164,3 +164,19 @@ A **Suppliers** section for managers and admins: the suppliers as hairline rows 
 ### 4.6 Design
 
 `DESIGN.md` gains a "Supplier calls" subsection in section 11 recording the screen as built. One Anton line; volt only where section 1 allows; statuses in words, never colour alone.
+
+---
+
+## 5. As built (15 Oct 2026)
+
+What differs from the sections above, and why. Everything else is as written.
+
+- **`games.adapter`** was blank for every game before this work, so "a game with no adapter" meant nothing in the data. The migration fills it for the five card games (`tcgdex`, `scryfall`, `ygoprodeck`, `optcg`, `lorcast`) where it is blank; Retro, Warhammer and Other stay blank. The card search chips list the lookup games whose `adapter` is set, and all five when none is (a database from before the migration).
+- **Number fields arrive cast.** PocketBase turns text that is not a number, `null` and `""` into 0 before a hook sees it, so a `shelf_target` of "lots" saves as 0 (no target) rather than being refused; negative and fractional values are refused as written. A request's `qty` of 0 or empty becomes 1.
+- **Agents.** A request logged through the agent tools has an empty `created_by` and "Logged by <agent>." in its notes; the report leaves the "by" part out. Only the `stock_update` tool writes a stock row, so it alone takes `supplier` (a name, an id, or "" to clear), `shelf_target` and `supplier_code`; `stock_get` and `stock_search` show them.
+- **Dates.** A `to` alone gives the six days before it; a `from` alone runs to today.
+- **Filing.** Warhammer stock files under Miniatures and paints whatever its kind (that branch has no branches by kind).
+- **The item page saves the three supplier fields on every stock row of the product** (rows matched as `productKey` matches them), not only the row on screen. Saved on one row, a new code split the product in two and a lowered target never took effect, because the report takes the largest target across the rows. The page says "Saved on both stock rows of this product" when there is more than one.
+- **Card singles and graded cards** show no supplier fields on the item page unless one is already set, as on Add stock.
+- **Labels.** "Excel" is "Export Excel", as on every other report; the period is "Last 7 days" or "Custom" (the usual From and To fields); the five figures are Jost 500, keeping the supplier's name the screen's one Anton line.
+- **Checks.** `pb/scripts/checks/38-reorder.sh` (12 checks); `e2e/reorder.spec.ts` (9 tests at each width).
