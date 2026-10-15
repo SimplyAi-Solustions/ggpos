@@ -104,8 +104,9 @@ Each phase ends deployed. The server deploys only finished commits that passed C
   - Where it is used: the till's catalogue pane drills down the tree with a breadcrumb and a back step (the quick-key pages stay alongside); Stock filters by any branch and everything under it; Add stock, goods in and the buy-in pick a branch, which fills in its defaults; reports and the X and Z group sales by category at any level, rolling up; the EPOS Now import maps its categories into the tree.
 - Category and quick-key editor with drag to reorder and to move a branch under another (touch friendly).
 - Suppliers; purchase orders; goods in against a purchase order or without one, updating cost, quantity and queueing labels.
+  - Shipped early (October 2026, for the weekly Games Workshop call): the `suppliers` collection with rep details in Settings, a supplier, a "Keep on shelf" target and the supplier's code on each stock line, customer requests with a status (`stock_requests`), and the supplier call report at Reports, Supplier calls (`docs/api-contract-reorder.md`). Purchase orders and goods in are still to come and should build on these fields.
 - Stock adjustments with a reason (damaged, lost, used in store, correction, found), audited; stock counts that update quantities when closed; transfers between locations.
-- Low stock alerts on Home and a reorder list built from reorder points and sales velocity.
+- Low stock alerts on Home and a reorder list built from reorder points and sales velocity. The supplier call report already tops each line up to its "Keep on shelf" target; the reorder point here should reuse `shelf_target` rather than add a second field.
 - EPOS Now import: products, stock levels and customers from EPOS Now's CSV exports, with a mapping preview and a review queue for rows that do not match.
 
 ### Phase 10: bookings and Guild Membership
