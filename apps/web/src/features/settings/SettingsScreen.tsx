@@ -42,6 +42,7 @@ import { PermissionsTable } from "@/features/settings/PermissionsTable"
 import { PrintersSection } from "@/features/settings/PrintersSection"
 import { TillsSection } from "@/features/settings/TillsSection"
 import { BookingsSection } from "@/features/settings/BookingsSection"
+import { SuppliersSection } from "@/features/settings/SuppliersSection"
 import { GuildSettingsSection } from "@/features/settings/GuildSettingsSection"
 import { WebsiteSection } from "@/features/settings/WebsiteSection"
 import { VatProductsSection, VatSection } from "@/features/settings/VatSection"
@@ -902,6 +903,7 @@ function Editor({
       </section>
 
       <CategoriesSection />
+      <SuppliersSection />
       <AgentsSection />
 
       <BookingsSection admin />
@@ -939,9 +941,13 @@ function ManagerSettings() {
   return (
     <section className="pt-16 sm:pt-24">
       <PageTitle>Settings</PageTitle>
-      <Lede>Tills, categories and bookings are yours to set up. The rest of Settings is for admins.</Lede>
+      <Lede>
+        Tills, categories, suppliers and bookings are yours to set up. The rest of Settings is for
+        admins.
+      </Lede>
       <TillsSection admin={false} />
       <CategoriesSection />
+      <SuppliersSection />
       <BookingsSection admin={false} />
     </section>
   )

@@ -6,8 +6,70 @@
  * Shared by the live and the demo implementations so a card looks the same
  * whichever one answered.
  */
+import { productKey } from "@gg/shared"
+
 import type { PlatformKey } from "@/design/platforms"
-import type { ItemKind, LabelTemplateKey, StockItemRecord } from "@/lib/api/types"
+import type {
+  ItemDetail,
+  ItemKind,
+  ItemPatch,
+  LabelTemplateKey,
+  StockItemRecord,
+} from "@/lib/api/types"
+
+/**
+ * The item page's supplier, Keep on shelf and supplier code
+ * (docs/api-contract-reorder.md, section 4.1). An empty or 0 target is no
+ * target, said as null so the field reads empty rather than "0".
+ */
+export function supplierFieldsOf(
+  item: Pick<StockItemRecord, "supplier" | "shelf_target" | "supplier_code">,
+  supplierName = ""
+): Pick<ItemDetail, "supplierId" | "supplierName" | "shelfTarget" | "supplierCode"> {
+  const target = item.shelf_target
+  return {
+    supplierId: item.supplier ?? "",
+    supplierName: item.supplier ? supplierName : "",
+    shelfTarget:
+      typeof target === "number" && Number.isFinite(target) && target > 0 ? Math.trunc(target) : null,
+    supplierCode: item.supplier_code ?? "",
+  }
+}
+
+/**
+ * The stock rows that are the same product as `item` on its supplier's
+ * call: the same supplier, and the same supplier code, else barcode, else
+ * title (`productKey` in @gg/shared). The item itself is always one of them.
+ * A row with no supplier is a product of its own.
+ */
+export function productRowIdsIn(
+  item: Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">,
+  rows: readonly Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">[]
+): string[] {
+  if (!item.supplier) return [item.id]
+  const keyOf = (row: Pick<StockItemRecord, "supplier_code" | "ean" | "title">) =>
+    productKey({ supplierCode: row.supplier_code ?? "", ean: row.ean ?? "", title: row.title ?? "" })
+  const key = keyOf(item)
+  const ids = rows
+    .filter((row) => row.id !== item.id && row.supplier === item.supplier && keyOf(row) === key)
+    .map((row) => row.id)
+  return [item.id, ...ids]
+}
+
+/**
+ * The supplier fields of a patch as `items` stores them: a cleared supplier
+ * is null, a cleared target is 0 (the contract's "0 or empty is no
+ * target"), and a code is trimmed. Only the fields the patch names.
+ */
+export function supplierPatchBody(
+  patch: Pick<ItemPatch, "supplierId" | "shelfTarget" | "supplierCode">
+): { supplier?: string | null; shelf_target?: number; supplier_code?: string } {
+  const body: { supplier?: string | null; shelf_target?: number; supplier_code?: string } = {}
+  if (patch.supplierId !== undefined) body.supplier = patch.supplierId || null
+  if (patch.shelfTarget !== undefined) body.shelf_target = patch.shelfTarget ?? 0
+  if (patch.supplierCode !== undefined) body.supplier_code = patch.supplierCode.trim()
+  return body
+}
 
 /**
  * The `ProductImage` frame for a stock row. `items` carries no platform of

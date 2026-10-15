@@ -73,9 +73,11 @@ describe("what a selector takes", () => {
   })
 
   it("takes a location, a kind or a game on its own", () => {
+    // The demo shop's Games Workshop rack is "other" stock on the shelf too.
+    const rack = queueBatch({ kind: "other", include_queued: true }).queued
     itemStore().push(...shelf(2))
     expect(queueBatch({ location: "loc_test_drawer" }).queued).toBe(2)
-    expect(queueBatch({ kind: "other", include_queued: true }).queued).toBe(2)
+    expect(queueBatch({ kind: "other", include_queued: true }).queued).toBe(rack + 2)
     expect(queueBatch({ game: "game_test", include_queued: true }).queued).toBe(2)
   })
 

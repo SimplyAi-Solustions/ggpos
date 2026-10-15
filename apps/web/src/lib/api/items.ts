@@ -12,7 +12,13 @@ import { formatDateTime } from "@/lib/dates"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
-import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
+import {
+  itemDetailLine,
+  platformForItem,
+  productRowIdsIn,
+  supplierFieldsOf,
+  supplierPatchBody,
+} from "@/lib/api/item-shape"
 import * as demo from "@/lib/api/demo/items"
 import type {
   CardRecord,
@@ -45,6 +51,8 @@ type ExpandedItem = StockItemRecord & {
     /** Its branch, for the path the list and the item page show. */
     category?: { id: string; path?: string; name?: string }
     reserved_for?: { id: string; name?: string; code?: string }
+    /** Who it is ordered from (docs/api-contract-reorder.md, section 2.3). */
+    supplier?: { id: string; name?: string }
     trade_in_line?: {
       id: string
       expand?: { trade_in?: { number?: string; expand?: { customer?: { name?: string; code?: string } } } }
@@ -53,7 +61,7 @@ type ExpandedItem = StockItemRecord & {
 }
 
 const DETAIL_EXPAND =
-  "card,game,location,category,reserved_for,trade_in_line.trade_in,trade_in_line.trade_in.customer"
+  "card,game,location,category,reserved_for,supplier,trade_in_line.trade_in,trade_in_line.trade_in.customer"
 
 function categoryPathOf(item: ExpandedItem): string {
   const branch = item.expand?.category
@@ -164,6 +172,7 @@ async function toDetail(item: ExpandedItem): Promise<ItemDetail> {
     reservedUntil: item.reserved_until ?? null,
     history: await historyFor(item),
     categoryPath: categoryPathOf(item),
+    ...supplierFieldsOf(item, item.expand?.supplier?.name ?? ""),
   }
 }
 
@@ -181,7 +190,7 @@ export async function getItem(sku: string): Promise<ItemDetail | null> {
   }
 }
 
-/** Price, location, status or notes. Everything else is a route. */
+/** Price, location, status, notes, VAT or the supplier fields. Everything else is a route. */
 export async function updateItem(id: string, patch: ItemPatch): Promise<ItemDetail> {
   if (isDemo()) return demo.updateItem(id, patch)
   const body: Record<string, unknown> = {}
@@ -190,10 +199,41 @@ export async function updateItem(id: string, patch: ItemPatch): Promise<ItemDeta
   if (patch.status !== undefined) body.status = patch.status
   if (patch.notes !== undefined) body.notes = patch.notes
   if (patch.vatTreatment !== undefined) Object.assign(body, treatmentFields(patch.vatTreatment))
+  Object.assign(body, supplierPatchBody(patch))
   const item = await pb
     .collection("items")
     .update<ExpandedItem>(id, body, { expand: DETAIL_EXPAND })
   return toDetail(item)
+}
+
+/**
+ * The item page's Supplier, Keep on shelf and Supplier code
+ * (docs/api-contract-reorder.md, section 4.3), saved on every stock row of
+ * the same product, as the call's own Keep on shelf is. The call groups a
+ * product's rows and takes the largest target among them, so a change made
+ * to one row alone would leave a sold-out older row speaking for the
+ * product: a lowered target would not take, and a new code would split it
+ * in two. Answers the item and how many rows it saved on.
+ */
+export async function updateProductSupplierFields(
+  item: Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">,
+  patch: Pick<ItemPatch, "supplierId" | "shelfTarget" | "supplierCode">
+): Promise<{ item: ItemDetail; rows: number }> {
+  if (isDemo()) return demo.updateProductSupplierFields(item, patch)
+  const siblings = item.supplier
+    ? await pb.collection("items").getFullList<StockItemRecord>({
+        filter: `supplier = "${quote(item.supplier)}"`,
+        fields: "id,supplier,supplier_code,ean,title",
+      })
+    : []
+  const ids = productRowIdsIn(item, siblings)
+  // The item first: a refusal from the items guard then changes nothing.
+  const updated = await updateItem(item.id, patch)
+  const body = supplierPatchBody(patch)
+  for (const id of ids) {
+    if (id !== item.id) await pb.collection("items").update(id, body)
+  }
+  return { item: updated, rows: ids.length }
 }
 
 /** One page of the stock table, filtered and searched. */

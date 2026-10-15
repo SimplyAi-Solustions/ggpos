@@ -825,6 +825,91 @@ alone, and a server refusal is shown as the server's own sentence.
   branch" when none is set. Settings, VAT sits in the page's form; "VAT on
   till products" below the Save saves each choice as it is made.
 
+### Supplier calls
+
+The weekly call with a supplier's rep (`docs/api-contract-reorder.md`),
+Games Workshop first. Built from the reports' own parts; no new token, face
+or component.
+
+- **Reports** gains "Supplier calls" between the dashboard and "Every
+  report": a hairline row per active supplier, by `sort`, with "Stock, sales,
+  orders and requests for the weekly call." in 13px grey. The command
+  palette has "Supplier call: Games Workshop", one per active supplier.
+- `/counter/reports/reorder?supplier&from&to&view` keeps every choice in the
+  address. The **one Anton line is the supplier's name**; the lede is the
+  contract's sentence, then the rep and the account in 13px grey, only what
+  is set ("Rep: Dan, 07700 900321, dan@example.co.uk. Account GW-48213").
+- The period is two chips, "Last 7 days" (both ends counted) and "Custom",
+  which opens the From and To date fields every report uses, with the range
+  said in 15px under them.
+- **Five figures** in the dashboard's `dl`: In stock, Sold, Out of stock, To
+  order, Requests, two columns on a phone, three from 640px, five across
+  from 900px. All five are Jost 500 20px `tnum`, never Anton, because the
+  supplier's name is the screen's Anton line; under each, in 13px grey, what
+  it counts ("units", "products", "open"). Under them, three `text`
+  actions: Copy order, Export Excel and Print.
+- **The rack** (`SectionHeading` "The rack") has four chips: To order (the
+  default), Out of stock, Sold (led by what sold most) and Everything. From
+  900px it is a hairline `Table`: Product (the title as a link to the item,
+  then the supplier code and barcode in Space Mono 13px grey), In stock, Keep
+  on shelf, Sold, To order (Jost 500) and Status, numbers right-aligned in
+  `tnum`. Below 900px each product is one hairline row: the title with "3 to
+  order" on the right, the codes, then "1 in stock", "3 sold" and the status
+  in 13px. The two layouts are different trees (`useWide`), never a hidden
+  copy, because Everything carries fields.
+- **Status is always words**: "Out of stock", "Below target", "Stocked", "No
+  target". No colour, no dot, no chip; volt never appears on this screen
+  beyond the focus underline and ring.
+- In **Everything**, Keep on shelf is a 64px underline number field,
+  right-aligned, 36px tall from 640px so its figure sits on the row's line
+  (48px on a phone), "None" as its placeholder, with one 13px line above the
+  table saying Enter or leaving the field saves it on every stock row of the
+  product. The line then moves to its new place, and one 13px line under the
+  rack says what changed, or in `--destructive` what was refused.
+- **Customer requests** follow under their `SectionHeading` with "Add a
+  request" as a `text` action on the right: a hairline row each, oldest
+  first, in three columns from 900px (what, with "Quantity 2. Asked 13 Oct,
+  16:00 by Jo." and the notes in 13px; who, with the Guild code in Space Mono
+  13px or the contact name, and the phone; the status as a 200px `Select`
+  that saves on change). A request moved to Collected or Cancelled says so in
+  one line and leaves the list. A request an agent logged has no "by".
+- **Add a request** is a right sheet (a bottom sheet on a phone): What are
+  they after, Quantity (the stepper), Guild member (the till's search, five
+  hairline rows of name, code and tier badge, the chosen one with "Change"),
+  Or a name to contact, Phone, Notes with a count, and "Add request" as the
+  block. Each refusal is the hook's own sentence under its field.
+- Empty states are one grey sentence that says what to do: "No Games Workshop
+  stock yet. Set the supplier and Keep on shelf on an item to put it on this
+  list.", "Nothing to order. Every product with a target is at or above
+  it.", "Nothing sold between 9 and 15 Oct 2026." and "No open requests.
+  When a customer asks for something Games Workshop can get, add it here so
+  it is asked for on the call."
+- **Print** is A4, ink on white whatever the colour mode: the supplier's
+  name in Anton, the range and the rep, the five figures, the to-order table
+  and the open requests, in hairline rows. The screen is `print:hidden` and
+  the print block is shown only on paper, its print rule scoped to the call
+  as `PrintSheet`'s is. **Export Excel** writes To order, Rack and Requests
+  after the cover through the reports' Excel helper, price as money.
+- **Stock**: on the item page, Supplier (a 220px `Select` of active
+  suppliers and None), Keep on shelf and Supplier code (220px underline
+  fields, the code in Space Mono) sit under VAT as Details rows, and save on
+  change, Enter or leaving the field, on every stock row of the product, so
+  a restocked product never has two rows disagreeing. They are left off card
+  singles and graded cards unless one is already set. "Add more of this" is
+  a `text` action beside Print label; it opens Add stock filled from the
+  item with one 15px line saying so ("Filled from Combat Patrol: Space
+  Marines. Say how many came in.") and the quantity empty. Add stock shows
+  the same three fields, each "Optional", after the EAN for every kind but
+  singles and graded cards. The card search chips are the games with an
+  adapter, so Warhammer and Other are in the Game select and never offered
+  a card search.
+- **Settings, Suppliers**, for managers and admins, acts at once like
+  Tills: hairline rows of name, "Rep: Dan, 07700 900321" in 13px and
+  "Switched off" in `Hint`, an Edit `text` action each, "Add a supplier", and
+  a right sheet with Name, Account number (Space Mono), Rep name, email and
+  phone, Notes and an Active `Switch` that says "On the supplier calls" or
+  "Switched off". A supplier is switched off, never deleted.
+
 ---
 
 ## 12. Verifying a change

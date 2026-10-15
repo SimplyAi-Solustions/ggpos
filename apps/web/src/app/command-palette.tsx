@@ -13,6 +13,7 @@ import { logout } from "@/lib/auth"
 import { lockCounter } from "@/features/lock/lock-store"
 import { isManagerUp, useStaffRole } from "@/features/lock/role"
 import { searchCards, type CardHit } from "@/lib/api"
+import { listSuppliers, suppliersKey } from "@/lib/api/reorder"
 
 type PaletteAction = {
   id: string
@@ -97,6 +98,27 @@ export function CommandPalette({
     [close, navigate]
   )
 
+  // One supplier call per active supplier (docs/api-contract-reorder.md,
+  // section 4.2), read only once the palette is open.
+  const { data: suppliers = [] } = useQuery({
+    queryKey: suppliersKey(true),
+    queryFn: () => listSuppliers({ activeOnly: true }),
+    enabled: open,
+    staleTime: 5 * 60_000,
+  })
+  const supplierActions = React.useMemo<PaletteAction[]>(
+    () =>
+      suppliers.map((supplier) => ({
+        id: `supplier-call-${supplier.id}`,
+        label: `Supplier call: ${supplier.name}`,
+        run: () => {
+          close()
+          void navigate({ to: "/counter/reports/reorder", search: { supplier: supplier.id } })
+        },
+      })),
+    [suppliers, close, navigate]
+  )
+
   const actions = React.useMemo<PaletteAction[]>(
     () => [
       { id: "till", label: "Till", hint: "T", run: () => go("/counter/till") },
@@ -119,6 +141,7 @@ export function CommandPalette({
       { id: "bookings", label: "Bookings", run: () => go("/counter/bookings") },
       { id: "customers", label: "Customers", run: () => go("/counter/customers") },
       { id: "reports", label: "Reports", run: () => go("/counter/reports") },
+      ...supplierActions,
       {
         id: "exports",
         label: "Exports and imports",
@@ -161,7 +184,7 @@ export function CommandPalette({
         },
       },
     ],
-    [close, go, navigate, onShowShortcuts, setTheme, theme]
+    [close, go, navigate, onShowShortcuts, setTheme, supplierActions, theme]
   )
 
   // --- Customers and trade ---

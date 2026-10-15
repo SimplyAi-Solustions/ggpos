@@ -62,6 +62,21 @@ export const RETRO_PLATFORMS: { key: PlatformKey; label: string }[] = [
 
 const GAME_KEYS = new Set<string>(LOOKUP_GAMES.map((game) => game.key))
 
+/**
+ * The games a card search offers: the lookup route's own five, less any
+ * whose `games` row carries no adapter (docs/api-contract-reorder.md,
+ * section 2.1), so Warhammer, Other and retro are never offered one. A
+ * catalogue in which no row names an adapter at all is one from before the
+ * reorder migration filled them in, and keeps all five rather than none.
+ */
+export function cardSearchGames(
+  games: readonly Pick<GameRecord, "key" | "adapter">[] | undefined
+): { key: LookupGame; label: string }[] {
+  if (!games || !games.some((game) => game.adapter)) return LOOKUP_GAMES
+  const searchable = new Set(games.filter((game) => game.adapter).map((game) => game.key))
+  return LOOKUP_GAMES.filter((entry) => searchable.has(entry.key))
+}
+
 /** True for one of the five keys the lookup route accepts. */
 export function isLookupGame(key: string | undefined): key is LookupGame {
   return Boolean(key && GAME_KEYS.has(key))

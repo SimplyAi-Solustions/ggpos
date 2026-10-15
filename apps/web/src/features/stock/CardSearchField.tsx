@@ -18,17 +18,27 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { ProductImage } from "@/components/product-image"
-import { parseCardQuery, type CardHit } from "@/lib/api"
+import { listGames, parseCardQuery, type CardHit } from "@/lib/api"
 import { LOOKUP_STALE_MS } from "@/lib/api/prices"
 import {
+  cardSearchGames,
   createManualCard,
   getCard,
   isLookupGame,
-  LOOKUP_GAMES,
   searchCards,
 } from "@/lib/api/lookup"
 import { refusalMessage, refusalOrFallback } from "@/lib/api/refusal"
 import { useDebounced } from "@/features/pricing/use-debounced"
+
+/**
+ * The games a card search offers, from the `games` collection: only those
+ * with an adapter, so Warhammer and Other never offer one
+ * (docs/api-contract-reorder.md, section 2.1).
+ */
+function useCardSearchGames() {
+  const { data: games } = useQuery({ queryKey: ["games"], queryFn: listGames, staleTime: 5 * 60_000 })
+  return cardSearchGames(games)
+}
 
 /** When the lookup comes back with nothing and no words of its own. */
 const FALLBACK_MESSAGE =
@@ -83,6 +93,7 @@ export function CardSearchField({
   // A set and a number together is an exact lookup, which is the one call
   // that can say "not in this set" rather than just coming back empty.
   const exact = Boolean(game && parsed.setCode && parsed.number)
+  const chips = useCardSearchGames()
 
   const search = useQuery({
     queryKey: ["lookup", "cards", game, debounced],
@@ -172,7 +183,7 @@ export function CardSearchField({
           value={game ? [game] : []}
           onValueChange={(next) => onGameChange(next[0] ?? "")}
         >
-          {LOOKUP_GAMES.map((entry) => (
+          {chips.map((entry) => (
             <Chip key={entry.key} value={entry.key}>
               {entry.label}
             </Chip>
@@ -367,6 +378,7 @@ function ManualCardBody({
   const [setCode, setSetCode] = React.useState(initial.setCode)
   const [number, setNumber] = React.useState(initial.number)
   const [issue, setIssue] = React.useState<string | null>(null)
+  const chips = useCardSearchGames()
 
   return (
     <>
@@ -389,7 +401,7 @@ function ManualCardBody({
                 setIssue(null)
               }}
             >
-              {LOOKUP_GAMES.map((entry) => (
+              {chips.map((entry) => (
                 <Chip key={entry.key} value={entry.key}>
                   {entry.label}
                 </Chip>

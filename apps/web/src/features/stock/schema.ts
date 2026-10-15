@@ -1,5 +1,13 @@
-import { parseDecimalToMinor, treatmentLabel, VAT_TREATMENTS } from "@gg/shared"
+import {
+  formatGBP,
+  parseDecimalToMinor,
+  treatmentLabel,
+  treatmentOf,
+  VAT_TREATMENTS,
+} from "@gg/shared"
 import { z } from "zod"
+
+import type { StockItemRecord } from "@/lib/api/types"
 
 /**
  * What Add stock accepts, and what it says when it does not.
@@ -91,6 +99,18 @@ export const addStockSchema = z
         "An EAN is 8 to 14 digits. Scan it again or leave it blank."
       ),
     notes: z.string().max(200, "Notes stop at 200 characters.").optional(),
+    /**
+     * Who it is ordered from, how many to keep on the shelf and their code
+     * (docs/api-contract-reorder.md, section 4.3). Only stock lines carry
+     * them: a card single or a graded card is never reordered.
+     */
+    supplierId: z.string().optional(),
+    shelfTarget: z
+      .string()
+      .trim()
+      .optional()
+      .refine((value) => !value || /^\d+$/.test(value), "Keep on shelf is a whole number, 0 or more."),
+    supplierCode: z.string().trim().max(40, "A supplier code stops at 40 characters.").optional(),
   })
   .superRefine((value, ctx) => {
     if (CARD_KINDS.has(value.kind) && !value.cardId) {
@@ -132,6 +152,71 @@ export const addStockSchema = z
 
 export type AddStockValues = z.input<typeof addStockSchema>
 export type AddStockParsed = z.output<typeof addStockSchema>
+
+/**
+ * Every kind but a card single and a graded card takes a supplier, a Keep
+ * on shelf target and a supplier code (docs/api-contract-reorder.md,
+ * section 4.3): a card is bought in one at a time, never reordered.
+ */
+export function takesSupplier(kind: string): boolean {
+  return !CARD_KINDS.has(kind)
+}
+
+/** Pence as the text a money field holds: 123456 is "1234.56", nothing is "". */
+function poundsField(pence: number | undefined): string {
+  if (typeof pence !== "number" || !Number.isFinite(pence)) return ""
+  return formatGBP(pence).replace("£", "").replace(/,/g, "")
+}
+
+/**
+ * Add more of this (section 4.3): the form filled from a stock row, with
+ * its kind, game, branch, title, barcode, price, cost, VAT, supplier, Keep
+ * on shelf, supplier code and location. The quantity is left empty for
+ * staff to count what came in, unless the kind is always one per row.
+ */
+export function valuesFromItem(
+  item: Pick<
+    StockItemRecord,
+    | "kind"
+    | "game"
+    | "category"
+    | "title"
+    | "ean"
+    | "price"
+    | "cost"
+    | "tax_scheme"
+    | "vat_rate"
+    | "location"
+    | "supplier"
+    | "shelf_target"
+    | "supplier_code"
+  >
+): Partial<AddStockValues> {
+  const supplier = takesSupplier(item.kind)
+  return {
+    kind: item.kind,
+    gameId: item.game ?? "",
+    categoryId: item.category ?? "",
+    title: item.title ?? "",
+    ean: item.ean ?? "",
+    price: poundsField(item.price),
+    cost: poundsField(item.cost),
+    taxScheme: treatmentOf(item.tax_scheme, item.vat_rate) ?? "standard",
+    locationId: item.location || undefined,
+    supplierId: supplier ? (item.supplier ?? "") : "",
+    shelfTarget: supplier && item.shelf_target && item.shelf_target > 0 ? String(item.shelf_target) : "",
+    supplierCode: supplier ? (item.supplier_code ?? "") : "",
+    qty: SINGLE_QTY_KINDS.has(item.kind) ? 1 : "",
+  }
+}
+
+/** A Keep on shelf field as the item stores it: a whole number, or null for none. */
+export function shelfTargetValue(text: string | undefined): number | null {
+  const clean = (text ?? "").trim()
+  if (!/^\d+$/.test(clean)) return null
+  const value = Number(clean)
+  return value > 0 ? value : null
+}
 
 /**
  * The finish a card is priced in until somebody taps another chip.

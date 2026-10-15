@@ -13,7 +13,15 @@
  * touch it.
  */
 import { DEMO_ITEMS } from "@/lib/api/fixtures"
+import { DEMO_SUPPLIER_STOCK } from "@/lib/api/demo/supplier-stock"
 import type { ItemRecord } from "@/lib/api/types"
 
-/** Items created during a demo session, newest first. Never persisted. */
-export const demoItems: ItemRecord[] = [...DEMO_ITEMS]
+/**
+ * Items created during a demo session, newest first. Never persisted. The
+ * Games Workshop rack (`demo/supplier-stock.ts`) goes after the two
+ * shelf items, which other demo stores reach as the first two rows.
+ */
+export const demoItems: ItemRecord[] = [
+  ...DEMO_ITEMS,
+  ...DEMO_SUPPLIER_STOCK.map((row) => ({ ...row })),
+]
