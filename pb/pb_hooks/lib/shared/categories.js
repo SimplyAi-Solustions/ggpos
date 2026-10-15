@@ -19,7 +19,7 @@
  * the tree's shape and on where an item belongs.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.STARTER_TREE = exports.TCG_GAMES = exports.UNSORTED_KEY = exports.CATEGORY_PATH_SEPARATOR = exports.MAX_CATEGORY_DEPTH = exports.CATEGORY_KINDS = void 0;
+exports.STARTER_TREE = exports.NON_CARD_GAMES = exports.OTHER_GAME = exports.WARHAMMER_GAME = exports.TCG_GAMES = exports.UNSORTED_KEY = exports.CATEGORY_PATH_SEPARATOR = exports.MAX_CATEGORY_DEPTH = exports.CATEGORY_KINDS = void 0;
 exports.starterBranches = starterBranches;
 exports.fileItem = fileItem;
 exports.lineageOf = lineageOf;
@@ -46,6 +46,19 @@ exports.TCG_GAMES = [
     { key: "yugioh", name: "Yu-Gi-Oh!", slug: "yugioh" },
     { key: "onepiece", name: "One Piece", slug: "onepiece" },
     { key: "lorcana", name: "Disney Lorcana", slug: "lorcana" },
+];
+/**
+ * Games for stock that is not a trading card or a retro game
+ * (docs/api-contract-reorder.md, section 2.1): Warhammer boxes, paints and
+ * the rest of the shop. They have no catalogue adapter, so a card search never
+ * offers them. The migration seeds these two `games` rows and the starter
+ * tree defaults to them.
+ */
+exports.WARHAMMER_GAME = "warhammer";
+exports.OTHER_GAME = "other";
+exports.NON_CARD_GAMES = [
+    { key: exports.WARHAMMER_GAME, name: "Warhammer" },
+    { key: exports.OTHER_GAME, name: "Other" },
 ];
 function tcgBranch(game) {
     const base = `tcg.${game.slug}`;
@@ -210,49 +223,57 @@ exports.STARTER_TREE = [
     {
         key: "boardgames",
         name: "Board games",
-        defaults: { kind: "other", tax_scheme: "standard" },
+        defaults: { kind: "other", game: exports.OTHER_GAME, tax_scheme: "standard" },
         children: leaves("boardgames", ["Family", "Strategy", "Party", "Card games", "Expansions"], {
             kind: "other",
+            game: exports.OTHER_GAME,
             tax_scheme: "standard",
         }),
     },
     {
         key: "minis",
         name: "Miniatures and paints",
-        defaults: { kind: "other", tax_scheme: "standard" },
+        defaults: { kind: "other", game: exports.WARHAMMER_GAME, tax_scheme: "standard" },
         children: leaves("minis", ["Warhammer 40,000", "Age of Sigmar", "Other miniatures", "Paints", "Tools and hobby"], {
             kind: "other",
+            game: exports.WARHAMMER_GAME,
             tax_scheme: "standard",
-        }),
+        }).map((branch) => 
+        // Other makers' miniatures are not Warhammer.
+        branch.key === "minis.otherminiatures"
+            ? Object.assign(Object.assign({}, branch), { defaults: Object.assign(Object.assign({}, branch.defaults), { game: exports.OTHER_GAME }) }) : branch),
     },
     {
         key: "pc",
         name: "PC parts",
-        defaults: { kind: "other", tax_scheme: "standard" },
+        defaults: { kind: "other", game: exports.OTHER_GAME, tax_scheme: "standard" },
         children: leaves("pc", ["Graphics cards", "Processors", "Memory", "Storage", "Peripherals"], {
             kind: "other",
+            game: exports.OTHER_GAME,
             tax_scheme: "standard",
         }),
     },
     {
         key: "accessories",
         name: "Accessories",
-        defaults: { kind: "accessory", tax_scheme: "standard" },
+        defaults: { kind: "accessory", game: exports.OTHER_GAME, tax_scheme: "standard" },
         children: leaves("accessories", ["Sleeves", "Top loaders", "Binders", "Deck boxes", "Playmats", "Storage"], {
             kind: "accessory",
+            game: exports.OTHER_GAME,
             tax_scheme: "standard",
         }),
     },
     {
         key: "food",
         name: "Drinks and snacks",
-        defaults: { kind: "other", tax_scheme: "standard" },
-        children: leaves("food", ["Drinks", "Snacks"], { kind: "other", tax_scheme: "standard" }),
+        defaults: { kind: "other", game: exports.OTHER_GAME, tax_scheme: "standard" },
+        children: leaves("food", ["Drinks", "Snacks"], { kind: "other", game: exports.OTHER_GAME, tax_scheme: "standard" }),
     },
     {
         key: "services",
         name: "Services",
-        children: leaves("services", ["Table time", "Events", "Repairs", "Memberships"]),
+        defaults: { game: exports.OTHER_GAME },
+        children: leaves("services", ["Table time", "Events", "Repairs", "Memberships"], { game: exports.OTHER_GAME }),
     },
     { key: exports.UNSORTED_KEY, name: "Unsorted" },
 ];
@@ -292,10 +313,10 @@ const TCG_SEALED_BY_PLATFORM = {
 };
 /**
  * The key of the branch an item files into when nobody chose one: by kind
- * and game for cards and sealed product, by the boxed platform for a retro
- * game, and Unsorted for anything the facts do not settle (a PS2-or-Xbox
- * case, a console, an "other"). The caller falls back to Unsorted when the
- * key no longer exists.
+ * and game for cards and sealed product, under Miniatures and paints for
+ * Warhammer, by the boxed platform for a retro game, and Unsorted for
+ * anything the facts do not settle (a PS2-or-Xbox case, a console, an
+ * "other"). The caller falls back to Unsorted when the key no longer exists.
  */
 function fileItem(facts) {
     var _a;
@@ -315,6 +336,12 @@ function fileItem(facts) {
         }
         return exports.UNSORTED_KEY;
     }
+    // Warhammer stock files under Miniatures and paints whatever its kind: that
+    // branch has no branches by kind to narrow it, so the whole of it is the home.
+    if (facts.game === exports.WARHAMMER_GAME)
+        return "minis";
+    // Game "other" files by its kind, exactly as a row with no game this module
+    // knows does.
     if (kind === "retro" && facts.platform)
         return (_a = RETRO_BY_PLATFORM[facts.platform]) !== null && _a !== void 0 ? _a : exports.UNSORTED_KEY;
     if (kind === "accessory")

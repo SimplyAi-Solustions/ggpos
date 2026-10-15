@@ -66,6 +66,21 @@ export const TCG_GAMES: readonly { key: string; name: string; slug: string }[] =
   { key: "lorcana", name: "Disney Lorcana", slug: "lorcana" },
 ]
 
+/**
+ * Games for stock that is not a trading card or a retro game
+ * (docs/api-contract-reorder.md, section 2.1): Warhammer boxes, paints and
+ * the rest of the shop. They have no catalogue adapter, so a card search never
+ * offers them. The migration seeds these two `games` rows and the starter
+ * tree defaults to them.
+ */
+export const WARHAMMER_GAME = "warhammer"
+export const OTHER_GAME = "other"
+
+export const NON_CARD_GAMES: readonly { key: string; name: string }[] = [
+  { key: WARHAMMER_GAME, name: "Warhammer" },
+  { key: OTHER_GAME, name: "Other" },
+]
+
 function tcgBranch(game: { key: string; name: string; slug: string }): StarterBranch {
   const base = `tcg.${game.slug}`
   const sealed = { kind: "sealed" as const, game: game.key, tax_scheme: "standard" as const }
@@ -244,49 +259,59 @@ export const STARTER_TREE: readonly StarterBranch[] = [
   {
     key: "boardgames",
     name: "Board games",
-    defaults: { kind: "other", tax_scheme: "standard" },
+    defaults: { kind: "other", game: OTHER_GAME, tax_scheme: "standard" },
     children: leaves("boardgames", ["Family", "Strategy", "Party", "Card games", "Expansions"], {
       kind: "other",
+      game: OTHER_GAME,
       tax_scheme: "standard",
     }),
   },
   {
     key: "minis",
     name: "Miniatures and paints",
-    defaults: { kind: "other", tax_scheme: "standard" },
+    defaults: { kind: "other", game: WARHAMMER_GAME, tax_scheme: "standard" },
     children: leaves("minis", ["Warhammer 40,000", "Age of Sigmar", "Other miniatures", "Paints", "Tools and hobby"], {
       kind: "other",
+      game: WARHAMMER_GAME,
       tax_scheme: "standard",
-    }),
+    }).map((branch) =>
+      // Other makers' miniatures are not Warhammer.
+      branch.key === "minis.otherminiatures"
+        ? { ...branch, defaults: { ...branch.defaults, game: OTHER_GAME } }
+        : branch
+    ),
   },
   {
     key: "pc",
     name: "PC parts",
-    defaults: { kind: "other", tax_scheme: "standard" },
+    defaults: { kind: "other", game: OTHER_GAME, tax_scheme: "standard" },
     children: leaves("pc", ["Graphics cards", "Processors", "Memory", "Storage", "Peripherals"], {
       kind: "other",
+      game: OTHER_GAME,
       tax_scheme: "standard",
     }),
   },
   {
     key: "accessories",
     name: "Accessories",
-    defaults: { kind: "accessory", tax_scheme: "standard" },
+    defaults: { kind: "accessory", game: OTHER_GAME, tax_scheme: "standard" },
     children: leaves("accessories", ["Sleeves", "Top loaders", "Binders", "Deck boxes", "Playmats", "Storage"], {
       kind: "accessory",
+      game: OTHER_GAME,
       tax_scheme: "standard",
     }),
   },
   {
     key: "food",
     name: "Drinks and snacks",
-    defaults: { kind: "other", tax_scheme: "standard" },
-    children: leaves("food", ["Drinks", "Snacks"], { kind: "other", tax_scheme: "standard" }),
+    defaults: { kind: "other", game: OTHER_GAME, tax_scheme: "standard" },
+    children: leaves("food", ["Drinks", "Snacks"], { kind: "other", game: OTHER_GAME, tax_scheme: "standard" }),
   },
   {
     key: "services",
     name: "Services",
-    children: leaves("services", ["Table time", "Events", "Repairs", "Memberships"]),
+    defaults: { game: OTHER_GAME },
+    children: leaves("services", ["Table time", "Events", "Repairs", "Memberships"], { game: OTHER_GAME }),
   },
   { key: UNSORTED_KEY, name: "Unsorted" },
 ]
@@ -339,10 +364,10 @@ export interface FilingFacts {
 
 /**
  * The key of the branch an item files into when nobody chose one: by kind
- * and game for cards and sealed product, by the boxed platform for a retro
- * game, and Unsorted for anything the facts do not settle (a PS2-or-Xbox
- * case, a console, an "other"). The caller falls back to Unsorted when the
- * key no longer exists.
+ * and game for cards and sealed product, under Miniatures and paints for
+ * Warhammer, by the boxed platform for a retro game, and Unsorted for
+ * anything the facts do not settle (a PS2-or-Xbox case, a console, an
+ * "other"). The caller falls back to Unsorted when the key no longer exists.
  */
 export function fileItem(facts: FilingFacts): string {
   const game = TCG_GAMES.find((entry) => entry.key === facts.game)
@@ -358,6 +383,11 @@ export function fileItem(facts: FilingFacts): string {
     }
     return UNSORTED_KEY
   }
+  // Warhammer stock files under Miniatures and paints whatever its kind: that
+  // branch has no branches by kind to narrow it, so the whole of it is the home.
+  if (facts.game === WARHAMMER_GAME) return "minis"
+  // Game "other" files by its kind, exactly as a row with no game this module
+  // knows does.
   if (kind === "retro" && facts.platform) return RETRO_BY_PLATFORM[facts.platform] ?? UNSORTED_KEY
   if (kind === "accessory") return "accessories"
   return UNSORTED_KEY

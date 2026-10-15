@@ -91,6 +91,11 @@ describe("selectRule", () => {
   it("ignores inactive rules and returns null when nothing matches", () => {
     expect(selectRule(rules, { game: "pokemon", kind: "retro", condition: "loose" }, 2000)).toBeNull()
   })
+  it("falls back to the general rule for a game with no rules of its own", () => {
+    // Warhammer and Other have no adapter and no rules (docs/api-contract-reorder.md, 2.1).
+    expect(selectRule(rules, { game: "warhammer", kind: "single", condition: "NM" }, 2000)?.id).toBe("any")
+    expect(selectRule(rules, { game: "other", kind: "single", condition: "NM" }, 2000)?.id).toBe("any")
+  })
 })
 
 describe("isWildcard", () => {

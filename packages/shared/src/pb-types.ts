@@ -64,8 +64,10 @@ export const Collections = {
 	Staff: "staff",
 	StockCountLines: "stock_count_lines",
 	StockCounts: "stock_counts",
+	StockRequests: "stock_requests",
 	SumupCheckouts: "sumup_checkouts",
 	SumupTransactions: "sumup_transactions",
+	Suppliers: "suppliers",
 	TillCategories: "till_categories",
 	TillEvents: "till_events",
 	TillKeys: "till_keys",
@@ -670,11 +672,14 @@ export type ItemsRecord = {
 	reserved_until?: IsoDateString
 	retro_title?: RecordIdString
 	set_code?: string
+	shelf_target?: number
 	show_online?: boolean
 	sku: string
 	source?: ItemsSourceOptions
 	status?: ItemsStatusOptions
 	sumup_synced_at?: IsoDateString
+	supplier?: RecordIdString
+	supplier_code?: string
 	supplier_ref?: string
 	tax_scheme?: ItemsTaxSchemeOptions
 	tested?: boolean
@@ -1495,6 +1500,32 @@ export type StockCountsRecord = {
 	updated: IsoAutoDateString
 }
 
+export const StockRequestsStatusOptions = {
+	"waiting": "waiting",
+	"asked": "asked",
+	"ordered": "ordered",
+	"arrived": "arrived",
+	"collected": "collected",
+	"cancelled": "cancelled",
+} as const
+export type StockRequestsStatusOptions = typeof StockRequestsStatusOptions[keyof typeof StockRequestsStatusOptions]
+export type StockRequestsRecord = {
+	contact_name?: string
+	contact_phone?: string
+	created: IsoAutoDateString
+	created_by?: RecordIdString
+	customer?: RecordIdString
+	id: string
+	item?: RecordIdString
+	notes?: string
+	qty?: number
+	status: StockRequestsStatusOptions
+	status_changed_at?: IsoDateString
+	supplier?: RecordIdString
+	title: string
+	updated: IsoAutoDateString
+}
+
 export const SumupCheckoutsStatusOptions = {
 	"pending": "pending",
 	"paid": "paid",
@@ -1537,6 +1568,20 @@ export type SumupTransactionsRecord<Tproducts = unknown> = {
 	sumup_id: string
 	timestamp?: IsoDateString
 	transaction_code?: string
+	updated: IsoAutoDateString
+}
+
+export type SuppliersRecord = {
+	account_number?: string
+	active?: boolean
+	created: IsoAutoDateString
+	id: string
+	name: string
+	notes?: string
+	rep_email?: string
+	rep_name?: string
+	rep_phone?: string
+	sort?: number
 	updated: IsoAutoDateString
 }
 
@@ -1866,8 +1911,10 @@ export type SettingsResponse<Tagent_webhook = unknown, Tapi_keys = unknown, Tcon
 export type StaffResponse<Texpand = unknown> = Required<StaffRecord> & AuthSystemFields<Texpand>
 export type StockCountLinesResponse<Texpand = unknown> = Required<StockCountLinesRecord> & BaseSystemFields<Texpand>
 export type StockCountsResponse<Texpand = unknown> = Required<StockCountsRecord> & BaseSystemFields<Texpand>
+export type StockRequestsResponse<Texpand = unknown> = Required<StockRequestsRecord> & BaseSystemFields<Texpand>
 export type SumupCheckoutsResponse<Texpand = unknown> = Required<SumupCheckoutsRecord> & BaseSystemFields<Texpand>
 export type SumupTransactionsResponse<Tproducts = unknown, Texpand = unknown> = Required<SumupTransactionsRecord<Tproducts>> & BaseSystemFields<Texpand>
+export type SuppliersResponse<Texpand = unknown> = Required<SuppliersRecord> & BaseSystemFields<Texpand>
 export type TillCategoriesResponse<Tfilter = unknown, Texpand = unknown> = Required<TillCategoriesRecord<Tfilter>> & BaseSystemFields<Texpand>
 export type TillEventsResponse<Tdetail = unknown, Texpand = unknown> = Required<TillEventsRecord<Tdetail>> & BaseSystemFields<Texpand>
 export type TillKeysResponse<Texpand = unknown> = Required<TillKeysRecord> & BaseSystemFields<Texpand>
@@ -1943,8 +1990,10 @@ export type CollectionRecords = {
 	staff: StaffRecord
 	stock_count_lines: StockCountLinesRecord
 	stock_counts: StockCountsRecord
+	stock_requests: StockRequestsRecord
 	sumup_checkouts: SumupCheckoutsRecord
 	sumup_transactions: SumupTransactionsRecord
+	suppliers: SuppliersRecord
 	till_categories: TillCategoriesRecord
 	till_events: TillEventsRecord
 	till_keys: TillKeysRecord
@@ -2019,8 +2068,10 @@ export type CollectionResponses = {
 	staff: StaffResponse
 	stock_count_lines: StockCountLinesResponse
 	stock_counts: StockCountsResponse
+	stock_requests: StockRequestsResponse
 	sumup_checkouts: SumupCheckoutsResponse
 	sumup_transactions: SumupTransactionsResponse
+	suppliers: SuppliersResponse
 	till_categories: TillCategoriesResponse
 	till_events: TillEventsResponse
 	till_keys: TillKeysResponse
