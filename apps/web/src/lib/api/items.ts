@@ -12,7 +12,12 @@ import { formatDateTime } from "@/lib/dates"
 
 import { pb } from "@/lib/pb"
 import { isDemo } from "@/lib/api/mode"
-import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
+import {
+  itemDetailLine,
+  platformForItem,
+  supplierFieldsOf,
+  supplierPatchBody,
+} from "@/lib/api/item-shape"
 import * as demo from "@/lib/api/demo/items"
 import type {
   CardRecord,
@@ -45,6 +50,8 @@ type ExpandedItem = StockItemRecord & {
     /** Its branch, for the path the list and the item page show. */
     category?: { id: string; path?: string; name?: string }
     reserved_for?: { id: string; name?: string; code?: string }
+    /** Who it is ordered from (docs/api-contract-reorder.md, section 2.3). */
+    supplier?: { id: string; name?: string }
     trade_in_line?: {
       id: string
       expand?: { trade_in?: { number?: string; expand?: { customer?: { name?: string; code?: string } } } }
@@ -53,7 +60,7 @@ type ExpandedItem = StockItemRecord & {
 }
 
 const DETAIL_EXPAND =
-  "card,game,location,category,reserved_for,trade_in_line.trade_in,trade_in_line.trade_in.customer"
+  "card,game,location,category,reserved_for,supplier,trade_in_line.trade_in,trade_in_line.trade_in.customer"
 
 function categoryPathOf(item: ExpandedItem): string {
   const branch = item.expand?.category
@@ -164,6 +171,7 @@ async function toDetail(item: ExpandedItem): Promise<ItemDetail> {
     reservedUntil: item.reserved_until ?? null,
     history: await historyFor(item),
     categoryPath: categoryPathOf(item),
+    ...supplierFieldsOf(item, item.expand?.supplier?.name ?? ""),
   }
 }
 
@@ -181,7 +189,7 @@ export async function getItem(sku: string): Promise<ItemDetail | null> {
   }
 }
 
-/** Price, location, status or notes. Everything else is a route. */
+/** Price, location, status, notes, VAT or the supplier fields. Everything else is a route. */
 export async function updateItem(id: string, patch: ItemPatch): Promise<ItemDetail> {
   if (isDemo()) return demo.updateItem(id, patch)
   const body: Record<string, unknown> = {}
@@ -190,6 +198,7 @@ export async function updateItem(id: string, patch: ItemPatch): Promise<ItemDeta
   if (patch.status !== undefined) body.status = patch.status
   if (patch.notes !== undefined) body.notes = patch.notes
   if (patch.vatTreatment !== undefined) Object.assign(body, treatmentFields(patch.vatTreatment))
+  Object.assign(body, supplierPatchBody(patch))
   const item = await pb
     .collection("items")
     .update<ExpandedItem>(id, body, { expand: DETAIL_EXPAND })

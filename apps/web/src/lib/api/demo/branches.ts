@@ -12,9 +12,14 @@
  * Kept apart from `demo/offers.ts` so the demo till can file its tiles
  * without importing the shelf back.
  */
-import { fileItem, UNSORTED_KEY } from "@gg/shared"
+import { UNSORTED_KEY } from "@gg/shared"
 
-import { demoCategoryId, demoCategoryTree, demoProductHome } from "@/lib/api/demo/categories"
+import {
+  demoCategoryId,
+  demoCategoryTree,
+  demoFileKey,
+  demoProductHome,
+} from "@/lib/api/demo/categories"
 import type { OfferBranch } from "@/lib/api/offers"
 import type { StockItemRecord } from "@/lib/api/types"
 
@@ -34,7 +39,7 @@ export function demoBranches(): OfferBranch[] {
 export function demoBranchForItem(item: Pick<StockItemRecord, "kind" | "game" | "category">): string {
   if (item.category) return item.category
   const game = (item.game ?? "").replace(/^game_/, "")
-  const id = demoCategoryId(fileItem({ kind: item.kind, game }))
+  const id = demoCategoryId(demoFileKey(item.kind, game))
   return demoBranches().some((branch) => branch.id === id) ? id : demoCategoryId(UNSORTED_KEY)
 }
 

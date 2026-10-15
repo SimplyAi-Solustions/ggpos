@@ -187,6 +187,11 @@ export async function createItem(input: NewItemInput): Promise<ItemRecord> {
     // Left out, the item-create hook files it by kind and game
     // (docs/api-contract-inventory.md, section 1.2).
     category: input.categoryId || undefined,
+    // Who it is ordered from, the shelf target and their product code
+    // (docs/api-contract-reorder.md, section 2.3); each left out when empty.
+    supplier: input.supplierId || undefined,
+    shelf_target: input.shelfTarget && input.shelfTarget > 0 ? input.shelfTarget : undefined,
+    supplier_code: input.supplierCode?.trim() || undefined,
   }
 
   if (isDemo()) {

@@ -118,6 +118,14 @@ export interface ItemRecord extends BaseRecord {
   category?: string
   /** On the shop's website (docs/api-contract-launch.md, section 6). */
   show_online?: boolean
+  /**
+   * Who the shop orders it from, how many to keep on the shelf (0 or empty
+   * is no target) and the supplier's own product code
+   * (docs/api-contract-reorder.md, section 2.3).
+   */
+  supplier?: string
+  shelf_target?: number
+  supplier_code?: string
 }
 
 /** `label_jobs`. `template` is required by the migration, so queueLabel resolves one. */
@@ -200,6 +208,12 @@ export interface NewItemInput {
   categoryId?: string
   /** One of the five VAT treatments; standard when nothing says otherwise. */
   vatTreatment?: VatTreatment
+  /** The `suppliers` id it is ordered from, or empty for none. */
+  supplierId?: string
+  /** Keep this many on the shelf; null or 0 is no target. */
+  shelfTarget?: number | null
+  /** The supplier's own product code, for the order. */
+  supplierCode?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -892,6 +906,13 @@ export interface ItemDetail extends StockItemRecord {
   history: ItemEvent[]
   /** Its branch's path, "Trading cards / Pokémon / Singles", or "". */
   categoryPath?: string
+  /** The supplier it is ordered from, by id and name, or "" for none. */
+  supplierId: string
+  supplierName: string
+  /** Keep this many on the shelf; null when there is no target. */
+  shelfTarget: number | null
+  /** The supplier's own product code, or "". */
+  supplierCode: string
 }
 
 /** What the item page's edit sheets send back. */
@@ -902,6 +923,85 @@ export interface ItemPatch {
   notes?: string
   /** Stored as a scheme and a rate (@gg/shared `treatmentFields`). */
   vatTreatment?: VatTreatment
+  /** A `suppliers` id, or "" to clear it. */
+  supplierId?: string
+  /** A whole number 0 or more; null (or 0) clears the target. */
+  shelfTarget?: number | null
+  supplierCode?: string
+}
+
+// ---- Suppliers and customer requests (docs/api-contract-reorder.md) -------
+
+/** `suppliers` (section 2.2), as the collection stores it. */
+export interface SupplierRecord extends BaseRecord {
+  name: string
+  account_number?: string
+  rep_name?: string
+  rep_email?: string
+  rep_phone?: string
+  notes?: string
+  active?: boolean
+  sort?: number
+}
+
+/** A supplier as the screens use it. */
+export interface Supplier {
+  id: string
+  name: string
+  accountNumber: string
+  repName: string
+  repEmail: string
+  repPhone: string
+  notes: string
+  active: boolean
+  sort: number
+}
+
+/** What Settings, Suppliers saves. No id adds a supplier. */
+export interface SupplierInput {
+  id?: string
+  name: string
+  accountNumber: string
+  repName: string
+  repEmail: string
+  repPhone: string
+  notes: string
+  active: boolean
+}
+
+/** `stock_requests` (section 2.4), as the collection stores it. */
+export interface StockRequestRecord extends BaseRecord {
+  supplier?: string
+  title: string
+  qty?: number
+  customer?: string
+  contact_name?: string
+  contact_phone?: string
+  notes?: string
+  status: "waiting" | "asked" | "ordered" | "arrived" | "collected" | "cancelled"
+  status_changed_at?: string
+  created_by?: string
+  item?: string
+}
+
+/** What the Add a request sheet sends. */
+export interface NewStockRequestInput {
+  supplierId: string
+  title: string
+  qty: number
+  /** A Guild member, when they are one. */
+  customerId?: string
+  /** Who to tell when it is not a member, or a better number for them. */
+  contactName?: string
+  contactPhone?: string
+  notes?: string
+}
+
+/** The three things a request changes after it is made. */
+export interface StockRequestPatch {
+  status?: StockRequestRecord["status"]
+  notes?: string
+  qty?: number
 }
 
 // ---- Labels ---------------------------------------------------------------

@@ -45,18 +45,28 @@ export const DEMO_LOCKED_STAFF: StaffRecord & { password: string } = {
   must_change_password: true,
 }
 
+/**
+ * The adapters are the ones the reorder migration names on the five card
+ * games (docs/api-contract-reorder.md, section 2.1). Retro has its own
+ * lookup rather than a card search, and Warhammer and Other have none, so
+ * none of the three is offered a card search (`cardSearchGames`).
+ */
 export const DEMO_GAMES: GameRecord[] = [
-  { id: "game_pokemon", key: "pokemon", name: "Pokemon", enabled: true },
-  { id: "game_mtg", key: "mtg", name: "Magic: The Gathering", enabled: true },
-  { id: "game_yugioh", key: "yugioh", name: "Yu-Gi-Oh!", enabled: true },
-  { id: "game_onepiece", key: "onepiece", name: "One Piece", enabled: true },
-  { id: "game_lorcana", key: "lorcana", name: "Disney Lorcana", enabled: true },
+  { id: "game_pokemon", key: "pokemon", name: "Pokemon", adapter: "tcgdex", enabled: true },
+  { id: "game_mtg", key: "mtg", name: "Magic: The Gathering", adapter: "scryfall", enabled: true },
+  { id: "game_yugioh", key: "yugioh", name: "Yu-Gi-Oh!", adapter: "ygoprodeck", enabled: true },
+  { id: "game_onepiece", key: "onepiece", name: "One Piece", adapter: "optcg", enabled: true },
+  { id: "game_lorcana", key: "lorcana", name: "Disney Lorcana", adapter: "lorcast", enabled: true },
   {
     id: "game_retro",
     key: "retro",
     name: "Retro games and consoles",
+    adapter: "",
     enabled: true,
   },
+  // Stock that is not a card game.
+  { id: "game_warhammer", key: "warhammer", name: "Warhammer", adapter: "", enabled: true },
+  { id: "game_other", key: "other", name: "Other", adapter: "", enabled: true },
 ]
 
 export const DEMO_LOCATIONS: LocationRecord[] = [

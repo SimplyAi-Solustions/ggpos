@@ -113,6 +113,20 @@ const UNFILED: StockItemRecord[] = [
 let rows: DemoBranchRow[] | null = null
 const productHomes = new Map<string, string>()
 
+/**
+ * The game the supplier reorder migration gives a branch that names none
+ * (docs/api-contract-reorder.md, section 2.1): Warhammer for the minis
+ * branches, Other for Other miniatures and the subtrees that are not a card
+ * or retro game. Only ever where the starter tree sets no game, as the
+ * migration only fills an empty `default_game`.
+ */
+export function reorderDefaultGame(key: string): string {
+  if (key === "minis.otherminiatures") return "other"
+  if (key === "minis" || key.startsWith("minis.")) return "warhammer"
+  if (/^(boardgames|pc|accessories|food|services)(\.|$)/.test(key)) return "other"
+  return ""
+}
+
 function seedRows(): DemoBranchRow[] {
   const games = new Map(DEMO_GAMES.map((game) => [game.key, game.id]))
   const sorts = new Map<string, number>()
@@ -129,7 +143,9 @@ function seedRows(): DemoBranchRow[] {
       key: branch.key,
       image_url: "",
       default_kind: defaults.kind ?? "",
-      default_game: defaults.game ? (games.get(defaults.game) ?? "") : "",
+      default_game: defaults.game
+        ? (games.get(defaults.game) ?? "")
+        : (games.get(reorderDefaultGame(branch.key)) ?? ""),
       default_platform: defaults.platform ? demoPlatformId(defaults.platform) : "",
       default_tax_scheme: defaults.tax_scheme ?? "",
       default_vat_rate: defaults.vat_rate ?? 0,
@@ -157,6 +173,18 @@ function store(): DemoBranchRow[] {
 const GAME_KEYS = new Map(DEMO_GAMES.map((game) => [game.id, game.key]))
 
 /**
+ * `fileItem`, with the supplier reorder contract's rule for Warhammer
+ * (docs/api-contract-reorder.md, section 2.1): a row of game `warhammer`
+ * files under Miniatures and paints whatever its kind, as the server's
+ * filing now does. Once the shared rule says the same, this adds nothing.
+ * A row of game `other` is filed by its kind, which `fileItem` already does.
+ */
+export function demoFileKey(kind: string, gameKey: string): string {
+  if (gameKey === "warhammer") return "minis"
+  return fileItem({ kind, game: gameKey, platform: "" })
+}
+
+/**
  * Every demo stock row with no branch, filed by `fileItem` as the migration
  * and the item-create hook file real ones. Run before every read, because
  * Add stock, the buy-in and the till all add rows to the same store.
@@ -166,7 +194,7 @@ function fileDemoItems(list: DemoBranchRow[]): void {
   const unsorted = byKey.get(UNSORTED_KEY) ?? ""
   for (const item of itemStore()) {
     if (item.category && list.some((row) => row.id === item.category)) continue
-    const key = fileItem({ kind: item.kind, game: GAME_KEYS.get(item.game) ?? "", platform: "" })
+    const key = demoFileKey(item.kind, GAME_KEYS.get(item.game) ?? "")
     item.category = byKey.get(key) ?? unsorted
   }
 }

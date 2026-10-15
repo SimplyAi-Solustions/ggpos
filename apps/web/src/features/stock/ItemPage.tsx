@@ -80,7 +80,10 @@ import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { OverrideCancelled } from "@/features/lock/override"
 import { WebsiteRow } from "@/features/online/WebsiteRow"
 import { PhotoStrip } from "@/features/photos/PhotoStrip"
-import type { ItemDetail, ItemStatus } from "@/lib/api/types"
+import { shelfTargetFromText } from "@/features/reorder/rack"
+import { takesSupplier } from "@/features/stock/schema"
+import { listSuppliers, suppliersKey } from "@/lib/api/reorder"
+import type { ItemDetail, ItemPatch, ItemStatus, Supplier } from "@/lib/api/types"
 
 const STATUS_LABELS: Record<ItemStatus, string> = {
   in_stock: "In stock",
@@ -320,6 +323,162 @@ function WriteOffSheet({
   )
 }
 
+/** The Supplier select's "None", which a null value would show as a placeholder. */
+const NO_SUPPLIER = "__none__"
+
+/**
+ * A text field on a Details row that saves when it is left or on Enter, and
+ * only when it changed. Keyed on the saved value by its caller, so it starts
+ * again from what the server holds after every save.
+ */
+function SavedField({
+  id,
+  label,
+  initial,
+  placeholder,
+  numeric,
+  maxLength,
+  onSave,
+  check,
+}: {
+  id: string
+  label: string
+  initial: string
+  placeholder: string
+  numeric?: boolean
+  maxLength?: number
+  onSave: (text: string) => void
+  /** A sentence when the text cannot be saved, else null. */
+  check?: (text: string) => string | null
+}) {
+  const [text, setText] = React.useState(initial)
+  const [problem, setProblem] = React.useState<string | null>(null)
+
+  function commit() {
+    const clean = text.trim()
+    if (clean === initial.trim()) return
+    const message = check?.(clean) ?? null
+    setProblem(message)
+    if (!message) onSave(clean)
+  }
+
+  return (
+    <div className="w-[220px]">
+      <Input
+        id={id}
+        aria-label={label}
+        inputMode={numeric ? "numeric" : undefined}
+        autoComplete="off"
+        maxLength={maxLength}
+        placeholder={placeholder}
+        className={numeric ? "tnum" : "tnum font-mono"}
+        aria-invalid={problem ? true : undefined}
+        aria-describedby={problem ? `${id}-problem` : undefined}
+        value={text}
+        onChange={(event) => {
+          setText(event.target.value)
+          setProblem(null)
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return
+          event.preventDefault()
+          commit()
+        }}
+      />
+      {problem ? (
+        <p id={`${id}-problem`} role="alert" className="mt-2 text-left text-[13px] leading-[1.45] text-destructive">
+          {problem}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Supplier, Keep on shelf and Supplier code (docs/api-contract-reorder.md,
+ * section 4.3), each saving as Location and VAT do. They are what put a
+ * product on its supplier's call; a card single or a graded card is never
+ * reordered, so those show them only when one is already set.
+ */
+function SupplierRows({
+  item,
+  suppliers,
+  onSave,
+}: {
+  item: ItemDetail
+  suppliers: Supplier[]
+  onSave: (patch: ItemPatch) => void
+}) {
+  const offered = suppliers.filter((row) => row.active || row.id === item.supplierId)
+  return (
+    <>
+      <div className="flex min-h-12 items-center justify-between gap-6 border-b border-hairline-soft py-3">
+        <MicroLabel>Supplier</MicroLabel>
+        <div className="w-[220px]">
+          <Select
+            value={item.supplierId || NO_SUPPLIER}
+            onValueChange={(next) =>
+              onSave({ supplierId: !next || next === NO_SUPPLIER ? "" : (next as string) })
+            }
+          >
+            <SelectTrigger aria-label="Supplier" data-testid="item-supplier">
+              <SelectValue>
+                {(value: string) =>
+                  offered.find((row) => row.id === value)?.name ?? (item.supplierName || "None")
+                }
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_SUPPLIER}>None</SelectItem>
+              {offered.map((row) => (
+                <SelectItem key={row.id} value={row.id}>
+                  {row.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="flex min-h-12 items-start justify-between gap-6 border-b border-hairline-soft py-3">
+        <label htmlFor="item-shelf-target" className="pt-2">
+          <MicroLabel>Keep on shelf</MicroLabel>
+        </label>
+        <SavedField
+          key={`target:${item.shelfTarget ?? ""}`}
+          id="item-shelf-target"
+          label="Keep on shelf"
+          numeric
+          initial={item.shelfTarget ? String(item.shelfTarget) : ""}
+          placeholder="No target"
+          check={(text) => {
+            const parsed = shelfTargetFromText(text)
+            return parsed.ok ? null : parsed.message
+          }}
+          onSave={(text) => {
+            const parsed = shelfTargetFromText(text)
+            if (parsed.ok) onSave({ shelfTarget: parsed.value })
+          }}
+        />
+      </div>
+      <div className="flex min-h-12 items-start justify-between gap-6 border-b border-hairline-soft py-3">
+        <label htmlFor="item-supplier-code" className="pt-2">
+          <MicroLabel>Supplier code</MicroLabel>
+        </label>
+        <SavedField
+          key={`code:${item.supplierCode}`}
+          id="item-supplier-code"
+          label="Supplier code"
+          maxLength={40}
+          initial={item.supplierCode}
+          placeholder="Their product code"
+          onSave={(text) => onSave({ supplierCode: text })}
+        />
+      </div>
+    </>
+  )
+}
+
 export function ItemPage({ sku }: { sku: string }) {
   const navigate = useNavigate()
   const dock = useCounterDock()
@@ -342,6 +501,11 @@ export function ItemPage({ sku }: { sku: string }) {
   const { data: games = [] } = useQuery({
     queryKey: ["games"],
     queryFn: listGames,
+    staleTime: 5 * 60_000,
+  })
+  const { data: suppliers = [] } = useQuery({
+    queryKey: suppliersKey(false),
+    queryFn: () => listSuppliers(),
     staleTime: 5 * 60_000,
   })
   const queryClient = useQueryClient()
@@ -375,10 +539,11 @@ export function ItemPage({ sku }: { sku: string }) {
         : market
   const suggested = suggestedSellPrice(adjustedMarket, pricing)
 
-  /** Anything that changes this item changes the stock list behind it. */
+  /** Anything that changes this item changes the stock list and the supplier calls behind it. */
   function settle() {
     void refetch()
     void queryClient.invalidateQueries({ queryKey: ["items"] })
+    void queryClient.invalidateQueries({ queryKey: ["reorder"] })
   }
 
   function onFailure(fallback: string) {
@@ -386,7 +551,7 @@ export function ItemPage({ sku }: { sku: string }) {
   }
 
   const save = useMutation({
-    mutationFn: (patch: { price?: number; locationId?: string; vatTreatment?: VatTreatment }) =>
+    mutationFn: (patch: ItemPatch & { vatTreatment?: VatTreatment }) =>
       updateItem(item?.id ?? "", patch),
     onSuccess: () => {
       setPriceOpen(false)
@@ -478,6 +643,27 @@ export function ItemPage({ sku }: { sku: string }) {
 
   const sellable = item.status === "in_stock" || item.status === "reserved"
   const holdEnded = holdHasEnded(item.reservedUntil)
+
+  // Add more of this (docs/api-contract-reorder.md, section 4.3): Add stock
+  // filled from this row. A card carries its set and number too, so the
+  // card itself comes across through the palette's own handover.
+  const addMore = (
+    <Button
+      variant="text"
+      render={
+        <Link
+          to="/counter/stock/new"
+          search={
+            item.card && item.set_code && item.number
+              ? { from: item.sku, set: item.set_code, number: item.number }
+              : { from: item.sku }
+          }
+        />
+      }
+    >
+      Add more of this
+    </Button>
+  )
 
   const sellAction = (
     <Button
@@ -651,6 +837,9 @@ export function ItemPage({ sku }: { sku: string }) {
             </Select>
           </div>
         </div>
+        {takesSupplier(item.kind) || item.supplierId || item.shelfTarget || item.supplierCode ? (
+          <SupplierRows item={item} suppliers={suppliers} onSave={(patch) => save.mutate(patch)} />
+        ) : null}
         {/* The hold is said once, in the line under the status, where it
             can carry a link to the customer. A second row here said the
             same thing again, further down. */}
@@ -771,6 +960,7 @@ export function ItemPage({ sku }: { sku: string }) {
         >
           Print label
         </Button>
+        {addMore}
         <Button
           variant="text-destructive"
           onClick={() => setWriteOffOpen(true)}
@@ -791,6 +981,7 @@ export function ItemPage({ sku }: { sku: string }) {
         >
           Print label
         </Button>
+        {addMore}
         <Button
           variant="text-destructive"
           onClick={() => setWriteOffOpen(true)}

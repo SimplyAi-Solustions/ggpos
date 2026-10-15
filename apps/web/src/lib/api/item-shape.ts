@@ -7,7 +7,47 @@
  * whichever one answered.
  */
 import type { PlatformKey } from "@/design/platforms"
-import type { ItemKind, LabelTemplateKey, StockItemRecord } from "@/lib/api/types"
+import type {
+  ItemDetail,
+  ItemKind,
+  ItemPatch,
+  LabelTemplateKey,
+  StockItemRecord,
+} from "@/lib/api/types"
+
+/**
+ * The item page's supplier, Keep on shelf and supplier code
+ * (docs/api-contract-reorder.md, section 4.1). An empty or 0 target is no
+ * target, said as null so the field reads empty rather than "0".
+ */
+export function supplierFieldsOf(
+  item: Pick<StockItemRecord, "supplier" | "shelf_target" | "supplier_code">,
+  supplierName = ""
+): Pick<ItemDetail, "supplierId" | "supplierName" | "shelfTarget" | "supplierCode"> {
+  const target = item.shelf_target
+  return {
+    supplierId: item.supplier ?? "",
+    supplierName: item.supplier ? supplierName : "",
+    shelfTarget:
+      typeof target === "number" && Number.isFinite(target) && target > 0 ? Math.trunc(target) : null,
+    supplierCode: item.supplier_code ?? "",
+  }
+}
+
+/**
+ * The supplier fields of a patch as `items` stores them: a cleared supplier
+ * is null, a cleared target is 0 (the contract's "0 or empty is no
+ * target"), and a code is trimmed. Only the fields the patch names.
+ */
+export function supplierPatchBody(
+  patch: Pick<ItemPatch, "supplierId" | "shelfTarget" | "supplierCode">
+): { supplier?: string | null; shelf_target?: number; supplier_code?: string } {
+  const body: { supplier?: string | null; shelf_target?: number; supplier_code?: string } = {}
+  if (patch.supplierId !== undefined) body.supplier = patch.supplierId || null
+  if (patch.shelfTarget !== undefined) body.shelf_target = patch.shelfTarget ?? 0
+  if (patch.supplierCode !== undefined) body.supplier_code = patch.supplierCode.trim()
+  return body
+}
 
 /**
  * The `ProductImage` frame for a stock row. `items` carries no platform of

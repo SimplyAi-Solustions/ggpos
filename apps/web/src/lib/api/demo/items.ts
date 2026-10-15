@@ -4,8 +4,16 @@
  */
 import { displayCode, treatmentFields } from "@gg/shared"
 
+import { ClientResponseError } from "pocketbase"
+
 import { DEMO_GAMES, DEMO_LOCATIONS } from "@/lib/api/fixtures"
-import { itemDetailLine, platformForItem } from "@/lib/api/item-shape"
+import {
+  itemDetailLine,
+  platformForItem,
+  supplierFieldsOf,
+  supplierPatchBody,
+} from "@/lib/api/item-shape"
+import { demoSupplierById } from "@/lib/api/demo/suppliers"
 import { demoBranchForItem } from "@/lib/api/demo/branches"
 import { demoCategoryPaths, demoSubtreeIds } from "@/lib/api/demo/categories"
 import {
@@ -144,13 +152,39 @@ export function getItem(sku: string): ItemDetail | null {
     // Filed by the shared rule, as the server files stock, so the till
     // prices an offer on a branch the way the sale does.
     category: item.category ?? demoBranchForItem(item),
+    ...supplierFieldsOf(item, demoSupplierById(item.supplier)?.name ?? ""),
   }
+}
+
+/** The items guard's refusal for a target that is not a whole number 0 or more. */
+export const SHELF_TARGET_REFUSAL = "Keep on shelf is a whole number, 0 or more."
+
+/** The supplier fields of a patch, checked as the server checks them. */
+export function applySupplierPatch(item: StockItemRecord, patch: ItemPatch): void {
+  const target = patch.shelfTarget
+  if (target !== undefined && target !== null && (!Number.isInteger(target) || target < 0)) {
+    throw new ClientResponseError({
+      status: 400,
+      response: { code: 400, message: SHELF_TARGET_REFUSAL, data: {} },
+    })
+  }
+  if (patch.supplierId && !demoSupplierById(patch.supplierId)) {
+    throw new ClientResponseError({
+      status: 404,
+      response: { code: 404, message: "That supplier was not found.", data: {} },
+    })
+  }
+  const body = supplierPatchBody(patch)
+  if (body.supplier !== undefined) item.supplier = body.supplier ?? ""
+  if (body.shelf_target !== undefined) item.shelf_target = body.shelf_target
+  if (body.supplier_code !== undefined) item.supplier_code = body.supplier_code
 }
 
 export function updateItem(id: string, patch: ItemPatch): ItemDetail {
   ensureSeeded()
   const item = itemStore().find((row) => row.id === id)
   if (!item) throw new Error("That item is no longer in stock.")
+  applySupplierPatch(item, patch)
   if (patch.price !== undefined) item.price = patch.price
   if (patch.locationId !== undefined) item.location = patch.locationId
   if (patch.status !== undefined) item.status = patch.status

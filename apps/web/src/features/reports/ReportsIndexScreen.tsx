@@ -7,13 +7,51 @@
  * target and the hairline under it is the only rule on the page.
  */
 import { Link } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
 import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { useStaff } from "@/lib/auth"
+import { listSuppliers, suppliersKey } from "@/lib/api/reorder"
 import { DashboardSection } from "@/features/reports/DashboardScreen"
 import { REPORT_ORDER, REPORT_SPECS } from "@/features/reports/specs"
+
+/**
+ * One row per active supplier, Games Workshop first by `sort`
+ * (docs/api-contract-reorder.md, section 4.2): the call is a tap away.
+ */
+function SupplierCalls() {
+  const { data: suppliers = [] } = useQuery({
+    queryKey: suppliersKey(true),
+    queryFn: () => listSuppliers({ activeOnly: true }),
+    staleTime: 5 * 60_000,
+  })
+  if (suppliers.length === 0) return null
+  return (
+    <section className="mt-24" aria-labelledby="supplier-calls">
+      <SectionHeading id="supplier-calls">Supplier calls</SectionHeading>
+      <ul data-testid="supplier-call-list">
+        {suppliers.map((supplier) => (
+          <li key={supplier.id} className="border-b border-hairline-soft first:border-t">
+            <Link
+              to="/counter/reports/reorder"
+              search={{ supplier: supplier.id }}
+              className="flex min-h-16 items-center justify-between gap-6 py-4 transition-colors duration-150 ease-gg hover:bg-row-hover"
+            >
+              <span className="flex min-w-0 flex-col gap-1">
+                <span className="text-base text-foreground">{supplier.name}</span>
+                <span className="max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                  Stock, sales, orders and requests for the weekly call.
+                </span>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
 
 export function ReportsIndexScreen() {
   const admin = useStaff()?.role === "admin"
@@ -27,6 +65,8 @@ export function ReportsIndexScreen() {
       </Lede>
 
       <DashboardSection />
+
+      <SupplierCalls />
 
       <section className="mt-24" aria-labelledby="every-report">
         <SectionHeading id="every-report">Every report</SectionHeading>

@@ -4,7 +4,6 @@ import { useNavigate } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { MinusIcon, PlusIcon } from "lucide-react"
 import {
   adjustForCondition,
   displayCode,
@@ -42,6 +41,7 @@ import { PhotoSheet } from "@/features/photos/PhotoSheet"
 import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { branchById } from "@/features/categories/tree"
 import { CardSearchField } from "@/features/stock/CardSearchField"
+import { Stepper } from "@/features/stock/Stepper"
 import { PriceSources } from "@/features/pricing"
 import { suggestedSellPrice } from "@/features/pricing/suggest"
 import {
@@ -53,7 +53,10 @@ import {
   finishesFor,
   KINDS,
   SINGLE_QTY_KINDS,
+  shelfTargetValue,
+  takesSupplier,
   TAX_SCHEMES,
+  valuesFromItem,
   type AddStockValues,
 } from "@/features/stock/schema"
 import {
@@ -70,6 +73,7 @@ import {
 import { CATEGORY_TREE_KEY, useCategoryTree } from "@/lib/api/categories"
 import { useVaultConfig } from "@/lib/api/config"
 import { useCardPrices, usePricingSettings } from "@/lib/api/prices"
+import { listSuppliers, suppliersKey } from "@/lib/api/reorder"
 import type { PriceSource } from "@gg/shared"
 
 export interface AddStockScreenProps {
@@ -78,6 +82,11 @@ export interface AddStockScreenProps {
   initialNumber?: string
   /** Prefilled from a retail barcode scanned on any screen. */
   initialEan?: string
+  /**
+   * Add more of this (docs/api-contract-reorder.md, section 4.3): the SKU
+   * of a stock row to fill the form from, quantity left empty.
+   */
+  fromSku?: string
 }
 
 const DEFAULTS: AddStockValues = {
@@ -98,6 +107,9 @@ const DEFAULTS: AddStockValues = {
   locationId: undefined,
   ean: "",
   notes: "",
+  supplierId: "",
+  shelfTarget: "",
+  supplierCode: "",
 }
 
 /** An underlined amount with the pound sign as its leading glyph. */
@@ -143,52 +155,11 @@ function MoneyInput({
   )
 }
 
-function Stepper({
-  id,
-  value,
-  onChange,
-  disabled,
-}: {
-  id: string
-  value: number
-  onChange: (next: number) => void
-  disabled?: boolean
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <Button
-        variant="ghost-icon"
-        type="button"
-        aria-label="One fewer"
-        disabled={disabled || value <= 1}
-        onClick={() => onChange(Math.max(1, value - 1))}
-      >
-        <MinusIcon />
-      </Button>
-      <Input
-        id={id}
-        inputMode="numeric"
-        disabled={disabled}
-        containerClassName="w-16"
-        className="tnum text-center"
-        value={String(value)}
-        onChange={(event) => {
-          const next = Number(event.target.value.replace(/\D/g, ""))
-          onChange(Number.isFinite(next) && next > 0 ? next : 1)
-        }}
-      />
-      <Button
-        variant="ghost-icon"
-        type="button"
-        aria-label="One more"
-        disabled={disabled}
-        onClick={() => onChange(value + 1)}
-      >
-        <PlusIcon />
-      </Button>
-    </div>
-  )
-}
+/**
+ * The Supplier select's "None". A Base UI select with a null value shows
+ * its placeholder, which would not say that none is a choice.
+ */
+const NO_SUPPLIER = "__none__"
 
 /** "kind, game and VAT treatment", for the line under the branch. */
 function listed(parts: string[]): string {
@@ -217,6 +188,7 @@ export function AddStockScreen({
   initialSet,
   initialNumber,
   initialEan,
+  fromSku,
 }: AddStockScreenProps) {
   const navigate = useNavigate()
   const [card, setCard] = React.useState<CardHit | null>(null)
@@ -245,6 +217,15 @@ export function AddStockScreen({
   // The VAT select says the shop's own standard rate.
   const { data: config } = useVaultConfig()
   const standardRate = standardRateOf(config?.settings.vat_standard_rate)
+  // Every supplier, so one switched off still names itself on a row filled
+  // from stock that came from it; only the active ones are offered.
+  const { data: suppliers = [] } = useQuery({
+    queryKey: suppliersKey(false),
+    queryFn: () => listSuppliers(),
+    staleTime: 5 * 60_000,
+  })
+  /** Add more of this: which row the form was filled from. */
+  const [fromNote, setFromNote] = React.useState<string | null>(null)
 
   const form = useForm<AddStockValues>({
     resolver: zodResolver(addStockSchema),
@@ -262,8 +243,10 @@ export function AddStockScreen({
   const condition = useWatch({ control, name: "condition" })
   const categoryId = useWatch({ control, name: "categoryId" })
   const ean = useWatch({ control, name: "ean" })
+  const supplierId = useWatch({ control, name: "supplierId" })
   const gameKey = games.find((game) => game.id === gameId)?.key
   const isCard = CARD_KINDS.has(kind)
+  const offeredSuppliers = suppliers.filter((row) => row.active || row.id === supplierId)
   const fixedQty = SINGLE_QTY_KINDS.has(kind)
   const branch = branchById(branches, categoryId)
 
@@ -389,6 +372,27 @@ export function AddStockScreen({
     setValue("finish", defaultFinish(prefilledCard.finishes))
   }, [prefilledCard, setValue])
 
+  // Add more of this hands over a stock row's SKU: everything about the
+  // product comes across, and the quantity waits for staff to count it.
+  const filledFrom = React.useRef(false)
+  const { data: fromItem } = useQuery({
+    queryKey: ["item", fromSku],
+    queryFn: () => getItem(fromSku!),
+    enabled: Boolean(fromSku),
+  })
+  React.useEffect(() => {
+    if (!fromItem || filledFrom.current) return
+    filledFrom.current = true
+    for (const [name, value] of Object.entries(valuesFromItem(fromItem))) {
+      setValue(name as keyof AddStockValues, value as never)
+    }
+    setFromNote(
+      SINGLE_QTY_KINDS.has(fromItem.kind)
+        ? `Filled from ${fromItem.title || displayCode(fromItem.sku)}.`
+        : `Filled from ${fromItem.title || displayCode(fromItem.sku)}. Say how many came in.`
+    )
+  }, [fromItem, setValue])
+
   function chooseCard(next: CardHit | null) {
     setCard(next)
     setValue("cardId", next?.id, { shouldValidate: formState.isSubmitted })
@@ -427,6 +431,15 @@ export function AddStockScreen({
         marketAtIntake: adjustedMarket ?? undefined,
         categoryId: values.categoryId || undefined,
         vatTreatment: values.taxScheme,
+        // A card single or a graded card is never reordered, whatever the
+        // form held before the kind changed.
+        ...(takesSupplier(values.kind)
+          ? {
+              supplierId: values.supplierId || undefined,
+              shelfTarget: shelfTargetValue(values.shelfTarget),
+              supplierCode: values.supplierCode || undefined,
+            }
+          : {}),
       }),
     onSuccess: (item, values) => {
       setLabelNote(null)
@@ -464,6 +477,7 @@ export function AddStockScreen({
     setPhotoNote(null)
     setCard(null)
     setBranchNote(null)
+    setFromNote(null)
     pickedUp.current = ""
     reset(DEFAULTS)
   }
@@ -552,6 +566,16 @@ export function AddStockScreen({
                 {displayCode(saved.sku)}
               </span>{" "}
               saved. Binder mode kept the branch, game, set and location.
+            </p>
+          ) : null}
+
+          {fromNote ? (
+            <p
+              data-testid="stock-from-note"
+              aria-live="polite"
+              className="mb-10 max-w-[56ch] text-[15px] text-muted-foreground"
+            >
+              {fromNote}
             </p>
           ) : null}
 
@@ -793,7 +817,8 @@ export function AddStockScreen({
                 render={({ field }) => (
                   <Stepper
                     id="stock-qty"
-                    value={Number(field.value) || 1}
+                    // Empty until counted when the form was filled from a row.
+                    value={field.value === "" && !fixedQty ? "" : Number(field.value) || 1}
                     onChange={field.onChange}
                     disabled={fixedQty}
                   />
@@ -897,6 +922,94 @@ export function AddStockScreen({
                   )}
                 />
               </Field>
+            ) : null}
+
+            {/* Who it is reordered from (docs/api-contract-reorder.md,
+                section 4.3). Never on a card single or a graded card. */}
+            {takesSupplier(kind) ? (
+              <>
+                <Field label="Supplier" htmlFor="stock-supplier" hint="Optional">
+                  <Controller
+                    control={control}
+                    name="supplierId"
+                    render={({ field }) => (
+                      <Select
+                        value={field.value || NO_SUPPLIER}
+                        onValueChange={(next) =>
+                          field.onChange(!next || next === NO_SUPPLIER ? "" : next)
+                        }
+                      >
+                        <SelectTrigger id="stock-supplier">
+                          <SelectValue>
+                            {(value: string) =>
+                              offeredSuppliers.find((row) => row.id === value)?.name ?? "None"
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NO_SUPPLIER}>None</SelectItem>
+                          {offeredSuppliers.map((row) => (
+                            <SelectItem key={row.id} value={row.id}>
+                              {row.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                </Field>
+
+                <Field
+                  label="Keep on shelf"
+                  htmlFor="stock-shelf-target"
+                  hint="Optional"
+                  error={errors.shelfTarget?.message}
+                >
+                  <Controller
+                    control={control}
+                    name="shelfTarget"
+                    render={({ field }) => (
+                      <Input
+                        id="stock-shelf-target"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        containerClassName="w-28"
+                        className="tnum"
+                        placeholder="No target"
+                        aria-invalid={!!errors.shelfTarget}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                      />
+                    )}
+                  />
+                </Field>
+
+                <Field
+                  label="Supplier code"
+                  htmlFor="stock-supplier-code"
+                  hint="Optional"
+                  error={errors.supplierCode?.message}
+                >
+                  <Controller
+                    control={control}
+                    name="supplierCode"
+                    render={({ field }) => (
+                      <Input
+                        id="stock-supplier-code"
+                        autoComplete="off"
+                        maxLength={40}
+                        className="tnum font-mono"
+                        placeholder="Their product code"
+                        aria-invalid={!!errors.supplierCode}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                      />
+                    )}
+                  />
+                </Field>
+              </>
             ) : null}
 
             <Field label="Notes" htmlFor="stock-notes" error={errors.notes?.message}>

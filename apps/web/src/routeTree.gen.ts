@@ -55,6 +55,7 @@ import { Route as CounterQuotesIndexRouteImport } from "./routes/counter.quotes.
 import { Route as CounterQuotesIdRouteImport } from "./routes/counter.quotes.$id"
 import { Route as CounterReportsIndexRouteImport } from "./routes/counter.reports.index"
 import { Route as CounterReportsKeyRouteImport } from "./routes/counter.reports.$key"
+import { Route as CounterReportsReorderRouteImport } from "./routes/counter.reports.reorder"
 import { Route as CounterReportsVatRouteImport } from "./routes/counter.reports.vat"
 import { Route as CounterStockIndexRouteImport } from "./routes/counter.stock.index"
 import { Route as CounterStockSkuRouteImport } from "./routes/counter.stock.$sku"
@@ -299,6 +300,11 @@ const CounterReportsKeyRoute = CounterReportsKeyRouteImport.update({
   path: "/reports/$key",
   getParentRoute: () => CounterRoute,
 } as any)
+const CounterReportsReorderRoute = CounterReportsReorderRouteImport.update({
+  id: "/reports/reorder",
+  path: "/reports/reorder",
+  getParentRoute: () => CounterRoute,
+} as any)
 const CounterReportsVatRoute = CounterReportsVatRouteImport.update({
   id: "/reports/vat",
   path: "/reports/vat",
@@ -408,6 +414,7 @@ export interface FileRoutesByFullPath {
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
+  "/counter/reports/reorder": typeof CounterReportsReorderRoute
   "/counter/reports/vat": typeof CounterReportsVatRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
@@ -467,6 +474,7 @@ export interface FileRoutesByTo {
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
+  "/counter/reports/reorder": typeof CounterReportsReorderRoute
   "/counter/reports/vat": typeof CounterReportsVatRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
@@ -529,6 +537,7 @@ export interface FileRoutesById {
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
+  "/counter/reports/reorder": typeof CounterReportsReorderRoute
   "/counter/reports/vat": typeof CounterReportsVatRoute
   "/counter/stock/$sku": typeof CounterStockSkuRoute
   "/counter/stock/new": typeof CounterStockNewRoute
@@ -592,6 +601,7 @@ export interface FileRouteTypes {
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
+    | "/counter/reports/reorder"
     | "/counter/reports/vat"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
@@ -651,6 +661,7 @@ export interface FileRouteTypes {
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
+    | "/counter/reports/reorder"
     | "/counter/reports/vat"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
@@ -712,6 +723,7 @@ export interface FileRouteTypes {
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
+    | "/counter/reports/reorder"
     | "/counter/reports/vat"
     | "/counter/stock/$sku"
     | "/counter/stock/new"
@@ -1070,6 +1082,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CounterReportsKeyRouteImport
       parentRoute: typeof CounterRoute
     }
+    "/counter/reports/reorder": {
+      id: "/counter/reports/reorder"
+      path: "/reports/reorder"
+      fullPath: "/counter/reports/reorder"
+      preLoaderRoute: typeof CounterReportsReorderRouteImport
+      parentRoute: typeof CounterRoute
+    }
     "/counter/reports/vat": {
       id: "/counter/reports/vat"
       path: "/reports/vat"
@@ -1225,6 +1244,7 @@ interface CounterRouteChildren {
   CounterCustomersNewRoute: typeof CounterCustomersNewRoute
   CounterQuotesIdRoute: typeof CounterQuotesIdRoute
   CounterReportsKeyRoute: typeof CounterReportsKeyRoute
+  CounterReportsReorderRoute: typeof CounterReportsReorderRoute
   CounterReportsVatRoute: typeof CounterReportsVatRoute
   CounterStockSkuRoute: typeof CounterStockSkuRoute
   CounterStockNewRoute: typeof CounterStockNewRoute
@@ -1260,6 +1280,7 @@ const CounterRouteChildren: CounterRouteChildren = {
   CounterCustomersNewRoute: CounterCustomersNewRoute,
   CounterQuotesIdRoute: CounterQuotesIdRoute,
   CounterReportsKeyRoute: CounterReportsKeyRoute,
+  CounterReportsReorderRoute: CounterReportsReorderRoute,
   CounterReportsVatRoute: CounterReportsVatRoute,
   CounterStockSkuRoute: CounterStockSkuRoute,
   CounterStockNewRoute: CounterStockNewRoute,
