@@ -26,7 +26,8 @@ var INSTRUCTIONS =
   "a games shop in Bolsover. You act with full admin access and everything you do is audited under your name. " +
   "Money is integer GBP pence; a key ending _gbp shows the same amount in pounds. UK sold prices lead every other " +
   "source. For a research request: research_list, research_claim, search ebay.co.uk sold listings (the request's " +
-  "ebay_url), then research_complete with the comps you found.";
+  "ebay_url), then research_complete with the comps you found. For a supplier's weekly call: reorder_report, and " +
+  "stock_request to log what a customer asked for.";
 
 /** The most text one tool answer may carry. */
 var MAX_TEXT = 60000;
@@ -161,6 +162,9 @@ function itemRow(item) {
   var expand = item.expand || {};
   if (expand.location) row.location = expand.location.name;
   if (expand.category) row.category = { id: expand.category.id, path: expand.category.path };
+  if (expand.supplier) row.supplier = expand.supplier.name;
+  if (item.shelf_target > 0) row.shelf_target = item.shelf_target;
+  if (item.supplier_code) row.supplier_code = item.supplier_code;
   return row;
 }
 
@@ -207,11 +211,44 @@ function findItem(api, args) {
   var page = api.get("/api/collections/items/records", {
     filter: filter,
     perPage: 1,
-    expand: "location,category,card,card.set,retro_title,game",
+    expand: "location,category,supplier,card,card.set,retro_title,game",
   });
   var item = page.items && page.items[0];
   if (!item) fail("No stock item has that " + (id ? "id" : "SKU") + ". Check it and try again.");
   return item;
+}
+
+/** Whether a tool argument was given at all, an empty string included. */
+function given(args, key) {
+  return args[key] !== undefined && args[key] !== null;
+}
+
+/**
+ * A supplier's id from its id or its name (any case), or "" when the value is
+ * empty, which clears a supplier. A supplier switched off still counts: its
+ * stock stays its stock.
+ */
+function resolveSupplier(api, value) {
+  var text = String(value === undefined || value === null ? "" : value).trim();
+  if (!text) return "";
+  var page = api.get("/api/collections/suppliers/records", { perPage: 200, sort: "sort,name", fields: "id,name" });
+  var rows = page.items || [];
+  var lower = text.toLowerCase();
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].id === text || String(rows[i].name).toLowerCase() === lower) return rows[i].id;
+  }
+  fail("No supplier is called " + text + ". Check the name under Settings, Suppliers.");
+}
+
+/** A customer's id from an id or a customer code, or a tool error. */
+function resolveCustomerId(api, value) {
+  var text = String(value).trim();
+  var code = text.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  var filter = 'id = "' + esc(text) + '"' + (code ? ' || code = "' + esc(code) + '"' : "");
+  var page = api.get("/api/collections/customers/records", { filter: filter, perPage: 1, fields: "id" });
+  var found = page.items && page.items[0];
+  if (!found) fail("No customer has that id or code. Search for them by name first.");
+  return found.id;
 }
 
 /** A branch id from an id or a full path ("Trading cards / Pokémon / Singles"). */
@@ -305,7 +342,7 @@ var TOOLS = [
         sort: "-created",
         page: int(args, "page", { min: 1, fallback: 1 }),
         perPage: int(args, "limit", { min: 1, max: 50, fallback: 20 }),
-        expand: "location,category",
+        expand: "location,category,supplier",
       });
       return { total_items: page.totalItems, page: page.page, items: (page.items || []).map(itemRow) };
     },
@@ -313,7 +350,9 @@ var TOOLS = [
   {
     name: "stock_get",
     title: "Get a stock item",
-    description: "One stock item by id or SKU, with its card or retro title, cost, price, branch, location and notes.",
+    description:
+      "One stock item by id or SKU, with its card or retro title, cost, price, branch, location, supplier, " +
+      "Keep on shelf target and notes.",
     inputSchema: schema({ id: { type: "string" }, sku: { type: "string" } }),
     annotations: READ,
     run: function (args, api) {
@@ -335,7 +374,8 @@ var TOOLS = [
     name: "stock_update",
     title: "Update a stock item",
     description:
-      "Change a stock item's shelf price (pence), its branch in the category tree, or whether it shows on the website. " +
+      "Change a stock item's shelf price (pence), its branch in the category tree, whether it shows on the website, " +
+      "its supplier, how many to keep on the shelf or the supplier's product code. " +
       "Give the item's id or SKU and only what changes.",
     inputSchema: schema({
       id: { type: "string" },
@@ -343,18 +383,29 @@ var TOOLS = [
       price_pence: { type: "integer", minimum: 0, description: "The new shelf price in pence: 1250 is £12.50." },
       category: { type: "string", description: "A branch id or full path, from category_tree." },
       show_online: { type: "boolean" },
+      supplier: { type: "string", description: "A supplier's name or id, such as Games Workshop. An empty string clears it." },
+      shelf_target: { type: "integer", minimum: 0, description: "Keep this many on the shelf. 0 means no target." },
+      supplier_code: { type: "string", description: "The supplier's own product code, for the order. An empty string clears it." },
     }),
     annotations: CHANGE,
     run: function (args, api) {
       var price = int(args, "price_pence", { min: 0, max: 10000000 });
       var online = bool(args, "show_online");
+      var target = int(args, "shelf_target", { min: 0, max: 1000000 });
       var patch = {};
       if (price !== null) patch.price = price;
       if (online !== null) patch.show_online = online;
       if (args.category) patch.category = resolveCategory(api, args.category);
-      if (!Object.keys(patch).length) fail("Say what to change: price_pence, category or show_online.");
+      if (given(args, "supplier")) patch.supplier = resolveSupplier(api, args.supplier);
+      if (target !== null) patch.shelf_target = target;
+      if (given(args, "supplier_code")) patch.supplier_code = str(args, "supplier_code", { max: 40 });
+      if (!Object.keys(patch).length) {
+        fail("Say what to change: price_pence, category, show_online, supplier, shelf_target or supplier_code.");
+      }
       var item = findItem(api, args);
-      var saved = api.patch("/api/collections/items/records/" + encodeURIComponent(item.id), patch, { expand: "location,category" });
+      var saved = api.patch("/api/collections/items/records/" + encodeURIComponent(item.id), patch, {
+        expand: "location,category,supplier",
+      });
       return itemRow(saved);
     },
   },
@@ -375,6 +426,81 @@ var TOOLS = [
         rows.push({ id: b.id, path: b.path || b.name, active: b.active !== false });
       }
       return { branches: capRows(rows), count: rows.length };
+    },
+  },
+
+  // --- Supplier calls ----------------------------------------------------------
+  {
+    name: "reorder_report",
+    title: "Supplier reorder report",
+    description:
+      "The weekly supplier call in one answer: for a supplier (name or id), each product's stock, units sold in the " +
+      "period (default the last 7 days), Keep on shelf target and units to order, the totals, and the customers' open requests.",
+    inputSchema: schema(
+      {
+        supplier: { type: "string", description: "A supplier's name or id, such as Games Workshop." },
+        from: { type: "string", description: "YYYY-MM-DD. Default 6 days before to." },
+        to: { type: "string", description: "YYYY-MM-DD. Default today." },
+      },
+      ["supplier"]
+    ),
+    annotations: READ,
+    run: function (args, api) {
+      var wanted = str(args, "supplier", { required: true, max: 80 });
+      var query = { supplier: resolveSupplier(api, wanted), from: date(args, "from", false), to: date(args, "to", false) };
+      var report = api.get("/api/vault/reorder", query);
+      if (report && Array.isArray(report.lines) && report.lines.length > MAX_ROWS) {
+        report.lines_total = report.lines.length;
+        report.lines = report.lines.slice(0, MAX_ROWS);
+      }
+      if (report && Array.isArray(report.requests) && report.requests.length > MAX_ROWS) {
+        report.requests_total = report.requests.length;
+        report.requests = report.requests.slice(0, MAX_ROWS);
+      }
+      return report;
+    },
+  },
+  {
+    name: "stock_request",
+    title: "Log a customer request",
+    description:
+      "Log something a customer has asked for that the shop does not have, so it stays on the supplier's report until it " +
+      "is collected. Give what they are after, and either a Guild customer or a name to contact.",
+    inputSchema: schema(
+      {
+        title: { type: "string", description: "What the customer is after, in their words." },
+        qty: { type: "integer", minimum: 1, description: "How many. Default 1." },
+        supplier: { type: "string", description: "The supplier to ask, by name or id." },
+        customer: { type: "string", description: "A Guild customer's id or code." },
+        contact_name: { type: "string", description: "Who to tell when it comes in, if they are not a customer." },
+        contact_phone: { type: "string" },
+        notes: { type: "string" },
+      },
+      ["title"]
+    ),
+    annotations: WRITE,
+    run: function (args, api) {
+      var body = { title: str(args, "title", { required: true, max: 200 }) };
+      var qty = int(args, "qty", { min: 1, max: 1000 });
+      if (qty !== null) body.qty = qty;
+      var supplier = resolveSupplier(api, args.supplier);
+      if (supplier) body.supplier = supplier;
+      if (given(args, "customer") && String(args.customer).trim()) body.customer = resolveCustomerId(api, args.customer);
+      var contactName = str(args, "contact_name", { max: 100 });
+      if (contactName) body.contact_name = contactName;
+      var contactPhone = str(args, "contact_phone", { max: 40 });
+      if (contactPhone) body.contact_phone = contactPhone;
+
+      // The hook leaves created_by empty for an agent, so the notes say who logged it.
+      var me = api.get("/api/vault/me");
+      var tag = "Logged by " + (me && me.name ? me.name : "the agent") + ".";
+      var notes = str(args, "notes", { max: 500 - tag.length - 1 });
+      body.notes = notes ? notes + " " + tag : tag;
+
+      var saved = api.post("/api/collections/stock_requests/records", body);
+      return pick(saved, [
+        "id", "title", "qty", "status", "supplier", "customer", "contact_name", "contact_phone", "notes", "created",
+      ]);
     },
   },
 
