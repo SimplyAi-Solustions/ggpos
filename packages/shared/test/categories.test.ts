@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest"
 
 import {
   MAX_CATEGORY_DEPTH,
+  NON_CARD_GAMES,
+  OTHER_GAME,
   STARTER_TREE,
+  TCG_GAMES,
   UNSORTED_KEY,
+  WARHAMMER_GAME,
   buildCategoryTree,
   fileItem,
   flattenCategoryTree,
@@ -62,6 +66,47 @@ describe("the starter tree", () => {
       if (kind) expect(["single", "graded", "retro", "sealed", "accessory", "other"]).toContain(kind)
     }
   })
+
+  it("only defaults to games the shop has", () => {
+    const known = new Set([...TCG_GAMES.map((game) => game.key), "retro", ...NON_CARD_GAMES.map((game) => game.key)])
+    for (const { branch } of all) {
+      const game = branch.defaults?.game
+      if (game) expect(known.has(game)).toBe(true)
+    }
+  })
+
+  it("names the two games for stock that is not a card game", () => {
+    expect(NON_CARD_GAMES).toEqual([
+      { key: "warhammer", name: "Warhammer" },
+      { key: "other", name: "Other" },
+    ])
+  })
+
+  it("starts the miniatures branches on Warhammer, and other makers' miniatures on Other", () => {
+    const game = (key: string) => all.find((entry) => entry.branch.key === key)?.branch.defaults?.game
+    expect(game("minis")).toBe(WARHAMMER_GAME)
+    expect(game("minis.warhammer40000")).toBe(WARHAMMER_GAME)
+    expect(game("minis.ageofsigmar")).toBe(WARHAMMER_GAME)
+    expect(game("minis.paints")).toBe(WARHAMMER_GAME)
+    expect(game("minis.toolsandhobby")).toBe(WARHAMMER_GAME)
+    expect(game("minis.otherminiatures")).toBe(OTHER_GAME)
+  })
+
+  it("starts board games, PC parts, accessories, food and services on Other", () => {
+    for (const { branch } of all) {
+      const top = branch.key.split(".")[0]
+      if (["boardgames", "pc", "accessories", "food", "services"].includes(top ?? "")) {
+        expect(branch.defaults?.game, branch.key).toBe(OTHER_GAME)
+      }
+    }
+  })
+
+  it("leaves a branch that already had a game on it", () => {
+    const game = (key: string) => all.find((entry) => entry.branch.key === key)?.branch.defaults?.game
+    expect(game("tcg.pokemon.singles")).toBe("pokemon")
+    expect(game("retro.sega.megadrive.games")).toBe("retro")
+    expect(game("unsorted")).toBeUndefined()
+  })
 })
 
 describe("fileItem", () => {
@@ -97,9 +142,32 @@ describe("fileItem", () => {
     expect(fileItem({ kind: "accessory", game: "retro" })).toBe("accessories")
   })
 
+  it("files Warhammer under Miniatures and paints, whatever its kind", () => {
+    for (const kind of ["single", "graded", "retro", "sealed", "accessory", "other"]) {
+      expect(fileItem({ kind, game: "warhammer" })).toBe("minis")
+    }
+    expect(fileItem({ kind: "other", game: "warhammer", platform: "etb" })).toBe("minis")
+  })
+
+  it("files the game Other by its kind, as a row with no game it knows", () => {
+    for (const [kind, platform] of [
+      ["accessory", undefined],
+      ["other", undefined],
+      ["sealed", "etb"],
+      ["single", undefined],
+      ["retro", "megadrive_box"],
+      ["retro", "console"],
+    ] as const) {
+      expect(fileItem({ kind, game: "other", platform })).toBe(fileItem({ kind, game: "", platform }))
+    }
+    expect(fileItem({ kind: "accessory", game: "other" })).toBe("accessories")
+    expect(fileItem({ kind: "other", game: "other" })).toBe(UNSORTED_KEY)
+    expect(fileItem({ kind: "retro", game: "other", platform: "megadrive_box" })).toBe("retro.sega.megadrive.games")
+  })
+
   it("only ever answers a key the starter tree has", () => {
     const kinds = ["single", "graded", "retro", "sealed", "accessory", "other"]
-    const games = ["pokemon", "mtg", "yugioh", "onepiece", "lorcana", "retro", ""]
+    const games = ["pokemon", "mtg", "yugioh", "onepiece", "lorcana", "retro", "warhammer", "other", ""]
     const platforms = ["", "etb", "booster_box", "booster_pack", "megadrive_box", "snes_pal_box", "n64_box",
       "gamecube_case", "switch_case", "gameboy_cart", "gameboy_box", "ps1_case", "ps2_case", "console", "other"]
     for (const kind of kinds) {
