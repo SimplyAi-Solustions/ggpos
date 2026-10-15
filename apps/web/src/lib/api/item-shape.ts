@@ -6,6 +6,8 @@
  * Shared by the live and the demo implementations so a card looks the same
  * whichever one answered.
  */
+import { productKey } from "@gg/shared"
+
 import type { PlatformKey } from "@/design/platforms"
 import type {
   ItemDetail,
@@ -32,6 +34,26 @@ export function supplierFieldsOf(
       typeof target === "number" && Number.isFinite(target) && target > 0 ? Math.trunc(target) : null,
     supplierCode: item.supplier_code ?? "",
   }
+}
+
+/**
+ * The stock rows that are the same product as `item` on its supplier's
+ * call: the same supplier, and the same supplier code, else barcode, else
+ * title (`productKey` in @gg/shared). The item itself is always one of them.
+ * A row with no supplier is a product of its own.
+ */
+export function productRowIdsIn(
+  item: Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">,
+  rows: readonly Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">[]
+): string[] {
+  if (!item.supplier) return [item.id]
+  const keyOf = (row: Pick<StockItemRecord, "supplier_code" | "ean" | "title">) =>
+    productKey({ supplierCode: row.supplier_code ?? "", ean: row.ean ?? "", title: row.title ?? "" })
+  const key = keyOf(item)
+  const ids = rows
+    .filter((row) => row.id !== item.id && row.supplier === item.supplier && keyOf(row) === key)
+    .map((row) => row.id)
+  return [item.id, ...ids]
 }
 
 /**

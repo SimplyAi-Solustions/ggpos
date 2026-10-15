@@ -6,7 +6,7 @@ import {
   takesSupplier,
   valuesFromItem,
 } from "@/features/stock/schema"
-import { supplierFieldsOf, supplierPatchBody } from "@/lib/api/item-shape"
+import { productRowIdsIn, supplierFieldsOf, supplierPatchBody } from "@/lib/api/item-shape"
 import type { StockItemRecord } from "@/lib/api/types"
 
 /**
@@ -128,6 +128,22 @@ describe("the item page's supplier fields", () => {
       shelfTarget: null,
       supplierCode: "",
     })
+  })
+
+  it("finds every row of the same product on the same supplier", () => {
+    const rows = [
+      { id: "old", supplier: "supplier_gw", supplier_code: " 48-75 ", ean: "", title: "Combat Patrol" },
+      { id: "other-supplier", supplier: "supplier_asmodee", supplier_code: "48-75", ean: "", title: "" },
+      { id: "other-code", supplier: "supplier_gw", supplier_code: "49-41", ean: "", title: "" },
+      { id: "by-ean", supplier: "supplier_gw", supplier_code: "", ean: "5011921171484", title: "" },
+      BOX,
+    ]
+    expect(productRowIdsIn(BOX, rows)).toEqual([BOX.id, "old"])
+    // No code: by barcode.
+    const plain = { ...BOX, id: "new", supplier_code: "" }
+    expect(productRowIdsIn(plain, rows)).toEqual(["new", "by-ean"])
+    // No supplier: a product of its own.
+    expect(productRowIdsIn({ ...BOX, supplier: "" }, rows)).toEqual([BOX.id])
   })
 
   it("writes only what the patch names, clearing with null and 0", () => {

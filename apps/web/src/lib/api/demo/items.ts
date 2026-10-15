@@ -10,6 +10,7 @@ import { DEMO_GAMES, DEMO_LOCATIONS } from "@/lib/api/fixtures"
 import {
   itemDetailLine,
   platformForItem,
+  productRowIdsIn,
   supplierFieldsOf,
   supplierPatchBody,
 } from "@/lib/api/item-shape"
@@ -192,6 +193,27 @@ export function updateItem(id: string, patch: ItemPatch): ItemDetail {
   if (patch.vatTreatment !== undefined) Object.assign(item, treatmentFields(patch.vatTreatment))
   item.updated = new Date().toISOString()
   return getItem(item.sku) as ItemDetail
+}
+
+/** The live call's twin: the supplier fields on every row of the product. */
+export function updateProductSupplierFields(
+  item: Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">,
+  patch: Pick<ItemPatch, "supplierId" | "shelfTarget" | "supplierCode">
+): { item: ItemDetail; rows: number } {
+  ensureSeeded()
+  const ids = productRowIdsIn(item, itemStore())
+  const now = new Date().toISOString()
+  // Checked on the item first, so a refusal changes nothing anywhere.
+  const self = itemStore().find((row) => row.id === item.id)
+  if (!self) throw new Error("That item is no longer in stock.")
+  applySupplierPatch(self, patch)
+  for (const row of itemStore()) {
+    if (row.id === item.id || !ids.includes(row.id)) continue
+    applySupplierPatch(row, patch)
+    row.updated = now
+  }
+  self.updated = now
+  return { item: getItem(self.sku) as ItemDetail, rows: ids.length }
 }
 
 export function listItems(filters: ItemFilters, page: number): ItemListPage {

@@ -15,6 +15,7 @@ import { isDemo } from "@/lib/api/mode"
 import {
   itemDetailLine,
   platformForItem,
+  productRowIdsIn,
   supplierFieldsOf,
   supplierPatchBody,
 } from "@/lib/api/item-shape"
@@ -203,6 +204,36 @@ export async function updateItem(id: string, patch: ItemPatch): Promise<ItemDeta
     .collection("items")
     .update<ExpandedItem>(id, body, { expand: DETAIL_EXPAND })
   return toDetail(item)
+}
+
+/**
+ * The item page's Supplier, Keep on shelf and Supplier code
+ * (docs/api-contract-reorder.md, section 4.3), saved on every stock row of
+ * the same product, as the call's own Keep on shelf is. The call groups a
+ * product's rows and takes the largest target among them, so a change made
+ * to one row alone would leave a sold-out older row speaking for the
+ * product: a lowered target would not take, and a new code would split it
+ * in two. Answers the item and how many rows it saved on.
+ */
+export async function updateProductSupplierFields(
+  item: Pick<StockItemRecord, "id" | "supplier" | "supplier_code" | "ean" | "title">,
+  patch: Pick<ItemPatch, "supplierId" | "shelfTarget" | "supplierCode">
+): Promise<{ item: ItemDetail; rows: number }> {
+  if (isDemo()) return demo.updateProductSupplierFields(item, patch)
+  const siblings = item.supplier
+    ? await pb.collection("items").getFullList<StockItemRecord>({
+        filter: `supplier = "${quote(item.supplier)}"`,
+        fields: "id,supplier,supplier_code,ean,title",
+      })
+    : []
+  const ids = productRowIdsIn(item, siblings)
+  // The item first: a refusal from the items guard then changes nothing.
+  const updated = await updateItem(item.id, patch)
+  const body = supplierPatchBody(patch)
+  for (const id of ids) {
+    if (id !== item.id) await pb.collection("items").update(id, body)
+  }
+  return { item: updated, rows: ids.length }
 }
 
 /** One page of the stock table, filtered and searched. */

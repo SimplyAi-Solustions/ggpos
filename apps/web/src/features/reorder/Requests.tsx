@@ -114,8 +114,8 @@ export function RequestsSection({
       setNote({
         tone: "info",
         text: isOpenRequest(saved.status)
-          ? `${saved.title} is ${label} now.`
-          : `${saved.title} is ${label} now, so it leaves the open requests.`,
+          ? `Moved ${saved.title} to ${label}.`
+          : `Moved ${saved.title} to ${label}. It leaves the open requests.`,
       })
       void queryClient.invalidateQueries({ queryKey: reorderKeys.all })
     },

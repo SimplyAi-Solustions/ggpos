@@ -218,7 +218,9 @@ export function ReorderScreen({
     // supplier never shows the last one's.
     placeholderData: (previous: ReorderReport | undefined) =>
       previous?.supplier.id === supplierId ? previous : undefined,
-    staleTime: 30_000,
+    // Read again on every visit: the till, Add stock and the item page all
+    // change what is on the shelf between one look and the next.
+    staleTime: 0,
   })
   const data = report.data ?? null
 
@@ -285,29 +287,16 @@ export function ReorderScreen({
     )
   }
 
-  // ---- A supplier the route does not know ---------------------------------
-  if (report.error && !data) {
-    return (
-      <section className="pt-16 sm:pt-24">
-        <PageTitle>{name || "Supplier call"}</PageTitle>
-        <p role="alert" className="mt-3 max-w-[56ch] text-base leading-[1.5] text-destructive">
-          {refusalOrFallback(report.error, "The supplier call would not load. Check the connection and try again.")}
-        </p>
-        <div className="mt-12">
-          <Button variant="text" render={<Link to="/counter/reports" />}>
-            All reports
-          </Button>
-        </div>
-      </section>
-    )
-  }
-
   const rep = data ? repLine(data.supplier) : ""
 
   return (
     <>
       <section className="pt-16 sm:pt-24 print:hidden" data-testid="reorder-screen">
-        {name ? <PageTitle>{name}</PageTitle> : <Skeleton className="h-9 w-64" />}
+        {name || report.error ? (
+          <PageTitle>{name || "Supplier call"}</PageTitle>
+        ) : (
+          <Skeleton className="h-9 w-64" />
+        )}
         <Lede>The weekly call: what sold, what is out, what to order and what customers asked for.</Lede>
         {rep ? (
           <p
@@ -329,9 +318,15 @@ export function ReorderScreen({
         <p data-testid="range-line" className="mt-6 text-[15px] text-muted-foreground">
           {formatRange(range)}
         </p>
+        {report.error ? (
+          // The route's own sentence: an unknown supplier, or dates it refused.
+          <p role="alert" data-testid="reorder-error" className="mt-6 max-w-[56ch] text-[15px] leading-[1.5] text-destructive">
+            {refusalOrFallback(report.error, "The supplier call would not load. Check the connection and try again.")}
+          </p>
+        ) : null}
 
         {!data ? (
-          invalid ? null : (
+          invalid || report.error ? null : (
             <SkeletonText lines={4} className="mt-12 max-w-[40rem]" />
           )
         ) : (

@@ -6,7 +6,7 @@ import { todayIso } from "@/lib/api/dates"
 import { DEMO_GAMES } from "@/lib/api/fixtures"
 import { cardSearchGames, isLookupGame, LOOKUP_GAMES } from "@/lib/api/lookup"
 import { demoCategoryId, demoCategoryTree, demoFileKey, reorderDefaultGame } from "@/lib/api/demo/categories"
-import { getItem, updateItem } from "@/lib/api/demo/items"
+import { getItem, updateItem, updateProductSupplierFields } from "@/lib/api/demo/items"
 import {
   demoCreateRequest,
   demoListRequests,
@@ -227,6 +227,20 @@ describe("the item page's supplier fields", () => {
     const cleared = updateItem("item_gw_core_book", { supplierId: "" })
     expect(cleared).toMatchObject({ supplierId: "", supplierName: "" })
     updateItem("item_gw_core_book", { supplierId: DEMO_GW_ID, shelfTarget: 2, supplierCode: "40-01" })
+  })
+
+  it("saves them on every row of a restocked product, so the call keeps one line", () => {
+    const newest = itemStore().find((item) => item.id === "item_gw_cp_sm_2")!
+    const result = updateProductSupplierFields(newest, { shelfTarget: 2, supplierCode: "48-75B" })
+    expect(result.rows).toBe(2)
+    expect(result.item).toMatchObject({ shelfTarget: 2, supplierCode: "48-75B" })
+    const old = itemStore().find((item) => item.id === "item_gw_cp_sm_1")!
+    expect(old).toMatchObject({ shelf_target: 2, supplier_code: "48-75B" })
+    const marines = report().lines.filter((line) => line.title === "Combat Patrol: Space Marines")
+    // Lowered on both rows, so it takes: one on hand against two.
+    expect(marines).toHaveLength(1)
+    expect(marines[0]).toMatchObject({ shelfTarget: 2, toOrder: 1 })
+    updateProductSupplierFields(newest, { shelfTarget: 4, supplierCode: "48-75" })
   })
 
   it("refuses a target that is not a whole number", () => {

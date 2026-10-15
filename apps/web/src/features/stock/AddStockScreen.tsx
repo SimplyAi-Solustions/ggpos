@@ -444,6 +444,8 @@ export function AddStockScreen({
     onSuccess: (item, values) => {
       setLabelNote(null)
       void queryClient.invalidateQueries({ queryKey: CATEGORY_TREE_KEY })
+      // A restock changes its supplier's call.
+      void queryClient.invalidateQueries({ queryKey: ["reorder"] })
       if (binderMode) {
         // Binder mode stays on the form: the branch, game, set and location
         // hold, the varying fields clear, and focus goes back to the number

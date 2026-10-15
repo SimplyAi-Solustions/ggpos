@@ -71,6 +71,7 @@ import {
   queueLabels,
   reserveItem,
   updateItem,
+  updateProductSupplierFields,
   writeOffItem,
 } from "@/lib/api"
 import { useCardPrices, usePricingSettings, useRetroPrices } from "@/lib/api/prices"
@@ -353,13 +354,17 @@ function SavedField({
 }) {
   const [text, setText] = React.useState(initial)
   const [problem, setProblem] = React.useState<string | null>(null)
+  // What was last sent, so Enter and then leaving the field save it once.
+  const sent = React.useRef(initial.trim())
 
   function commit() {
     const clean = text.trim()
-    if (clean === initial.trim()) return
+    if (clean === sent.current) return
     const message = check?.(clean) ?? null
     setProblem(message)
-    if (!message) onSave(clean)
+    if (message) return
+    sent.current = clean
+    onSave(clean)
   }
 
   return (
@@ -397,9 +402,10 @@ function SavedField({
 
 /**
  * Supplier, Keep on shelf and Supplier code (docs/api-contract-reorder.md,
- * section 4.3), each saving as Location and VAT do. They are what put a
- * product on its supplier's call; a card single or a graded card is never
- * reordered, so those show them only when one is already set.
+ * section 4.3), each saving the moment it changes as Location and VAT do,
+ * on every stock row of the product (`updateProductSupplierFields`). They
+ * are what put a product on its supplier's call; a card single or a graded
+ * card is never reordered, so those show them only when one is already set.
  */
 function SupplierRows({
   item,
@@ -551,12 +557,31 @@ export function ItemPage({ sku }: { sku: string }) {
   }
 
   const save = useMutation({
-    mutationFn: (patch: ItemPatch & { vatTreatment?: VatTreatment }) =>
+    mutationFn: (patch: { price?: number; locationId?: string; vatTreatment?: VatTreatment }) =>
       updateItem(item?.id ?? "", patch),
     onSuccess: () => {
       setPriceOpen(false)
       setError(null)
       setNote("Saved")
+      settle()
+    },
+    onError: onFailure("That did not save. Check the connection and try again."),
+  })
+
+  // Supplier, Keep on shelf and Supplier code go on every stock row of the
+  // product, so the supplier call never has two rows disagreeing.
+  const saveSupplierFields = useMutation({
+    mutationFn: (patch: Pick<ItemPatch, "supplierId" | "shelfTarget" | "supplierCode">) =>
+      updateProductSupplierFields(item!, patch),
+    onSuccess: ({ rows }) => {
+      setError(null)
+      setNote(
+        rows === 1
+          ? "Saved"
+          : rows === 2
+            ? "Saved on both stock rows of this product"
+            : `Saved on all ${rows} stock rows of this product`
+      )
       settle()
     },
     onError: onFailure("That did not save. Check the connection and try again."),
@@ -838,7 +863,11 @@ export function ItemPage({ sku }: { sku: string }) {
           </div>
         </div>
         {takesSupplier(item.kind) || item.supplierId || item.shelfTarget || item.supplierCode ? (
-          <SupplierRows item={item} suppliers={suppliers} onSave={(patch) => save.mutate(patch)} />
+          <SupplierRows
+            item={item}
+            suppliers={suppliers}
+            onSave={(patch) => saveSupplierFields.mutate(patch)}
+          />
         ) : null}
         {/* The hold is said once, in the line under the status, where it
             can carry a link to the customer. A second row here said the
