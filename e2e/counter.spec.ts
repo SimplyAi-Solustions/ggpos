@@ -222,6 +222,23 @@ test.describe("the counter", () => {
     await expect(lock).toBeHidden()
   })
 
+  test("fits the stock table to the page, with the code under each name", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/counter/stock")
+    const charizard = page.getByTestId("stock-row").filter({ hasText: "Charizard ex" }).first()
+    await expect(charizard).toContainText(DEMO_SKU.display)
+    const table = page.locator('[data-slot="table-container"]')
+    const overflow = await table.evaluate((box) => box.scrollWidth - box.clientWidth)
+    expect(overflow).toBe(0)
+    // Condition is only a column while something on screen has one.
+    const condition = page.getByRole("columnheader", { name: "Condition" })
+    if ((page.viewportSize()?.width ?? 0) >= 640) await expect(condition).toBeVisible()
+    await page.getByLabel("Search stock").fill("Citadel")
+    await expect(page.getByTestId("stock-row")).toHaveCount(4)
+    await expect(condition).toHaveCount(0)
+    expect(await table.evaluate((box) => box.scrollWidth - box.clientWidth)).toBe(0)
+  })
+
   test("refuses to save without the fields the stock book needs", async ({ page }) => {
     await signIn(page)
     await page.goto("/counter/stock/new")

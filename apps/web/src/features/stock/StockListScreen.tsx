@@ -61,6 +61,12 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
   written_off: "Written off",
 }
 
+/**
+ * Columns a phone leaves to the item page. Below 640px a row is the picture,
+ * the name with its code and the price, so the list never scrolls sideways.
+ */
+const WIDE = "max-sm:hidden"
+
 export interface StockListScreenProps {
   /** The filter the list opens on. Home's waiting line links in on "reserved". */
   initialStatus?: ItemStatus
@@ -108,6 +114,9 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
 
   const rows = data?.pages.flatMap((page) => page.items) ?? []
   const totalItems = data?.pages[0]?.totalItems ?? 0
+  // Only singles and graded cards carry a condition, so a list of boxes and
+  // paints gives the column back to the item's name.
+  const showCondition = rows.some((row) => row.condition)
   const ticked = chosen.filter((id) => rows.some((row) => row.id === id))
 
   const file = useMutation({
@@ -259,12 +268,11 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                   <span className="sr-only">Picture</span>
                 </TableHead>
                 <TableHead>Item</TableHead>
-                <TableHead>Code</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Condition</TableHead>
+                <TableHead className={WIDE}>Category</TableHead>
+                {showCondition ? <TableHead className={WIDE}>Condition</TableHead> : null}
                 <TableHead numeric>Price</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Location</TableHead>
+                <TableHead className={WIDE}>Status</TableHead>
+                <TableHead className={WIDE}>Location</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -312,30 +320,46 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                       height={40}
                     />
                   </TableImageCell>
-                  <TableCell>
-                    <span className="block truncate text-[15px] text-foreground">
+                  {/* The one column that gives: `w-full max-w-0` hands it
+                      whatever the others leave, so the table always fits the
+                      page and a long name wraps instead of pushing Status and
+                      Location off the edge. The code sits under the name, as
+                      it does on the supplier call. */}
+                  <TableCell className="w-full max-w-0 min-w-40">
+                    <span className="line-clamp-2 text-[15px] leading-[1.35] text-foreground [overflow-wrap:anywhere]">
                       {row.title}
                     </span>
-                    {row.detail ? (
-                      <Hint className="block truncate normal-case">{row.detail}</Hint>
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="tnum font-mono text-[13px] whitespace-nowrap">
-                    {displayCode(row.sku)}
+                    <span className="mt-1 flex min-w-0 items-baseline gap-3">
+                      <span className="tnum shrink-0 font-mono text-[13px] text-muted-foreground-2">
+                        {displayCode(row.sku)}
+                      </span>
+                      {row.detail ? (
+                        <Hint className="min-w-0 truncate normal-case">{row.detail}</Hint>
+                      ) : null}
+                      {/* A phone has no Status column, so a mixed list says it here. */}
+                      {status === null ? (
+                        <Hint className="shrink-0 normal-case sm:hidden">{STATUS_LABELS[row.status]}</Hint>
+                      ) : null}
+                    </span>
                   </TableCell>
                   <TableCell
-                    className="max-w-56 truncate text-muted-foreground"
+                    className={`max-w-44 truncate text-muted-foreground ${WIDE}`}
                     data-testid="stock-category"
                     title={row.categoryPath || undefined}
                   >
                     {row.categoryPath ? lastLevels(row.categoryPath) : "-"}
                   </TableCell>
-                  <TableCell>{row.condition || "-"}</TableCell>
-                  <TableCell numeric>{formatGBP(row.price)}</TableCell>
-                  <TableCell>
+                  {showCondition ? <TableCell className={WIDE}>{row.condition || "-"}</TableCell> : null}
+                  <TableCell numeric className="whitespace-nowrap">
+                    {formatGBP(row.price)}
+                  </TableCell>
+                  <TableCell className={`whitespace-nowrap ${WIDE}`}>
                     <Badge variant="outline">{STATUS_LABELS[row.status]}</Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground-2">
+                  <TableCell
+                    className={`max-w-32 truncate text-muted-foreground-2 ${WIDE}`}
+                    title={row.locationName || undefined}
+                  >
                     {row.locationName || "-"}
                   </TableCell>
                 </TableRow>

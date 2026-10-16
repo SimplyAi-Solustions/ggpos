@@ -139,6 +139,15 @@ Rules:
   bottom bar of five thin icons with Space Mono labels takes over.
 - On phones the primary action docks to the bottom in the thumb zone, and every
   secondary action is a bottom sheet. Targets are at least 48px.
+- A table fits the content column; it never scrolls sideways on a desktop.
+  One column gives (`w-full max-w-0` on its cells, the name wrapping to two
+  lines at most) and every other column keeps its content on one line or
+  truncates with the full text in `title`. The Stock table is the pattern:
+  choose, picture, Item (the name, then the code in Space Mono 13px grey and
+  the card's set line), Category, Condition (only when a row on screen has
+  one), Price, Status and Location. Below 640px it keeps the choose box, the
+  picture, the item and the price; the item page has the rest, and an
+  unfiltered list says each row's status in the item's second line.
 - My Vault (`/account`) is built for one person in one hand, so its column is
   560px, not 1,040px, with the same 20px gutters below 640px and 40px above.
   The header carries the "My Vault" wordmark and the notification bell only.
