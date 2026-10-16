@@ -1,0 +1,15 @@
+{
+  "_fixture_note": "Hand-written from eBay Browse API's documented item_summary/search response shape (https://developer.ebay.com/api-docs/buy/browse/resources/item_summary/methods/search). Nobody on this build has production access to the Browse API to record a real search. Seven GB/GBP listings at 10.00-30.00, plus one US/USD and one DE/GBP row that the adapter must filter out before taking the median of the five lowest.",
+  "total": 9,
+  "itemSummaries": [
+    { "itemId": "v1|100000000001|0", "title": "Test Card NM", "price": { "value": "30.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000001", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000002|0", "title": "Test Card NM", "price": { "value": "10.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000002", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000003|0", "title": "Test Card NM", "price": { "value": "20.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000003", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000004|0", "title": "Test Card NM", "price": { "value": "12.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000004", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000005|0", "title": "Test Card NM", "price": { "value": "18.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000005", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000006|0", "title": "Test Card NM", "price": { "value": "15.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000006", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000007|0", "title": "Test Card NM", "price": { "value": "25.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.co.uk/itm/100000000007", "itemLocation": { "country": "GB" } },
+    { "itemId": "v1|100000000008|0", "title": "Test Card NM", "price": { "value": "5.00", "currency": "USD" }, "itemWebUrl": "https://www.ebay.com/itm/100000000008", "itemLocation": { "country": "US" } },
+    { "itemId": "v1|100000000009|0", "title": "Test Card NM", "price": { "value": "1.00", "currency": "GBP" }, "itemWebUrl": "https://www.ebay.de/itm/100000000009", "itemLocation": { "country": "DE" } }
+  ]
+}

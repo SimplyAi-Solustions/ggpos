@@ -1,0 +1,17 @@
+{
+  "name": "@gg/mcp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "GG Vault's MCP endpoint over stdio, for an MCP client that only runs local servers",
+  "bin": {
+    "ggvault-mcp": "./stdio.mjs"
+  },
+  "scripts": {
+    "start": "node ./stdio.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

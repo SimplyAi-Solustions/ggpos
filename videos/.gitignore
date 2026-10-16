@@ -1,0 +1,6 @@
+node_modules/
+out/
+public/captures/
+public/music/bed.wav
+# Written by capture/run.mjs from the screenshots, which are not committed either.
+src/captures/

@@ -1,0 +1,1238 @@
+import * as React from "react"
+import { createPortal } from "react-dom"
+import { useNavigate } from "@tanstack/react-router"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Controller, useForm, useWatch } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import {
+  adjustForCondition,
+  displayCode,
+  formatGBP,
+  isVatTreatment,
+  parseDecimalToMinor,
+  standardRateOf,
+  treatmentLabel,
+  treatmentOf,
+  type CardCondition,
+  type CategoryBranch,
+} from "@gg/shared"
+
+import { Button } from "@/components/ui/button"
+import { Chip, ChipGroup } from "@/components/ui/chip"
+import { Field, FieldRow } from "@/components/ui/field"
+import { BarcodeGlyph, Input } from "@/components/ui/input"
+import { Hint, MicroLabel } from "@/components/ui/micro-label"
+import { Lede, PageTitle } from "@/components/ui/page-title"
+import { Seal } from "@/components/ui/seal"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import { ProductImage } from "@/components/product-image"
+import { useCounterDock } from "@/app/counter-dock"
+import { registerSearchField } from "@/app/focus-registry"
+import { CameraSheet } from "@/features/scan/CameraSheet"
+import { PhotoSheet } from "@/features/photos/PhotoSheet"
+import { PriceLabelSheet } from "@/features/price-labels/PriceLabelSheet"
+import { startingCopies } from "@/features/price-labels/plan"
+import { CategoryPicker } from "@/features/categories/CategoryPicker"
+import { branchById } from "@/features/categories/tree"
+import { CardSearchField } from "@/features/stock/CardSearchField"
+import { Stepper } from "@/features/stock/Stepper"
+import { PriceSources } from "@/features/pricing"
+import { suggestedSellPrice } from "@/features/pricing/suggest"
+import {
+  addStockSchema,
+  CARD_KINDS,
+  COMPLETENESS,
+  CONDITIONS,
+  defaultFinish,
+  finishesFor,
+  KINDS,
+  SINGLE_QTY_KINDS,
+  shelfTargetValue,
+  takesSupplier,
+  TAX_SCHEMES,
+  valuesFromItem,
+  type AddStockValues,
+} from "@/features/stock/schema"
+import {
+  createItem,
+  getCardBySetNumber,
+  getItem,
+  listGames,
+  listItems,
+  listLocations,
+  queueLabel,
+  type CardHit,
+  type ItemRecord,
+} from "@/lib/api"
+import { CATEGORY_TREE_KEY, useCategoryTree } from "@/lib/api/categories"
+import { useVaultConfig } from "@/lib/api/config"
+import { useCardPrices, usePricingSettings } from "@/lib/api/prices"
+import { listSuppliers, suppliersKey } from "@/lib/api/reorder"
+import type { PriceSource } from "@gg/shared"
+
+export interface AddStockScreenProps {
+  /** Prefilled from the command palette or a card search elsewhere. */
+  initialSet?: string
+  initialNumber?: string
+  /** Prefilled from a retail barcode scanned on any screen. */
+  initialEan?: string
+  /**
+   * Add more of this (docs/api-contract-reorder.md, section 4.3): the SKU
+   * of a stock row to fill the form from, quantity left empty.
+   */
+  fromSku?: string
+}
+
+const DEFAULTS: AddStockValues = {
+  categoryId: "",
+  gameId: "",
+  kind: "single",
+  taxScheme: "standard",
+  cardId: undefined,
+  title: "",
+  setCode: "",
+  number: "",
+  finish: undefined,
+  condition: undefined,
+  completeness: undefined,
+  qty: 1,
+  cost: "",
+  price: "",
+  locationId: undefined,
+  ean: "",
+  notes: "",
+  supplierId: "",
+  shelfTarget: "",
+  supplierCode: "",
+}
+
+/** An underlined amount with the pound sign as its leading glyph. */
+function MoneyInput({
+  id,
+  value,
+  onChange,
+  onBlur,
+  invalid,
+  inputRef,
+}: {
+  id: string
+  value: string
+  onChange: (next: string) => void
+  onBlur: () => void
+  invalid?: boolean
+  inputRef?: React.Ref<HTMLInputElement>
+}) {
+  return (
+    <Input
+      id={id}
+      ref={inputRef}
+      inputMode="decimal"
+      autoComplete="off"
+      className="tnum"
+      aria-invalid={invalid || undefined}
+      leadingIcon={
+        <span aria-hidden="true" className="text-[18px] leading-none">
+          &pound;
+        </span>
+      }
+      placeholder="0.00"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={() => {
+        const pence = parseDecimalToMinor(value)
+        // Tidy 4.5 into 4.50 the moment the field is left, so a column of
+        // costs lines up without anybody retyping.
+        if (pence !== null) onChange(formatGBP(pence).replace("£", ""))
+        onBlur()
+      }}
+    />
+  )
+}
+
+/**
+ * The Supplier select's "None". A Base UI select with a null value shows
+ * its placeholder, which would not say that none is a choice.
+ */
+const NO_SUPPLIER = "__none__"
+
+/** "kind, game and VAT treatment", for the line under the branch. */
+function listed(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ""
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
+}
+
+/**
+ * Add stock, from the Nova reference: one Anton line, label-left fields from
+ * 900px, and a single black block to finish. The card preview sits beside the
+ * form on a desktop and above it on a phone, where the primary button docks
+ * to the thumb zone.
+ *
+ * A chosen card brings its market with it: every source side by side under
+ * the fields, and the sell price the shop's own markup bands suggest from the
+ * condition-adjusted figure, which fills the price box until somebody types
+ * their own.
+ *
+ * The branch comes first (docs/api-contract-inventory.md, section 1.6):
+ * chosen through the picker, or picked up from the stock line a scanned
+ * barcode already belongs to. Its defaults fill the kind, the game and the
+ * VAT treatment, each still editable, and the item is saved in it. Left
+ * empty, the server files the item by its kind and game.
+ */
+export function AddStockScreen({
+  initialSet,
+  initialNumber,
+  initialEan,
+  fromSku,
+}: AddStockScreenProps) {
+  const navigate = useNavigate()
+  const [card, setCard] = React.useState<CardHit | null>(null)
+  const [binderMode, setBinderMode] = React.useState(false)
+  const [saved, setSaved] = React.useState<ItemRecord | null>(null)
+  const [labelNote, setLabelNote] = React.useState<string | null>(null)
+  const [cameraOpen, setCameraOpen] = React.useState(false)
+  /** Launch, section 6: Take photo on the saved item. */
+  const [photoOpen, setPhotoOpen] = React.useState(false)
+  const [photoNote, setPhotoNote] = React.useState<string | null>(null)
+  /** Print price on the Niimbot D110, one label per unit that came in. */
+  const [priceLabelOpen, setPriceLabelOpen] = React.useState(false)
+  const [branchOpen, setBranchOpen] = React.useState(false)
+  /** What the branch filled in, or where it came from. */
+  const [branchNote, setBranchNote] = React.useState<string | null>(null)
+  const searchRef = React.useRef<HTMLInputElement>(null)
+  const formRef = React.useRef<HTMLFormElement>(null)
+  const dock = useCounterDock()
+  const queryClient = useQueryClient()
+  const tree = useCategoryTree()
+  const branches = React.useMemo(() => tree.data?.branches ?? [], [tree.data])
+
+  const { data: games = [] } = useQuery({ queryKey: ["games"], queryFn: listGames })
+  const { data: locations = [] } = useQuery({
+    queryKey: ["locations"],
+    queryFn: listLocations,
+  })
+  // The VAT select says the shop's own standard rate.
+  const { data: config } = useVaultConfig()
+  const standardRate = standardRateOf(config?.settings.vat_standard_rate)
+  // Every supplier, so one switched off still names itself on a row filled
+  // from stock that came from it; only the active ones are offered.
+  const { data: suppliers = [] } = useQuery({
+    queryKey: suppliersKey(false),
+    queryFn: () => listSuppliers(),
+    staleTime: 5 * 60_000,
+  })
+  /** Add more of this: which row the form was filled from. */
+  const [fromNote, setFromNote] = React.useState<string | null>(null)
+
+  const form = useForm<AddStockValues>({
+    resolver: zodResolver(addStockSchema),
+    defaultValues: { ...DEFAULTS, ean: initialEan ?? "" },
+    mode: "onSubmit",
+  })
+  const { control, formState, handleSubmit, reset, setValue } = form
+  const errors = formState.errors
+
+  // `useWatch` rather than `watch()`: it subscribes through the control, so
+  // the React compiler can memoise around it.
+  const kind = useWatch({ control, name: "kind" })
+  const gameId = useWatch({ control, name: "gameId" })
+  const finish = useWatch({ control, name: "finish" })
+  const condition = useWatch({ control, name: "condition" })
+  const categoryId = useWatch({ control, name: "categoryId" })
+  const ean = useWatch({ control, name: "ean" })
+  const supplierId = useWatch({ control, name: "supplierId" })
+  const gameKey = games.find((game) => game.id === gameId)?.key
+  const isCard = CARD_KINDS.has(kind)
+  const offeredSuppliers = suppliers.filter((row) => row.active || row.id === supplierId)
+  const fixedQty = SINGLE_QTY_KINDS.has(kind)
+  const branch = branchById(branches, categoryId)
+
+  // ---- The branch ---------------------------------------------------------
+  // Its defaults fill the kind, the game and the VAT treatment. A default
+  // platform has nowhere to go here: an item carries no platform of its own.
+  const applyBranch = React.useCallback(
+    (next: CategoryBranch, from?: string) => {
+      const validate = { shouldValidate: formState.isSubmitted }
+      setValue("categoryId", next.id, validate)
+      const filled: string[] = []
+      const defaults = next.defaults
+      if (defaults.kind) {
+        setValue("kind", defaults.kind, validate)
+        if (SINGLE_QTY_KINDS.has(defaults.kind)) setValue("qty", 1, validate)
+        filled.push("kind")
+      }
+      if (defaults.game && games.some((game) => game.id === defaults.game)) {
+        setValue("gameId", defaults.game, validate)
+        filled.push("game")
+      }
+      // The branch's treatment, any of the five (its scheme and rate together).
+      const treatment = treatmentOf(defaults.tax_scheme, defaults.vat_rate)
+      if (treatment) {
+        setValue("taxScheme", treatment, validate)
+        filled.push("VAT treatment")
+      }
+      const what = listed(filled)
+      const said = what ? `${what.charAt(0).toUpperCase()}${what.slice(1)} filled from ${next.name}.` : ""
+      setBranchNote([from, said].filter(Boolean).join(" ") || null)
+    },
+    [formState.isSubmitted, games, setValue]
+  )
+
+  // A barcode that is already on a stock line brings that line's branch,
+  // once, while no branch has been chosen.
+  const pickedUp = React.useRef("")
+  React.useEffect(() => {
+    const code = (ean ?? "").trim()
+    if (categoryId || branches.length === 0 || !/^\d{8,14}$/.test(code)) return undefined
+    if (pickedUp.current === code) return undefined
+    const timer = window.setTimeout(() => {
+      pickedUp.current = code
+      void (async () => {
+        try {
+          const page = await listItems({ search: code }, 1)
+          for (const hit of page.items) {
+            if (!hit.categoryId) continue
+            const line = await getItem(hit.sku)
+            const home = branchById(branches, line?.category)
+            if (line?.ean === code && home) {
+              applyBranch(home, `Filed with the ${line.title || "stock"} already on the shelf.`)
+              return
+            }
+          }
+        } catch {
+          // Nothing to pick up; the branch is still there to choose.
+        }
+      })()
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [ean, categoryId, branches, applyBranch])
+
+  // ---- What the card is worth ------------------------------------------
+  // The chips above the search box set the same field the Game select does,
+  // because every lookup route takes a game key.
+  function chooseGameKey(key: string) {
+    setValue("gameId", games.find((game) => game.key === key)?.id ?? "", {
+      shouldValidate: formState.isSubmitted,
+    })
+  }
+
+  const pricing = usePricingSettings()
+  const prices = useCardPrices(card?.id, finish ?? "", condition ?? "NM")
+  // A source a staff member picked over the one the rules chose. On Add stock
+  // it only changes the figure the suggestion is worked out from; nothing
+  // records it, because nothing here is an offer to anybody.
+  // Keyed by the card and finish it was picked for, so changing either drops
+  // it without an effect reaching in to clear the state.
+  const [picked, setPicked] = React.useState<{
+    key: string
+    source: PriceSource
+    gbp: number
+  } | null>(null)
+  const pickKey = `${card?.id ?? ""}:${finish ?? ""}`
+  const pick = picked && picked.key === pickKey ? picked : null
+
+  const market = pick?.gbp ?? prices.data?.chosen?.gbp_market ?? null
+  const adjustedMarket =
+    market === null
+      ? null
+      : condition
+        ? adjustForCondition(market, condition as CardCondition, pricing.conditionMultipliers)
+        : market
+  const suggested = suggestedSellPrice(adjustedMarket, pricing)
+
+  // The suggestion fills the price field until somebody types their own, and
+  // "Use suggested" puts it back after they have.
+  const priceTyped = Boolean(formState.dirtyFields.price)
+  React.useEffect(() => {
+    if (suggested === null || priceTyped) return
+    setValue("price", formatGBP(suggested).replace("£", "").replace(/,/g, ""))
+  }, [suggested, priceTyped, setValue])
+
+  // `/` focuses this screen's search box rather than opening the palette.
+  React.useEffect(() => registerSearchField(searchRef.current), [isCard])
+
+  // A card handed over by the palette arrives as a set and a number.
+  const prefilled = React.useRef(false)
+  const { data: prefilledCard } = useQuery({
+    queryKey: ["card", initialSet, initialNumber],
+    queryFn: () => getCardBySetNumber(initialSet!, initialNumber!),
+    enabled: Boolean(initialSet && initialNumber),
+  })
+  React.useEffect(() => {
+    if (!prefilledCard || prefilled.current) return
+    prefilled.current = true
+    setCard(prefilledCard)
+    setValue("cardId", prefilledCard.id)
+    setValue("gameId", prefilledCard.gameId)
+    setValue("setCode", prefilledCard.setCode)
+    setValue("number", prefilledCard.number)
+    setValue("finish", defaultFinish(prefilledCard.finishes))
+  }, [prefilledCard, setValue])
+
+  // Add more of this hands over a stock row's SKU: everything about the
+  // product comes across, and the quantity waits for staff to count it.
+  const filledFrom = React.useRef(false)
+  const { data: fromItem } = useQuery({
+    queryKey: ["item", fromSku],
+    queryFn: () => getItem(fromSku!),
+    enabled: Boolean(fromSku),
+  })
+  React.useEffect(() => {
+    if (!fromItem || filledFrom.current) return
+    filledFrom.current = true
+    for (const [name, value] of Object.entries(valuesFromItem(fromItem))) {
+      setValue(name as keyof AddStockValues, value as never)
+    }
+    setFromNote(
+      SINGLE_QTY_KINDS.has(fromItem.kind)
+        ? `Filled from ${fromItem.title || displayCode(fromItem.sku)}.`
+        : `Filled from ${fromItem.title || displayCode(fromItem.sku)}. Say how many came in.`
+    )
+  }, [fromItem, setValue])
+
+  function chooseCard(next: CardHit | null) {
+    setCard(next)
+    setValue("cardId", next?.id, { shouldValidate: formState.isSubmitted })
+    setValue("setCode", next?.setCode ?? "")
+    setValue("number", next?.number ?? "")
+    setValue("title", next?.name ?? "")
+    if (next) {
+      setValue("gameId", next.gameId)
+      const allowed: string[] = finishesFor(next.finishes).map((finish) => finish.value)
+      const current = form.getValues("finish")
+      // A card is never priced with an empty finish: see `defaultFinish`.
+      if (!current || !allowed.includes(current)) {
+        setValue("finish", defaultFinish(next.finishes))
+      }
+    }
+  }
+
+  const save = useMutation({
+    mutationFn: (values: AddStockValues) =>
+      createItem({
+        kind: values.kind,
+        gameId: values.gameId,
+        cardId: values.cardId,
+        title: values.title || card?.name,
+        setCode: values.setCode,
+        number: values.number,
+        finish: values.finish,
+        condition: values.condition,
+        completeness: values.completeness,
+        qty: Number(values.qty),
+        cost: parseDecimalToMinor(values.cost) ?? 0,
+        price: parseDecimalToMinor(values.price) ?? 0,
+        locationId: values.locationId,
+        ean: values.ean,
+        notes: values.notes,
+        marketAtIntake: adjustedMarket ?? undefined,
+        categoryId: values.categoryId || undefined,
+        vatTreatment: values.taxScheme,
+        // A card single or a graded card is never reordered, whatever the
+        // form held before the kind changed.
+        ...(takesSupplier(values.kind)
+          ? {
+              supplierId: values.supplierId || undefined,
+              shelfTarget: shelfTargetValue(values.shelfTarget),
+              supplierCode: values.supplierCode || undefined,
+            }
+          : {}),
+      }),
+    onSuccess: (item, values) => {
+      setLabelNote(null)
+      void queryClient.invalidateQueries({ queryKey: CATEGORY_TREE_KEY })
+      // A restock changes its supplier's call.
+      void queryClient.invalidateQueries({ queryKey: ["reorder"] })
+      if (binderMode) {
+        // Binder mode stays on the form: the branch, game, set and location
+        // hold, the varying fields clear, and focus goes back to the number
+        // field.
+        reset({
+          ...DEFAULTS,
+          categoryId: values.categoryId,
+          kind: values.kind,
+          gameId: values.gameId,
+          taxScheme: values.taxScheme,
+          setCode: values.setCode,
+          locationId: values.locationId,
+        })
+        setCard(null)
+        setSaved(item)
+        window.setTimeout(() => searchRef.current?.focus(), 0)
+        return
+      }
+      setSaved(item)
+    },
+  })
+
+  const label = useMutation({
+    mutationFn: (itemId: string) => queueLabel(itemId, 1),
+    onSuccess: () => setLabelNote("Label queued"),
+  })
+
+  function startAnother() {
+    setSaved(null)
+    setLabelNote(null)
+    setPhotoNote(null)
+    setCard(null)
+    setBranchNote(null)
+    setFromNote(null)
+    pickedUp.current = ""
+    reset(DEFAULTS)
+  }
+
+  const savedPriceLabel = saved ? (
+    <PriceLabelSheet
+      open={priceLabelOpen}
+      onOpenChange={setPriceLabelOpen}
+      items={[
+        {
+          id: saved.id,
+          sku: saved.sku,
+          title: saved.title || "Item",
+          price: saved.price ?? 0,
+          copies: startingCopies(saved.qty),
+        },
+      ]}
+    />
+  ) : null
+
+  // ---- The success state ------------------------------------------------
+  if (saved && !binderMode) {
+    return (
+      <section className="pt-16 sm:pt-24" aria-live="polite">
+        <Seal tick />
+        <PageTitle className="mt-10">Saved</PageTitle>
+        <p
+          data-testid="saved-sku"
+          className="tnum mt-4 font-mono text-[28px] leading-none text-foreground"
+        >
+          {displayCode(saved.sku)}
+        </p>
+        <p className="mt-4 text-base text-muted-foreground">
+          {saved.title || "Item"} is in stock and ready to price up.
+        </p>
+
+        {card ? (
+          <div className="mt-10">
+            <ProductImage src={card.image} alt="" platform="tcg_card" height={160} />
+          </div>
+        ) : null}
+
+        <div className="mt-14 flex flex-wrap items-center gap-8">
+          <Button
+            onClick={() => label.mutate(saved.id)}
+            loading={label.isPending}
+            trailingArrow
+          >
+            Print label
+          </Button>
+          <Button variant="text" onClick={() => setPriceLabelOpen(true)}>
+            Print price
+          </Button>
+          <Button variant="text" onClick={startAnother}>
+            Add another
+          </Button>
+          {labelNote ? <Hint aria-live="polite">{labelNote}</Hint> : null}
+        </div>
+
+        {/* Launch (docs/api-contract-launch.md, section 6): a photo of
+            what was just added, the first being the website's. */}
+        <div className="mt-8 flex flex-wrap items-center gap-8">
+          <Button variant="text" onClick={() => setPhotoOpen(true)}>
+            Take photo
+          </Button>
+          {photoNote ? (
+            <Hint aria-live="polite" data-testid="saved-photo-note">
+              {photoNote}
+            </Hint>
+          ) : null}
+        </div>
+        <PhotoSheet
+          open={photoOpen}
+          onOpenChange={setPhotoOpen}
+          item={saved}
+          onSaved={(names) => setPhotoNote(names.length === 1 ? "Photo saved" : `${names.length} photos saved`)}
+        />
+        {savedPriceLabel}
+      </section>
+    )
+  }
+
+  // ---- The form ---------------------------------------------------------
+  return (
+    <section className="pt-16 sm:pt-24">
+      <PageTitle>Add stock</PageTitle>
+      <Lede>Every card, cart and box in one place, priced and findable.</Lede>
+
+      <div className="mt-14 flex flex-col gap-12 min-[900px]:grid min-[900px]:grid-cols-[minmax(0,1fr)_168px] min-[900px]:items-start min-[900px]:gap-16">
+        <form
+          ref={formRef}
+          noValidate
+          onSubmit={handleSubmit((values) => save.mutate(values))}
+          aria-label="Add stock"
+          // Keeps a focused field clear of the docked block on a phone.
+          // A control scrolled into view clears the docked group, whatever
+          // the browser decides to scroll: the field, the input or the chip.
+          className="max-[899px]:[&_*]:scroll-mb-[calc(var(--gg-dock-h,5rem)+1.5rem)]"
+        >
+          {saved && binderMode ? (
+            <p
+              aria-live="polite"
+              className="mb-10 text-[15px] text-muted-foreground"
+            >
+              <span className="tnum font-mono text-[13px] text-foreground">
+                {displayCode(saved.sku)}
+              </span>{" "}
+              saved. Binder mode kept the branch, game, set and location.{" "}
+              <Button variant="text" type="button" onClick={() => setPriceLabelOpen(true)}>
+                Print price
+              </Button>
+            </p>
+          ) : null}
+
+          {fromNote ? (
+            <p
+              data-testid="stock-from-note"
+              aria-live="polite"
+              className="mb-10 max-w-[56ch] text-[15px] text-muted-foreground"
+            >
+              {fromNote}
+            </p>
+          ) : null}
+
+          <FieldRow>
+            <Field label="Branch" hint={branch ? undefined : "Optional"}>
+              <div data-testid="stock-branch-field">
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 pt-1">
+                  <span
+                    data-testid="stock-branch-path"
+                    className={
+                      branch
+                        ? "min-w-0 text-base text-foreground"
+                        : "min-w-0 text-base text-muted-foreground-2"
+                    }
+                  >
+                    {branch ? branch.path : "Filed by its kind and game"}
+                  </span>
+                  <Button variant="text" type="button" onClick={() => setBranchOpen(true)}>
+                    {branch ? "Change" : "Choose a branch"}
+                  </Button>
+                </div>
+                {branchNote ? (
+                  <p aria-live="polite" className="mt-2 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground-2">
+                    {branchNote}
+                  </p>
+                ) : null}
+              </div>
+            </Field>
+
+            <Field label="Game" htmlFor="stock-game" error={errors.gameId?.message}>
+              <Controller
+                control={control}
+                name="gameId"
+                render={({ field }) => (
+                  <Select
+                    value={field.value || null}
+                    onValueChange={(next) => field.onChange(next ?? "")}
+                  >
+                    <SelectTrigger id="stock-game" aria-invalid={!!errors.gameId}>
+                      <SelectValue placeholder="Choose a game">
+                        {(value: string) =>
+                          games.find((game) => game.id === value)?.name ??
+                          "Choose a game"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {games.map((game) => (
+                        <SelectItem key={game.id} value={game.id}>
+                          {game.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+
+            <Field label="Kind" htmlFor="stock-kind">
+              <Controller
+                control={control}
+                name="kind"
+                render={({ field }) => (
+                  <Select
+                    value={field.value}
+                    onValueChange={(next) => {
+                      if (!next) return
+                      field.onChange(next)
+                      // Singles, graded cards and retro are always one row:
+                      // land on one whenever the stepper is about to grey
+                      // out, so a quantity left over from sealed or an
+                      // accessory can never block the save.
+                      if (SINGLE_QTY_KINDS.has(next)) {
+                        setValue("qty", 1, { shouldValidate: formState.isSubmitted })
+                      }
+                    }}
+                  >
+                    <SelectTrigger id="stock-kind">
+                      <SelectValue>
+                        {(value: string) =>
+                          KINDS.find((option) => option.value === value)?.label ??
+                          "Card single"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {KINDS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+
+            <Field label="VAT" htmlFor="stock-vat">
+              <Controller
+                control={control}
+                name="taxScheme"
+                render={({ field }) => (
+                  <Select
+                    value={field.value ?? "standard"}
+                    onValueChange={(next) => {
+                      if (next) field.onChange(next)
+                    }}
+                  >
+                    <SelectTrigger id="stock-vat">
+                      <SelectValue>
+                        {(value: string) =>
+                          isVatTreatment(value)
+                            ? treatmentLabel(value, standardRate)
+                            : treatmentLabel("standard", standardRate)
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TAX_SCHEMES.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {treatmentLabel(option.value, standardRate)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+
+            {isCard ? (
+              <Field
+                label="Set and number"
+                htmlFor="stock-card"
+                error={errors.cardId?.message}
+              >
+                <CardSearchField
+                  id="stock-card"
+                  gameKey={gameKey}
+                  onGameChange={chooseGameKey}
+                  value={card}
+                  onChange={chooseCard}
+                  invalid={!!errors.cardId}
+                  inputRef={searchRef}
+                />
+              </Field>
+            ) : (
+              <Field label="Title" htmlFor="stock-title" error={errors.title?.message}>
+                <Controller
+                  control={control}
+                  name="title"
+                  render={({ field }) => (
+                    <Input
+                      id="stock-title"
+                      ref={searchRef}
+                      placeholder="Elite Trainer Box, Surging Sparks"
+                      aria-invalid={!!errors.title}
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                    />
+                  )}
+                />
+              </Field>
+            )}
+
+            <Field label="Finish">
+              <Controller
+                control={control}
+                name="finish"
+                render={({ field }) => (
+                  <ChipGroup
+                    aria-label="Finish"
+                    value={field.value ? [field.value] : []}
+                    onValueChange={(next) => field.onChange(next[0])}
+                    className="py-1"
+                  >
+                    {finishesFor(card?.finishes).map((finish) => (
+                      <Chip key={finish.value} value={finish.value}>
+                        {finish.label}
+                      </Chip>
+                    ))}
+                  </ChipGroup>
+                )}
+              />
+            </Field>
+
+            {kind === "retro" ? (
+              <Field label="Completeness" error={errors.completeness?.message}>
+                <Controller
+                  control={control}
+                  name="completeness"
+                  render={({ field }) => (
+                    <ChipGroup
+                      aria-label="Completeness"
+                      value={field.value ? [field.value] : []}
+                      onValueChange={(next) => field.onChange(next[0])}
+                      className="py-1"
+                    >
+                      {COMPLETENESS.map((option) => (
+                        <Chip key={option.value} value={option.value}>
+                          {option.label}
+                        </Chip>
+                      ))}
+                    </ChipGroup>
+                  )}
+                />
+              </Field>
+            ) : (
+              <Field label="Condition" error={errors.condition?.message}>
+                <Controller
+                  control={control}
+                  name="condition"
+                  render={({ field }) => (
+                    <ChipGroup
+                      aria-label="Condition"
+                      value={field.value ? [field.value] : []}
+                      onValueChange={(next) => field.onChange(next[0])}
+                      className="py-1"
+                    >
+                      {CONDITIONS.map((option) => (
+                        <Chip key={option.value} value={option.value}>
+                          {option.label}
+                        </Chip>
+                      ))}
+                    </ChipGroup>
+                  )}
+                />
+              </Field>
+            )}
+
+            <Field
+              label="Quantity"
+              htmlFor="stock-qty"
+              error={errors.qty?.message}
+            >
+              <Controller
+                control={control}
+                name="qty"
+                render={({ field }) => (
+                  <Stepper
+                    id="stock-qty"
+                    // Empty until counted when the form was filled from a row.
+                    value={field.value === "" && !fixedQty ? "" : Number(field.value) || 1}
+                    onChange={field.onChange}
+                    disabled={fixedQty}
+                  />
+                )}
+              />
+            </Field>
+
+            <Field label="Cost" htmlFor="stock-cost" error={errors.cost?.message}>
+              <Controller
+                control={control}
+                name="cost"
+                render={({ field }) => (
+                  <MoneyInput
+                    id="stock-cost"
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    invalid={!!errors.cost}
+                  />
+                )}
+              />
+            </Field>
+
+            <Field
+              label="Price"
+              htmlFor="stock-price"
+              hint={suggested !== null ? `Suggested ${formatGBP(suggested)}` : undefined}
+              error={errors.price?.message}
+            >
+              <Controller
+                control={control}
+                name="price"
+                render={({ field }) => (
+                  <MoneyInput
+                    id="stock-price"
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    invalid={!!errors.price}
+                  />
+                )}
+              />
+            </Field>
+
+            <Field label="Location" htmlFor="stock-location">
+              <Controller
+                control={control}
+                name="locationId"
+                render={({ field }) => (
+                  <Select
+                    value={field.value || null}
+                    onValueChange={(next) => field.onChange(next ?? undefined)}
+                  >
+                    <SelectTrigger id="stock-location">
+                      <SelectValue placeholder="Where it will sit">
+                        {(value: string) =>
+                          locations.find((location) => location.id === value)?.name ??
+                          "Where it will sit"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {locations.map((location) => (
+                        <SelectItem key={location.id} value={location.id}>
+                          {location.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+
+            {kind === "sealed" || kind === "accessory" ? (
+              <Field label="EAN" htmlFor="stock-ean" error={errors.ean?.message}>
+                <Controller
+                  control={control}
+                  name="ean"
+                  render={({ field }) => (
+                    <Input
+                      id="stock-ean"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      className="tnum"
+                      aria-invalid={!!errors.ean}
+                      leadingIcon={<BarcodeGlyph />}
+                      placeholder="Scan the barcode"
+                      trailingHint={
+                        <button
+                          type="button"
+                          onClick={() => setCameraOpen(true)}
+                          className="font-mono text-[11px] font-bold tracking-[0.16em] text-foreground uppercase underline-offset-4 outline-none hover:underline"
+                        >
+                          Use camera
+                        </button>
+                      }
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                    />
+                  )}
+                />
+              </Field>
+            ) : null}
+
+            {/* Who it is reordered from (docs/api-contract-reorder.md,
+                section 4.3). Never on a card single or a graded card. */}
+            {takesSupplier(kind) ? (
+              <>
+                <Field label="Supplier" htmlFor="stock-supplier" hint="Optional">
+                  <Controller
+                    control={control}
+                    name="supplierId"
+                    render={({ field }) => (
+                      <Select
+                        value={field.value || NO_SUPPLIER}
+                        onValueChange={(next) =>
+                          field.onChange(!next || next === NO_SUPPLIER ? "" : next)
+                        }
+                      >
+                        <SelectTrigger id="stock-supplier">
+                          <SelectValue>
+                            {(value: string) =>
+                              offeredSuppliers.find((row) => row.id === value)?.name ?? "None"
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NO_SUPPLIER}>None</SelectItem>
+                          {offeredSuppliers.map((row) => (
+                            <SelectItem key={row.id} value={row.id}>
+                              {row.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                </Field>
+
+                <Field
+                  label="Keep on shelf"
+                  htmlFor="stock-shelf-target"
+                  hint="Optional"
+                  error={errors.shelfTarget?.message}
+                >
+                  <Controller
+                    control={control}
+                    name="shelfTarget"
+                    render={({ field }) => (
+                      <Input
+                        id="stock-shelf-target"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        containerClassName="w-28"
+                        className="tnum"
+                        placeholder="No target"
+                        aria-invalid={!!errors.shelfTarget}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                      />
+                    )}
+                  />
+                </Field>
+
+                <Field
+                  label="Supplier code"
+                  htmlFor="stock-supplier-code"
+                  hint="Optional"
+                  error={errors.supplierCode?.message}
+                >
+                  <Controller
+                    control={control}
+                    name="supplierCode"
+                    render={({ field }) => (
+                      <Input
+                        id="stock-supplier-code"
+                        autoComplete="off"
+                        maxLength={40}
+                        className="tnum font-mono"
+                        placeholder="Their product code"
+                        aria-invalid={!!errors.supplierCode}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                      />
+                    )}
+                  />
+                </Field>
+              </>
+            ) : null}
+
+            <Field label="Notes" htmlFor="stock-notes" error={errors.notes?.message}>
+              <Controller
+                control={control}
+                name="notes"
+                render={({ field }) => (
+                  <Textarea
+                    id="stock-notes"
+                    maxLength={200}
+                    placeholder="Anything the next person needs to know"
+                    aria-invalid={!!errors.notes}
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    trailingHint={`${(field.value ?? "").length} / 200`}
+                  />
+                )}
+              />
+            </Field>
+
+            <Field label="Binder mode">
+              <div className="flex min-h-10 items-center gap-4 pt-1 pb-2">
+                <Switch
+                  checked={binderMode}
+                  onCheckedChange={setBinderMode}
+                  aria-label="Binder mode: keep game, set and location after a save"
+                />
+                <span className="text-[15px] text-muted-foreground">
+                  Keeps the game, set and location after a save
+                </span>
+              </div>
+            </Field>
+          </FieldRow>
+
+          {/* ---- What the market says ------------------------------------
+              Every source side by side, the chosen one marked, and the sell
+              price the shop's own markup bands suggest from it. */}
+          {isCard && card ? (
+            <section className="mt-16" aria-label="Market">
+              <MicroLabel tone="ink" className="mb-5">
+                Market
+              </MicroLabel>
+              <PriceSources
+                subject={{
+                  kind: "card",
+                  id: card.id,
+                  finish: finish ?? "",
+                  condition: condition ?? "NM",
+                  gameKey: card.gameKey,
+                  title: card.name,
+                }}
+                picked={pick?.source ?? null}
+                onPick={(choice) =>
+                  setPicked({ key: pickKey, source: choice.source, gbp: choice.gbp })
+                }
+              />
+              {suggested !== null ? (
+                <div className="mt-8 flex flex-wrap items-baseline gap-x-10 gap-y-4">
+                  <span className="flex items-baseline gap-3">
+                    <MicroLabel>Suggested</MicroLabel>
+                    <span
+                      data-testid="suggested-price"
+                      className="tnum text-[20px] leading-none font-medium text-foreground"
+                    >
+                      {formatGBP(suggested)}
+                    </span>
+                  </span>
+                  <Button
+                    variant="text"
+                    type="button"
+                    onClick={() =>
+                      setValue(
+                        "price",
+                        formatGBP(suggested).replace("£", "").replace(/,/g, ""),
+                        { shouldDirty: false }
+                      )
+                    }
+                  >
+                    Use suggested
+                  </Button>
+                </div>
+              ) : prices.isPending ? null : (
+                <p className="mt-8 max-w-[56ch] text-[13px] leading-[1.45] text-muted-foreground">
+                  No source has a value for this one yet. Refresh, add a UK
+                  comp, or price it by hand.
+                </p>
+              )}
+            </section>
+          ) : null}
+
+          {save.isError ? (
+            <p role="alert" className="mt-10 text-[13px] text-destructive">
+              That did not save. Check the connection and press save again.
+            </p>
+          ) : null}
+
+          {/* From 900px the block sits with the form; below it docks to the
+              thumb zone above the counter bar. */}
+          <div className="mt-14 hidden flex-wrap items-center gap-8 min-[900px]:flex">
+            <Button type="submit" trailingArrow loading={save.isPending}>
+              Save item
+            </Button>
+            <Button
+              variant="text"
+              type="button"
+              onClick={() => void navigate({ to: "/counter/stock" })}
+            >
+              Cancel
+            </Button>
+          </div>
+
+          <div className="mt-14 flex items-center justify-center min-[900px]:hidden">
+            <Button
+              variant="text"
+              type="button"
+              onClick={() => void navigate({ to: "/counter/stock" })}
+            >
+              Cancel
+            </Button>
+          </div>
+
+        </form>
+
+        {/* Below 900px the one primary action docks into the shell's thumb
+            zone, directly on top of the tab bar. It lives outside the form in
+            the DOM, so it asks the form to submit itself. */}
+        {dock
+          ? createPortal(
+              <div className="border-t border-hairline-soft bg-background px-5 py-3">
+                <Button
+                  type="button"
+                  trailingArrow
+                  loading={save.isPending}
+                  className="w-full"
+                  onClick={() => formRef.current?.requestSubmit()}
+                >
+                  Save item
+                </Button>
+              </div>,
+              dock
+            )
+          : null}
+
+        {/* Beside the form on a desktop, above it on a phone. A phone has no
+            room to hold an empty frame open, so it appears with the card. */}
+        <aside
+          data-testid="card-preview"
+          aria-label="Chosen card"
+          className={
+            card
+              ? "max-[899px]:order-first"
+              : "max-[899px]:hidden max-[899px]:order-first"
+          }
+        >
+          <MicroLabel className="mb-3">Preview</MicroLabel>
+          {card ? (
+            <>
+              <ProductImage src={card.image} alt="" platform="tcg_card" height={120} />
+              <p className="mt-3 text-[13px] leading-[1.45] text-muted-foreground">
+                {card.name}
+                <br />
+                {card.setName} &middot; {card.number}
+              </p>
+            </>
+          ) : (
+            <p className="text-[13px] leading-[1.45] text-muted-foreground-2">
+              Choose a card and its art appears here.
+            </p>
+          )}
+        </aside>
+      </div>
+
+      <CameraSheet
+        open={cameraOpen}
+        onOpenChange={setCameraOpen}
+        onResult={(value) =>
+          setValue("ean", value.replace(/\D/g, ""), { shouldValidate: true })
+        }
+      />
+
+      <CategoryPicker
+        open={branchOpen}
+        onOpenChange={setBranchOpen}
+        title="File it in"
+        description="The branch's kind, game and VAT treatment fill in below, and each can still be changed."
+        initial={categoryId}
+        onChoose={(next) => {
+          if (next) applyBranch(next)
+          setBranchOpen(false)
+        }}
+      />
+      {/* Binder mode's Print price, outside the form so nothing in it submits. */}
+      {binderMode ? savedPriceLabel : null}
+    </section>
+  )
+}

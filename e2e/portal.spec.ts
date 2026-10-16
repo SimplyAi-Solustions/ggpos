@@ -1,0 +1,666 @@
+import { join } from "node:path"
+import { expect, test, type Page } from "@playwright/test"
+
+/**
+ * My Vault, end to end against the demo fixtures.
+ *
+ * `?demo=1` puts the built app into demo mode for the tab, so this runs with
+ * no PocketBase behind it: the code, the card, the quotes, the want list and
+ * the erasure refusal are all answered in memory.
+ *
+ * Playwright's two projects run this at 1440 and at 390, so the thumb bar and
+ * the docked primary action are covered along with the desktop path.
+ */
+
+const DEMO_EMAIL = "jasmine.okafor@example.co.uk"
+const DEMO_CODE = "48213976"
+const DEMO_QR_TOKEN = "demo-4k7m2-token"
+/** Jasmine's own card code, which is also her referral code. */
+const DEMO_CUSTOMER_CODE = "GGC-4K7M2S"
+/** The second demo card: an email, and no store credit to block an erasure. */
+const DEMO_NO_CREDIT_EMAIL = "tom.bradbury@example.co.uk"
+
+// Playwright compiles the suite to CommonJS, so `__dirname`.
+const PHOTO = join(__dirname, "fixtures", "id-sample.png")
+
+/** Below 900px the primary action is a second, docked copy of the button. */
+/**
+ * No service worker for these specs.
+ *
+ * The built app registers one, and a navigation answered out of its precache
+ * is a navigation this suite did not ask the server for: if the precache was
+ * written by a different build than the one being previewed, the page comes
+ * back as an error rather than as itself. Nothing here tests the worker, so
+ * it is blocked rather than raced; the push handler it carries is covered by
+ * unit tests and by hand.
+ */
+test.use({ serviceWorkers: "block" })
+
+function primary(page: Page, name: string) {
+  return page.getByRole("button", { name, exact: true }).filter({ visible: true })
+}
+
+async function signIn(page: Page, email = DEMO_EMAIL) {
+  await page.goto("/account?demo=1")
+  await expect(page.getByRole("heading", { name: "My Vault" })).toBeVisible()
+  await page.getByLabel("Email").fill(email)
+  await page.getByRole("button", { name: "Send me a code" }).click()
+  await page.getByLabel("Code", { exact: true }).fill(DEMO_CODE)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page.getByRole("heading", { name: "My card" })).toBeVisible()
+}
+
+test.describe("signing in", () => {
+  test("takes an emailed code and lands on the card", async ({ page }) => {
+    await signIn(page)
+
+    // The card is the counter's own component, QR and all.
+    await expect(
+      page.getByRole("img", { name: "Guild card QR for Jasmine Okafor" })
+    ).toBeVisible()
+    await expect(page.getByTestId("portal-credit")).toHaveText("£45.00")
+    await expect(page.getByTestId("portal-points")).toHaveText("2,180")
+  })
+
+  test("takes a code pasted out of a mail app, spaces and all", async ({ page }) => {
+    await page.goto("/account?demo=1")
+    await page.getByRole("button", { name: "Send me a code" }).click()
+    const field = page.getByLabel("Code", { exact: true })
+    await field.click()
+
+    // A real paste, through the clipboard event the field handles, rather
+    // than a fill: the handler is what strips the words and the spaces.
+    await field.evaluate((input) => {
+      const data = new DataTransfer()
+      data.setData("text/plain", "Your GG Vault code is 4821 3976")
+      input.dispatchEvent(
+        new ClipboardEvent("paste", {
+          clipboardData: data,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
+    })
+
+    await expect(field).toHaveValue(DEMO_CODE)
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeEnabled()
+  })
+
+  test("announces the wait once rather than counting out loud", async ({ page }) => {
+    await page.goto("/account?demo=1")
+    await page.getByRole("button", { name: "Send me a code" }).click()
+    await expect(
+      page.getByText("Code sent. You can ask for another in 60 seconds.")
+    ).toBeAttached()
+    // The ticking number is not a live region: it would read every second.
+    await expect(page.getByText(/Ready in \d+ seconds?/)).toHaveAttribute(
+      "aria-live",
+      "off"
+    )
+  })
+
+  test("says what to do when the code does not match", async ({ page }) => {
+    await page.goto("/account?demo=1")
+    await page.getByRole("button", { name: "Send me a code" }).click()
+    await page.getByLabel("Code", { exact: true }).fill("11112222")
+    await page.getByRole("button", { name: "Sign in" }).click()
+    await expect(page.getByRole("alert")).toContainText("Check it, or send another")
+  })
+
+  test("holds 'Send another' back for a minute", async ({ page }) => {
+    await page.goto("/account?demo=1")
+    await page.getByRole("button", { name: "Send me a code" }).click()
+    await expect(page.getByRole("button", { name: "Send another" })).toBeDisabled()
+    await expect(page.getByText(/Ready in \d+ seconds?/)).toBeVisible()
+  })
+
+  test("leaves a staff session on the same browser alone", async ({ page }) => {
+    // Sign in at the counter first, then into My Vault in the same tab.
+    await page.goto("/login?demo=1")
+    await page.getByLabel("Email").fill("demo@ggentertainment.co.uk")
+    await page.getByLabel("Password").fill("ggvault-demo")
+    await page.getByRole("button", { name: "Sign in" }).click()
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+
+    await signIn(page)
+
+    // The counter is still signed in: its guard would bounce to /login.
+    await page.goto("/counter")
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+  })
+})
+
+test.describe("quotes", () => {
+  test("shows the offer, its timeline and accepts it", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/quotes")
+
+    await expect(page.getByRole("heading", { name: "Quotes" })).toBeVisible()
+    await expect(page.getByText("Waiting on you")).toBeVisible()
+
+    await page.getByRole("link", { name: /Offer made/ }).first().click()
+    await expect(page.getByTestId("quote-offer-total")).toHaveText("£42.00")
+
+    // The timeline says where it is, in words.
+    const current = page.locator('[aria-current="step"]')
+    await expect(current).toContainText("Offer made")
+    await expect(current).toContainText("This offer stands until")
+
+    await primary(page, "Accept the offer").click()
+    const sheet = page.getByRole("dialog", { name: "Accept this offer" })
+    await expect(sheet).toContainText("£42.00")
+    // The sentence follows the drop-off choice, which is in the sheet.
+    await expect(sheet).toContainText("Bring the items to the shop in Bolsover")
+    await sheet.getByRole("button", { name: "Post it" }).click()
+    await expect(sheet).toContainText("send you the address to post to")
+    await sheet.getByRole("button", { name: "Bring it in" }).click()
+    await sheet.getByRole("button", { name: "Accept", exact: true }).click()
+
+    await expect(page.getByRole("dialog")).toBeHidden()
+    await expect(page.locator('[aria-current="step"]')).toContainText("Accepted")
+  })
+
+  test("sends photos for a new quote and shows it as sent", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/quotes/new")
+
+    await expect(page.getByRole("heading", { name: "Get a quote" })).toBeVisible()
+    await expect(primary(page, "Send for a quote")).toBeDisabled()
+
+    await page.getByTestId("quote-photo-input").setInputFiles(PHOTO)
+    await expect(page.getByText("1 of 20 added")).toBeVisible()
+    await expect(page.getByRole("img", { name: "Photo 1" })).toBeVisible()
+
+    await page.getByLabel("Message").fill("Two boxes of Pokemon and a Game Boy.")
+    await page.getByRole("button", { name: "Post it" }).click()
+    await expect(page.getByText(/at your own risk/)).toBeVisible()
+
+    await primary(page, "Send for a quote").click()
+
+    await expect(page.getByRole("heading", { name: "Quote", exact: true })).toBeVisible()
+    await expect(page.locator('[aria-current="step"]')).toContainText("Sent")
+  })
+
+  test("answers a message on the thread", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/quotes")
+    await page.getByRole("link", { name: /Offer made/ }).first().click()
+
+    await page.getByLabel("Reply").fill("Coming in on Saturday morning.")
+    await page.getByRole("button", { name: "Send message" }).click()
+    await expect(page.getByText("Coming in on Saturday morning.")).toBeVisible()
+  })
+})
+
+test.describe("want list", () => {
+  test("says how long a matched card is held for", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/wants")
+
+    const held = page.getByTestId("want-row").first()
+    await expect(held).toContainText("Charizard ex")
+    await expect(held).toContainText(/Held for you until \d+ \w+, \d\d:\d\d/)
+    await expect(held).toContainText("£230.00")
+    await expect(held).toContainText("Up to £250.00")
+  })
+
+  test("adds a card and takes one off the list", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/wants")
+
+    // The demo list is three rows; waiting for them stops the count below
+    // being taken while the screen is still loading.
+    await expect(page.getByTestId("want-row")).toHaveCount(3)
+    const before = await page.getByTestId("want-row").count()
+
+    await primary(page, "Add a card").click()
+    const sheet = page.getByRole("dialog", { name: "Add a card" })
+    await sheet.getByLabel("Card").fill("Mew")
+    await sheet.getByRole("option", { name: /Mew ex/ }).click()
+    await sheet.getByLabel("Most you would pay").fill("60.00")
+    await sheet.getByRole("button", { name: "Add to my list" }).click()
+
+    await expect(page.getByTestId("want-row")).toHaveCount(before + 1)
+    await expect(page.getByTestId("want-row").first()).toContainText("Up to £60.00")
+
+    await page
+      .getByTestId("want-row")
+      .first()
+      .getByRole("button", { name: "Remove" })
+      .click()
+    await expect(page.getByTestId("want-row")).toHaveCount(before)
+  })
+})
+
+test.describe("credit and trade-ins", () => {
+  test("shows the balance and the rows behind it", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/credit")
+
+    await expect(page.getByTestId("credit-balance")).toHaveText("£45.00")
+    await expect(page.getByText("Sold to us")).toBeVisible()
+    await expect(page.getByText("Spent in the shop")).toBeVisible()
+    await expect(page.getByText("- £15.00")).toBeVisible()
+  })
+
+  test("opens a trade-in and shows what was sold and paid", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/trade-ins")
+
+    await expect(page.getByRole("heading", { name: "My trade-ins" })).toBeVisible()
+    await page.getByRole("link", { name: /GG-BI-000061/ }).click()
+
+    await expect(page.getByText("Pidgeot ex 113/191")).toBeVisible()
+    await expect(page.getByText("£42.00")).toBeVisible()
+  })
+})
+
+test.describe("the Guild", () => {
+  test("shows the tier, the wallet and the referral code", async ({ page }) => {
+    await signIn(page)
+
+    // Reached from the card, which is where a customer starts.
+    await page.getByRole("link", { name: "Guild", exact: true }).click()
+    await expect(page.getByRole("heading", { name: "GG Guild" })).toBeVisible()
+
+    // The paid plan pins the tier, so the badge is the plan's own and not
+    // the one the points earned.
+    await expect(page.getByTestId("guild-tier")).toHaveText("Guild Pass")
+    await expect(page.getByTestId("guild-progress")).toHaveText(
+      "5,920 points to Legend"
+    )
+    await expect(page.getByTestId("guild-membership")).toContainText(
+      "Guild Pass membership. Renews on"
+    )
+    await expect(page.getByTestId("guild-balance")).toHaveText("2,180")
+
+    // The wallet says each perk in words, and counts the monthly ones.
+    const perks = page.getByTestId("perk-list")
+    await expect(perks).toContainText("10% off sealed product")
+    await expect(perks).toContainText("1.5x points")
+    await expect(perks).toContainText("Free event entries")
+    await expect(perks).toContainText("1 of 2 used this month")
+    await expect(perks).toContainText("Lounge hours")
+    await expect(perks).toContainText("3 of 12 used this month")
+    await expect(perks).toContainText("Priority booking on new releases")
+    await expect(perks).toContainText("Member prices at events")
+
+    await expect(page.getByTestId("referral-code")).toHaveText(DEMO_CUSTOMER_CODE)
+    await expect(
+      page.getByText(
+        "You both get 250 points after their first buy-in or purchase."
+      )
+    ).toBeVisible()
+    await expect(
+      page.getByText(
+        "2 friends have earned you points, and 1 is still to make their first visit."
+      )
+    ).toBeVisible()
+  })
+
+  test("copies the code on a browser with no share sheet", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"])
+    await signIn(page)
+    await page.goto("/account/guild")
+
+    // Chromium here has no `navigator.share`, so the button says what it
+    // will really do rather than offering a sheet that cannot open.
+    await page.getByRole("button", { name: "Copy my code" }).click()
+    await expect(page.getByTestId("share-result")).toHaveText("Code copied.")
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(DEMO_CUSTOMER_CODE)
+  })
+
+  test("lists every points row with the balance it left", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/points")
+
+    await expect(page.getByRole("heading", { name: "Points" })).toBeVisible()
+    await expect(page.getByTestId("points-balance")).toHaveText("2,180")
+
+    const rows = page.getByTestId("points-list").getByRole("listitem")
+    await expect(rows.first()).toContainText("Earned on a £33.00 sale")
+    await expect(rows.first()).toContainText("+330")
+    await expect(rows.first()).toContainText("2,180 after")
+
+    // Spending points is a row like any other, and carries its own sign.
+    const spent = rows.filter({ hasText: "Redeemed for Free booster pack" })
+    await expect(spent).toContainText("-500")
+    await expect(rows.filter({ hasText: "Welcome bonus" })).toContainText("+100")
+  })
+})
+
+test.describe("rewards", () => {
+  test("says in the list why one cannot be redeemed yet", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+
+    await expect(page.getByRole("heading", { name: "Rewards" })).toBeVisible()
+    await expect(page.getByTestId("rewards-points")).toHaveText("2,180")
+
+    const list = page.getByTestId("reward-list")
+    await expect(list).toContainText("You need 5,000 points and have 2,180.")
+    await expect(list).toContainText("None left at the moment.")
+    await expect(list).toContainText("You have had this one already.")
+  })
+
+  test("offers no button at all on one they cannot have", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page.getByTestId("reward-row").filter({ hasText: "Retro shelf pick" }).click()
+
+    await expect(
+      page.getByRole("heading", { name: "Retro shelf pick" })
+    ).toBeVisible()
+    await expect(page.getByTestId("reward-refusal")).toHaveText(
+      "You need 5,000 points and have 2,180."
+    )
+    await expect(page.getByRole("button", { name: /^Redeem/ })).toHaveCount(0)
+  })
+
+  test("redeems one and shows the voucher with its QR", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page
+      .getByTestId("reward-row")
+      .filter({ hasText: "Free booster pack" })
+      .click()
+
+    await expect(page.getByTestId("reward-cost")).toHaveText("500 points")
+    await primary(page, "Redeem for 500 points").click()
+
+    const confirm = page.getByRole("dialog", { name: "Redeem this reward" })
+    await expect(confirm).toContainText("You would have 1,680 left")
+    await confirm.getByRole("button", { name: "Redeem", exact: true }).click()
+
+    const voucher = page.getByRole("dialog", { name: "Your voucher" })
+    await expect(voucher).toContainText("Ready to use")
+    await expect(voucher).toContainText("Show this at the counter.")
+    await expect(voucher).toContainText("GGV-V00081")
+    await expect(voucher.getByRole("img", { name: /^Voucher GGV-/ })).toBeVisible()
+    await voucher.getByRole("button", { name: "Done" }).click()
+
+    // The points went with it, and the voucher is on the list. Back through
+    // the link rather than a fresh load: the demo shop lives in the tab, so
+    // a reload would start it over and prove nothing about the redemption.
+    await expect(page.getByRole("dialog")).toBeHidden()
+    await page.getByRole("link", { name: "Back to rewards" }).click()
+    await expect(page.getByTestId("rewards-points")).toHaveText("1,680")
+    await expect(page.getByTestId("voucher-row")).toHaveCount(4)
+  })
+
+  test("says so when the last one goes before the press lands", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page.getByTestId("reward-row").filter({ hasText: "Shop playmat" }).click()
+
+    // The catalogue offered it, so the button is there and says the cost.
+    await primary(page, "Redeem for 1,500 points").click()
+    const confirm = page.getByRole("dialog", { name: "Redeem this reward" })
+    await confirm.getByRole("button", { name: "Redeem", exact: true }).click()
+
+    // The server's refusal lands in the sheet, in its own words, and no
+    // voucher takes its place.
+    await expect(confirm).toContainText("That one has gone. Pick another reward.")
+    await expect(page.getByRole("dialog", { name: "Your voucher" })).toHaveCount(0)
+
+    // Nothing was spent: the balance is where it was.
+    await confirm.getByRole("button", { name: "Cancel" }).click()
+    await page.getByRole("link", { name: "Back to rewards" }).click()
+    await expect(page.getByTestId("rewards-points")).toHaveText("2,180")
+  })
+
+  test("puts store credit on the account instead of a code", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+    await page
+      .getByTestId("reward-row")
+      .filter({ hasText: "£5 store credit" })
+      .click()
+
+    await primary(page, "Redeem for 750 points").click()
+    const confirm = page.getByRole("dialog", { name: "Redeem this reward" })
+    await expect(confirm).toContainText("goes onto your account straight away")
+    await confirm.getByRole("button", { name: "Redeem", exact: true }).click()
+
+    const voucher = page.getByRole("dialog", { name: "Your voucher" })
+    await expect(voucher).toContainText(
+      "paid £5.00 of store credit onto your account"
+    )
+    await expect(voucher.getByRole("img", { name: /^Voucher/ })).toHaveCount(0)
+
+    await voucher.getByRole("link", { name: "See my credit" }).click()
+    await expect(page.getByTestId("credit-balance")).toHaveText("£50.00")
+  })
+
+  test("shows an issued code again, and says which ones are spent", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/account/rewards")
+
+    const rows = page.getByTestId("voucher-row")
+    await expect(rows).toHaveCount(3)
+    // Status in words, never a colour on its own.
+    await expect(rows.filter({ hasText: "Tournament entry" })).toContainText(
+      "Expired"
+    )
+    await expect(rows.filter({ hasText: "GG lanyard" })).toContainText("Used")
+
+    await rows
+      .filter({ hasText: "Free booster pack" })
+      .getByRole("button", { name: "Show code" })
+      .click()
+    const sheet = page.getByRole("dialog", { name: "Free booster pack" })
+    await expect(sheet).toContainText("GGV-7QB2MW")
+    await expect(sheet.getByRole("img", { name: "Voucher GGV-7QB2MW" })).toBeVisible()
+  })
+})
+
+test.describe("notifications", () => {
+  test("counts the unread ones in the nav and clears them on open", async ({ page }) => {
+    await signIn(page)
+
+    const bell = page.getByRole("link", { name: /Notifications, 2 unread/ })
+    await expect(bell).toBeVisible()
+    await bell.click()
+
+    await expect(page.getByRole("heading", { name: "Notifications" })).toBeVisible()
+    await expect(page.getByText("Your quote offer, £42.00")).toBeVisible()
+
+    await expect(
+      page.getByRole("link", { name: "Notifications, none unread" })
+    ).toBeVisible()
+  })
+
+  test("opens the screen a notification points at, in the app", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/notifications")
+
+    // The server writes `/account/want-list`; the portal calls the screen
+    // Wants, so the path redirects rather than the link being rewritten.
+    await page.getByRole("link", { name: /Charizard ex 199\/165 is in/ }).click()
+    await expect(page.getByRole("heading", { name: "Want list" })).toBeVisible()
+    await expect(page).toHaveURL(/\/account\/wants$/)
+  })
+
+  test("opens the Guild and the points history from a Guild row", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/account/notifications")
+
+    await page.getByRole("link", { name: /You are now a Regular/ }).click()
+    await expect(page.getByRole("heading", { name: "GG Guild" })).toBeVisible()
+
+    await page.goto("/account/notifications")
+    await page.getByRole("link", { name: /points expire on/ }).click()
+    await expect(page.getByRole("heading", { name: "Points" })).toBeVisible()
+  })
+
+  test("opens the quote a notification points at", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/notifications")
+
+    await page.getByRole("link", { name: /Your quote offer/ }).click()
+    await expect(page.getByTestId("quote-offer-total")).toHaveText("£42.00")
+  })
+})
+
+test.describe("the bottom bar", () => {
+  test("moves between the five sections", async ({ page }) => {
+    await signIn(page)
+
+    // Only one nav is ever in the accessibility tree: the thumb bar below
+    // 900px, the text links above it. So the same five names work at both
+    // of the widths this suite runs at.
+    for (const [label, heading] of [
+      ["Quotes", "Quotes"],
+      ["Wants", "Want list"],
+      ["Credit", "Store credit"],
+      ["Me", "Profile"],
+      ["Card", "My card"],
+    ] as const) {
+      await page.getByRole("link", { name: label, exact: true }).click()
+      await expect(page.getByRole("heading", { name: heading })).toBeVisible()
+    }
+  })
+})
+
+test.describe("profile and privacy", () => {
+  test("summarises the privacy notice in a sheet", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "How we use your data" }).click()
+    const sheet = page.getByRole("dialog", { name: "How we use your data" })
+    await expect(sheet).toContainText("six years")
+    await expect(sheet).toContainText("twelve months")
+    await expect(sheet).toContainText("90 days")
+    await expect(sheet).toContainText("Information Commissioner's Office")
+  })
+
+  test("refuses to delete an account that still holds store credit", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "Delete my account" }).click()
+    const sheet = page.getByRole("dialog", { name: "Delete my account" })
+    await expect(sheet).toContainText("six years")
+    await expect(sheet).toContainText(
+      "You still have £45.00 store credit. Use it or ask the shop to pay it out first."
+    )
+
+    await sheet.getByLabel("Type DELETE to confirm").fill("DELETE")
+    await expect(
+      sheet.getByRole("button", { name: "Delete my account" })
+    ).toBeDisabled()
+  })
+
+  test("deletes an account that holds no store credit", async ({ page }) => {
+    await signIn(page, DEMO_NO_CREDIT_EMAIL)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "Delete my account" }).click()
+    const sheet = page.getByRole("dialog", { name: "Delete my account" })
+    await expect(sheet).toContainText("six years")
+    await expect(sheet).not.toContainText("store credit. Use it")
+
+    const confirm = sheet.getByRole("button", { name: "Delete my account" })
+    await expect(confirm).toBeDisabled()
+    await sheet.getByLabel("Type DELETE to confirm").fill("DELETE")
+    await expect(confirm).toBeEnabled()
+    await confirm.click()
+
+    // Signed out, and back at the front door.
+    await expect(page.getByRole("heading", { name: "My Vault" })).toBeVisible()
+    await expect(page.getByLabel("Email")).toBeVisible()
+  })
+
+  test("says what the download does and does not carry", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "How we use your data" }).click()
+    const sheet = page.getByRole("dialog", { name: "How we use your data" })
+    await expect(sheet).toContainText("email and text message provider")
+    await expect(sheet).toContainText(
+      "It never includes an ID number, an expiry date, a date of birth, an address or a photo of your ID."
+    )
+  })
+
+  test("says where the ID stands, and that the email is the sign-in", async ({
+    page,
+  }) => {
+    await signIn(page)
+    await page.goto("/account/me")
+
+    await expect(page.getByText(/photo ID is on file and in date/)).toBeVisible()
+    await expect(page.getByText(DEMO_EMAIL)).toBeVisible()
+    await expect(page.getByText(/This is how you sign in/)).toBeVisible()
+  })
+
+  test("signs out and puts the sign-in screen back", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/me")
+
+    await page.getByRole("button", { name: "Sign out" }).click()
+    await expect(page.getByRole("heading", { name: "My Vault" })).toBeVisible()
+    await expect(page.getByLabel("Email")).toBeVisible()
+  })
+})
+
+test.describe("the card landing", () => {
+  test("never names anybody before a sign-in", async ({ page }) => {
+    await page.goto(`/c/${DEMO_QR_TOKEN}?demo=1`)
+
+    await expect(page.getByRole("heading", { name: "Guild card" })).toBeVisible()
+    await expect(
+      page.getByText("This card belongs to a GG Guild member.")
+    ).toBeVisible()
+    await expect(page.getByText("Jasmine")).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "Sign in to My Vault" })).toBeVisible()
+  })
+
+  test("sends the customer whose card it is to their own card", async ({ page }) => {
+    await signIn(page)
+    await page.goto(`/c/${DEMO_QR_TOKEN}`)
+    await expect(page.getByRole("heading", { name: "My card" })).toBeVisible()
+  })
+
+  test("sends a signed-in staff member to the counter's customer page", async ({
+    page,
+  }) => {
+    await page.goto("/login?demo=1")
+    await page.getByLabel("Email").fill("demo@ggentertainment.co.uk")
+    await page.getByLabel("Password").fill("ggvault-demo")
+    await page.getByRole("button", { name: "Sign in" }).click()
+    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible()
+
+    await page.goto(`/c/${DEMO_QR_TOKEN}`)
+    await expect(page.getByRole("heading", { name: "Jasmine Okafor" })).toBeVisible()
+  })
+
+  test("says what to do for a link that is not a card", async ({ page }) => {
+    await page.goto("/c/not-a-real-token?demo=1")
+    await expect(page.getByRole("heading", { name: "Card not found" })).toBeVisible()
+  })
+})
+
+test.describe("the guard", () => {
+  test("bounces a signed-out visit and comes back to it", async ({ page }) => {
+    await page.goto("/account/wants?demo=1")
+    await expect(page.getByRole("heading", { name: "My Vault" })).toBeVisible()
+
+    await page.getByLabel("Email").fill(DEMO_EMAIL)
+    await page.getByRole("button", { name: "Send me a code" }).click()
+    await page.getByLabel("Code", { exact: true }).fill(DEMO_CODE)
+    await page.getByRole("button", { name: "Sign in" }).click()
+
+    await expect(page.getByRole("heading", { name: "Want list" })).toBeVisible()
+  })
+})

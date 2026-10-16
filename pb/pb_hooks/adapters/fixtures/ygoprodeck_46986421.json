@@ -1,0 +1,77 @@
+{
+  "data": [
+    {
+      "id": 46986421,
+      "name": "Dark Magician",
+      "typeline": [
+        "Spellcaster",
+        "Normal"
+      ],
+      "type": "Normal Monster",
+      "humanReadableCardType": "Normal Monster",
+      "frameType": "normal",
+      "desc": "''The ultimate wizard in terms of attack and defense.''",
+      "race": "Spellcaster",
+      "atk": 2500,
+      "def": 2100,
+      "level": 7,
+      "attribute": "DARK",
+      "archetype": "Dark Magician",
+      "ygoprodeck_url": "https://ygoprodeck.com/card/dark-magician-4003",
+      "card_sets": [
+        {
+          "set_name": "2016 Mega-Tins",
+          "set_code": "CT13-EN003",
+          "set_rarity": "Ultra Rare",
+          "set_rarity_code": "(UR)",
+          "set_price": "6.97"
+        },
+        {
+          "set_name": "2-Player Starter Set",
+          "set_code": "STAX-EN005",
+          "set_rarity": "Common",
+          "set_rarity_code": "(C)",
+          "set_price": "0"
+        },
+        {
+          "set_name": "2017 Mega-Tins",
+          "set_code": "CT14-EN001",
+          "set_rarity": "Secret Rare",
+          "set_rarity_code": "(ScR)",
+          "set_price": "9.66"
+        },
+        {
+          "set_name": "25th Anniversary Tin: Dueling Heroes",
+          "set_code": "TN23-EN001",
+          "set_rarity": "Quarter Century Secret Rare",
+          "set_rarity_code": "",
+          "set_price": "0"
+        },
+        {
+          "set_name": "Adidas collaboration card",
+          "set_code": "ADC1-EN001",
+          "set_rarity": "Secret Rare",
+          "set_rarity_code": "(ScR)",
+          "set_price": "0"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 46986421,
+          "image_url": "https://images.ygoprodeck.com/images/cards/46986421.jpg",
+          "image_url_small": "https://images.ygoprodeck.com/images/cards_small/46986421.jpg",
+          "image_url_cropped": "https://images.ygoprodeck.com/images/cards_cropped/46986421.jpg"
+        }
+      ],
+      "card_prices": [
+        {
+          "cardmarket_price": "0.02",
+          "tcgplayer_price": "0.33",
+          "ebay_price": "0.99",
+          "amazon_price": "14.45",
+          "coolstuffinc_price": "0.39"
+        }
+      ]
+    }
+  ]
+}
