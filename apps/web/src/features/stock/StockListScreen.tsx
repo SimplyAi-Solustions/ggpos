@@ -9,6 +9,11 @@
  * filter through the picker that takes in everything beneath the branch, a
  * Category column with the last two levels of each row's path, and rows
  * ticked here filed into a branch in one go.
+ *
+ * The table always fits the page (DESIGN.md, section 3): the item's name is
+ * the one column that gives, with the code under it, and a phone keeps the
+ * name and the price. Ticked rows can also go to the Niimbot D110 as price
+ * labels (Print prices).
  */
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
