@@ -211,7 +211,7 @@ describe("what the counter says when the printer will not", () => {
 
   it("keeps to the copy rules", () => {
     for (const message of Object.values(LABEL_PRINTER_MESSAGES)) {
-      expect(message).not.toMatch(/[!—]/)
+      expect(message).not.toMatch(/[!\u2014]/)
       expect(message.endsWith(".")).toBe(true)
     }
   })
