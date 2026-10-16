@@ -29,6 +29,7 @@ import { CounterDockContext } from "@/app/counter-dock"
 import { dispatchScan, makeScanFallback } from "@/app/scan-bus"
 import { useShortcuts } from "@/app/shortcuts"
 import { PageMain } from "@/app/page-transition"
+import { UpdateStrip } from "@/app/update-strip"
 import { ShortcutOverlay } from "@/app/shortcut-overlay"
 import { isScanField } from "@/app/focus-registry"
 import { createWedgeListener } from "@/lib/scanning/wedge"
@@ -297,6 +298,7 @@ export function CounterShell() {
       <CounterDockContext.Provider value={null}>
         <div className="flex min-h-svh w-full flex-col bg-background">
           <OfflineStrip />
+          <UpdateStrip />
           <main id="counter-main" className="flex min-h-0 w-full flex-1 flex-col">
             <Outlet />
           </main>
@@ -349,6 +351,7 @@ export function CounterShell() {
       {/* One hairline line, and only when the queue or the connection has
           something to say. */}
       <OfflineStrip />
+      <UpdateStrip />
 
       <PageMain
         id="counter-main"

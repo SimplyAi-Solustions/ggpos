@@ -33,12 +33,7 @@ import {
 } from "@/components/ui/sheet"
 import { Stepper } from "@/features/stock/Stepper"
 
-import {
-  DEFAULT_PRICE_LABEL_SIZE,
-  PRICE_LABEL_SIZES,
-  priceLabelSize,
-  type PriceLabelSizeKey,
-} from "./layout"
+import { PRICE_LABEL_SIZES, priceLabelSize, type PriceLabelSizeKey } from "./layout"
 import {
   bluetoothSupported,
   connectLabelPrinter,
@@ -59,37 +54,15 @@ import {
   totalLabels,
   type PriceLabelItem,
 } from "./plan"
+import { isDarkness, saveDarkness, savedDarkness, savedLabelSize, saveLabelSize } from "./settings"
 
 export type { PriceLabelItem } from "./plan"
-
-const SIZE_KEY = "gg-price-label-size"
-const DARKNESS_KEY = "gg-price-label-darkness"
 
 const DARKNESS: { value: Darkness; label: string }[] = [
   { value: "light", label: "Light" },
   { value: "normal", label: "Normal" },
   { value: "dark", label: "Dark" },
 ]
-
-function readSetting(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function writeSetting(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    // A private window keeps the choice for this sheet only.
-  }
-}
-
-function isDarkness(value: string | null): value is Darkness {
-  return value === "light" || value === "normal" || value === "dark"
-}
 
 /** Where the printer has got to, in one line. */
 function printerLine(printer: LabelPrinterState): string {
@@ -119,13 +92,8 @@ function Body({ items, onDone }: { items: readonly PriceLabelItem[]; onDone: () 
   const [copies, setCopies] = React.useState<Record<string, number | "">>(() =>
     Object.fromEntries(items.map((item) => [item.id, item.copies]))
   )
-  const [sizeKey, setSizeKey] = React.useState<PriceLabelSizeKey>(
-    () => priceLabelSize(readSetting(SIZE_KEY) ?? DEFAULT_PRICE_LABEL_SIZE).key
-  )
-  const [darkness, setDarkness] = React.useState<Darkness>(() => {
-    const saved = readSetting(DARKNESS_KEY)
-    return isDarkness(saved) ? saved : "normal"
-  })
+  const [sizeKey, setSizeKey] = React.useState<PriceLabelSizeKey>(savedLabelSize)
+  const [darkness, setDarkness] = React.useState<Darkness>(savedDarkness)
   const [preview, setPreview] = React.useState<string | null>(null)
   const [progress, setProgress] = React.useState<{ printed: number; total: number } | null>(null)
   const [outcome, setOutcome] = React.useState<Outcome | null>(null)
@@ -282,7 +250,7 @@ function Body({ items, onDone }: { items: readonly PriceLabelItem[]; onDone: () 
                 onValueChange={(next: string | null) => {
                   const key = priceLabelSize(next).key
                   setSizeKey(key)
-                  writeSetting(SIZE_KEY, key)
+                  saveLabelSize(key)
                 }}
               >
                 <SelectTrigger id="price-label-size">
@@ -303,7 +271,7 @@ function Body({ items, onDone }: { items: readonly PriceLabelItem[]; onDone: () 
                 onValueChange={(next: string | null) => {
                   if (!isDarkness(next)) return
                   setDarkness(next)
-                  writeSetting(DARKNESS_KEY, next)
+                  saveDarkness(next)
                 }}
               >
                 <SelectTrigger id="price-label-darkness">

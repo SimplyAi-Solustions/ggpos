@@ -12,8 +12,9 @@
  *
  * The table always fits the page (DESIGN.md, section 3): the item's name is
  * the one column that gives, with the code under it, and a phone keeps the
- * name and the price. Ticked rows can also go to the Niimbot D110 as price
- * labels (Print prices).
+ * name and the price. Each row has Print, which puts one price label per
+ * unit in stock straight through the Niimbot D110, and ticked rows go
+ * together through Print prices.
  */
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
@@ -43,12 +44,14 @@ import { RowCheck } from "@/features/categories/RowCheck"
 import { lastLevels } from "@/features/categories/tree"
 import { OverrideCancelled } from "@/features/lock/override"
 import { PriceLabelSheet } from "@/features/price-labels/PriceLabelSheet"
-import { startingCopies } from "@/features/price-labels/plan"
+import { describeLabelPrinterError, loadPrinterLibrary } from "@/features/price-labels/niimbot"
+import { hasPrice, startingCopies } from "@/features/price-labels/plan"
+import { printPricesNow } from "@/features/price-labels/print-now"
 import { listItems } from "@/lib/api"
 import { assignCategory, CATEGORY_TREE_KEY } from "@/lib/api/categories"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { ONLINE_FEED_KEY, setItemsOnline } from "@/lib/api/online"
-import type { ItemStatus } from "@/lib/api/types"
+import type { ItemStatus, ItemSummary } from "@/lib/api/types"
 
 const FILTERS: { value: ItemStatus; label: string }[] = [
   { value: "in_stock", label: "In stock" },
@@ -67,10 +70,63 @@ const STATUS_LABELS: Record<ItemStatus, string> = {
 }
 
 /**
- * Columns a phone leaves to the item page. Below 640px a row is the picture,
- * the name with its code and the price, so the list never scrolls sideways.
+ * Columns that step aside as the page narrows, so the table never scrolls
+ * sideways: the name and the price always; Status and Print from 640px;
+ * Category from 900px; Condition and Location from 1024px. The item page
+ * has everything a narrow screen leaves out.
  */
-const WIDE = "max-sm:hidden"
+const FROM_SM = "max-sm:hidden"
+const FROM_900 = "max-[900px]:hidden"
+const FROM_LG = "max-lg:hidden"
+
+interface RowPrint {
+  id: string
+  state: "printing" | "done" | "error"
+  text: string
+}
+
+/**
+ * Print on a stock row: one price label per unit in stock, straight to the
+ * D110, the count on the button so nobody is surprised by six labels. The
+ * printer library is fetched as the pointer arrives, so the press that
+ * shows Chrome's printer list never waits on the network.
+ */
+function PrintRowButton({
+  row,
+  busy,
+  printing,
+  onPrint,
+}: {
+  row: ItemSummary
+  busy: boolean
+  printing: boolean
+  onPrint: () => void
+}) {
+  const copies = startingCopies(row.qty)
+  const what = copies === 1 ? "1 price label" : `${copies} price labels`
+  const warm = () => void loadPrinterLibrary().catch(() => undefined)
+  return (
+    <Button
+      variant="text"
+      data-testid="stock-print"
+      loading={printing}
+      disabled={busy && !printing}
+      title={`Print ${what} on the label printer`}
+      onPointerEnter={warm}
+      onFocus={warm}
+      onClick={(event) => {
+        event.stopPropagation()
+        onPrint()
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <span aria-hidden="true">{copies === 1 ? "Print" : `Print ${copies}`}</span>
+      <span className="sr-only">
+        Print {what} for {row.title}
+      </span>
+    </Button>
+  )
+}
 
 export interface StockListScreenProps {
   /** The filter the list opens on. Home's waiting line links in on "reserved". */
@@ -92,6 +148,38 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
   const [note, setNote] = React.useState<string | null>(null)
   /** Print prices for the ticked rows on the Niimbot D110. */
   const [pricing, setPricing] = React.useState(false)
+  /** The row whose Print was pressed last, and how it went. */
+  const [rowPrint, setRowPrint] = React.useState<RowPrint | null>(null)
+
+  // "Printed" says its piece and goes; a refusal stays until the next press.
+  React.useEffect(() => {
+    if (rowPrint?.state !== "done") return
+    const timer = window.setTimeout(() => setRowPrint(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [rowPrint])
+
+  async function printRow(row: ItemSummary) {
+    const copies = startingCopies(row.qty)
+    setRowPrint({ id: row.id, state: "printing", text: "" })
+    try {
+      const printed = await printPricesNow([{ title: row.title, price: row.price, copies }])
+      setRowPrint({
+        id: row.id,
+        state: "done",
+        text: printed === 1 ? "1 price label printed." : `${printed} price labels printed.`,
+      })
+    } catch (error) {
+      const fault = describeLabelPrinterError(error, "print")
+      setRowPrint({
+        id: row.id,
+        state: "error",
+        text:
+          fault.printed > 0
+            ? `${fault.message} ${fault.printed} of ${copies} came out first.`
+            : fault.message,
+      })
+    }
+  }
 
   React.useEffect(() => registerSearchField(searchRef.current), [])
 
@@ -273,11 +361,14 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                   <span className="sr-only">Picture</span>
                 </TableHead>
                 <TableHead>Item</TableHead>
-                <TableHead className={WIDE}>Category</TableHead>
-                {showCondition ? <TableHead className={WIDE}>Condition</TableHead> : null}
+                <TableHead className={FROM_900}>Category</TableHead>
+                {showCondition ? <TableHead className={FROM_LG}>Condition</TableHead> : null}
                 <TableHead numeric>Price</TableHead>
-                <TableHead className={WIDE}>Status</TableHead>
-                <TableHead className={WIDE}>Location</TableHead>
+                <TableHead className={FROM_SM}>Status</TableHead>
+                <TableHead className={FROM_LG}>Location</TableHead>
+                <TableHead className={FROM_SM}>
+                  <span className="sr-only">Price label</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -346,26 +437,49 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
                         <Hint className="shrink-0 normal-case sm:hidden">{STATUS_LABELS[row.status]}</Hint>
                       ) : null}
                     </span>
+                    {rowPrint?.id === row.id && rowPrint.text ? (
+                      <span
+                        data-testid="stock-print-note"
+                        role={rowPrint.state === "error" ? "alert" : "status"}
+                        className={
+                          rowPrint.state === "error"
+                            ? "mt-1 block text-[13px] leading-[1.45] text-destructive"
+                            : "mt-1 block text-[13px] leading-[1.45] text-muted-foreground"
+                        }
+                      >
+                        {rowPrint.text}
+                      </span>
+                    ) : null}
                   </TableCell>
                   <TableCell
-                    className={`max-w-44 truncate text-muted-foreground ${WIDE}`}
+                    className={`max-w-44 truncate text-muted-foreground ${FROM_900}`}
                     data-testid="stock-category"
                     title={row.categoryPath || undefined}
                   >
                     {row.categoryPath ? lastLevels(row.categoryPath) : "-"}
                   </TableCell>
-                  {showCondition ? <TableCell className={WIDE}>{row.condition || "-"}</TableCell> : null}
+                  {showCondition ? <TableCell className={FROM_LG}>{row.condition || "-"}</TableCell> : null}
                   <TableCell numeric className="whitespace-nowrap">
                     {formatGBP(row.price)}
                   </TableCell>
-                  <TableCell className={`whitespace-nowrap ${WIDE}`}>
+                  <TableCell className={`whitespace-nowrap ${FROM_SM}`}>
                     <Badge variant="outline">{STATUS_LABELS[row.status]}</Badge>
                   </TableCell>
                   <TableCell
-                    className={`max-w-32 truncate text-muted-foreground-2 ${WIDE}`}
+                    className={`max-w-32 truncate text-muted-foreground-2 ${FROM_LG}`}
                     title={row.locationName || undefined}
                   >
                     {row.locationName || "-"}
+                  </TableCell>
+                  <TableCell className={`whitespace-nowrap ${FROM_SM}`}>
+                    {hasPrice(row) ? (
+                      <PrintRowButton
+                        row={row}
+                        busy={rowPrint?.state === "printing"}
+                        printing={rowPrint?.state === "printing" && rowPrint.id === row.id}
+                        onPrint={() => void printRow(row)}
+                      />
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}

@@ -237,6 +237,16 @@ test.describe("the counter", () => {
     await expect(page.getByTestId("stock-row")).toHaveCount(4)
     await expect(condition).toHaveCount(0)
     expect(await table.evaluate((box) => box.scrollWidth - box.clientWidth)).toBe(0)
+
+    // Every width in between: columns step aside rather than scroll.
+    await page.getByLabel("Search stock").fill("")
+    await expect(charizard).toBeVisible()
+    for (const width of [1193, 1024, 960, 900, 768, 640]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect
+        .poll(() => table.evaluate((box) => box.scrollWidth - box.clientWidth), { message: `${width}px` })
+        .toBe(0)
+    }
   })
 
   test("refuses to save without the fields the stock book needs", async ({ page }) => {

@@ -279,6 +279,11 @@ function snapshot(): LabelPrinterState {
 
 const UNSUPPORTED: LabelPrinterState = { status: "unsupported", name: "" }
 
+/** Where the label printer has got to, outside a component. */
+export function labelPrinterState(): LabelPrinterState {
+  return snapshot()
+}
+
 /** Where the label printer has got to, for a component. */
 export function useLabelPrinter(): LabelPrinterState {
   return React.useSyncExternalStore(subscribe, snapshot, snapshot)
@@ -326,6 +331,8 @@ export async function printLabels(
 ): Promise<number> {
   const current = client
   if (!current?.isConnected()) throw new LabelPrinterError("not_connected")
+  // One print at a time: a second press while labels are coming out waits.
+  if (state.status === "printing") throw new LabelPrinterError("busy")
   const lib = await loadPrinterLibrary()
   setState({ status: "printing", name: state.name })
   try {

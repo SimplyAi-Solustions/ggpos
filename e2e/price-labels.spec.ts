@@ -160,6 +160,44 @@ test.describe("price labels", () => {
     )
   })
 
+  test("Print on a stock row goes straight to the printer, one label per unit", async ({ page }) => {
+    await pickerClosed(page)
+    await signIn(page)
+    await page.goto("/counter/stock")
+    await page.getByLabel("Search stock").fill("Nuln Oil")
+    const row = page.getByTestId("stock-row").filter({ hasText: "Citadel Shade: Nuln Oil" })
+    await expect(row).toHaveCount(1)
+    const print = row.getByTestId("stock-print")
+    if ((page.viewportSize()?.width ?? 0) < 640) {
+      // A phone cannot reach the printer, so its rows carry no Print.
+      await expect(print).toBeHidden()
+      return
+    }
+    await expect(print).toHaveText(/Print 3/)
+    await expect(print).toHaveAccessibleName("Print 3 price labels for Citadel Shade: Nuln Oil")
+
+    // One press: no sheet, the printer list straight away, and the answer
+    // under the name. The row does not open the item.
+    await print.click()
+    await expect(page.getByTestId("price-label-sheet")).toHaveCount(0)
+    await expect(row.getByTestId("stock-print-note")).toHaveText(
+      "No printer was chosen. Press Connect printer and pick the D110 from the list."
+    )
+    await expect(page).toHaveURL(/\/counter\/stock$/)
+  })
+
+  test("Print on a stock row in a browser without Web Bluetooth says where to print from", async ({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 0) < 640, "Phones carry no Print on a row")
+    await noBluetooth(page)
+    await signIn(page)
+    await page.goto("/counter/stock")
+    const row = page.getByTestId("stock-row").filter({ hasText: "Charizard ex" }).first()
+    await row.getByTestId("stock-print").click()
+    await expect(row.getByTestId("stock-print-note")).toContainText(
+      "This browser cannot reach a Bluetooth printer."
+    )
+  })
+
   test("Add stock offers one label per unit that came in", async ({ page }) => {
     await pickerClosed(page)
     await signIn(page)

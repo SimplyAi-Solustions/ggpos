@@ -6,10 +6,14 @@ import "./index.css"
 import { routeTree } from "./routeTree.gen"
 import { resolveDataMode } from "@/lib/api/mode"
 import { watchForStaleBuild } from "@/lib/stale-build"
+import { watchForAppUpdate } from "@/lib/app-update"
 
 // Before anything can lazy-load a screen: a page left open across an update
 // reloads onto the new build instead of failing to open a screen.
 watchForStaleBuild()
+// A tab left open (the counter Mac's, all day) hears about a new release and
+// says so, rather than running yesterday's build until somebody reloads.
+watchForAppUpdate()
 
 const router = createRouter({
   routeTree,

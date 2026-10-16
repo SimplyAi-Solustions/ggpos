@@ -139,15 +139,21 @@ Rules:
   bottom bar of five thin icons with Space Mono labels takes over.
 - On phones the primary action docks to the bottom in the thumb zone, and every
   secondary action is a bottom sheet. Targets are at least 48px.
-- A table fits the content column; it never scrolls sideways on a desktop.
-  One column gives (`w-full max-w-0` on its cells, the name wrapping to two
-  lines at most) and every other column keeps its content on one line or
-  truncates with the full text in `title`. The Stock table is the pattern:
-  choose, picture, Item (the name, then the code in Space Mono 13px grey and
-  the card's set line), Category, Condition (only when a row on screen has
-  one), Price, Status and Location. Below 640px it keeps the choose box, the
-  picture, the item and the price; the item page has the rest, and an
-  unfiltered list says each row's status in the item's second line.
+- A table fits the content column at every width; it never scrolls
+  sideways. One column gives (`w-full max-w-0` on its cells, the name
+  wrapping to two lines at most), every other column keeps its content on
+  one line or truncates with the full text in `title`, and columns step
+  aside as the page narrows rather than squeeze. The Stock table is the
+  pattern: choose, picture, Item (the name, then the code in Space Mono 13px
+  grey and the card's set line), Category, Condition (only when a row on
+  screen has one), Price, Status, Location and Print. The name and the price
+  are always there; Status and Print from 640px; Category from 900px;
+  Condition and Location from 1024px. The item page has whatever a narrow
+  screen leaves out, and below 640px an unfiltered list says each row's
+  status in the item's second line.
+- A tab left open across a release says so in one line under the header,
+  drawn like the offline strip: "GG Vault has been updated. Reload to use the
+  new version." with Reload as a `text` action. It never reloads by itself.
 - My Vault (`/account`) is built for one person in one hand, so its column is
   560px, not 1,040px, with the same 20px gutters below 640px and 40px above.
   The header carries the "My Vault" wordmark and the notification bell only.
@@ -931,6 +937,15 @@ new token, face or component.
   screen beside Add another and as a `text` action at the end of binder
   mode's saved line. Never the screen's black block: each screen already
   has one.
+- **Print on a stock row** is the quickest way: the table's last column, a
+  `text` action reading "Print", or "Print 3" when three are in stock, that
+  sends one label per unit straight to the printer with no sheet, using the
+  roll and darkness this browser last chose. A first press in a session
+  shows Chrome's printer list from the same press. What happened is one
+  13px line under the item's name: "3 price labels printed." in grey for a
+  few seconds, or the printer's sentence in `--destructive` until the next
+  press. A row with no price has no Print. Phones, which cannot reach the
+  printer, have no Print column.
 - **The sheet** is a right sheet (a bottom sheet on a phone), titled "Print
   price" for one item and "Print prices" for several, with the one grey
   sentence "The logo, the name and the price, on the Niimbot label printer

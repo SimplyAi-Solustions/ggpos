@@ -737,8 +737,9 @@ camera.
 
 ## 16. Price labels on the Niimbot D110
 
-**Print price** (the item page, ticked rows in Stock, and Add stock once an
-item is saved) prints a 12 x 40 mm label with the GG logo, the item's name
+**Print** on each row of the Stock list (one label per unit in stock, in
+one press), and **Print price** on the item page, on ticked rows in Stock
+and on Add stock once an item is saved, print a 12 x 40 mm label with the GG logo, the item's name
 and its price on the Niimbot D110. The browser talks to the printer over
 Bluetooth itself: there is no driver, no NIIMBOT app and no helper program
 in the way. The page draws the logo, so nothing has to be set up on the
@@ -757,8 +758,8 @@ printer.
    the NIIMBOT app (and stop any other tool, Gandalf's included, that holds
    the printer). A Bluetooth printer takes one connection at a time.
 
-**Each day:** switch the D110 on, open an item, press **Print price**,
-then **Print**. The first print after the browser opens shows Chrome's
+**Each day:** switch the D110 on and press **Print** on an item's row in
+Stock (or **Print price** on its page, then **Print**). The first print after the browser opens shows Chrome's
 list of nearby printers: pick the one named `D110-...`. After that the
 printer stays connected while the GG Vault tab stays open, and every print
 is one press; reloading the page or opening a new tab asks again. If the printer turns itself off when idle, the next print says
