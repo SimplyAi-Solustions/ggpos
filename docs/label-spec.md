@@ -68,7 +68,16 @@ Item and reward labels encode the bare code, no hyphen, in the QR, for example `
 
 ## Printer
 
-ORGSTA T003: direct thermal, TSPL2 command language, handles label stock from 20 to 80 mm wide, 203 dpi, USB and Bluetooth. Only USB is used for printing in GG Vault; Bluetooth printing from a browser is not viable, so the Bluetooth radio goes unused.
+ORGSTA T003: direct thermal, TSPL2 command language, handles label stock from 20 to 80 mm wide, 203 dpi, USB and Bluetooth. Only USB is used for printing on the T003 in GG Vault, so its Bluetooth goes unused.
+
+## Price labels: Niimbot D110 over Web Bluetooth
+
+The shop's price labels come from a Niimbot D110 on the counter Mac mini, separate from the item labels above. **Print price** on the item page, on ticked rows in Stock and after Add stock opens one sheet (`apps/web/src/features/price-labels/`) that:
+
+- draws each label in the browser at 8 dots per mm: 12 x 40 mm is a 320 x 96 landscape with the item's name (Jost 500 at 17 dots, two lines at most, the second cut with an ellipsis), the GG logo in one colour (`GGLogo mono`, 24 dots tall) on the bottom line and the price in Anton (38 dots, smaller only to fit) right-aligned beside it. 12 x 30 mm keeps the same layout; 12 x 22 mm drops the name, moves the logo to the top and gives the price 48 dots. The layout is the receipt's draw ops (`features/printing/receipt/draw.ts`, which gained a `logo` op) painted one bit deep by the receipt painter;
+- sends it with niimbluelib (MIT, the library behind niim.blue) over Web Bluetooth: Chrome or Edge, or Brave with its Web Bluetooth flag on. The label is turned a quarter for the D110's 96-dot head (`printDirection: "left"`), the label type is "with gaps", the density follows the sheet's Light, Normal or Dark within the model's own range, and the print runs as niim.blue's does: heartbeat off, one page per item with its copies, each page waited for, the print ended and the heartbeat back on whatever happens.
+
+The library loads only when the sheet opens. Nothing is queued on the server: the D110 belongs to the Mac it is paired with, so a phone can preview a label but only the Mac prints it. The runbook's section 16 (`deploy/README.md`) covers the Mac's one-off setup.
 
 ## Printing path 1: browser print, day one
 

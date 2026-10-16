@@ -16,7 +16,18 @@
  */
 import { toCanvas, type RenderOptions } from "bwip-js/browser"
 
-import { fontString, type DrawOp, type FontSpec, type Layout, type Measure, type QrOp, type BarcodeOp } from "./draw"
+import { LOGO } from "@/design/brand/logo-paths"
+
+import {
+  fontString,
+  type BarcodeOp,
+  type DrawOp,
+  type FontSpec,
+  type Layout,
+  type LogoOp,
+  type Measure,
+  type QrOp,
+} from "./draw"
 
 /**
  * The faces a receipt uses, one entry per weight. `document.fonts.load`
@@ -158,6 +169,17 @@ function drawQr(ctx: Context, op: QrOp) {
   )
 }
 
+/** Both Gs in ink, no outline: the lockup as `GGLogo mono` draws it. */
+function drawLogo(ctx: Context, op: LogoOp) {
+  const scale = op.height / Number(LOGO.viewBox.split(" ")[3] ?? 100)
+  ctx.save()
+  ctx.translate(op.x, op.y)
+  ctx.scale(scale, scale)
+  ctx.fill(new Path2D(LOGO.paper))
+  ctx.fill(new Path2D(LOGO.volt))
+  ctx.restore()
+}
+
 function drawOp(ctx: Context, op: DrawOp) {
   switch (op.kind) {
     case "text":
@@ -180,6 +202,9 @@ function drawOp(ctx: Context, op: DrawOp) {
       return
     case "qr":
       drawQr(ctx, op)
+      return
+    case "logo":
+      drawLogo(ctx, op)
       return
   }
 }

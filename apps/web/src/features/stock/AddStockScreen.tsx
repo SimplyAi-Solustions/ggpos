@@ -38,6 +38,8 @@ import { useCounterDock } from "@/app/counter-dock"
 import { registerSearchField } from "@/app/focus-registry"
 import { CameraSheet } from "@/features/scan/CameraSheet"
 import { PhotoSheet } from "@/features/photos/PhotoSheet"
+import { PriceLabelSheet } from "@/features/price-labels/PriceLabelSheet"
+import { startingCopies } from "@/features/price-labels/plan"
 import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { branchById } from "@/features/categories/tree"
 import { CardSearchField } from "@/features/stock/CardSearchField"
@@ -199,6 +201,8 @@ export function AddStockScreen({
   /** Launch, section 6: Take photo on the saved item. */
   const [photoOpen, setPhotoOpen] = React.useState(false)
   const [photoNote, setPhotoNote] = React.useState<string | null>(null)
+  /** Print price on the Niimbot D110, one label per unit that came in. */
+  const [priceLabelOpen, setPriceLabelOpen] = React.useState(false)
   const [branchOpen, setBranchOpen] = React.useState(false)
   /** What the branch filled in, or where it came from. */
   const [branchNote, setBranchNote] = React.useState<string | null>(null)
@@ -484,6 +488,22 @@ export function AddStockScreen({
     reset(DEFAULTS)
   }
 
+  const savedPriceLabel = saved ? (
+    <PriceLabelSheet
+      open={priceLabelOpen}
+      onOpenChange={setPriceLabelOpen}
+      items={[
+        {
+          id: saved.id,
+          sku: saved.sku,
+          title: saved.title || "Item",
+          price: saved.price ?? 0,
+          copies: startingCopies(saved.qty),
+        },
+      ]}
+    />
+  ) : null
+
   // ---- The success state ------------------------------------------------
   if (saved && !binderMode) {
     return (
@@ -514,6 +534,9 @@ export function AddStockScreen({
           >
             Print label
           </Button>
+          <Button variant="text" onClick={() => setPriceLabelOpen(true)}>
+            Print price
+          </Button>
           <Button variant="text" onClick={startAnother}>
             Add another
           </Button>
@@ -538,6 +561,7 @@ export function AddStockScreen({
           item={saved}
           onSaved={(names) => setPhotoNote(names.length === 1 ? "Photo saved" : `${names.length} photos saved`)}
         />
+        {savedPriceLabel}
       </section>
     )
   }
@@ -567,7 +591,10 @@ export function AddStockScreen({
               <span className="tnum font-mono text-[13px] text-foreground">
                 {displayCode(saved.sku)}
               </span>{" "}
-              saved. Binder mode kept the branch, game, set and location.
+              saved. Binder mode kept the branch, game, set and location.{" "}
+              <Button variant="text" type="button" onClick={() => setPriceLabelOpen(true)}>
+                Print price
+              </Button>
             </p>
           ) : null}
 
@@ -1204,6 +1231,8 @@ export function AddStockScreen({
           setBranchOpen(false)
         }}
       />
+      {/* Binder mode's Print price, outside the form so nothing in it submits. */}
+      {binderMode ? savedPriceLabel : null}
     </section>
   )
 }

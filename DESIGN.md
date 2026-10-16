@@ -910,6 +910,45 @@ or component.
   phone, Notes and an Active `Switch` that says "On the supplier calls" or
   "Switched off". A supplier is switched off, never deleted.
 
+### Price labels
+
+Print price puts shelf price labels through the Niimbot D110 on the counter
+Mac (`docs/label-spec.md`, "Price labels"). Built from existing parts; no
+new token, face or component.
+
+- **Where**: a `text` action "Print price" beside Print label on the item
+  page (both rows, desktop and phone), "Print prices" in the stock list's
+  ticked-rows bar after Take offline, and "Print price" on Add stock's Saved
+  screen beside Add another and as a `text` action at the end of binder
+  mode's saved line. Never the screen's black block: each screen already
+  has one.
+- **The sheet** is a right sheet (a bottom sheet on a phone), titled "Print
+  price" for one item and "Print prices" for several, with the one grey
+  sentence "The logo, the name and the price, on the Niimbot label printer
+  by Bluetooth." Then, top to bottom: **What prints**, the first priced
+  item's label at one CSS pixel per printer dot (320 x 96 for 12 x 40 mm)
+  on white with a hairline edge in both colour modes, `image-rendering:
+  pixelated`, because thermal paper is white whatever the screen is;
+  **How many**, a hairline row per item (title, then the code in Space
+  Mono and the price in 13px grey, the quantity `Stepper` on the right, or
+  "No price" as a `Hint` for an item with none); **Label** and
+  **Darkness**, two `Select`s side by side from 640px; and **Printer**,
+  where it has got to in words ("D110-G417090412, connected", "Not
+  connected. Print asks you to pick the D110 first.") with "Connect
+  printer" or "Change printer" as a `text` action. The block is "Print 3
+  labels" (it says the count), Cancel beside it.
+- **The label itself** is ink on white, one bit: the name in Jost 500 top
+  left, at most two lines and the second cut with an ellipsis; the GG
+  lockup in one colour (`GGLogo mono`) bottom left; the price in Anton
+  bottom right on the same baseline. No volt, no grey, no border.
+- **States in words**: "Sending to the printer", "Printed 3 of 12", "12
+  labels printed." A refusal is the printer's sentence in `--destructive`
+  under the sheet's body, and when some labels came out first it says how
+  many and leaves the counts at what is left. A browser that cannot reach a
+  Bluetooth printer says where to print from in the Printer line, in
+  `--destructive`, and the block is disabled; the label still draws, so a
+  price can be checked from a phone.
+
 ---
 
 ## 12. Verifying a change

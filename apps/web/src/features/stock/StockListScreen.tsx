@@ -37,6 +37,8 @@ import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { RowCheck } from "@/features/categories/RowCheck"
 import { lastLevels } from "@/features/categories/tree"
 import { OverrideCancelled } from "@/features/lock/override"
+import { PriceLabelSheet } from "@/features/price-labels/PriceLabelSheet"
+import { startingCopies } from "@/features/price-labels/plan"
 import { listItems } from "@/lib/api"
 import { assignCategory, CATEGORY_TREE_KEY } from "@/lib/api/categories"
 import { refusalOrFallback } from "@/lib/api/refusal"
@@ -77,6 +79,8 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
   const [picking, setPicking] = React.useState<"filter" | "file" | null>(null)
   const [chosen, setChosen] = React.useState<string[]>([])
   const [note, setNote] = React.useState<string | null>(null)
+  /** Print prices for the ticked rows on the Niimbot D110. */
+  const [pricing, setPricing] = React.useState(false)
 
   React.useEffect(() => registerSearchField(searchRef.current), [])
 
@@ -213,6 +217,9 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
               </Button>
               <Button variant="text" loading={online.isPending && !online.variables} onClick={() => online.mutate(false)}>
                 Take offline
+              </Button>
+              <Button variant="text" onClick={() => setPricing(true)}>
+                Print prices
               </Button>
               <Button variant="text" onClick={() => setChosen([])}>
                 Clear
@@ -353,6 +360,17 @@ export function StockListScreen({ initialStatus = "in_stock" }: StockListScreenP
         </div>
       ) : null}
 
+      {/* One label per unit on each ticked row, in the order they were ticked. */}
+      <PriceLabelSheet
+        open={pricing}
+        onOpenChange={setPricing}
+        items={ticked.flatMap((id) => {
+          const row = rows.find((entry) => entry.id === id)
+          return row
+            ? [{ id: row.id, sku: row.sku, title: row.title, price: row.price, copies: startingCopies(row.qty) }]
+            : []
+        })}
+      />
       <CategoryPicker
         open={picking === "filter"}
         onOpenChange={(open) => setPicking(open ? "filter" : null)}

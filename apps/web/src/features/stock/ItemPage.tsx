@@ -81,6 +81,7 @@ import { CategoryPicker } from "@/features/categories/CategoryPicker"
 import { OverrideCancelled } from "@/features/lock/override"
 import { WebsiteRow } from "@/features/online/WebsiteRow"
 import { PhotoStrip } from "@/features/photos/PhotoStrip"
+import { PriceLabelSheet } from "@/features/price-labels/PriceLabelSheet"
 import { shelfTargetFromText } from "@/features/reorder/rack"
 import { takesSupplier } from "@/features/stock/schema"
 import { listSuppliers, suppliersKey } from "@/lib/api/reorder"
@@ -492,6 +493,8 @@ export function ItemPage({ sku }: { sku: string }) {
   const [reserveOpen, setReserveOpen] = React.useState(false)
   const [writeOffOpen, setWriteOffOpen] = React.useState(false)
   const [branchOpen, setBranchOpen] = React.useState(false)
+  /** Print price: the Niimbot D110 on the counter Mac. */
+  const [priceLabelOpen, setPriceLabelOpen] = React.useState(false)
   const [note, setNote] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -687,6 +690,14 @@ export function ItemPage({ sku }: { sku: string }) {
       }
     >
       Add more of this
+    </Button>
+  )
+
+  // Print price (DESIGN.md, "Price labels"): one label to start with; the
+  // sheet takes more.
+  const printPrice = (
+    <Button variant="text" onClick={() => setPriceLabelOpen(true)}>
+      Print price
     </Button>
   )
 
@@ -989,6 +1000,7 @@ export function ItemPage({ sku }: { sku: string }) {
         >
           Print label
         </Button>
+        {printPrice}
         {addMore}
         <Button
           variant="text-destructive"
@@ -1010,6 +1022,7 @@ export function ItemPage({ sku }: { sku: string }) {
         >
           Print label
         </Button>
+        {printPrice}
         {addMore}
         <Button
           variant="text-destructive"
@@ -1064,6 +1077,14 @@ export function ItemPage({ sku }: { sku: string }) {
         suggested={suggested}
         pending={save.isPending}
         onSave={(price) => save.mutate({ price })}
+      />
+
+      <PriceLabelSheet
+        open={priceLabelOpen}
+        onOpenChange={setPriceLabelOpen}
+        items={[
+          { id: item.id, sku: item.sku, title: item.title || "Item", price: item.price ?? 0, copies: 1 },
+        ]}
       />
 
       <CustomerSearchSheet

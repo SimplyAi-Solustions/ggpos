@@ -12,6 +12,7 @@
  * pixel, 576 across on 80 mm paper and 384 on 58 mm, so one unit here is one
  * dot and there is no scaling anywhere downstream.
  */
+import { LOGO } from "@/design/brand/logo-paths"
 
 export type PaperWidth = 576 | 384
 
@@ -72,12 +73,31 @@ export interface QrOp {
   size: number
 }
 
-export type DrawOp = TextOp | RuleOp | BarcodeOp | QrOp
+/**
+ * The GG Entertainment lockup in one colour, both Gs filled with ink and no
+ * outline (`GGLogo mono`), `height` dots tall with its top-left corner here.
+ * The Niimbot price label carries it.
+ */
+export interface LogoOp {
+  kind: "logo"
+  x: number
+  y: number
+  height: number
+}
+
+export type DrawOp = TextOp | RuleOp | BarcodeOp | QrOp | LogoOp
 
 export interface Layout {
-  width: PaperWidth
+  /** A receipt's `PaperWidth`, or a label's length in dots. */
+  width: number
   height: number
   ops: DrawOp[]
+}
+
+/** The lockup's width for a height, from its traced view box. */
+export function logoWidth(height: number): number {
+  const [, , width = 0, tall = 1] = LOGO.viewBox.split(" ").map(Number)
+  return Math.round((height * width) / tall)
 }
 
 /** The width of `text` set in `font`, in dots. */

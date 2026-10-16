@@ -735,6 +735,55 @@ five minutes before opening: a real Bluetooth scanner paired to the
 tablet, a real USB scanner on the Mac, and a real label in front of each
 camera.
 
+## 16. Price labels on the Niimbot D110
+
+**Print price** (the item page, ticked rows in Stock, and Add stock once an
+item is saved) prints a 12 x 40 mm label with the GG logo, the item's name
+and its price on the Niimbot D110. The browser talks to the printer over
+Bluetooth itself: there is no driver, no NIIMBOT app and no helper program
+in the way. The page draws the logo, so nothing has to be set up on the
+printer.
+
+**The Mac mini, once:**
+
+1. Use **Chrome** or **Edge**. Brave turns Web Bluetooth off: to use Brave,
+   open `brave://flags`, search for Bluetooth, set **Web Bluetooth API** to
+   Enabled and relaunch it. Safari and Firefox cannot reach a Bluetooth
+   printer at all, and the sheet says so.
+2. System Settings, Privacy and Security, **Bluetooth**: switch the browser
+   on. Without it the browser's printer list is empty.
+3. The D110 does not need pairing in macOS's own Bluetooth settings first,
+   and it must not be connected to anything else when GG Vault prints: quit
+   the NIIMBOT app (and stop any other tool, Gandalf's included, that holds
+   the printer). A Bluetooth printer takes one connection at a time.
+
+**Each day:** switch the D110 on, open an item, press **Print price**,
+then **Print**. The first print after the browser opens shows Chrome's
+list of nearby printers: pick the one named `D110-...`. After that the
+printer stays connected while the GG Vault tab stays open, and every print
+is one press; reloading the page or opening a new tab asks again. If the printer turns itself off when idle, the next print says
+the printer is not connected; switch it on and press **Connect printer**.
+
+**In the sheet:** the label as it will print, one row per item with how
+many labels (one on the item page, one per unit on ticked rows and after
+Add stock; change any count before printing), the roll (12 x 40 mm, or
+12 x 30 and 12 x 22, where the 22 mm label drops the name), and the
+darkness (Light, Normal, Dark). The roll and darkness are remembered by
+that browser. An item with no price is listed but not printed. If the
+printer stops part way (lid open, roll out), the sheet says why and how
+many came out, and leaves the counts at what is left, so pressing Print
+again finishes the job.
+
+**What has been checked** (`e2e/price-labels.spec.ts`,
+`apps/web/src/features/price-labels/*.test.ts`): the label drawn at 320 x
+96 dots in pure black and white, the sheet from all three places at both
+widths, the browser with no Web Bluetooth and the printer list closed
+without a choice, and the print sequence against niimbluelib's own
+encoder and print task interface (the 40 mm label turned for the D110's
+96-dot head, every label waited for, the print ended whatever happens).
+Not checked by machine, so worth five minutes with the printer: one real
+label from the item page, then three from a ticked row.
+
 ## Before go-live checklist
 
 - [ ] A full restore rehearsal (`deploy/restore.md`) has been completed
@@ -757,6 +806,8 @@ camera.
       (section 15), and Use camera reads a GG label in Safari on the Mac
 - [ ] A USB scanner on the Mac and a Bluetooth scanner on the tablet each
       open an item from its label, from the Home screen (section 15)
+- [ ] Print price puts a real 12 x 40 mm label through the D110 from
+      Chrome on the Mac mini, with the NIIMBOT app closed (section 16)
 - [ ] An item switched on under Settings, Website or its page shows on
       the website's Shop page, with its photo
 - [ ] VAPID keys are generated, the private key and subject are in `.env`,
