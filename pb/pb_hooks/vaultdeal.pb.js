@@ -4,8 +4,9 @@
  * vaultdeal.pb.js - the Vault deal calculator's buy-in routes
  * (docs/vault-rebuild-api.md, "Deals").
  *
- *   GET  /api/vault/deals/{id}            the deal priced on the server
- *   POST /api/vault/deals/{id}/complete   book the cards into stock and record the split
+ *   GET  /api/vault/deals/{id}              the deal priced on the server
+ *   POST /api/vault/deals/{id}/complete     book the cards into stock and record the split
+ *   GET  /api/vault/deals/{id}/epos-credit  whether the credit given has reached Epos Now
  *
  * A deal is an ordinary `trade_ins` row with `trade_in_lines`, drafted and
  * edited through the collection API, plus the rate and override fields
@@ -23,6 +24,9 @@
  * no_cash and under_18 flags, a verified unexpired ID with a photo on file
  * for any cash at all, 18 or over, the signature), so the ID-on-file rule
  * is enforced identically. That route is unchanged.
+ *
+ * Credit given is queued for Epos Now in the same transaction
+ * (lib/eposcredit.js, epos_credit_queue); the worker on the shop Mac sends it.
  */
 
 // ---------------------------------------------------------------------
@@ -65,6 +69,25 @@ routerAdd(
     }
     const lines = tradeComplete.acceptedLines(e.app, tradeIn.id);
     return e.json(200, { deal: vaultDeal.shape(tradeIn, lines, vaultDeal.computeFor(tradeIn, lines)) });
+  },
+  $apis.requireAuth("staff")
+);
+
+// ---------------------------------------------------------------------
+// GET /api/vault/deals/{id}/epos-credit
+// ---------------------------------------------------------------------
+routerAdd(
+  "GET",
+  "/api/vault/deals/{id}/epos-credit",
+  (e) => {
+    const eposCredit = require(`${__hooks}/lib/eposcredit.js`);
+    let tradeIn = null;
+    try {
+      tradeIn = e.app.findRecordById("trade_ins", e.request.pathValue("id"));
+    } catch (err) {
+      throw e.notFoundError("Deal not found. Check the link and try again.", null);
+    }
+    return e.json(200, { epos_credit: eposCredit.statusFor(e.app, tradeIn.id, eposCredit.MAX_ATTEMPTS) });
   },
   $apis.requireAuth("staff")
 );
@@ -218,6 +241,9 @@ routerAdd(
           halt = { status: done.status, message: done.message };
           throw new Error(halt.message);
         }
+        // Credit given goes to Epos Now through the shop Mac's worker:
+        // queued here so it exists if and only if the deal completed.
+        require(`${__hooks}/lib/eposcredit.js`).queueCredit(txApp, tradeIn.id, customerId, payout.credit);
       });
     } catch (err) {
       if (halt) throw e.error(halt.status, halt.message, null);

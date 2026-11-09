@@ -11,6 +11,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.roundHalfUp = roundHalfUp;
 exports.parseDecimalToMinor = parseDecimalToMinor;
 exports.formatGBP = formatGBP;
+exports.penceToDecimal = penceToDecimal;
 exports.convertMinorToGbpPence = convertMinorToGbpPence;
 exports.usdCentsToGbpPence = usdCentsToGbpPence;
 exports.eurDecimalToGbpPence = eurDecimalToGbpPence;
@@ -44,6 +45,22 @@ function formatGBP(pence) {
     const rem = abs % 100;
     const grouped = pounds.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     return `${negative ? "-" : ""}£${grouped}.${rem.toString().padStart(2, "0")}`;
+}
+/**
+ * Pence as a plain decimal-pounds string for an API that takes pounds, such
+ * as Epos Now's "BalanceToAdd": 6324 -> "63.24", 5 -> "0.05", -100 -> "-1.00".
+ * Integer arithmetic only, so no float ever touches the amount; put the
+ * string into the JSON body as a bare number literal. Throws on anything
+ * that is not a whole number of pence.
+ */
+function penceToDecimal(pence) {
+    if (!Number.isSafeInteger(pence))
+        throw new Error(`Not a whole number of pence: ${pence}`);
+    const negative = pence < 0;
+    const abs = Math.abs(pence);
+    const pounds = Math.floor(abs / 100);
+    const rem = abs % 100;
+    return `${negative ? "-" : ""}${pounds}.${rem.toString().padStart(2, "0")}`;
 }
 /**
  * Convert minor units of a foreign currency to GBP pence at a rate expressed

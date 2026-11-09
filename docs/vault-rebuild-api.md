@@ -539,7 +539,7 @@ Then, in one transaction:
 - the trade-in gets `status: completed`, `payout_type` (`cash`, `credit` or `mixed`, from `dealPayout`), `payout_cash`, `payout_credit`, `trade_pct`, `cash_pct`, `calculated_trade`, `calculated_cash`, `deal_trade_total` and `deal_cash_total`;
 - the audit row is `vault_deal_complete`, with the totals, `trade_overridden`, `cash_overridden` and `custom_lines` (the ids of lines with their own rate or a fixed figure).
 
-It does **not** write `cash_movements`, `credit_ledger`, `points_ledger` or referrals, does not recompute balances, and does not link `cash_session`. The credit lives on the trade-in only, pending the owner's decision.
+It does **not** write `cash_movements`, `credit_ledger`, `points_ledger` or referrals, does not recompute balances, and does not link `cash_session`. When `credit_given` is above 0, the same transaction queues one pending row in `epos_credit_queue` for the shop Mac to add to the customer's Epos Now balance (see "Store credit to Epos Now" below).
 
 Response 200:
 ```json
@@ -553,11 +553,52 @@ Response 200:
 
 Receipts work on a completed deal as for any trade-in: `GET /api/vault/trade-ins/{id}/receipt` and `POST .../receipt/email`.
 
+### Store credit to Epos Now (migration `1789821560_epos_credit_queue.js`)
+
+Customers spend store credit at the Epos Now till, and the Epos Now token stays on the shop Mac. So completion queues the credit, and a worker on the Mac (`deploy/mac/epos-credit-sync.mjs`, see `deploy/mac/README.md`) sends it.
+
+`epos_credit_queue` (superuser only, every rule null):
+
+| field | type | meaning |
+|---|---|---|
+| `trade_in` | relation, unique | The completed deal. A deal can only be queued once. |
+| `customer` | relation customers | Whose credit it is. |
+| `amount` | int pence, 1 or more | The credit given. |
+| `status` | `pending`, `sending`, `done`, `failed`, `needs_check` | `sending` is stored before the balance call. `needs_check` means the outcome is unknown; only a person moves it on. |
+| `epos_customer_id` | int, 0 = not known | The Epos Now customer credited. |
+| `epos_balance_after` | int pence | The Epos balance reported after the credit. Only meaningful when `done` with `sent_at`. |
+| `attempts` | int | Tries so far. The worker stops at 5. |
+| `last_error` | text | The last failure, for the operator. |
+| `sent_at` | date | When Epos Now confirmed it. |
+
+`customers.epos_customer_id` (int, 0 = not linked) is saved by the worker. Staff can set it; a customer cannot set it on their own record.
+
+#### `GET /api/vault/deals/{id}/epos-credit` (staff)
+
+```json
+{ "epos_credit": { "status": "done", "synced": true, "amount": 6324, "epos_customer_id": 444,
+                   "epos_balance_after": 7324, "attempts": 1, "sent_at": "2026-11-09 15:00:00.000Z",
+                   "last_error": null, "message": "Credit added to Epos Now: £63.24" } }
+```
+
+`message` is written to show as-is:
+
+| status | message |
+|---|---|
+| `none` | `No store credit on this deal for Epos Now.` (no credit, or not completed) |
+| `pending`, `sending` | `Waiting to sync £63.24 to Epos Now.` |
+| `done` | `Credit added to Epos Now: £63.24` |
+| `failed`, under 5 attempts | `Could not add £63.24 to Epos Now yet. It will try again in a minute.` |
+| `failed`, 5 attempts | `Could not add £63.24 to Epos Now. Add it in Epos Now Back Office and tell the owner.` |
+| `needs_check` | `Check Epos Now before adding £63.24 by hand: the sync may already have added it.` |
+
+`epos_customer_id`, `epos_balance_after` and `sent_at` are `null` until known. 404 `Deal not found. Check the link and try again.`
+
 ---
 
 ## 9. Open gaps and decisions for Richard
 
-1. **Store credit given is not on any ledger yet.** The new route records `payout_credit` on the trade-in only, because `credit_ledger` belongs to the till and loyalty side. This is with the owner to decide; adding a ledger write later is one flag in `complete()`.
+1. **Store credit given is not on any Vault ledger.** The new route records `payout_credit` on the trade-in and queues it for Epos Now (`epos_credit_queue`), where the customer spends it. `credit_ledger` belongs to the till and loyalty side and is not written; adding a ledger write later is one flag in `complete()`.
 2. **Staff can PATCH `trade_ins.status` to `completed`** through the collection API and skip both completion routes. Tighten `trade_ins.updateRule` (for example `@request.body.status != "completed"`) once the old app is retired.
 3. **Card identification from a photo** does not exist; see section 3 for a proposed route.
 4. **Per-condition UK comps** are not stored, which double-discounts an LP comp; see section 2.
