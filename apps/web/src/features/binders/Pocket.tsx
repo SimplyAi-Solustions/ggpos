@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react"
 import { BookmarkCheckIcon, BookmarkPlusIcon, CheckIcon, LayersIcon, PlusIcon } from "lucide-react"
 
 import { img, type BinderCard } from "@/features/binders/api"
+import { InStockBadge } from "@/features/binders/InStockBadge"
 
 /** Pointer tilt and holo glare for a card in its sleeve. Touch skips it: a tap is a tick, not a tilt. */
 function tiltMove(e: React.PointerEvent<HTMLElement>) {
@@ -84,6 +85,7 @@ export function Pocket({
   wanted = false,
   wantBusy = false,
   compact = false,
+  inStock = false,
   onTap,
   onWant,
 }: {
@@ -96,6 +98,8 @@ export function Pocket({
   wanted?: boolean
   wantBusy?: boolean
   compact?: boolean
+  /** The shop has this exact print on the shelf; only needed cards show it. */
+  inStock?: boolean
   onTap?: () => void
   onWant?: () => void
 }) {
@@ -103,7 +107,8 @@ export function Pocket({
   const total = c.set_total && /^\d+$/.test(c.number) ? `/${c.set_total}` : ""
   const art = c.image && !broken ? img(c.image) : ""
   const sprite = !art && c.sprite ? c.sprite : ""
-  const state = owned ? "Collected" : "Needed"
+  const inShop = inStock && !owned
+  const state = owned ? "Collected" : inShop ? "Needed, in stock at GG Entertainment" : "Needed"
   const action = target
     ? "Tap to move the chosen cards here."
     : selecting
@@ -124,6 +129,7 @@ export function Pocket({
         target ? "target" : "",
         wanted ? "wanted" : "",
         sprite ? "dex" : "",
+        inShop ? "instock" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -177,6 +183,7 @@ export function Pocket({
           </span>
         ) : null}
         {wanted && !owned ? <span className="bx-ribbon">Wanted</span> : null}
+        {inShop ? <InStockBadge /> : null}
       </Tag>
       {onWant && !owned && !selecting ? (
         <button

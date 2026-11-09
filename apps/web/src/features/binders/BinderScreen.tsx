@@ -29,6 +29,7 @@ import { LoadFailed } from "@/features/portal/LoadFailed"
 import {
   cancelWanted,
   colorOf,
+  getAvailability,
   getBinder,
   KINDS,
   listPockets,
@@ -89,6 +90,15 @@ export function BinderScreen({ id }: { id: string }) {
     refetchOnWindowFocus: false,
   })
   const wantedQ = useQuery({ queryKey: ["portal", "binder-wanted"], queryFn: listWanted })
+  // What the shop has on the shelf, as pocket ids. A boolean per pocket is
+  // all the server ever sends; a stale set only means a badge lags a minute.
+  const stockQ = useQuery({
+    queryKey: ["portal", "binder-stock", id],
+    queryFn: () => getAvailability(id),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  })
+  const inStock = React.useMemo(() => stockQ.data ?? new Set<string>(), [stockQ.data])
 
   // The layout history is rebuilt whenever a fresh copy of the pockets
   // arrives from the server (first load, after adding a card, after a failed
@@ -126,8 +136,8 @@ export function BinderScreen({ id }: { id: string }) {
   const byId = React.useMemo(() => new Map(all.map((c) => [c.id, c])), [all])
 
   const pages = React.useMemo(
-    () => (layout ? buildPages(all, layout, grid, filter) : []),
-    [all, layout, grid, filter]
+    () => (layout ? buildPages(all, layout, grid, filter, inStock) : []),
+    [all, layout, grid, filter, inStock]
   )
   const count = Math.max(1, pages.length)
   const spread = wide
@@ -142,15 +152,17 @@ export function BinderScreen({ id }: { id: string }) {
   const counts = React.useMemo(() => {
     let owned = 0
     let total = 0
+    let instock = 0
     if (layout) {
       for (const c of all) {
         if ((layout.slots[c.id] ?? -1) < 0) continue
         total++
         if (layout.owned[c.id]) owned++
+        else if (inStock.has(c.id)) instock++
       }
     }
-    return { all: total, owned, needed: total - owned }
-  }, [all, layout])
+    return { all: total, owned, needed: total - owned, instock }
+  }, [all, layout, inStock])
 
   const wantedByCard = React.useMemo(() => {
     const m = new Map<string, WantedRequest>()
@@ -419,6 +431,7 @@ export function BinderScreen({ id }: { id: string }) {
                 wanted={wantedByCard.has(c.card_id)}
                 wantBusy={wantBusy === c.id || wantBusy === "bulk"}
                 compact={compact}
+                inStock={inStock.has(c.id)}
                 onTap={live ? () => tapPocket(c) : undefined}
                 onWant={live ? () => void toggleWant(c) : undefined}
               />
@@ -512,6 +525,7 @@ export function BinderScreen({ id }: { id: string }) {
           pages={layout ? pageCount(layout, grid) : 1}
           grid={grid}
           wanted={wantedHere}
+          inShop={counts.instock}
         />
       ) : (
         <div className="bx-skel mt-6" style={{ height: 96 }} />

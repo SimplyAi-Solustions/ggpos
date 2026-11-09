@@ -4,6 +4,7 @@ import { CopyIcon, Link2Icon, Link2OffIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { MicroLabel } from "@/components/ui/micro-label"
+import { Switch } from "@/components/ui/switch"
 import {
   Sheet,
   SheetBody,
@@ -143,6 +144,7 @@ export function SettingsSheet({
   const [name, setName] = React.useState(binder.name)
   const [owner, setOwner] = React.useState(binder.owner)
   const [color, setColor] = React.useState(binder.color)
+  const [alertsOn, setAlertsOn] = React.useState(!binder.alerts_off)
   const [confirm, setConfirm] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState("")
@@ -150,7 +152,7 @@ export function SettingsSheet({
   async function save() {
     setBusy(true)
     try {
-      await updateBinder(binder.id, { name: name.trim(), owner: owner.trim(), color })
+      await updateBinder(binder.id, { name: name.trim(), owner: owner.trim(), color, alerts_off: !alertsOn })
       onSaved()
       onOpenChange(false)
     } catch {
@@ -201,6 +203,19 @@ export function SettingsSheet({
                     onClick={() => setColor(c.id)}
                   />
                 ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <MicroLabel>Stock alerts</MicroLabel>
+              <div className="flex items-start gap-4">
+                <Switch
+                  checked={alertsOn}
+                  onCheckedChange={(next: boolean) => setAlertsOn(next)}
+                  aria-label="Tell me when a card this binder needs comes into the shop"
+                />
+                <p className="text-[15px] leading-[1.5] text-muted-foreground">
+                  Tell me when a card this binder needs comes into the shop.
+                </p>
               </div>
             </div>
             {error ? <p className="text-[15px] text-destructive">{error}</p> : null}

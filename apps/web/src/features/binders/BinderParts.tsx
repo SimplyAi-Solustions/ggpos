@@ -32,7 +32,7 @@ function Ring({ pct, color }: { pct: number; color: string }) {
 
 const pctOf = (got: number, total: number) => (total ? got / total : 0)
 
-/** The stats tiles: pockets filled, set (or Pokédex) completion, wanted cards and pages. */
+/** The stats tiles: pockets filled, set (or Pokédex) completion, in the shop, wanted cards and pages. */
 export function StatTiles({
   stats,
   kind,
@@ -40,6 +40,7 @@ export function StatTiles({
   pages,
   grid,
   wanted,
+  inShop,
 }: {
   stats: BinderStatsV2
   kind: string
@@ -47,6 +48,8 @@ export function StatTiles({
   pages: number
   grid: Grid
   wanted?: number
+  /** How many needed cards the shop has on the shelf right now. */
+  inShop?: number
 }) {
   const filledPct = pctOf(stats.filled, stats.total)
   let completion: { label: string; value: string; note: string; pct: number }
@@ -94,6 +97,15 @@ export function StatTiles({
         </div>
         <div className="bx-tile-note">{completion.note}</div>
       </div>
+      {inShop !== undefined ? (
+        <div className="bx-tile bx-tile-instock">
+          <div className="bx-tile-label">In stock at GG</div>
+          <div className="bx-tile-value tnum">{inShop}</div>
+          <div className="bx-tile-note">
+            {inShop === 1 ? "Card you need is in the shop" : "Cards you need are in the shop"}
+          </div>
+        </div>
+      ) : null}
       {wanted !== undefined ? (
         <div className="bx-tile">
           <div className="bx-tile-label">Wanted</div>
@@ -144,7 +156,7 @@ export function FilterTabs({
   onChange,
 }: {
   filter: Filter
-  counts: { all: number; owned: number; needed: number }
+  counts: { all: number; owned: number; needed: number; instock?: number }
   onChange: (f: Filter) => void
 }) {
   const tabs: [Filter, string][] = [
@@ -152,6 +164,7 @@ export function FilterTabs({
     ["owned", `Owned ${counts.owned}`],
     ["needed", `Needed ${counts.needed}`],
   ]
+  if (counts.instock !== undefined) tabs.push(["instock", `In stock at GG ${counts.instock}`])
   return (
     <div className="bx-seg bx-filter" role="group" aria-label="Show">
       {tabs.map(([v, l]) => (

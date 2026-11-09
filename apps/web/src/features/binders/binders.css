@@ -442,6 +442,38 @@
   letter-spacing: 0.12em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; box-shadow: 0 2px 8px #0008;
 }
 
+/* "In stock at GG": the one full-colour thing on a greyed needed card, with
+   a slow volt glow so it pops without shouting. */
+.bx-root .bx-instock {
+  position: absolute; bottom: 5%; right: 5%; z-index: 4; width: 22px; height: 22px;
+  border-radius: 6px; overflow: hidden; display: grid; place-items: center; pointer-events: none;
+  box-shadow: 0 0 0 1px #ffffff2e, 0 2px 8px #000a, 0 0 12px -2px #fedf01;
+  animation: bx-instock-glow 2.6s ease-in-out infinite;
+}
+.bx-root .bx-instock img { width: 100%; height: 100%; display: block; }
+@keyframes bx-instock-glow {
+  0%, 100% { box-shadow: 0 0 0 1px #ffffff2e, 0 2px 8px #000a, 0 0 8px -3px #fedf01; }
+  50% { box-shadow: 0 0 0 1px #ffffff2e, 0 2px 8px #000a, 0 0 18px 0 #fedf01a6; }
+}
+
+/* Stock alert banners on the binder shelf. */
+.bx-alerts { display: grid; gap: 10px; max-width: 640px; }
+.bx-alert {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #fedf01 32%, transparent);
+  background: color-mix(in srgb, #fedf01 7%, transparent);
+}
+.bx-alert .bx-instock { position: static; flex: none; animation: none; }
+.bx-alert p { flex: 1; margin: 0; font-size: 14px; line-height: 1.45; color: var(--text); }
+.bx-alert button {
+  flex: none; height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-2);
+  background: transparent; color: var(--text-2); font-family: var(--font-mono); font-size: 10px;
+  font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.bx-alert button:hover:not(:disabled) { color: var(--text); border-color: var(--text-2); }
+.bx-alert button:disabled { opacity: 0.5; cursor: default; }
+
 /* A Pokedex pocket waiting for its card shows the sprite and the dex number. */
 .bx-root .bx-dex-slot { position: absolute; inset: 0; display: grid; place-items: center; }
 .bx-root .bx-art .bx-sprite { width: 62%; height: 62%; object-fit: contain; image-rendering: pixelated; }
@@ -580,6 +612,7 @@ html:not(.bx-dark) .bx-root .bx-rings i { border-color: #b9b9c4; border-top-colo
   .bx-root .bx-art { transform: none !important; }
   .bx-root .bx-pocket.just .bx-holo { animation: none; }
   .bx-root .bx-pocket.target .bx-sleeve { animation: none; }
+  .bx-root .bx-instock { animation: none; }
   .bx-skel { animation: none; }
   .bx-binder:hover .bx-body { transform: none; }
   .bx-binder:hover .bx-drop { transform: none; }

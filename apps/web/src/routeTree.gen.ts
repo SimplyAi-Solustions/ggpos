@@ -29,7 +29,6 @@ import { Route as AccountSignUpRouteImport } from "./routes/account.sign-up"
 import { Route as AccountVerifyRouteImport } from "./routes/account.verify"
 import { Route as AccountWantListRouteImport } from "./routes/account.want-list"
 import { Route as AccountWantsRouteImport } from "./routes/account.wants"
-import { Route as BinderTokenRouteImport } from "./routes/binder.$token"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
 import { Route as CounterIndexRouteImport } from "./routes/counter.index"
 import { Route as CounterBookingsRouteImport } from "./routes/counter.bookings"
@@ -55,6 +54,7 @@ import { Route as AccountRewardsIndexRouteImport } from "./routes/account.reward
 import { Route as AccountRewardsIdRouteImport } from "./routes/account.rewards.$id"
 import { Route as AccountTradeInsIndexRouteImport } from "./routes/account.trade-ins.index"
 import { Route as AccountTradeInsIdRouteImport } from "./routes/account.trade-ins.$id"
+import { Route as CBTokenRouteImport } from "./routes/c.b.$token"
 import { Route as CounterCustomersIndexRouteImport } from "./routes/counter.customers.index"
 import { Route as CounterCustomersNewRouteImport } from "./routes/counter.customers.new"
 import { Route as CounterQuotesIndexRouteImport } from "./routes/counter.quotes.index"
@@ -175,11 +175,6 @@ const AccountWantsRoute = AccountWantsRouteImport.update({
   id: "/wants",
   path: "/wants",
   getParentRoute: () => AccountRoute,
-} as any)
-const BinderTokenRoute = BinderTokenRouteImport.update({
-  id: "/binder/$token",
-  path: "/binder/$token",
-  getParentRoute: () => rootRouteImport,
 } as any)
 const CTokenRoute = CTokenRouteImport.update({
   id: "/c/$token",
@@ -306,6 +301,11 @@ const AccountTradeInsIdRoute = AccountTradeInsIdRouteImport.update({
   path: "/trade-ins/$id",
   getParentRoute: () => AccountRoute,
 } as any)
+const CBTokenRoute = CBTokenRouteImport.update({
+  id: "/c/b/$token",
+  path: "/c/b/$token",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CounterCustomersIndexRoute = CounterCustomersIndexRouteImport.update({
   id: "/customers/",
   path: "/customers/",
@@ -429,7 +429,6 @@ export interface FileRoutesByFullPath {
   "/account/verify": typeof AccountVerifyRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
-  "/binder/$token": typeof BinderTokenRoute
   "/c/$token": typeof CTokenRoute
   "/counter/bookings": typeof CounterBookingsRoute
   "/counter/cash": typeof CounterCashRoute
@@ -452,6 +451,7 @@ export interface FileRoutesByFullPath {
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
+  "/c/b/$token": typeof CBTokenRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
@@ -495,7 +495,6 @@ export interface FileRoutesByTo {
   "/account/verify": typeof AccountVerifyRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
-  "/binder/$token": typeof BinderTokenRoute
   "/c/$token": typeof CTokenRoute
   "/counter/bookings": typeof CounterBookingsRoute
   "/counter/cash": typeof CounterCashRoute
@@ -518,6 +517,7 @@ export interface FileRoutesByTo {
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
+  "/c/b/$token": typeof CBTokenRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
@@ -564,7 +564,6 @@ export interface FileRoutesById {
   "/account/verify": typeof AccountVerifyRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
-  "/binder/$token": typeof BinderTokenRoute
   "/c/$token": typeof CTokenRoute
   "/counter/bookings": typeof CounterBookingsRoute
   "/counter/cash": typeof CounterCashRoute
@@ -587,6 +586,7 @@ export interface FileRoutesById {
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
+  "/c/b/$token": typeof CBTokenRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
@@ -634,7 +634,6 @@ export interface FileRouteTypes {
     | "/account/verify"
     | "/account/want-list"
     | "/account/wants"
-    | "/binder/$token"
     | "/c/$token"
     | "/counter/bookings"
     | "/counter/cash"
@@ -657,6 +656,7 @@ export interface FileRouteTypes {
     | "/account/quotes/new"
     | "/account/rewards/$id"
     | "/account/trade-ins/$id"
+    | "/c/b/$token"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
@@ -700,7 +700,6 @@ export interface FileRouteTypes {
     | "/account/verify"
     | "/account/want-list"
     | "/account/wants"
-    | "/binder/$token"
     | "/c/$token"
     | "/counter/bookings"
     | "/counter/cash"
@@ -723,6 +722,7 @@ export interface FileRouteTypes {
     | "/account/quotes/new"
     | "/account/rewards/$id"
     | "/account/trade-ins/$id"
+    | "/c/b/$token"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
@@ -768,7 +768,6 @@ export interface FileRouteTypes {
     | "/account/verify"
     | "/account/want-list"
     | "/account/wants"
-    | "/binder/$token"
     | "/c/$token"
     | "/counter/bookings"
     | "/counter/cash"
@@ -791,6 +790,7 @@ export interface FileRouteTypes {
     | "/account/quotes/new"
     | "/account/rewards/$id"
     | "/account/trade-ins/$id"
+    | "/c/b/$token"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
@@ -825,9 +825,9 @@ export interface RootRouteChildren {
   EstimateRoute: typeof EstimateRoute
   KitRoute: typeof KitRoute
   LoginRoute: typeof LoginRoute
-  BinderTokenRoute: typeof BinderTokenRoute
   CTokenRoute: typeof CTokenRoute
   LabelsPrintRoute: typeof LabelsPrintRoute
+  CBTokenRoute: typeof CBTokenRoute
   PrintReceiptIdRoute: typeof PrintReceiptIdRoute
 }
 
@@ -972,13 +972,6 @@ declare module "@tanstack/react-router" {
       fullPath: "/account/wants"
       preLoaderRoute: typeof AccountWantsRouteImport
       parentRoute: typeof AccountRoute
-    }
-    "/binder/$token": {
-      id: "/binder/$token"
-      path: "/binder/$token"
-      fullPath: "/binder/$token"
-      preLoaderRoute: typeof BinderTokenRouteImport
-      parentRoute: typeof rootRouteImport
     }
     "/c/$token": {
       id: "/c/$token"
@@ -1154,6 +1147,13 @@ declare module "@tanstack/react-router" {
       fullPath: "/account/trade-ins/$id"
       preLoaderRoute: typeof AccountTradeInsIdRouteImport
       parentRoute: typeof AccountRoute
+    }
+    "/c/b/$token": {
+      id: "/c/b/$token"
+      path: "/c/b/$token"
+      fullPath: "/c/b/$token"
+      preLoaderRoute: typeof CBTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     "/counter/customers/": {
       id: "/counter/customers/"
@@ -1434,9 +1434,9 @@ const rootRouteChildren: RootRouteChildren = {
   EstimateRoute: EstimateRoute,
   KitRoute: KitRoute,
   LoginRoute: LoginRoute,
-  BinderTokenRoute: BinderTokenRoute,
   CTokenRoute: CTokenRoute,
   LabelsPrintRoute: LabelsPrintRoute,
+  CBTokenRoute: CBTokenRoute,
   PrintReceiptIdRoute: PrintReceiptIdRoute,
 }
 export const routeTree = rootRouteImport

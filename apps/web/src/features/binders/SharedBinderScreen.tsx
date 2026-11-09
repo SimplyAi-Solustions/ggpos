@@ -35,9 +35,15 @@ export function SharedBinderScreen({ token }: { token: string }) {
   )
   const pockets = React.useMemo(() => data?.pockets ?? [], [data])
   const byId = React.useMemo(() => new Map(pockets.map((p) => [p.id, p])), [pockets])
+  // The share payload carries in_stock true on needed pockets the shop has;
+  // a boolean is all it ever is - no price here either.
+  const inStock = React.useMemo(
+    () => new Set(pockets.filter((p) => p.in_stock).map((p) => p.id)),
+    [pockets]
+  )
   const pages = React.useMemo(
-    () => (layout ? buildPages(pockets, layout, grid, filter) : []),
-    [pockets, layout, grid, filter]
+    () => (layout ? buildPages(pockets, layout, grid, filter, inStock) : []),
+    [pockets, layout, grid, filter, inStock]
   )
   const stats = React.useMemo(
     () => (layout && data ? binderStats(pockets, layout, data.binder.kind) : null),
@@ -66,7 +72,7 @@ export function SharedBinderScreen({ token }: { token: string }) {
           {cells.map((cell, ci) => {
             const c = cell.pocket ? byId.get(cell.pocket.id) : undefined
             return c && layout ? (
-              <Pocket key={c.id} c={c} owned={!!layout.owned[c.id]} compact={compact} />
+              <Pocket key={c.id} c={c} owned={!!layout.owned[c.id]} compact={compact} inStock={inStock.has(c.id)} />
             ) : (
               <EmptyPocket key={`e${i}-${ci}`} />
             )
@@ -82,7 +88,7 @@ export function SharedBinderScreen({ token }: { token: string }) {
   return (
     <div className="bx-root bx-screen bx-shared mx-auto w-full max-w-[1180px] px-5 pt-6 pb-24 sm:px-8">
       <div className="bx-topbar">
-        <Link to="/" className="bx-back" aria-label="GG Vault">
+        <Link to="/account" className="bx-back" aria-label="GG Vault">
           <Wordmark />
         </Link>
         <span className="flex-1" />
@@ -116,11 +122,12 @@ export function SharedBinderScreen({ token }: { token: string }) {
             color={color}
             pages={pageCount(layout, grid)}
             grid={grid}
+            inShop={inStock.size}
           />
           <div className="bx-controls">
             <FilterTabs
               filter={filter}
-              counts={{ all: total, owned, needed: total - owned }}
+              counts={{ all: total, owned, needed: total - owned, instock: inStock.size }}
               onChange={(f) => {
                 setFilter(f)
                 setPage(0)

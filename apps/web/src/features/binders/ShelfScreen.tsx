@@ -9,9 +9,12 @@ import { Lede, PageTitle } from "@/components/ui/page-title"
 import { LoadFailed } from "@/features/portal/LoadFailed"
 import { BinderCover, OpeningStage } from "@/features/binders/BinderObject"
 import { CreateBinderSheet } from "@/features/binders/CreateBinderSheet"
+import { InStockBadge } from "@/features/binders/InStockBadge"
 import {
+  dismissAlert,
   getBinder,
   KINDS,
+  listAlerts,
   listAllPockets,
   listBinders,
   listPockets,
@@ -47,6 +50,20 @@ export function ShelfScreen() {
 
   const binders = useQuery({ queryKey: ["portal", "binders"], queryFn: listBinders })
   const pockets = useQuery({ queryKey: ["portal", "binder-pockets"], queryFn: listAllPockets })
+  // Unread "in stock at GG" alerts. Dismissing one marks it read; a failed
+  // dismiss leaves it on screen, honest, for the next try.
+  const alertsQ = useQuery({ queryKey: ["portal", "binder-alerts"], queryFn: listAlerts })
+  const [dismissing, setDismissing] = React.useState("")
+  async function gotIt(id: string) {
+    setDismissing(id)
+    try {
+      await dismissAlert(id)
+      await alertsQ.refetch()
+    } catch {
+      // Leave the alert showing; the next tap tries again.
+    }
+    setDismissing("")
+  }
 
   const statsById = React.useMemo(() => {
     const by: Record<string, Pick<BinderCard, "owned" | "image" | "slot">[]> = {}
@@ -98,6 +115,20 @@ export function ShelfScreen() {
         Build a binder for a set, a Pokédex, a Pokémon or an artist. Tick cards off as you collect them, and tell the
         shop which ones you want.
       </Lede>
+
+      {(alertsQ.data ?? []).length ? (
+        <div className="bx-alerts mt-8" role="status" aria-label="Stock alerts">
+          {(alertsQ.data ?? []).map((a) => (
+            <div key={a.id} className="bx-alert">
+              <InStockBadge />
+              <p>{a.message}</p>
+              <button type="button" disabled={dismissing === a.id} onClick={() => void gotIt(a.id)}>
+                Got it
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="mt-10">
         <Button type="button" onClick={startNew}>

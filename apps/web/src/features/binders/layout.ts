@@ -89,7 +89,7 @@ export function pageCount(layout: Layout, grid: Grid): number {
   return Math.max(1, Math.ceil(Math.max(layout.minSlots, maxSlot(layout) + 1) / pp))
 }
 
-export type Filter = "all" | "owned" | "needed"
+export type Filter = "all" | "owned" | "needed" | "instock"
 
 export interface Cell<T> {
   /** The pocket's real slot, or -1 for padding on a filtered page. */
@@ -99,14 +99,17 @@ export interface Cell<T> {
 
 /**
  * Lays pockets onto pages. "all" draws the binder as it is, gaps included;
- * "owned" and "needed" draw just those cards, packed in binder order, since
- * a page of mostly empty pockets helps nobody find a card.
+ * "owned", "needed" and "instock" draw just those cards, packed in binder
+ * order, since a page of mostly empty pockets helps nobody find a card.
+ * "instock" is the needed cards the shop has on the shelf; pass the pocket
+ * ids the server flagged as `inStock`.
  */
 export function buildPages<T extends { id: string }>(
   pockets: readonly T[],
   layout: Layout,
   grid: Grid,
-  filter: Filter
+  filter: Filter,
+  inStock?: ReadonlySet<string>
 ): Cell<T>[][] {
   const pp = perPage(grid)
   if (filter === "all") {
@@ -131,7 +134,9 @@ export function buildPages<T extends { id: string }>(
   const list = pockets
     .filter((p) => {
       const s = layout.slots[p.id]
-      return s !== undefined && s >= 0 && !!layout.owned[p.id] === want
+      if (s === undefined || s < 0) return false
+      if (filter === "instock") return !layout.owned[p.id] && !!inStock?.has(p.id)
+      return !!layout.owned[p.id] === want
     })
     .sort((a, b) => layout.slots[a.id] - layout.slots[b.id])
   const pages: Cell<T>[][] = []

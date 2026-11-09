@@ -102,6 +102,18 @@ describe("owned and needed filtering", () => {
     expect(pages).toHaveLength(1)
   })
 
+  it("instock shows only needed cards the shop has, never owned ones", () => {
+    // p1 is owned and flagged: the shelf copy means nothing once collected.
+    const pages = buildPages(pockets, l, "2x2", "instock", new Set(["p1", "p2", "p5"]))
+    expect(pages.flat().filter((c) => c.pocket).map((c) => c.pocket?.id)).toEqual(["p2", "p5"])
+  })
+
+  it("instock with no flags is one empty page", () => {
+    const pages = buildPages(pockets, l, "2x2", "instock", new Set())
+    expect(pages).toHaveLength(1)
+    expect(pages[0].every((c) => c.pocket === null)).toBe(true)
+  })
+
   it("leaves taken-out cards out of every view", () => {
     const out = clearPockets(l, ["p1"])
     expect(buildPages(pockets, out, "2x2", "owned")[0][0].pocket?.id).toBe("p4")

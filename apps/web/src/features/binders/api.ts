@@ -28,6 +28,8 @@ export interface Binder {
   min_slots: number
   share_token: string
   dex_scope: string
+  /** Stock alerts are on unless the customer switched them off. */
+  alerts_off: boolean
 }
 
 export interface BinderCard {
@@ -180,8 +182,52 @@ export async function listPockets(binderId: string): Promise<BinderCard[]> {
   )
 }
 
-export function updateBinder(id: string, patch: { name?: string; owner?: string; color?: string; grid?: Grid }) {
+export function updateBinder(
+  id: string,
+  patch: { name?: string; owner?: string; color?: string; grid?: Grid; alerts_off?: boolean }
+) {
   return pbCustomer.collection("binders").update<Binder>(id, patch)
+}
+
+/**
+ * Which of this binder's needed pockets the shop has on the shelf right
+ * now. The server answers with pocket ids only, nothing about the item.
+ */
+export async function getAvailability(binderId: string): Promise<ReadonlySet<string>> {
+  const r = stripPrices(
+    await pbCustomer.send<{ in_stock: string[] }>(
+      `/api/vault/binder-availability/${encodeURIComponent(binderId)}`,
+      {}
+    )
+  )
+  return new Set(r.in_stock ?? [])
+}
+
+export interface BinderAlert {
+  id: string
+  card_id: string
+  card_name: string
+  binder: string
+  binder_name: string
+  message: string
+  read_at: string
+  created: string
+}
+
+/** Unread "in stock at GG" alerts, newest first. */
+export async function listAlerts(): Promise<BinderAlert[]> {
+  return stripPrices(
+    await pbCustomer.collection("binder_alerts").getFullList<BinderAlert>({
+      filter: "read_at = ''",
+      fields: "id,card_id,card_name,binder,binder_name,message,read_at,created",
+      sort: "-created",
+      batch: 200,
+    })
+  )
+}
+
+export function dismissAlert(id: string) {
+  return pbCustomer.collection("binder_alerts").update(id, { read_at: new Date().toISOString() })
 }
 
 export function deleteBinder(id: string) {
@@ -204,8 +250,10 @@ export function unshareBinder(binderId: string): Promise<{ token: string }> {
   return pbCustomer.send(`/api/vault/binders/${encodeURIComponent(binderId)}/share`, { method: "DELETE" })
 }
 
+// Share links live under /c/ so the PocketBase app shell
+// (pb/pb_hooks/appshell.pb.js) serves the customer page for them.
 export const shareUrl = (token: string) =>
-  `${typeof window === "undefined" ? "" : window.location.origin}/binder/${encodeURIComponent(token)}`
+  `${typeof window === "undefined" ? "" : window.location.origin}/c/b/${encodeURIComponent(token)}`
 
 export async function listWanted(): Promise<WantedRequest[]> {
   return stripPrices(
@@ -227,7 +275,7 @@ export function cancelWanted(id: string): Promise<{ id: string; status: string }
 
 export interface SharedBinder {
   binder: Pick<Binder, "name" | "kind" | "query_label" | "color" | "cover" | "logo" | "grid" | "min_slots">
-  pockets: Omit<BinderCard, "binder" | "manual">[]
+  pockets: (Omit<BinderCard, "binder" | "manual"> & { in_stock?: boolean })[]
 }
 
 /** The public share view. No session needed; the token is the key. */
