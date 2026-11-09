@@ -203,6 +203,7 @@ describe("getDeal", () => {
         getFullList: [
           { id: "l1", trade_in: "d1", card: "card1", game: "g_pokemon", finish: "holo", condition: "LP", qty: 1, market_price: 27873, trade_pct: 90, cash_pct: null, created: "x", expand: { card: { id: "card1", game: "g_pokemon", name: "Charizard", number: "4/102", expand: { set: { name: "Base Set" } } } } },
           { id: "l2", trade_in: "d1", kind: "retro", game: "g_retro", free_text_title: "Pokemon Yellow", qty: 1, market_price: 6499, created: "x" },
+          { id: "l3", trade_in: "d1", card: "card2", game: "g_pokemon", condition: "NM", qty: 1, market_price: 0, created: "x" },
         ],
       },
     })
@@ -217,6 +218,7 @@ describe("getDeal", () => {
     })
     expect(draft!.lines[0]).toMatchObject({ kind: "card", name: "Charizard", setName: "Base Set", condition: "LP", manualMarket: 27873, tradePct: 90 })
     expect(draft!.lines[0]).not.toHaveProperty("cashPct")
+    expect(draft!.lines[2]).toMatchObject({ kind: "card", manualMarket: null })
     expect(draft!.lines[1]).toMatchObject({ kind: "custom", category: "retro", game: "retro", name: "Pokemon Yellow" })
   })
 

@@ -16,13 +16,15 @@ import { CompleteSheet } from "./components/CompleteSheet"
 import { ReviewSheet } from "./components/ReviewSheet"
 import { TotalsBar } from "./components/TotalsBar"
 import { customLine, draftPayout, itemCount, linePriced, priceDraft } from "./state"
-import { CONDITIONS, type CompletionResult, type Condition, type DealDraft } from "./types"
+import { addScannedCards, parseScanAdds } from "./scan-adds"
+import type { CompletionResult, DealDraft } from "./types"
 import { useDealBuilder, type SaveState } from "./useDealBuilder"
 
 type SheetName = "search" | "custom" | "review" | "complete" | "customer" | "delete" | null
 
+/** Cards sent by Scan: the raw ?add= and ?condition= lists (see scan-adds.ts). */
 export interface AddFromScan {
-  cardId: string
+  add: string
   condition?: string
 }
 
@@ -47,28 +49,34 @@ export function DealBuilder({
 
   const canReview = draft.lines.length > 0 && draft.lines.every(linePriced)
 
-  // A card from Scan: add it once, then drop the search params so a reload does not add it again.
+  // Cards from Scan: add them once, then drop the search params so a reload does not add them again.
   const scanned = React.useRef<string | null>(null)
   React.useEffect(() => {
-    const cardId = addFromScan?.cardId
-    if (!cardId || scanned.current === cardId) return
-    scanned.current = cardId
-    const condition = (CONDITIONS as readonly string[]).includes(String(addFromScan?.condition).toUpperCase())
-      ? (String(addFromScan?.condition).toUpperCase() as Condition)
-      : "NM"
-    api
-      .getCard(cardId)
-      .then((hit) => {
-        if (!hit) {
-          toast({ message: "That card is not in the catalogue. Search for it or add it as a custom item.", tone: "alert" })
-          return
+    if (!addFromScan?.add) return
+    const key = `${addFromScan.add}|${addFromScan.condition ?? ""}`
+    if (scanned.current === key) return
+    scanned.current = key
+    const adds = parseScanAdds(addFromScan.add, addFromScan.condition)
+    void addScannedCards(adds, api.getCard, addCard)
+      .then((outcome) => {
+        if (outcome.added > 0) {
+          toast(outcome.onlyName ? `${outcome.onlyName} added.` : `${outcome.added} cards added.`)
         }
-        addCard(hit, hit.finishes[0] ?? "", condition)
-        toast(`${hit.name} added.`)
+        if (outcome.missing > 0) {
+          toast({
+            message: `${outcome.missing === 1 ? "One card is" : `${outcome.missing} cards are`} not in the catalogue. Search for ${outcome.missing === 1 ? "it" : "them"} or add a custom item.`,
+            tone: "alert",
+          })
+        }
+        if (outcome.failed > 0) {
+          toast({
+            message: `${outcome.failed === 1 ? "One scanned card" : `${outcome.failed} scanned cards`} did not load. ${api.explain(outcome.error, "Search for them instead.")}`,
+            tone: "alert",
+          })
+        }
       })
-      .catch((error) => toast({ message: api.explain(error, "The scanned card did not load. Search for it instead."), tone: "alert" }))
       .finally(() => {
-        void navigate({ to: "/deals/$id", params: { id: draft.id }, search: {} as never, replace: true })
+        void navigate({ to: "/deals/$id", params: { id: draft.id }, search: {}, replace: true })
       })
   }, [addFromScan, addCard, draft.id, navigate, toast])
 

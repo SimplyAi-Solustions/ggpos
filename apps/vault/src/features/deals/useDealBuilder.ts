@@ -105,10 +105,11 @@ export function useDealBuilder(initial: DealDraft) {
   }, [])
 
   const addCard = React.useCallback(
-    (hit: CardHit, variant: string, condition: Condition = "NM") => {
+    (hit: CardHit, variant: string, condition: Condition = "NM", qty = 1) => {
       const line = cardLineFromHit(hit, variant)
       dispatch({ type: "addLine", line })
       if (condition !== "NM") dispatch({ type: "setCondition", lineId: line.id, condition })
+      if (qty > 1) dispatch({ type: "setQty", lineId: line.id, qty })
       loadPrices(line.id, hit.id, variant)
     },
     [loadPrices]

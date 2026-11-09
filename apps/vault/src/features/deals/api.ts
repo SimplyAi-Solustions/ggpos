@@ -438,8 +438,9 @@ async function toLine(row: LineRow): Promise<DraftLine> {
       condition: (row.condition || "NM") as Condition,
       prices: {},
       // Fresh prices load when the builder opens; the stored value holds until then.
+      // A card stored at 0 was never priced, so it comes back unpriced, not "typed £0.00".
       priceStatus: "loading",
-      manualMarket: row.market_price ?? 0,
+      manualMarket: row.market_price && row.market_price > 0 ? row.market_price : null,
       qty: Math.max(1, row.qty ?? 1),
       ...rates,
     }

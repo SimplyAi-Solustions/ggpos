@@ -1,11 +1,12 @@
 import * as React from "react"
-import { useQuery } from "@tanstack/react-query"
-import { Link } from "@tanstack/react-router"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { ChevronRight, Handshake, Plus } from "lucide-react"
 
 import { Badge, Button, buttonClasses, EmptyState, Money, PageHeader, Segmented, Skeleton } from "@/ui"
 
-import { explain, listDeals } from "./api"
+import { createDeal, explain, listDeals } from "./api"
+import type { AddFromScan } from "./DealBuilder"
 import { formatUpdated } from "./format"
 import { itemCount, priceDraft } from "./state"
 import type { DealDraft } from "./types"
@@ -18,7 +19,73 @@ const TABS: ReadonlyArray<{ value: Tab; label: string }> = [
   { value: "all", label: "All" },
 ]
 
-export function DealsPage() {
+export function DealsPage({ addFromScan }: { addFromScan?: AddFromScan } = {}) {
+  if (addFromScan?.add) return <NewDealFromScan addFromScan={addFromScan} />
+  return <DealsList />
+}
+
+/**
+ * Scan sent cards with no deal open (or the batch tray's "Add all to deal"):
+ * a new draft takes them. The builder adds the cards and clears the params.
+ */
+function NewDealFromScan({ addFromScan }: { addFromScan: AddFromScan }) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [error, setError] = React.useState<string | null>(null)
+  const [attempt, setAttempt] = React.useState(0)
+  const started = React.useRef(-1)
+
+  React.useEffect(() => {
+    if (started.current === attempt) return
+    started.current = attempt
+    createDeal()
+      .then((draft) => {
+        queryClient.setQueryData(["deals", "one", draft.id], draft)
+        void queryClient.invalidateQueries({ queryKey: ["deals", "list"] })
+        void navigate({
+          to: "/deals/$id",
+          params: { id: draft.id },
+          search: { add: addFromScan.add, condition: addFromScan.condition },
+          replace: true,
+        })
+      })
+      .catch((err) => setError(explain(err, "The new deal was not created. Try again.")))
+  }, [attempt, addFromScan, navigate, queryClient])
+
+  if (error) {
+    return (
+      <EmptyState
+        icon={<Handshake aria-hidden />}
+        title="No new deal"
+        action={
+          <div className="flex gap-2">
+            <Link to="/deals" search={{}} className={buttonClasses("secondary")}>
+              Back to deals
+            </Link>
+            <Button
+              onClick={() => {
+                setError(null)
+                setAttempt((n) => n + 1)
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        }
+      >
+        {error}
+      </EmptyState>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-4" aria-busy="true" aria-label="Starting a new deal for the scanned cards">
+      <Skeleton className="h-10 w-2/3" />
+      <Skeleton className="h-20" />
+    </div>
+  )
+}
+
+function DealsList() {
   const [tab, setTab] = React.useState<Tab>("open")
   const deals = useQuery({ queryKey: ["deals", "list"], queryFn: listDeals, staleTime: 0, refetchOnMount: "always" })
 
