@@ -12,48 +12,74 @@ import { CustomItemSheet } from "./components/CustomItemSheet"
 import { DealLineRow } from "./components/DealLineRow"
 import { FinalOverridePanel } from "./components/FinalOverridePanel"
 import { RateControl } from "./components/RateControl"
+import { CompleteSheet } from "./components/CompleteSheet"
 import { ReviewSheet } from "./components/ReviewSheet"
 import { TotalsBar } from "./components/TotalsBar"
-import { customLine, dealReducer, itemCount, linePriced, priceDraft } from "./state"
-import type { DealDraft } from "./types"
+import { customLine, draftPayout, itemCount, linePriced, priceDraft } from "./state"
+import { CONDITIONS, type CompletionResult, type Condition, type DealDraft } from "./types"
 import { useDealBuilder, type SaveState } from "./useDealBuilder"
 
-type SheetName = "search" | "custom" | "review" | "customer" | "delete" | null
+type SheetName = "search" | "custom" | "review" | "complete" | "customer" | "delete" | null
+
+export interface AddFromScan {
+  cardId: string
+  condition?: string
+}
 
 /** The deal builder: rates, lines, the final figure and review. Phone first. */
-export function DealBuilder({ initial }: { initial: DealDraft }) {
-  const { draft, dispatch, saveState, addCard, retryPrices } = useDealBuilder(initial)
+export function DealBuilder({
+  initial,
+  addFromScan,
+  onCompleted,
+}: {
+  initial: DealDraft
+  /** A card the Scan screen sent over (?add=<cardId>&condition=NM). */
+  addFromScan?: AddFromScan
+  onCompleted: (result: CompletionResult) => void
+}) {
+  const { draft, dispatch, saveState, saveError, flush, addCard, retryPrices } = useDealBuilder(initial)
   const deal = React.useMemo(() => priceDraft(draft), [draft])
+  const payout = React.useMemo(() => draftPayout(draft, deal), [draft, deal])
   const [sheet, setSheet] = React.useState<SheetName>(null)
-  const [completing, setCompleting] = React.useState(false)
-  const [completeError, setCompleteError] = React.useState<string | null>(null)
   const navigate = useNavigate()
   const toast = useToast()
   const close = React.useCallback(() => setSheet(null), [])
 
   const canReview = draft.lines.length > 0 && draft.lines.every(linePriced)
 
-  const complete = async () => {
-    setCompleting(true)
-    setCompleteError(null)
-    try {
-      const done = dealReducer(draft, { type: "complete", at: new Date().toISOString() })
-      const saved = await api.completeDeal(done)
-      dispatch({ type: "load", draft: saved })
-      setSheet(null)
-      toast({ message: "Deal completed.", tone: "ok" })
-      void navigate({ to: "/deals" })
-    } catch (error) {
-      setCompleteError(error instanceof Error ? error.message : "The deal did not complete. Try again.")
-    } finally {
-      setCompleting(false)
-    }
-  }
+  // A card from Scan: add it once, then drop the search params so a reload does not add it again.
+  const scanned = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    const cardId = addFromScan?.cardId
+    if (!cardId || scanned.current === cardId) return
+    scanned.current = cardId
+    const condition = (CONDITIONS as readonly string[]).includes(String(addFromScan?.condition).toUpperCase())
+      ? (String(addFromScan?.condition).toUpperCase() as Condition)
+      : "NM"
+    api
+      .getCard(cardId)
+      .then((hit) => {
+        if (!hit) {
+          toast({ message: "That card is not in the catalogue. Search for it or add it as a custom item.", tone: "alert" })
+          return
+        }
+        addCard(hit, hit.finishes[0] ?? "", condition)
+        toast(`${hit.name} added.`)
+      })
+      .catch((error) => toast({ message: api.explain(error, "The scanned card did not load. Search for it instead."), tone: "alert" }))
+      .finally(() => {
+        void navigate({ to: "/deals/$id", params: { id: draft.id }, search: {} as never, replace: true })
+      })
+  }, [addFromScan, addCard, draft.id, navigate, toast])
 
   const remove = async () => {
-    await api.deleteDeal(draft.id)
-    toast("Draft deleted.")
-    void navigate({ to: "/deals" })
+    try {
+      await api.deleteDeal(draft.id)
+      toast("Draft deleted.")
+      void navigate({ to: "/deals" })
+    } catch (error) {
+      toast({ message: api.explain(error, "The draft was not deleted. Try again."), tone: "alert" })
+    }
   }
 
   return (
@@ -64,7 +90,7 @@ export function DealBuilder({ initial }: { initial: DealDraft }) {
           Deals
         </Link>
         <div className="flex items-center gap-1">
-          <SaveIndicator state={saveState} />
+          <SaveIndicator state={saveState} message={saveError} />
           <IconButton label="Show customer" size="sm" onClick={() => setSheet("customer")} disabled={!draft.lines.length}>
             <QrCode aria-hidden />
           </IconButton>
@@ -75,6 +101,11 @@ export function DealBuilder({ initial }: { initial: DealDraft }) {
       </div>
 
       <DealName name={draft.name} onChange={(name) => dispatch({ type: "rename", name })} />
+      {saveState === "error" && saveError && (
+        <p className="mb-2 rounded-md border border-pop/50 px-3 py-2 text-sm text-pop-text" role="alert">
+          Not saved. {saveError}
+        </p>
+      )}
 
       <div className="sticky top-[calc(56px+var(--safe-top))] z-20 -mx-4 border-b border-line bg-bg/85 px-4 pt-2 pb-3 backdrop-blur-md md:-mx-6 md:px-6">
         <div className="flex gap-3">
@@ -153,9 +184,20 @@ export function DealBuilder({ initial }: { initial: DealDraft }) {
         draft={draft}
         deal={deal}
         dispatch={dispatch}
-        onComplete={complete}
-        completing={completing}
-        error={completeError}
+        onContinue={() => setSheet("complete")}
+      />
+      <CompleteSheet
+        open={sheet === "complete"}
+        onClose={() => setSheet("review")}
+        draft={draft}
+        deal={deal}
+        payout={payout}
+        onSeller={(seller) => dispatch({ type: "setSeller", seller })}
+        flush={flush}
+        onDone={(result) => {
+          setSheet(null)
+          onCompleted(result)
+        }}
       />
       <CustomerViewSheet open={sheet === "customer"} onClose={close} draft={draft} deal={deal} />
       <Sheet
@@ -178,9 +220,14 @@ export function DealBuilder({ initial }: { initial: DealDraft }) {
   )
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
+function SaveIndicator({ state, message }: { state: SaveState; message: string | null }) {
   return (
-    <span className="label-mono mr-1 flex items-center gap-1 text-fg-3" role="status" aria-live="polite">
+    <span
+      className="label-mono mr-1 flex items-center gap-1 text-fg-3"
+      role="status"
+      aria-live="polite"
+      title={state === "error" ? (message ?? undefined) : undefined}
+    >
       {state === "saving" && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
       {state === "saved" && <Check className="size-3.5 text-ok" aria-hidden />}
       {state === "error" && <CloudOff className="size-3.5 text-pop-text" aria-hidden />}

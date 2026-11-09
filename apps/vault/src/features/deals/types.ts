@@ -42,7 +42,7 @@ export interface CardHit {
 export type CustomCategory = "retro" | "comic" | "sealed" | "other"
 
 export const CUSTOM_CATEGORIES: ReadonlyArray<{ value: CustomCategory; label: string }> = [
-  { value: "retro", label: "Retro game" },
+  { value: "retro", label: "Retro" },
   { value: "comic", label: "Comic" },
   { value: "sealed", label: "Sealed" },
   { value: "other", label: "Other" },
@@ -60,6 +60,7 @@ interface LineBase {
 export interface CardLine extends LineBase {
   kind: "card"
   cardId: string
+  /** A `games` record id, or a game key ("pokemon") that the api resolves. */
   game: string
   setName: string
   setCode: string
@@ -71,13 +72,18 @@ export interface CardLine extends LineBase {
   prices: ConditionPrices
   /** "loading" while the price call runs, "error" if it failed. */
   priceStatus: "loading" | "ready" | "error"
-  /** A value typed by staff when the condition has no price. Per unit. */
+  /**
+   * A value typed by staff when the condition has no price, or the value the
+   * server stored, used until fresh prices load. Per unit.
+   */
   manualMarket: number | null
 }
 
 export interface CustomLine extends LineBase {
   kind: "custom"
   category: CustomCategory
+  /** The game key the item is stocked under: "retro", "other" or a TCG for sealed. */
+  game: string
   /** Typed by staff. Per unit, pence. */
   manualMarket: number | null
 }
@@ -90,8 +96,19 @@ export interface DealPayoutChoice {
   cashTaken: number
 }
 
+/** The seller on a deal: a `customers` record. */
+export interface Seller {
+  id: string
+  name: string
+  code: string
+  phone: string
+  email: string
+}
+
 export interface CompletedSnapshot {
   at: string
+  /** GG-BI-000123, assigned by the server on completion. */
+  number: string
   payout: DealPayout
   market: number
   trade: number
@@ -113,5 +130,19 @@ export interface DealDraft {
   overrides: DealOverrides
   payout: DealPayoutChoice
   note: string
+  seller: Seller | null
   completed: CompletedSnapshot | null
+}
+
+/** What POST /api/vault/deals/{id}/complete gives back. */
+export interface CompletionResult {
+  tradeIn: {
+    id: string
+    number: string
+    payoutType: "cash" | "credit" | "mixed"
+    cashTaken: number
+    creditGiven: number
+  }
+  items: Array<{ id: string; sku: string; title: string }>
+  labelsQueued: number
 }

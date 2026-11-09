@@ -45,6 +45,10 @@ function pricedCard(id: string, nm: number, lp: number | null = null): CardLine 
 }
 
 describe("a new draft", () => {
+  it("gets a PocketBase-shaped id", () => {
+    expect(newDraft().id).toMatch(/^[a-z0-9]{15}$/)
+  })
+
   it("defaults to 80% trade and 70% cash, credit payout, no lines", () => {
     const draft = newDraft("d1", new Date("2026-11-09T14:05:00Z"))
     expect(draft.rates).toEqual({ tradePct: 80, cashPct: 70 })
@@ -63,16 +67,16 @@ describe("dealReducer", () => {
     expect(deal.cash).toBe(36257)
   })
 
-  it("moves both totals with the sweep steppers and clamps to 0 to 100", () => {
+  it("moves both totals with the sweep steppers and clamps to 0 to 200", () => {
     const draft = run(
       newDraft("d"),
       { type: "addLine", line: pricedCard("a", 10000) },
       { type: "setRate", side: "trade", pct: 90 },
-      { type: "setRate", side: "cash", pct: 150 }
+      { type: "setRate", side: "cash", pct: 250 }
     )
-    expect(draft.rates).toEqual({ tradePct: 90, cashPct: 100 })
+    expect(draft.rates).toEqual({ tradePct: 90, cashPct: 200 })
     expect(priceDraft(draft).trade).toBe(9000)
-    expect(priceDraft(draft).cash).toBe(10000)
+    expect(priceDraft(draft).cash).toBe(20000)
   })
 
   it("lets one card carry its own rate and keeps it when the sweep moves, then resets it", () => {
@@ -136,7 +140,9 @@ describe("dealReducer", () => {
       type: "addLine",
       line: customLine({ name: " Pokemon Yellow ", category: "retro", marketPence: 6499, qty: 1 }, "x"),
     })
-    expect(draft.lines[0]!.name).toBe("Pokemon Yellow")
+    expect(draft.lines[0]).toMatchObject({ name: "Pokemon Yellow", game: "retro" })
+    expect(customLine({ name: "ETB", category: "sealed", marketPence: 1, qty: 1, game: "pokemon" }).game).toBe("pokemon")
+    expect(customLine({ name: "Beano 1", category: "comic", marketPence: 1, qty: 1 }).game).toBe("other")
     expect(priceDraft(draft)).toMatchObject({ trade: 5199, cash: 4549 })
   })
 
@@ -204,22 +210,33 @@ describe("payout", () => {
     expect(needsIdCheck(draftPayout(base, priceDraft(base)))).toBe(false)
   })
 
-  it("records the payout and the override on completion, and then refuses edits", () => {
-    let draft = run(
-      base,
-      { type: "setOverride", side: "trade", override: { kind: "amount", pence: 9500 } },
-      { type: "complete", at: "2026-11-09T15:00:00.000Z" }
+  it("trims the credit by the penny payoutLines cannot place, as the server checks it", () => {
+    // Two lines of 3 units: £1.01 x 3 and £1.00 x 3 at 100% trade, overridden to £6.04.
+    const draft = run(
+      newDraft("d"),
+      { type: "addLine", line: { ...pricedCard("a", 101), qty: 3 } },
+      { type: "addLine", line: { ...pricedCard("b", 100), qty: 3 } },
+      { type: "setRate", side: "trade", pct: 100 },
+      { type: "setOverride", side: "trade", override: { kind: "amount", pence: 605 } }
     )
-    expect(draft.status).toBe("completed")
-    expect(draft.completed).toMatchObject({
-      payout: { type: "credit", cash: 0, credit: 9500 },
-      trade: 9500,
-      calculatedTrade: 10000,
-      tradeOverridden: true,
-    })
-    const before = draft
-    draft = dealReducer(draft, { type: "setRate", side: "trade", pct: 50 })
-    expect(draft).toBe(before)
+    const deal = priceDraft(draft)
+    const payout = draftPayout(draft, deal)
+    expect(payout.type).toBe("credit")
+    // Whatever the lines could carry, the payout never claims more than they add up to.
+    expect(payout.credit).toBeLessThanOrEqual(deal.trade)
+    expect(payout.credit % 3).toBe(0)
+  })
+
+  it("keeps the seller on the draft", () => {
+    const seller = { id: "cust1", name: "Sam Hill", code: "GGC1", phone: "", email: "" }
+    const draft = run(base, { type: "setSeller", seller })
+    expect(draft.seller).toEqual(seller)
+    expect(run(draft, { type: "setSeller", seller: null }).seller).toBeNull()
+  })
+
+  it("refuses edits to a completed deal", () => {
+    const done = { ...base, status: "completed" as const }
+    expect(dealReducer(done, { type: "setRate", side: "trade", pct: 50 })).toBe(done)
   })
 })
 
