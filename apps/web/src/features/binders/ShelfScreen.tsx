@@ -2,7 +2,7 @@ import * as React from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
-import { PlusIcon } from "lucide-react"
+import { MoonIcon, PlusIcon, SunIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Lede, PageTitle } from "@/components/ui/page-title"
@@ -20,6 +20,7 @@ import {
   type BinderCard,
   type BinderStats,
 } from "@/features/binders/api"
+import { useBinderTheme } from "@/features/binders/theme"
 import "@/features/binders/binders.css"
 
 /**
@@ -30,6 +31,7 @@ import "@/features/binders/binders.css"
 export function ShelfScreen() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [theme, toggleTheme] = useBinderTheme()
   const [creating, setCreating] = React.useState(false)
   // Bumped on every open, so the create sheet always starts at step one.
   const [run, setRun] = React.useState(0)
@@ -47,7 +49,7 @@ export function ShelfScreen() {
   const pockets = useQuery({ queryKey: ["portal", "binder-pockets"], queryFn: listAllPockets })
 
   const statsById = React.useMemo(() => {
-    const by: Record<string, Pick<BinderCard, "owned" | "image">[]> = {}
+    const by: Record<string, Pick<BinderCard, "owned" | "image" | "slot">[]> = {}
     for (const p of pockets.data ?? []) (by[p.binder] ??= []).push(p)
     const out: Record<string, BinderStats> = {}
     for (const id in by) out[id] = statsFor(by[id])
@@ -64,7 +66,7 @@ export function ShelfScreen() {
     void queryClient.invalidateQueries({ queryKey: ["portal", "binder-pockets"] })
     try {
       const [b, cards] = await Promise.all([getBinder(id), listPockets(id)])
-      setStage({ binder: b, stats: statsFor(cards), preview: cards.slice(0, 9) })
+      setStage({ binder: b, stats: statsFor(cards), preview: cards.slice(0, 9).map((c) => ({ image: c.image || c.sprite, owned: c.owned })) })
     } catch {
       void navigate({ to: "/account/binders/$id", params: { id } })
     }
@@ -84,9 +86,18 @@ export function ShelfScreen() {
   }
 
   return (
-    <div className="bx-root pt-16 sm:pt-24">
+    <div className="bx-root bx-screen pt-16 sm:pt-24">
+      <div className="bx-topbar">
+        <span className="flex-1" />
+        <button type="button" className="bx-icon" onClick={toggleTheme} aria-label={theme === "dark" ? "Light pages" : "Dark pages"}>
+          {theme === "dark" ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
+        </button>
+      </div>
       <PageTitle>Binders</PageTitle>
-      <Lede>Build a binder for a set, a Pokémon or an artist, and tick cards off as you collect them.</Lede>
+      <Lede>
+        Build a binder for a set, a Pokédex, a Pokémon or an artist. Tick cards off as you collect them, and tell the
+        shop which ones you want.
+      </Lede>
 
       <div className="mt-10">
         <Button type="button" onClick={startNew}>
@@ -126,7 +137,7 @@ export function ShelfScreen() {
                   <PlusIcon size={22} />
                 </span>
                 <b>New binder</b>
-                <small>A Pokémon, a set, an artist, or your own picks</small>
+                <small>A set, a Pokédex, a Pokémon, an artist, or empty</small>
               </button>
             </div>
           ) : null}
