@@ -10,13 +10,11 @@ import {
   CircleDashedIcon,
   FilePlusIcon,
   FileXIcon,
-  MoonIcon,
   MoveIcon,
   PlusIcon,
   Redo2Icon,
   Settings2Icon,
   Share2Icon,
-  SunIcon,
   Trash2Icon,
   Undo2Icon,
   XIcon,
@@ -67,10 +65,11 @@ import {
   type Layout,
 } from "@/features/binders/layout"
 import { BookView } from "@/features/binders/BookView"
+import { CardDetailSheet, type DetailItem } from "@/features/binders/CardDetail"
 import { EmptyPocket, Pocket } from "@/features/binders/Pocket"
 import { FilterTabs, GridSwitch, PageNav, StatTiles } from "@/features/binders/BinderParts"
 import { AddCardSheet, SettingsSheet, ShareSheet } from "@/features/binders/BinderSheets"
-import { useBinderTheme, usePrefersReducedMotion, useWide } from "@/features/binders/theme"
+import { usePrefersReducedMotion, useWide } from "@/features/binders/theme"
 import "@/features/binders/binders.css"
 
 const SAVE_FAILED = "Could not save that change. Check your connection; the binder has been reloaded as it was last saved."
@@ -78,7 +77,6 @@ const SAVE_FAILED = "Could not save that change. Check your connection; the bind
 export function BinderScreen({ id }: { id: string }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [theme, toggleTheme] = useBinderTheme()
   const reduced = usePrefersReducedMotion()
   const wide = useWide()
 
@@ -122,6 +120,7 @@ export function BinderScreen({ id }: { id: string }) {
   const [saving, setSaving] = React.useState(0)
   const [wantBusy, setWantBusy] = React.useState("")
   const [sheet, setSheet] = React.useState<null | "add" | "settings" | "share">(null)
+  const [inspect, setInspect] = React.useState<number | null>(null)
   const [addSlot, setAddSlot] = React.useState<number | undefined>(undefined)
   const [sheetRun, setSheetRun] = React.useState(0)
   const saveChain = React.useRef<Promise<void>>(Promise.resolve())
@@ -176,6 +175,37 @@ export function BinderScreen({ id }: { id: string }) {
         : 0,
     [all, layout, wantedByCard]
   )
+
+  // The magnifier walks the pockets in page order, under the current filter.
+  const detailItems = React.useMemo<DetailItem[]>(() => {
+    if (!layout) return []
+    const out: DetailItem[] = []
+    for (const cells of pages) {
+      for (const cell of cells) {
+        const c = cell.pocket ? byId.get(cell.pocket.id) : undefined
+        if (!c) continue
+        out.push({
+          id: c.id,
+          card_id: c.card_id,
+          name: c.name,
+          number: c.number,
+          set_name: c.set_name,
+          set_total: c.set_total,
+          image: c.image,
+          sprite: c.sprite,
+          owned: !!layout.owned[c.id],
+          wanted: wantedByCard.has(c.card_id),
+          inStock: inStock.has(c.id),
+        })
+      }
+    }
+    return out
+  }, [pages, byId, layout, inStock, wantedByCard])
+  const detailIndexById = React.useMemo(() => {
+    const m = new Map<string, number>()
+    detailItems.forEach((it, i) => m.set(it.id, i))
+    return m
+  }, [detailItems])
 
   function refreshShelf() {
     void queryClient.invalidateQueries({ queryKey: ["portal", "binders"] })
@@ -434,6 +464,7 @@ export function BinderScreen({ id }: { id: string }) {
                 inStock={inStock.has(c.id)}
                 onTap={live ? () => tapPocket(c) : undefined}
                 onWant={live ? () => void toggleWant(c) : undefined}
+                onInspect={live ? () => setInspect(detailIndexById.get(c.id) ?? null) : undefined}
               />
             )
           })}
@@ -485,9 +516,6 @@ export function BinderScreen({ id }: { id: string }) {
           All binders
         </Link>
         <span className="flex-1" />
-        <button type="button" className="bx-icon" onClick={toggleTheme} aria-label={theme === "dark" ? "Light pages" : "Dark pages"}>
-          {theme === "dark" ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
-        </button>
         <button
           type="button"
           className="bx-icon"
@@ -654,6 +682,26 @@ export function BinderScreen({ id }: { id: string }) {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      <CardDetailSheet
+        open={inspect !== null}
+        onOpenChange={(o) => setInspect(o ? inspect : null)}
+        items={detailItems}
+        index={Math.min(inspect ?? 0, Math.max(0, detailItems.length - 1))}
+        onIndex={setInspect}
+        color={color}
+        canCreate
+        linkArtist
+        wantBusy={!!wantBusy}
+        onToggleOwned={(it) => {
+          const c = byId.get(it.id)
+          if (c && !selecting && !moving) tapPocket(c)
+        }}
+        onToggleWant={(it) => {
+          const c = byId.get(it.id)
+          if (c) void toggleWant(c)
+        }}
+      />
 
       {b ? (
         <>

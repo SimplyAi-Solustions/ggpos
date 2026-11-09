@@ -1,6 +1,6 @@
 import * as React from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { BookmarkCheckIcon, BookmarkPlusIcon, CheckIcon, LayersIcon, PlusIcon } from "lucide-react"
+import { BookmarkCheckIcon, BookmarkPlusIcon, CheckIcon, LayersIcon, PlusIcon, SearchIcon } from "lucide-react"
 
 import { img, type BinderCard } from "@/features/binders/api"
 import { InStockBadge } from "@/features/binders/InStockBadge"
@@ -88,6 +88,7 @@ export function Pocket({
   inStock = false,
   onTap,
   onWant,
+  onInspect,
 }: {
   c: PocketCard
   owned: boolean
@@ -102,6 +103,8 @@ export function Pocket({
   inStock?: boolean
   onTap?: () => void
   onWant?: () => void
+  /** Opens the magnifier for this card. */
+  onInspect?: () => void
 }) {
   const [broken, setBroken] = React.useState(false)
   const total = c.set_total && /^\d+$/.test(c.number) ? `/${c.set_total}` : ""
@@ -185,6 +188,11 @@ export function Pocket({
         {wanted && !owned ? <span className="bx-ribbon">Wanted</span> : null}
         {inShop ? <InStockBadge /> : null}
       </Tag>
+      {onInspect && !selecting && !target ? (
+        <button type="button" className="bx-find" onClick={onInspect} aria-label={`Look closer at ${c.name}`}>
+          <SearchIcon aria-hidden="true" />
+        </button>
+      ) : null}
       {onWant && !owned && !selecting ? (
         <button
           type="button"

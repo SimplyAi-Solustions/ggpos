@@ -680,6 +680,103 @@ routerAdd(
   $apis.requireAuth("staff")
 );
 
+// The magnifier's card detail: identity and gameplay from TCGdex, mapped
+// through a whitelist (lib/binders_detail.js) so the pricing TCGdex sends on
+// the same object can never leave. Public: the share page uses it too, and
+// everything in it is public catalogue data. Cached a day per card.
+routerAdd("GET", "/api/vault/binders/card/{id}", (e) => {
+  const L = require(`${__hooks}/lib/binders.js`);
+  const V = require(`${__hooks}/lib/binders_v2.js`);
+  const D = require(`${__hooks}/lib/binders_detail.js`);
+  const id = String(e.request.pathValue("id") || "");
+  if (!D.validCardId(id)) throw new NotFoundError("That card does not exist.");
+
+  const cached = (function () {
+    try {
+      const raw = $app.store().get("ggbind:card:" + id);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      return Date.now() - o.at > 24 * 3600 * 1000 ? null : o.v;
+    } catch (err) {
+      return null;
+    }
+  })();
+  if (cached) {
+    e.response.header().set("Cache-Control", "public, max-age=3600");
+    return e.json(200, cached);
+  }
+
+  let raw;
+  try {
+    raw = L.getJSON(L.TCG + "/cards/" + encodeURIComponent(id), 20);
+  } catch (err) {
+    return e.json(502, { message: "The card catalogue is not answering. Try again in a minute." });
+  }
+  const st = L.setMap()[L.setIdOf(id)] || null;
+  // The release date lives on the set detail; fetch it once per set.
+  let releaseDate = "";
+  const sid = (st && st.id) || (raw.set && raw.set.id) || "";
+  if (sid) {
+    try {
+      const hitRaw = $app.store().get("ggbind:setdate:" + sid);
+      const hit = hitRaw ? JSON.parse(hitRaw) : null;
+      if (hit && Date.now() - hit.at <= 7 * 86400 * 1000) {
+        releaseDate = hit.v;
+      } else {
+        releaseDate = String(L.getJSON(L.TCG + "/sets/" + encodeURIComponent(sid), 15).releaseDate || "");
+        $app.store().set("ggbind:setdate:" + sid, JSON.stringify({ at: Date.now(), v: releaseDate }));
+      }
+    } catch (err) {
+      // No date is fine; the sheet just leaves the line out.
+    }
+  }
+  const out = V.stripPrices(D.cardDetailOut(raw, st, releaseDate));
+  $app.store().set("ggbind:card:" + id, JSON.stringify({ at: Date.now(), v: out }));
+  e.response.header().set("Cache-Control", "public, max-age=3600");
+  return e.json(200, out);
+});
+
+// An artist's printed cards, for the artist page: identity fields joined
+// with the cached set catalogue, never a price. Cached half a day per name.
+routerAdd(
+  "GET",
+  "/api/vault/binders/artist/{name}",
+  (e) => {
+    const L = require(`${__hooks}/lib/binders.js`);
+    const V = require(`${__hooks}/lib/binders_v2.js`);
+    const D = require(`${__hooks}/lib/binders_detail.js`);
+    const name = String(e.request.pathValue("name") || "").trim();
+    if (!name || name.length > 80 || name.indexOf('"') >= 0) throw new NotFoundError("That artist does not exist.");
+
+    const key = "ggbind:artist:" + name.toLowerCase();
+    try {
+      const raw = $app.store().get(key);
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (Date.now() - o.at <= 12 * 3600 * 1000) {
+          e.response.header().set("Cache-Control", "private, max-age=3600");
+          return e.json(200, o.v);
+        }
+      }
+    } catch (err) {
+      // Fall through to a fresh fetch.
+    }
+
+    let brief;
+    try {
+      brief = L.getJSON(L.TCG + "/cards?illustrator=eq:" + encodeURIComponent(name));
+    } catch (err) {
+      return e.json(502, { message: "The card catalogue is not answering. Try again in a minute." });
+    }
+    const out = V.stripPrices(D.artistOut(name, brief, L.setMap()));
+    if (!out.count) throw new NotFoundError("No printed cards found for that artist.");
+    $app.store().set(key, JSON.stringify({ at: Date.now(), v: out }));
+    e.response.header().set("Cache-Control", "private, max-age=3600");
+    return e.json(200, out);
+  },
+  $apis.requireAuth("customers")
+);
+
 // Collection API reads (binders, pockets, wanted requests) by anyone but
 // staff: hide any price-like field, so a column added later cannot leak a
 // value to a customer.

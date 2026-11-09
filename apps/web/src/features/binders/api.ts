@@ -294,6 +294,95 @@ export async function getShared(token: string): Promise<SharedBinder> {
   return stripPrices(body as SharedBinder)
 }
 
+export interface CardMove {
+  type: string
+  /** Energy cost, named so the price stripper leaves it alone. */
+  energy: string[]
+  name: string
+  effect: string
+  damage: string
+}
+
+export interface CardDetail {
+  card_id: string
+  name: string
+  number: string
+  image: string
+  rarity: string
+  illustrator: string
+  category: string
+  hp: string
+  types: string[]
+  stage: string
+  evolve_from: string
+  description: string
+  dex: number
+  attacks: CardMove[]
+  abilities: CardMove[]
+  set: { id: string; name: string; logo: string; total: string; release_date: string }
+}
+
+/**
+ * The magnifier's card detail. A plain fetch rather than pbCustomer.send so
+ * the share page (no session) can use it too; the server whitelists the
+ * fields and never sends a price, and stripPrices here is the second lock.
+ */
+export async function getCardDetail(cardId: string): Promise<CardDetail> {
+  const res = await fetch(pbCustomer.buildURL(`/api/vault/binders/card/${encodeURIComponent(cardId)}`), {
+    headers: { accept: "application/json" },
+  })
+  if (!res.ok) {
+    throw new Error(
+      res.status === 404
+        ? "That card is not in the catalogue."
+        : "The card catalogue is not answering. Try again in a minute."
+    )
+  }
+  return stripPrices((await res.json()) as CardDetail)
+}
+
+export interface ArtistCard {
+  card_id: string
+  name: string
+  number: string
+  set_id: string
+  set_name: string
+  set_total: string
+  serie: string
+  serie_name: string
+  set_order: number
+  image: string
+}
+
+export interface Artist {
+  name: string
+  count: number
+  cards: ArtistCard[]
+  sets: { id: string; name: string; serie: string; serie_name: string; order: number; count: number }[]
+}
+
+export async function getArtist(name: string): Promise<Artist> {
+  return stripPrices(await pbCustomer.send<Artist>(`/api/vault/binders/artist/${encodeURIComponent(name)}`, {}))
+}
+
+/** Every card id this customer owns, across all their binders. */
+export async function listOwnedCardIds(): Promise<ReadonlySet<string>> {
+  const rows = await pbCustomer.collection("binder_cards").getFullList<{ card_id: string }>({
+    filter: "owned = true",
+    fields: "card_id",
+    batch: 1000,
+  })
+  return new Set(rows.map((r) => r.card_id))
+}
+
+/** Fills a custom binder with cards the client already has (binder ideas). */
+export function bulkAdd(binderId: string, cards: Pick<ArtistCard, "card_id" | "name" | "number" | "set_id" | "set_name" | "set_total" | "image">[]) {
+  return pbCustomer.send<{ added: number }>(`/api/vault/binders/${encodeURIComponent(binderId)}/bulk`, {
+    method: "POST",
+    body: { cards },
+  })
+}
+
 const catalogueCache: Record<string, Promise<unknown> | undefined> = {}
 function catalogue<T>(what: string): Promise<T> {
   let hit = catalogueCache[what] as Promise<T> | undefined

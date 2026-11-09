@@ -1,15 +1,17 @@
 import * as React from "react"
 import { Link } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { MoonIcon, SunIcon } from "lucide-react"
 
 import { Wordmark } from "@/components/ui/wordmark"
+import { Space } from "@/components/space/Space"
+import { ThemeToggleButton } from "@/features/portal/ThemeToggle"
 import { colorOf, getShared, KINDS } from "@/features/binders/api"
 import { binderStats, buildPages, gridOf, GRIDS, layoutFrom, pageCount, reflowPage, type Filter, type Grid } from "@/features/binders/layout"
 import { BookView } from "@/features/binders/BookView"
+import { CardDetailSheet, type DetailItem } from "@/features/binders/CardDetail"
 import { EmptyPocket, Pocket } from "@/features/binders/Pocket"
 import { FilterTabs, GridSwitch, PageNav, StatTiles } from "@/features/binders/BinderParts"
-import { useBinderTheme, usePrefersReducedMotion, useWide } from "@/features/binders/theme"
+import { usePrefersReducedMotion, useWide } from "@/features/binders/theme"
 import "@/features/binders/binders.css"
 
 /**
@@ -19,13 +21,13 @@ import "@/features/binders/binders.css"
  * saved.
  */
 export function SharedBinderScreen({ token }: { token: string }) {
-  const [theme, toggleTheme] = useBinderTheme()
   const reduced = usePrefersReducedMotion()
   const wide = useWide()
   const q = useQuery({ queryKey: ["binder-share", token], queryFn: () => getShared(token), retry: 1 })
   const [gridChoice, setGridChoice] = React.useState<Grid | null>(null)
   const [filter, setFilter] = React.useState<Filter>("all")
   const [page, setPage] = React.useState(0)
+  const [inspect, setInspect] = React.useState<number | null>(null)
 
   const data = q.data
   const grid = gridChoice ?? gridOf(data?.binder.grid)
@@ -49,6 +51,37 @@ export function SharedBinderScreen({ token }: { token: string }) {
     () => (layout && data ? binderStats(pockets, layout, data.binder.kind) : null),
     [pockets, layout, data]
   )
+  // The magnifier walks the visible pockets in page order. Read only: no
+  // mark, no want, no artist page (that lives behind sign-in).
+  const detailItems = React.useMemo<DetailItem[]>(() => {
+    if (!layout) return []
+    const out: DetailItem[] = []
+    for (const cells of pages) {
+      for (const cell of cells) {
+        const c = cell.pocket ? byId.get(cell.pocket.id) : undefined
+        if (!c) continue
+        out.push({
+          id: c.id,
+          card_id: c.card_id,
+          name: c.name,
+          number: c.number,
+          set_name: c.set_name,
+          set_total: c.set_total,
+          image: c.image,
+          sprite: c.sprite,
+          owned: !!layout.owned[c.id],
+          inStock: inStock.has(c.id),
+        })
+      }
+    }
+    return out
+  }, [pages, byId, layout, inStock])
+  const detailIndexById = React.useMemo(() => {
+    const m = new Map<string, number>()
+    detailItems.forEach((it, i) => m.set(it.id, i))
+    return m
+  }, [detailItems])
+
   const count = Math.max(1, pages.length)
   const step = wide ? 2 : 1
   const clamped = Math.min(page, count - 1)
@@ -72,7 +105,14 @@ export function SharedBinderScreen({ token }: { token: string }) {
           {cells.map((cell, ci) => {
             const c = cell.pocket ? byId.get(cell.pocket.id) : undefined
             return c && layout ? (
-              <Pocket key={c.id} c={c} owned={!!layout.owned[c.id]} compact={compact} inStock={inStock.has(c.id)} />
+              <Pocket
+                key={c.id}
+                c={c}
+                owned={!!layout.owned[c.id]}
+                compact={compact}
+                inStock={inStock.has(c.id)}
+                onInspect={() => setInspect(detailIndexById.get(c.id) ?? null)}
+              />
             ) : (
               <EmptyPocket key={`e${i}-${ci}`} />
             )
@@ -87,14 +127,13 @@ export function SharedBinderScreen({ token }: { token: string }) {
 
   return (
     <div className="bx-root bx-screen bx-shared mx-auto w-full max-w-[1180px] px-5 pt-6 pb-24 sm:px-8">
+      <Space />
       <div className="bx-topbar">
         <Link to="/account" className="bx-back" aria-label="GG Vault">
           <Wordmark />
         </Link>
         <span className="flex-1" />
-        <button type="button" className="bx-icon" onClick={toggleTheme} aria-label={theme === "dark" ? "Light pages" : "Dark pages"}>
-          {theme === "dark" ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
-        </button>
+        <ThemeToggleButton />
       </div>
 
       {q.isError ? (
@@ -143,6 +182,14 @@ export function SharedBinderScreen({ token }: { token: string }) {
           </div>
           <BookView count={count} page={current} spread={wide} reduced={reduced} onSwipe={turn} renderPage={renderPage} />
           <PageNav page={current} count={count} step={step} onPage={(p) => setPage(wide ? p - (p % 2) : p)} />
+          <CardDetailSheet
+            open={inspect !== null}
+            onOpenChange={(o) => setInspect(o ? inspect : null)}
+            items={detailItems}
+            index={Math.min(inspect ?? 0, Math.max(0, detailItems.length - 1))}
+            onIndex={setInspect}
+            color={color}
+          />
           <p className="bx-foot-note">
             Made with GG Vault at GG Entertainment, Bolsover. Build your own binder from My Vault.
           </p>
