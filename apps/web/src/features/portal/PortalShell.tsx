@@ -3,7 +3,7 @@ import { Link, Outlet } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import {
   BellIcon,
-  CalendarIcon,
+  BookOpenIcon,
   CameraIcon,
   CreditCardIcon,
   HeartIcon,
@@ -33,9 +33,10 @@ import { useCustomerSession } from "@/features/portal/session"
 
 const BAR = [
   { to: "/account", label: "Card", exact: true, Icon: CreditCardIcon },
-  // Bookings (package BW, docs/api-contract-launch.md, section 4).
-  { to: "/account/bookings", label: "Book", exact: false, Icon: CalendarIcon },
+  // Bookings are out of the Vault rebuild (Richard, 09/11/2026), so Binders
+  // takes their slot; /account/bookings itself still works.
   { to: "/account/quotes", label: "Quotes", exact: false, Icon: CameraIcon },
+  { to: "/account/binders", label: "Binders", exact: false, Icon: BookOpenIcon },
   { to: "/account/wants", label: "Wants", exact: false, Icon: HeartIcon },
   { to: "/account/credit", label: "Credit", exact: false, Icon: WalletIcon },
   { to: "/account/me", label: "Me", exact: false, Icon: UserIcon },

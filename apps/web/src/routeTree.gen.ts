@@ -42,6 +42,8 @@ import { Route as CounterStaffRouteImport } from "./routes/counter.staff"
 import { Route as CounterTillRouteImport } from "./routes/counter.till"
 import { Route as CounterTutorialsRouteImport } from "./routes/counter.tutorials"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
+import { Route as AccountBindersIndexRouteImport } from "./routes/account.binders.index"
+import { Route as AccountBindersIdRouteImport } from "./routes/account.binders.$id"
 import { Route as AccountQuotesIndexRouteImport } from "./routes/account.quotes.index"
 import { Route as AccountQuotesIdRouteImport } from "./routes/account.quotes.$id"
 import { Route as AccountQuotesNewRouteImport } from "./routes/account.quotes.new"
@@ -235,6 +237,16 @@ const LabelsPrintRoute = LabelsPrintRouteImport.update({
   path: "/labels/print",
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccountBindersIndexRoute = AccountBindersIndexRouteImport.update({
+  id: "/binders/",
+  path: "/binders/",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountBindersIdRoute = AccountBindersIdRouteImport.update({
+  id: "/binders/$id",
+  path: "/binders/$id",
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountQuotesIndexRoute = AccountQuotesIndexRouteImport.update({
   id: "/quotes/",
   path: "/quotes/",
@@ -407,6 +419,7 @@ export interface FileRoutesByFullPath {
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
+  "/account/binders/$id": typeof AccountBindersIdRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
@@ -420,6 +433,7 @@ export interface FileRoutesByFullPath {
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/print/receipt/$id": typeof PrintReceiptIdRoute
+  "/account/binders/": typeof AccountBindersIndexRoute
   "/account/quotes/": typeof AccountQuotesIndexRoute
   "/account/rewards/": typeof AccountRewardsIndexRoute
   "/account/trade-ins/": typeof AccountTradeInsIndexRoute
@@ -467,6 +481,7 @@ export interface FileRoutesByTo {
   "/labels/print": typeof LabelsPrintRoute
   "/account": typeof AccountIndexRoute
   "/counter": typeof CounterIndexRoute
+  "/account/binders/$id": typeof AccountBindersIdRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
@@ -480,6 +495,7 @@ export interface FileRoutesByTo {
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/print/receipt/$id": typeof PrintReceiptIdRoute
+  "/account/binders": typeof AccountBindersIndexRoute
   "/account/quotes": typeof AccountQuotesIndexRoute
   "/account/rewards": typeof AccountRewardsIndexRoute
   "/account/trade-ins": typeof AccountTradeInsIndexRoute
@@ -530,6 +546,7 @@ export interface FileRoutesById {
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
+  "/account/binders/$id": typeof AccountBindersIdRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
@@ -543,6 +560,7 @@ export interface FileRoutesById {
   "/counter/stock/new": typeof CounterStockNewRoute
   "/counter/trade/new": typeof CounterTradeNewRoute
   "/print/receipt/$id": typeof PrintReceiptIdRoute
+  "/account/binders/": typeof AccountBindersIndexRoute
   "/account/quotes/": typeof AccountQuotesIndexRoute
   "/account/rewards/": typeof AccountRewardsIndexRoute
   "/account/trade-ins/": typeof AccountTradeInsIndexRoute
@@ -594,6 +612,7 @@ export interface FileRouteTypes {
     | "/labels/print"
     | "/account/"
     | "/counter/"
+    | "/account/binders/$id"
     | "/account/quotes/$id"
     | "/account/quotes/new"
     | "/account/rewards/$id"
@@ -607,6 +626,7 @@ export interface FileRouteTypes {
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/print/receipt/$id"
+    | "/account/binders/"
     | "/account/quotes/"
     | "/account/rewards/"
     | "/account/trade-ins/"
@@ -654,6 +674,7 @@ export interface FileRouteTypes {
     | "/labels/print"
     | "/account"
     | "/counter"
+    | "/account/binders/$id"
     | "/account/quotes/$id"
     | "/account/quotes/new"
     | "/account/rewards/$id"
@@ -667,6 +688,7 @@ export interface FileRouteTypes {
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/print/receipt/$id"
+    | "/account/binders"
     | "/account/quotes"
     | "/account/rewards"
     | "/account/trade-ins"
@@ -716,6 +738,7 @@ export interface FileRouteTypes {
     | "/labels/print"
     | "/account/"
     | "/counter/"
+    | "/account/binders/$id"
     | "/account/quotes/$id"
     | "/account/quotes/new"
     | "/account/rewards/$id"
@@ -729,6 +752,7 @@ export interface FileRouteTypes {
     | "/counter/stock/new"
     | "/counter/trade/new"
     | "/print/receipt/$id"
+    | "/account/binders/"
     | "/account/quotes/"
     | "/account/rewards/"
     | "/account/trade-ins/"
@@ -991,6 +1015,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof LabelsPrintRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/account/binders/": {
+      id: "/account/binders/"
+      path: "/binders"
+      fullPath: "/account/binders/"
+      preLoaderRoute: typeof AccountBindersIndexRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/binders/$id": {
+      id: "/account/binders/$id"
+      path: "/binders/$id"
+      fullPath: "/account/binders/$id"
+      preLoaderRoute: typeof AccountBindersIdRouteImport
+      parentRoute: typeof AccountRoute
+    }
     "/account/quotes/": {
       id: "/account/quotes/"
       path: "/quotes"
@@ -1194,10 +1232,12 @@ interface AccountRouteChildren {
   AccountWantListRoute: typeof AccountWantListRoute
   AccountWantsRoute: typeof AccountWantsRoute
   AccountIndexRoute: typeof AccountIndexRoute
+  AccountBindersIdRoute: typeof AccountBindersIdRoute
   AccountQuotesIdRoute: typeof AccountQuotesIdRoute
   AccountQuotesNewRoute: typeof AccountQuotesNewRoute
   AccountRewardsIdRoute: typeof AccountRewardsIdRoute
   AccountTradeInsIdRoute: typeof AccountTradeInsIdRoute
+  AccountBindersIndexRoute: typeof AccountBindersIndexRoute
   AccountQuotesIndexRoute: typeof AccountQuotesIndexRoute
   AccountRewardsIndexRoute: typeof AccountRewardsIndexRoute
   AccountTradeInsIndexRoute: typeof AccountTradeInsIndexRoute
@@ -1214,10 +1254,12 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountWantListRoute: AccountWantListRoute,
   AccountWantsRoute: AccountWantsRoute,
   AccountIndexRoute: AccountIndexRoute,
+  AccountBindersIdRoute: AccountBindersIdRoute,
   AccountQuotesIdRoute: AccountQuotesIdRoute,
   AccountQuotesNewRoute: AccountQuotesNewRoute,
   AccountRewardsIdRoute: AccountRewardsIdRoute,
   AccountTradeInsIdRoute: AccountTradeInsIdRoute,
+  AccountBindersIndexRoute: AccountBindersIndexRoute,
   AccountQuotesIndexRoute: AccountQuotesIndexRoute,
   AccountRewardsIndexRoute: AccountRewardsIndexRoute,
   AccountTradeInsIndexRoute: AccountTradeInsIndexRoute,
