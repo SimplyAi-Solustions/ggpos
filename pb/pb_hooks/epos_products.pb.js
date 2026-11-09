@@ -149,6 +149,7 @@ routerAdd(
         refund: r.getBool("refund"),
         qty: r.getInt("qty"),
         unit_price: r.getInt("unit_price"),
+        sale_price: r.getInt("sale_price"),
         epos_product_id: r.getInt("product_id") || null,
         message: r.getString("note"),
         at: r.getString("occurred_at") || r.getString("created"),
@@ -333,6 +334,7 @@ routerAdd(
       product_id: util.asInt(body.product_id, 0),
       qty: Number(body.qty),
       unit_price: Number(body.unit_price),
+      sale_price: Number(body.sale_price),
       refund: body.refund === true,
       occurred_at: util.asStr(body.occurred_at),
       flag: util.asStr(body.flag),
@@ -342,6 +344,9 @@ routerAdd(
     }
     if (!(line.product_id > 0)) throw e.badRequestError("product_id is required.", null);
     if (!Number.isSafeInteger(line.unit_price)) throw e.badRequestError("unit_price must be whole pence.", null);
+    if (!Number.isSafeInteger(line.sale_price) || line.sale_price < 0) {
+      throw e.badRequestError("sale_price must be whole pence, 0 or more.", null);
+    }
     if (!Number.isSafeInteger(line.qty)) line.qty = 0;
 
     let out = null;

@@ -324,7 +324,7 @@ Formats are in `docs/csv-formats.md`. There is **no generic stock CSV import**, 
 
 Staff sell Vault items at the Epos Now till by scanning the item's label, so every Vault item on the shelf is also an Epos Now product. A worker on the shop Mac (`deploy/mac/epos-stock-sync.mjs`, see `deploy/mac/README.md`) holds the Epos token, makes the products and pulls the till's sales back. This server only queues, reports and applies.
 
-**Ownership.** The Vault only creates and changes products it made. A Vault product has `Barcode` = the item's `sku` exactly as stored and encoded on the label (for example `GGS7F3K2Q`), and `Sku` = `GGV-` + that SKU. Before any update or archive the worker reads the product from Epos Now and refuses unless its `Sku` matches; before any create it lists Epos products and adopts one that already carries the Sku, and refuses if a product it did not make already uses the barcode. Products are never deleted; leaving the shelf sets `IsArchived: true`.
+**Ownership.** The Vault only creates and changes products it made. A Vault product has `Barcode` = the item's SKU in its encoded form, no hyphen, exactly as the price label's Code 128 barcode carries it (for example `GGS7F3K2Q`; see `docs/label-spec.md`), and `Sku` = `GGV-` + that SKU. Before any update or archive the worker reads the product from Epos Now and refuses unless its `Sku` matches; before any create it lists Epos products and searches archived ones by barcode, and adopts one that already carries the Sku (un-archiving it); an item back in stock reuses its own product and un-archives it, and refuses if a product it did not make already uses the barcode. Products are never deleted; leaving the shelf sets `IsArchived: true`.
 
 **New item fields** (none can be set by staff through the collection API; the create and update rules refuse them, so only the worker can link an item to a product):
 
@@ -332,7 +332,7 @@ Staff sell Vault items at the Epos Now till by scanning the item's label, so eve
 |---|---|---|
 | `epos_product_id` | int, 0 = none | The Epos Now product the worker made or adopted for this item. |
 | `epos_synced_at` | date | When Epos Now last confirmed the product. |
-| `epos_sale_price` | int pence | Unit price of the last till sale applied to the item. |
+| `epos_sale_price` | int pence | What the last till sale applied to the item took: UnitPrice x Quantity less the line's DiscountAmount and BasketDiscountPortion. |
 | `epos_transaction_id` | text | That sale's Epos Now transaction. |
 | `epos_sold_at` | date | When that sale happened (UTC). |
 
@@ -348,7 +348,7 @@ Staff sell Vault items at the Epos Now till by scanning the item's label, so eve
 | `status` | `pending`, `sending`, `done`, `failed`, `needs_check`. |
 | `attempts`, `last_error`, `synced_at`, `resolved_by` | As the names say. The worker stops at 5 attempts. |
 
-`epos_sync_state` (superuser only) holds `key`/`value` rows: `sales` (the cursor: `last_polled_at`, `done_through`) and `categories` (the cached Epos category list and `refreshed_at`). `epos_sales_log` (superuser only) has one row per Vault-owned till line: `transaction_id`, `line`, `product_id`, `item`, `qty`, `unit_price` (pence), `refund`, `applied`, `needs_check`, `note`, `occurred_at`, `resolved_at`, `resolved_by`. A unique index on (`transaction_id`, `line`) means a line is applied at most once.
+`epos_sync_state` (superuser only) holds `key`/`value` rows: `sales` (the cursor: `last_polled_at`, `done_through`) and `categories` (the cached Epos category list and `refreshed_at`). `epos_sales_log` (superuser only) has one row per Vault-owned till line: `transaction_id`, `line` (the till line's `Id`), `product_id`, `item`, `qty`, `unit_price` (pence, before discounts), `sale_price` (pence, after line and basket discounts; migration `1789821740_epos_sales_log_sale_price.js`), `refund`, `applied`, `needs_check`, `note`, `occurred_at`, `resolved_at`, `resolved_by`. A unique index on (`transaction_id`, `line`) means a line is applied at most once.
 
 #### `GET /api/vault/stock/items/{id}/epos` (staff)
 
@@ -357,11 +357,11 @@ Staff sell Vault items at the Epos Now till by scanning the item's label, so eve
             "synced_at": "2026-11-09 15:44:58.383Z", "sold_on_till": null } }
 ```
 
-`status` is `synced`, `waiting` (a row is pending, sending or failed with tries left), `needs_check` (needs_check, or failed with no tries left; `last_error` is included), `archived` (taken off the till) or `none`. `sold_on_till` is `{ transaction_id, unit_price, sold_at }` once a till sale has been applied. 404 `Item not found. Refresh the list and try again.`
+`status` is `synced`, `waiting` (a row is pending, sending or failed with tries left), `needs_check` (needs_check, or failed with no tries left; `last_error` is included), `archived` (taken off the till) or `none`. `sold_on_till` is `{ transaction_id, sale_price, sold_at }` once a till sale has been applied. 404 `Item not found. Refresh the list and try again.`
 
 #### `GET /api/vault/stock/epos` (admin or manager)
 
-Returns `{ settings: { tax_group_id, category_map }, kinds, games: [{key, name}], categories: [{id, name, parent_id}], categories_refreshed_at, sales_polled_at, waiting, checks }`. `checks` lists every product row that needs a person (`kind: "product"`, with `action`, `status`, `epos_product_id`, `message`) and every unresolved flagged till line (`kind: "sale"`, with `transaction_id`, `refund`, `qty`, `unit_price`, `message`). 403 for staff.
+Returns `{ settings: { tax_group_id, category_map }, kinds, games: [{key, name}], categories: [{id, name, parent_id}], categories_refreshed_at, sales_polled_at, waiting, checks }`. `checks` lists every product row that needs a person (`kind: "product"`, with `action`, `status`, `epos_product_id`, `message`) and every unresolved flagged till line (`kind: "sale"`, with `transaction_id`, `refund`, `qty`, `unit_price`, `sale_price`, `message`). 403 for staff.
 
 #### `POST /api/vault/stock/epos/settings` (admin)
 
@@ -377,7 +377,7 @@ Queues an upsert for every shelf item with no product and no open row. Returns `
 
 #### `POST /api/vault/epos/sales/apply` (superuser: the worker)
 
-Body `{ transaction_id, line, product_id, qty, unit_price, refund, occurred_at, flag? }`, prices in whole pence. In one transaction: if the line is already logged, returns `{ result: "duplicate" }`; otherwise logs it and, unless it is a refund, flagged, not whole, or the item is already off the shelf, takes `qty` off the item (a blank qty counts as 1), marks it `sold` at 0 and records `epos_sale_price`, `epos_transaction_id` and `epos_sold_at`. Selling more than the Vault holds sets qty 0 and flags the line. Returns `{ result: "applied" | "flagged" | "unmatched" | "duplicate", log }`. Marking the item sold queues the archive of its product through the item hook.
+Body `{ transaction_id, line, product_id, qty, unit_price, sale_price, refund, occurred_at, flag? }`, prices in whole pence. In one transaction: if the line is already logged, returns `{ result: "duplicate" }`; otherwise logs it and, unless it is a refund, flagged, not whole, or the item is already off the shelf, takes `qty` off the item (a blank qty counts as 1), marks it `sold` at 0 and records `sale_price` as `epos_sale_price`, `epos_transaction_id` and `epos_sold_at`. Selling more than the Vault holds sets qty 0 and flags the line. Returns `{ result: "applied" | "flagged" | "unmatched" | "duplicate", log }`. Marking the item sold queues the archive of its product through the item hook.
 
 ### Gaps
 
@@ -664,5 +664,5 @@ Customers spend store credit at the Epos Now till, and the Epos Now token stays 
 5. **Comics** have no catalogue or prices.
 6. **Stock writes have no role check or audit**; see section 6.
 7. **No generic stock CSV import.**
-8. **Epos Now product sync needs a supervised first run.** The response shapes it relies on are listed in `deploy/mac/README.md` under "Assumptions to check on the first supervised run". Stock levels are not set unless `EPOS_SET_STOCK=1`.
+8. **Epos Now product sync: what is still unconfirmed** is listed in `deploy/mac/README.md` under "Assumptions". Stock levels are not set unless `EPOS_SET_STOCK=1`.
 9. **Hook check suite on macOS.** `pb/scripts/check.sh` assumes GNU `head -n -1` and bash 4+. On the shop Mac's bash 3.2, sections 31, 32, 35, 36 and 38 fail at HEAD as well. The heatmap check in section 21 assumes British Summer Time and fails in winter.

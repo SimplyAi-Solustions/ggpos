@@ -44,7 +44,7 @@ export async function printOverBluetooth(labels: readonly QuickLabel[]): Promise
     stage = "print"
     const { drawPriceLabels } = await import("./render")
     const canvases = await drawPriceLabels(
-      rows.map((row) => ({ title: row.title, price: row.price })),
+      rows.map((row) => ({ title: row.title, price: row.price, sku: row.sku })),
       priceLabelSize(savedLabelSize())
     )
     return await printLabels(

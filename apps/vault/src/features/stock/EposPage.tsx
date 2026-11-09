@@ -95,10 +95,10 @@ function Checks({ checks, canResolve }: { checks: EposCheck[]; canResolve: boole
                     {check.kind === "sale"
                       ? `${check.refund ? "Till refund" : "Till sale"} ${check.transaction_id}, ${whenText(check.at)}`
                       : `${check.action === "archive" ? "Archive" : "Product"}${check.epos_product_id ? ` ${check.epos_product_id}` : ""}, ${whenText(check.at)}`}
-                    {check.kind === "sale" && check.unit_price ? (
+                    {check.kind === "sale" && check.sale_price ? (
                       <>
                         {", "}
-                        <Money pence={check.unit_price} className="text-xs text-fg-3" />
+                        <Money pence={check.sale_price} className="text-xs text-fg-3" />
                       </>
                     ) : null}
                   </p>

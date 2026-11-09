@@ -1,8 +1,13 @@
 // node --test deploy/mac/test/
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createRequire } from "node:module"
+
 import {
   MAX_ATTEMPTS,
+  eposBarcode,
+  isEmptyReply,
+  lineSalePence,
   bodyJson,
   categoryFor,
   eposTime,
@@ -98,7 +103,11 @@ const item = (extra = {}) => ({
 const row = (extra = {}) => ({ id: "q1", item: "i1", sku: "GGS7F3K2Q", action: "upsert", status: "pending", ...extra })
 const owned = (extra = {}) => ({ Id: 900, Name: "Charizard ex #199", Sku: "GGV-GGS7F3K2Q", Barcode: "GGS7F3K2Q", SalePrice: 229.99, CostPrice: 120, IsArchived: false, ...extra })
 // Background jobs a run also does; quiet unless a test cares.
-const quiet = { "GET v4/Category": out(200, []), "GET v4/Transaction/GetByDate": out(200, []) }
+const quiet = {
+  "GET v4/Category": out(200, []),
+  "GET v4/Transaction/GetByDate": out(200, []),
+  "GET v4/catalogue/Products": out(200, { data: [], metadata: {} }),
+}
 
 // --- money ------------------------------------------------------------
 
@@ -121,7 +130,7 @@ test("till prices come back to pence through the shared parse helper", () => {
   assert.equal(saleLine(txn, { Id: 1, ProductId: 9, Quantity: 1, UnitPrice: "12.5" }, 0).unit_price, 1250)
   const bad = saleLine(txn, { Id: 1, ProductId: 9, Quantity: 1, UnitPrice: null }, 0)
   assert.equal(bad.unit_price, 0)
-  assert.match(bad.flag, /unit price/)
+  assert.match(bad.flag, /unreadable price/)
   assert.equal(eposTime("2026-11-09T14:03:00"), "2026-11-09T14:03:00.000Z")
 })
 
@@ -360,7 +369,7 @@ test("till sales are applied once, however many times they are pulled", async ()
   assert.equal(pb.applied.size, 2, "one log row per Vault line; the shop product is ignored")
   assert.ok(pb.saleCalls.every((l) => l.product_id === 900))
   const sale = pb.applied.get("3001:1")
-  assert.deepEqual(sale, { transaction_id: "3001", line: "1", product_id: 900, qty: 1, unit_price: 22999, refund: false, occurred_at: "2026-11-09T14:03:00.000Z" })
+  assert.deepEqual(sale, { transaction_id: "3001", line: "1", product_id: 900, qty: 1, unit_price: 22999, sale_price: 22999, refund: false, occurred_at: "2026-11-09T14:03:00.000Z" })
 })
 
 test("a refund line is sent flagged as a refund, never as a sale", async () => {
@@ -420,4 +429,190 @@ test("the Epos category list is cached for the settings screen", async () => {
   epos.calls.length = 0
   await runOnce(deps(pb, epos))
   assert.equal(epos.calls.filter((c) => c.path.startsWith("v4/Category")).length, 0, "cached for 6 hours")
+})
+
+// --- review fixes: empty replies, archived products, discounts, labels ------
+
+const require = createRequire(import.meta.url)
+const sharedSku = require("../../../pb/pb_hooks/lib/shared/sku.js")
+const empty = { stdout: "\nHTTP 200\n", exitCode: 0 }
+
+test("an empty body, null, [] or {} is nothing found", () => {
+  for (const v of [undefined, null, "", [], {}]) assert.equal(isEmptyReply(v), true)
+  for (const v of [[{ Id: 1 }], { Id: 1 }]) assert.equal(isEmptyReply(v), false)
+})
+
+for (const [name, reply] of [
+  ["an empty body", empty],
+  ["null", out(200, null)],
+  ["an empty array", out(200, [])],
+  ["a 404", out(404, { Message: "Not found" })],
+]) {
+  test(`a stored product id that comes back as ${name} is not found: no create, a person decides`, async () => {
+    const pb = mockPb({ rows: [row()], items: { i1: item({ epos_product_id: 900 }) } })
+    const epos = mockEpos({ ...quiet, "GET v4/Product/900": reply, "GET v4/Product?page=1": out(200, []) })
+    await runOnce(deps(pb, epos))
+    assert.equal(pb.rows.q1.status, "failed")
+    assert.equal(pb.rows.q1.attempts, MAX_ATTEMPTS)
+    assert.match(pb.rows.q1.last_error, /Epos Now has no product 900 and none with Sku GGV-GGS7F3K2Q/)
+    assert.equal(epos.writes().length, 0, "never creates a second product")
+  })
+}
+
+test("an item back in stock reuses its own archived product and un-archives it", async () => {
+  const items = { i1: item({ epos_product_id: 900 }) }
+  const pb = mockPb({ rows: [row()], items })
+  const epos = mockEpos({
+    ...quiet,
+    "GET v4/Product/900": out(200, owned({ IsArchived: true })),
+    "PUT v4/Product": (body) => {
+      const [p] = JSON.parse(body)
+      assert.equal(p.Id, 900)
+      assert.equal(p.IsArchived, false)
+      return out(200, [owned()])
+    },
+  })
+  await runOnce(deps(pb, epos))
+  assert.equal(pb.rows.q1.status, "done")
+  assert.equal(epos.calls.filter((c) => c.method === "POST").length, 0)
+  assert.equal(epos.calls.filter((c) => c.path.startsWith("v4/Product?")).length, 0, "no product list needed")
+})
+
+test("a stored id Epos no longer returns is found by Sku among archived products and un-archived", async () => {
+  const items = { i1: item({ epos_product_id: 900 }) }
+  const pb = mockPb({ rows: [row()], items })
+  const epos = mockEpos({
+    ...quiet,
+    "GET v4/Product/900": empty,
+    "GET v4/Product?page=1": out(200, []),
+    "GET v4/catalogue/Products": (_b, path) => {
+      assert.match(path, /Barcode=GGS7F3K2Q&Archived=true/)
+      return out(200, { data: [{ id: 900, sku: "GGV-GGS7F3K2Q", barcode: "GGS7F3K2Q", name: "Charizard ex #199" }], metadata: {} })
+    },
+    "PUT v4/Product": (body) => {
+      assert.equal(JSON.parse(body)[0].IsArchived, false)
+      return out(200, [owned()])
+    },
+  })
+  await runOnce(deps(pb, epos))
+  assert.equal(pb.rows.q1.status, "done")
+  assert.equal(items.i1.epos_product_id, 900)
+  assert.equal(epos.calls.filter((c) => c.method === "POST").length, 0)
+})
+
+test("before a create, an archived GGV product missing from the list is adopted, not duplicated", async () => {
+  const items = { i1: item() }
+  const pb = mockPb({ rows: [row()], items })
+  const epos = mockEpos({
+    ...quiet,
+    "GET v4/Product?page=1": out(200, [{ Id: 1, Sku: "GGE-POK-006", Barcode: "196214157507" }]),
+    "GET v4/catalogue/Products": out(200, { data: [{ id: 4321, sku: "GGV-GGS7F3K2Q", barcode: "GGS7F3K2Q" }] }),
+    "PUT v4/Product": (body) => {
+      const [p] = JSON.parse(body)
+      assert.equal(p.Id, 4321)
+      assert.equal(p.IsArchived, false)
+      return out(200, [owned({ Id: 4321 })])
+    },
+  })
+  await runOnce(deps(pb, epos))
+  assert.equal(items.i1.epos_product_id, 4321)
+  assert.equal(epos.calls.filter((c) => c.method === "POST").length, 0)
+})
+
+test("an archived shop product with the barcode blocks the create", async () => {
+  const pb = mockPb({ rows: [row()], items: { i1: item() } })
+  const epos = mockEpos({
+    ...quiet,
+    "GET v4/Product?page=1": out(200, []),
+    "GET v4/catalogue/Products": out(200, { data: [{ id: 77, sku: "OLD-1", barcode: "GGS7F3K2Q" }] }),
+  })
+  await runOnce(deps(pb, epos))
+  assert.match(pb.rows.q1.last_error, /Epos Now product 77 already uses barcode/)
+  assert.equal(epos.writes().length, 0)
+})
+
+test("if the archived search fails, nothing is created and it retries", async () => {
+  const pb = mockPb({ rows: [row()], items: { i1: item() } })
+  const epos = mockEpos({ ...quiet, "GET v4/Product?page=1": out(200, []), "GET v4/catalogue/Products": out(500) })
+  await runOnce(deps(pb, epos))
+  assert.equal(pb.rows.q1.status, "failed")
+  assert.equal(pb.rows.q1.attempts, 1)
+  assert.equal(epos.writes().length, 0)
+})
+
+test("an archive whose product Epos no longer returns by id is done when the archived search has it", async () => {
+  const pb = mockPb({ rows: [row({ action: "archive" })], items: { i1: item({ status: "sold", epos_product_id: 900 }) } })
+  const epos = mockEpos({
+    ...quiet,
+    "GET v4/Product/900": empty,
+    "GET v4/Product?page=1": out(200, []),
+    "GET v4/catalogue/Products": out(200, { data: [{ id: 900, sku: "GGV-GGS7F3K2Q", barcode: "GGS7F3K2Q" }] }),
+  })
+  await runOnce(deps(pb, epos))
+  assert.equal(pb.rows.q1.status, "done")
+  assert.equal(epos.writes().length, 0)
+})
+
+test("the barcode sent is the SKU without its hyphen, the same encodeCode the label uses", () => {
+  assert.equal(eposBarcode("GGS-7F3K2Q"), "GGS7F3K2Q")
+  assert.equal(eposBarcode("ggs7f3k2q"), "GGS7F3K2Q")
+  const f = productFields(item({ sku: "GGS-7F3K2Q" }), "pokemon", readSettings(SETTINGS))
+  assert.equal(f.Barcode, sharedSku.encodeCode("GGS-7F3K2Q"))
+  assert.equal(f.Sku, "GGV-GGS7F3K2Q")
+  assert.equal(isOwned({ Sku: "GGV-GGS7F3K2Q" }, "GGS-7F3K2Q"), true)
+})
+
+test("the sale price is UnitPrice x Quantity less the line and basket discounts, in pence", () => {
+  assert.equal(lineSalePence({ UnitPrice: 10, Quantity: 2, DiscountAmount: 1.5, BasketDiscountPortion: 0.33 }), 1817)
+  assert.equal(lineSalePence({ UnitPrice: 229.99, Quantity: 1, DiscountAmount: null, BasketDiscountPortion: null }), 22999)
+  assert.equal(lineSalePence({ UnitPrice: 229.99, Quantity: 1 }), 22999)
+  assert.equal(lineSalePence({ UnitPrice: 0.1 + 0.2, Quantity: 3, DiscountAmount: "0.10" }), 80)
+  assert.equal(lineSalePence({ UnitPrice: 5, Quantity: 1, DiscountAmount: "abc" }), null)
+  const txn = { Id: 9, DateTime: "2026-11-09T10:00:00" }
+  const line = saleLine(txn, { Id: 4, ProductId: 900, Quantity: 1, UnitPrice: 229.99, DiscountAmount: 20, BasketDiscountPortion: 9.99 }, 0)
+  assert.equal(line.unit_price, 22999)
+  assert.equal(line.sale_price, 20000)
+  assert.equal(line.flag, undefined)
+  const refund = saleLine(txn, { Id: 5, ProductId: 900, Quantity: -1, UnitPrice: 229.99, DiscountAmount: 20, RefundReasonId: 1 }, 0)
+  assert.equal(refund.sale_price, 20999)
+  assert.equal(refund.refund, true)
+  assert.match(saleLine(txn, { Id: 6, ProductId: 900, Quantity: 1, UnitPrice: 5, DiscountAmount: 6 }, 0).flag, /more than its price/)
+})
+
+test("till lines are keyed by their Id; a line with no Id is flagged, not keyed by position", () => {
+  const txn = { Id: 9 }
+  assert.equal(saleLine(txn, { Id: 41, ProductId: 900, Quantity: 1, UnitPrice: 1 }, 3).line, "41")
+  const noId = saleLine(txn, { ProductId: 900, Quantity: 1, UnitPrice: 1 }, 3)
+  assert.equal(noId.line, "noid-3")
+  assert.match(noId.flag, /no Id/)
+})
+
+test("discounted till sales reach the apply route with the discounted price", async () => {
+  const pb = mockPb({ items: { i1: item({ epos_product_id: 900 }) } })
+  const epos = mockEpos({
+    "GET v4/Transaction/GetByDate": () =>
+      out(200, [{ Id: 5001, DateTime: "2026-11-09T12:00:00", TransactionItems: [{ Id: 1, ProductId: 900, Quantity: 1, UnitPrice: 229.99, DiscountAmount: 10, BasketDiscountPortion: null }] }]),
+  })
+  await syncSales(deps(pb, epos), { everyMs: 0 })
+  assert.equal(pb.applied.get("5001:1").sale_price, 21999)
+})
+
+test("nested Children categories are cached too, with their parent", async () => {
+  const pb = mockPb()
+  const epos = mockEpos({
+    "GET v4/Category": out(200, [{ Id: 1, Name: "Pokemon", ParentId: null, Children: [{ Id: 2, Name: "Pokemon Singles", Children: [] }] }]),
+    "GET v4/Transaction/GetByDate": out(200, []),
+  })
+  await runOnce(deps(pb, epos))
+  assert.deepEqual(pb.state.categories.items, [
+    { id: 1, name: "Pokemon", parent_id: null },
+    { id: 2, name: "Pokemon Singles", parent_id: 1 },
+  ])
+})
+
+test("an empty category reply is an empty list", async () => {
+  const pb = mockPb()
+  const epos = mockEpos({ "GET v4/Category": empty, "GET v4/Transaction/GetByDate": empty })
+  await runOnce(deps(pb, epos))
+  assert.deepEqual(pb.state.categories.items, [])
 })
