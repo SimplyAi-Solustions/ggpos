@@ -1,33 +1,48 @@
-import { RefreshCw } from "lucide-react"
+import { AlertTriangle, Clock, RefreshCw } from "lucide-react"
 
 import { cn } from "@/lib/cn"
+import { Money } from "@/ui"
 
-/**
- * The Epos Now slot on the item page. The sync is being built separately;
- * until it stamps `epos_product_id` on an item this says so plainly. Once
- * the field is there, this shows the link without any change here.
- */
-export function EposStatus({ productId, className }: { productId?: string | null; className?: string }) {
-  const linked = Boolean(productId)
+import { useEposItem } from "../api"
+import { eposCopy, eposTime } from "../lib/epos-view"
+
+/** The Epos Now slot on the item page: whether staff can sell it at the Epos till. */
+export function EposStatus({ itemId, className }: { itemId: string; className?: string }) {
+  const epos = useEposItem(itemId)
+  const copy = eposCopy(epos.data, epos.isError)
+  const Icon = copy.tone === "alert" ? AlertTriangle : copy.tone === "wait" ? Clock : RefreshCw
+  const sold = epos.data?.sold_on_till
   return (
     <div
       data-slot="epos-status"
-      className={cn("flex items-center gap-3 rounded-md border border-dashed border-line-2 px-3.5 py-3", className)}
+      data-state={epos.data?.status ?? "loading"}
+      className={cn(
+        "flex items-center gap-3 rounded-md border px-3.5 py-3",
+        copy.tone === "alert" ? "border-pop/50" : "border-dashed border-line-2",
+        className
+      )}
     >
       <span
         aria-hidden
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-full",
-          linked ? "bg-ok/15 text-ok" : "bg-line text-fg-3"
+          copy.tone === "ok" && "bg-ok/15 text-ok",
+          copy.tone === "wait" && "bg-warn/15 text-warn",
+          copy.tone === "alert" && "bg-pop/15 text-pop-text",
+          copy.tone === "off" && "bg-line text-fg-3"
         )}
       >
-        <RefreshCw className="size-4" />
+        <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{linked ? "Epos Now: linked" : "Epos Now: not synced yet"}</p>
-        <p className="text-xs text-fg-3">
-          {linked ? `Product ${productId}` : "This item shows here once the Epos Now sync is switched on."}
-        </p>
+        <p className="text-sm font-semibold">{copy.title}</p>
+        <p className="text-xs text-fg-3">{copy.line}</p>
+        {sold && (
+          <p className="text-xs text-fg-3">
+            Sold on the Epos till for <Money pence={sold.unit_price} className="text-xs text-fg-3" />
+            {sold.sold_at ? `, ${eposTime(sold.sold_at)}` : ""}
+          </p>
+        )}
       </div>
     </div>
   )

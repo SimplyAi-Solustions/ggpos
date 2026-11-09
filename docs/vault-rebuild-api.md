@@ -320,6 +320,65 @@ Formats are in `docs/csv-formats.md`. There is **no generic stock CSV import**, 
 - **`POST /api/vault/labels/{id}/printed`**, **`/failed`** and **`/requeue`**.
 - The `label_jobs` and `label_templates` collections are `STAFF_ONLY`.
 
+### Epos Now products and till sales (migration `1789821680_epos_products.js`, `epos_products.pb.js`, `lib/eposproducts.js`)
+
+Staff sell Vault items at the Epos Now till by scanning the item's label, so every Vault item on the shelf is also an Epos Now product. A worker on the shop Mac (`deploy/mac/epos-stock-sync.mjs`, see `deploy/mac/README.md`) holds the Epos token, makes the products and pulls the till's sales back. This server only queues, reports and applies.
+
+**Ownership.** The Vault only creates and changes products it made. A Vault product has `Barcode` = the item's `sku` exactly as stored and encoded on the label (for example `GGS7F3K2Q`), and `Sku` = `GGV-` + that SKU. Before any update or archive the worker reads the product from Epos Now and refuses unless its `Sku` matches; before any create it lists Epos products and adopts one that already carries the Sku, and refuses if a product it did not make already uses the barcode. Products are never deleted; leaving the shelf sets `IsArchived: true`.
+
+**New item fields** (none can be set by staff through the collection API; the create and update rules refuse them, so only the worker can link an item to a product):
+
+| field | type | meaning |
+|---|---|---|
+| `epos_product_id` | int, 0 = none | The Epos Now product the worker made or adopted for this item. |
+| `epos_synced_at` | date | When Epos Now last confirmed the product. |
+| `epos_sale_price` | int pence | Unit price of the last till sale applied to the item. |
+| `epos_transaction_id` | text | That sale's Epos Now transaction. |
+| `epos_sold_at` | date | When that sale happened (UTC). |
+
+**New settings fields** (admin only): `epos_category_map` (json, `{ "default": 0, "game": { "pokemon": 516834 }, "kind": { "graded": 600001 } }`; a kind entry wins over a game entry, then `default`) and `epos_tax_group_id` (int, 0 = 26457 "NoTax"; 26456 is "20VAT").
+
+**When a row is queued** (`epos_product_queue`, superuser only). An item is on the till while its `status` is `in_stock` (or blank). Creating such an item, or changing its `title`, `price`, `cost`, `qty`, `sku`, `kind`, `game`, `grade_company` or `grade` while it is on the shelf, queues an `upsert`. Leaving the shelf (`sold`, `written_off`, `reserved`, `listed_ebay`, `returned`) or deleting the item queues an `archive` if it has a product. A pending or failed row for the same item is reused (set to the new action, pending, attempts 0) rather than a second row being added. While an item has a `needs_check` row, the worker holds its other rows.
+
+| queue field | meaning |
+|---|---|
+| `item`, `sku` | The item, and its SKU when queued (kept for an archive after a delete). |
+| `epos_product_id` | The product acted on; 0 on a create not yet made. A row left in `sending` with 0 is a create whose outcome is unknown. |
+| `action` | `upsert` or `archive`. |
+| `status` | `pending`, `sending`, `done`, `failed`, `needs_check`. |
+| `attempts`, `last_error`, `synced_at`, `resolved_by` | As the names say. The worker stops at 5 attempts. |
+
+`epos_sync_state` (superuser only) holds `key`/`value` rows: `sales` (the cursor: `last_polled_at`, `done_through`) and `categories` (the cached Epos category list and `refreshed_at`). `epos_sales_log` (superuser only) has one row per Vault-owned till line: `transaction_id`, `line`, `product_id`, `item`, `qty`, `unit_price` (pence), `refund`, `applied`, `needs_check`, `note`, `occurred_at`, `resolved_at`, `resolved_by`. A unique index on (`transaction_id`, `line`) means a line is applied at most once.
+
+#### `GET /api/vault/stock/items/{id}/epos` (staff)
+
+```json
+{ "epos": { "status": "synced", "message": "On Epos Now.", "epos_product_id": 1000,
+            "synced_at": "2026-11-09 15:44:58.383Z", "sold_on_till": null } }
+```
+
+`status` is `synced`, `waiting` (a row is pending, sending or failed with tries left), `needs_check` (needs_check, or failed with no tries left; `last_error` is included), `archived` (taken off the till) or `none`. `sold_on_till` is `{ transaction_id, unit_price, sold_at }` once a till sale has been applied. 404 `Item not found. Refresh the list and try again.`
+
+#### `GET /api/vault/stock/epos` (admin or manager)
+
+Returns `{ settings: { tax_group_id, category_map }, kinds, games: [{key, name}], categories: [{id, name, parent_id}], categories_refreshed_at, sales_polled_at, waiting, checks }`. `checks` lists every product row that needs a person (`kind: "product"`, with `action`, `status`, `epos_product_id`, `message`) and every unresolved flagged till line (`kind: "sale"`, with `transaction_id`, `refund`, `qty`, `unit_price`, `message`). 403 for staff.
+
+#### `POST /api/vault/stock/epos/settings` (admin)
+
+Body `{ tax_group_id, category_map }`. Unknown kinds and non-positive ids are dropped. Failed rows that stopped for want of a category go back to pending. Returns `{ settings, requeued }`.
+
+#### `POST /api/vault/stock/epos/resolve` (admin or manager)
+
+Body `{ kind: "product" | "sale", id }`. A product row goes back to `pending` with 0 attempts (the worker looks for the Sku before any create, so a create that did go through is adopted, not repeated). A sale row gets `needs_check: false`, `resolved_at` and `resolved_by`; nothing about the item changes, so put a refunded item back in stock by hand.
+
+#### `POST /api/vault/stock/epos/backfill` (admin)
+
+Queues an upsert for every shelf item with no product and no open row. Returns `{ queued }`. Use it once when the sync is switched on.
+
+#### `POST /api/vault/epos/sales/apply` (superuser: the worker)
+
+Body `{ transaction_id, line, product_id, qty, unit_price, refund, occurred_at, flag? }`, prices in whole pence. In one transaction: if the line is already logged, returns `{ result: "duplicate" }`; otherwise logs it and, unless it is a refund, flagged, not whole, or the item is already off the shelf, takes `qty` off the item (a blank qty counts as 1), marks it `sold` at 0 and records `epos_sale_price`, `epos_transaction_id` and `epos_sold_at`. Selling more than the Vault holds sets qty 0 and flags the line. Returns `{ result: "applied" | "flagged" | "unmatched" | "duplicate", log }`. Marking the item sold queues the archive of its product through the item hook.
+
 ### Gaps
 
 - **No role checks or audit on stock.** Any staff member can delete an item or change its `cost` or `price` through the collection API, and nothing is audited.
@@ -605,4 +664,5 @@ Customers spend store credit at the Epos Now till, and the Epos Now token stays 
 5. **Comics** have no catalogue or prices.
 6. **Stock writes have no role check or audit**; see section 6.
 7. **No generic stock CSV import.**
-8. **Hook check suite on macOS.** `pb/scripts/check.sh` assumes GNU `head -n -1` and bash 4+. On the shop Mac's bash 3.2, sections 31, 32, 35, 36 and 38 fail at HEAD as well. The heatmap check in section 21 assumes British Summer Time and fails in winter.
+8. **Epos Now product sync needs a supervised first run.** The response shapes it relies on are listed in `deploy/mac/README.md` under "Assumptions to check on the first supervised run". Stock levels are not set unless `EPOS_SET_STOCK=1`.
+9. **Hook check suite on macOS.** `pb/scripts/check.sh` assumes GNU `head -n -1` and bash 4+. On the shop Mac's bash 3.2, sections 31, 32, 35, 36 and 38 fail at HEAD as well. The heatmap check in section 21 assumes British Summer Time and fails in winter.

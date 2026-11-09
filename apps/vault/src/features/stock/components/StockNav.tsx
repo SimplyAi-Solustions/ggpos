@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Link, useRouterState } from "@tanstack/react-router"
-import { Activity, Boxes, FileUp, Printer, SlidersHorizontal } from "lucide-react"
+import { Activity, Boxes, FileUp, Printer, RefreshCw, SlidersHorizontal } from "lucide-react"
 
 import { cn } from "@/lib/cn"
 
@@ -10,6 +10,7 @@ const LINKS = [
   { to: "/stock/health", label: "Health", icon: Activity },
   { to: "/stock/pricing", label: "Pricing", icon: SlidersHorizontal },
   { to: "/stock/import", label: "Import", icon: FileUp },
+  { to: "/stock/epos", label: "Epos Now", icon: RefreshCw },
 ] as const
 
 /** The Stock section's own sub-navigation, a scrollable pill row. */
