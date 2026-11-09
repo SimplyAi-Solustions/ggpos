@@ -3,11 +3,12 @@ import * as React from "react"
 /**
  * Binder light and dark, separate from the app's own theme.
  *
- * The binders default to the GG HQ night look (ink #040406, smoked glass
- * panels, paper text) because cards read best on dark. The choice is kept
- * per device. While a binder screen is open it puts `dark` and `bx-dark` on
- * <html> so the portal shell and sheets match, and puts back whatever was
- * there when the screen closes.
+ * The binder's pages default to the GG HQ night look (smoked glass sleeves,
+ * paper text) because cards read best on dark; the choice is kept per
+ * device. Only the `bx-dark` class is managed here: the Vault chrome around
+ * the book stays on the app's own ThemeProvider, whose effect runs after
+ * this one and would strip a `dark` class this hook added, so touching the
+ * app theme would leave the two fighting over <html>.
  */
 export type BinderTheme = "dark" | "light"
 
@@ -26,19 +27,9 @@ export function useBinderTheme(): [BinderTheme, () => void] {
 
   React.useEffect(() => {
     const root = document.documentElement
-    const hadDark = root.classList.contains("dark")
-    const hadLight = root.classList.contains("light")
-    if (theme === "dark") {
-      root.classList.add("dark", "bx-dark")
-      root.classList.remove("light")
-    } else {
-      root.classList.remove("dark", "bx-dark")
-      root.classList.add("light")
-    }
+    root.classList.toggle("bx-dark", theme === "dark")
     return () => {
       root.classList.remove("bx-dark")
-      root.classList.toggle("dark", hadDark)
-      root.classList.toggle("light", hadLight)
     }
   }, [theme])
 
