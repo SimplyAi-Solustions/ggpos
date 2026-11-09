@@ -22,7 +22,11 @@ import { Route as AppDealsIdRouteImport } from "./routes/_app.deals.$id"
 import { Route as AppDealsNewRouteImport } from "./routes/_app.deals.new"
 import { Route as AppStockIndexRouteImport } from "./routes/_app.stock.index"
 import { Route as AppStockIdRouteImport } from "./routes/_app.stock.$id"
+import { Route as AppStockHealthRouteImport } from "./routes/_app.stock.health"
+import { Route as AppStockImportRouteImport } from "./routes/_app.stock.import"
+import { Route as AppStockLabelsRouteImport } from "./routes/_app.stock.labels"
 import { Route as AppStockNewRouteImport } from "./routes/_app.stock.new"
+import { Route as AppStockPricingRouteImport } from "./routes/_app.stock.pricing"
 
 const IndexRoute = IndexRouteImport.update({
   id: "/",
@@ -88,9 +92,29 @@ const AppStockIdRoute = AppStockIdRouteImport.update({
   path: "/stock/$id",
   getParentRoute: () => AppRoute,
 } as any)
+const AppStockHealthRoute = AppStockHealthRouteImport.update({
+  id: "/stock/health",
+  path: "/stock/health",
+  getParentRoute: () => AppRoute,
+} as any)
+const AppStockImportRoute = AppStockImportRouteImport.update({
+  id: "/stock/import",
+  path: "/stock/import",
+  getParentRoute: () => AppRoute,
+} as any)
+const AppStockLabelsRoute = AppStockLabelsRouteImport.update({
+  id: "/stock/labels",
+  path: "/stock/labels",
+  getParentRoute: () => AppRoute,
+} as any)
 const AppStockNewRoute = AppStockNewRouteImport.update({
   id: "/stock/new",
   path: "/stock/new",
+  getParentRoute: () => AppRoute,
+} as any)
+const AppStockPricingRoute = AppStockPricingRouteImport.update({
+  id: "/stock/pricing",
+  path: "/stock/pricing",
   getParentRoute: () => AppRoute,
 } as any)
 
@@ -104,7 +128,11 @@ export interface FileRoutesByFullPath {
   "/deals/$id": typeof AppDealsIdRoute
   "/deals/new": typeof AppDealsNewRoute
   "/stock/$id": typeof AppStockIdRoute
+  "/stock/health": typeof AppStockHealthRoute
+  "/stock/import": typeof AppStockImportRoute
+  "/stock/labels": typeof AppStockLabelsRoute
   "/stock/new": typeof AppStockNewRoute
+  "/stock/pricing": typeof AppStockPricingRoute
   "/cards/": typeof AppCardsIndexRoute
   "/deals/": typeof AppDealsIndexRoute
   "/stock/": typeof AppStockIndexRoute
@@ -119,7 +147,11 @@ export interface FileRoutesByTo {
   "/deals/$id": typeof AppDealsIdRoute
   "/deals/new": typeof AppDealsNewRoute
   "/stock/$id": typeof AppStockIdRoute
+  "/stock/health": typeof AppStockHealthRoute
+  "/stock/import": typeof AppStockImportRoute
+  "/stock/labels": typeof AppStockLabelsRoute
   "/stock/new": typeof AppStockNewRoute
+  "/stock/pricing": typeof AppStockPricingRoute
   "/cards": typeof AppCardsIndexRoute
   "/deals": typeof AppDealsIndexRoute
   "/stock": typeof AppStockIndexRoute
@@ -136,7 +168,11 @@ export interface FileRoutesById {
   "/_app/deals/$id": typeof AppDealsIdRoute
   "/_app/deals/new": typeof AppDealsNewRoute
   "/_app/stock/$id": typeof AppStockIdRoute
+  "/_app/stock/health": typeof AppStockHealthRoute
+  "/_app/stock/import": typeof AppStockImportRoute
+  "/_app/stock/labels": typeof AppStockLabelsRoute
   "/_app/stock/new": typeof AppStockNewRoute
+  "/_app/stock/pricing": typeof AppStockPricingRoute
   "/_app/cards/": typeof AppCardsIndexRoute
   "/_app/deals/": typeof AppDealsIndexRoute
   "/_app/stock/": typeof AppStockIndexRoute
@@ -153,7 +189,11 @@ export interface FileRouteTypes {
     | "/deals/$id"
     | "/deals/new"
     | "/stock/$id"
+    | "/stock/health"
+    | "/stock/import"
+    | "/stock/labels"
     | "/stock/new"
+    | "/stock/pricing"
     | "/cards/"
     | "/deals/"
     | "/stock/"
@@ -168,7 +208,11 @@ export interface FileRouteTypes {
     | "/deals/$id"
     | "/deals/new"
     | "/stock/$id"
+    | "/stock/health"
+    | "/stock/import"
+    | "/stock/labels"
     | "/stock/new"
+    | "/stock/pricing"
     | "/cards"
     | "/deals"
     | "/stock"
@@ -184,7 +228,11 @@ export interface FileRouteTypes {
     | "/_app/deals/$id"
     | "/_app/deals/new"
     | "/_app/stock/$id"
+    | "/_app/stock/health"
+    | "/_app/stock/import"
+    | "/_app/stock/labels"
     | "/_app/stock/new"
+    | "/_app/stock/pricing"
     | "/_app/cards/"
     | "/_app/deals/"
     | "/_app/stock/"
@@ -289,11 +337,39 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AppStockIdRouteImport
       parentRoute: typeof AppRoute
     }
+    "/_app/stock/health": {
+      id: "/_app/stock/health"
+      path: "/stock/health"
+      fullPath: "/stock/health"
+      preLoaderRoute: typeof AppStockHealthRouteImport
+      parentRoute: typeof AppRoute
+    }
+    "/_app/stock/import": {
+      id: "/_app/stock/import"
+      path: "/stock/import"
+      fullPath: "/stock/import"
+      preLoaderRoute: typeof AppStockImportRouteImport
+      parentRoute: typeof AppRoute
+    }
+    "/_app/stock/labels": {
+      id: "/_app/stock/labels"
+      path: "/stock/labels"
+      fullPath: "/stock/labels"
+      preLoaderRoute: typeof AppStockLabelsRouteImport
+      parentRoute: typeof AppRoute
+    }
     "/_app/stock/new": {
       id: "/_app/stock/new"
       path: "/stock/new"
       fullPath: "/stock/new"
       preLoaderRoute: typeof AppStockNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    "/_app/stock/pricing": {
+      id: "/_app/stock/pricing"
+      path: "/stock/pricing"
+      fullPath: "/stock/pricing"
+      preLoaderRoute: typeof AppStockPricingRouteImport
       parentRoute: typeof AppRoute
     }
   }
@@ -307,7 +383,11 @@ interface AppRouteChildren {
   AppDealsIdRoute: typeof AppDealsIdRoute
   AppDealsNewRoute: typeof AppDealsNewRoute
   AppStockIdRoute: typeof AppStockIdRoute
+  AppStockHealthRoute: typeof AppStockHealthRoute
+  AppStockImportRoute: typeof AppStockImportRoute
+  AppStockLabelsRoute: typeof AppStockLabelsRoute
   AppStockNewRoute: typeof AppStockNewRoute
+  AppStockPricingRoute: typeof AppStockPricingRoute
   AppCardsIndexRoute: typeof AppCardsIndexRoute
   AppDealsIndexRoute: typeof AppDealsIndexRoute
   AppStockIndexRoute: typeof AppStockIndexRoute
@@ -321,7 +401,11 @@ const AppRouteChildren: AppRouteChildren = {
   AppDealsIdRoute: AppDealsIdRoute,
   AppDealsNewRoute: AppDealsNewRoute,
   AppStockIdRoute: AppStockIdRoute,
+  AppStockHealthRoute: AppStockHealthRoute,
+  AppStockImportRoute: AppStockImportRoute,
+  AppStockLabelsRoute: AppStockLabelsRoute,
   AppStockNewRoute: AppStockNewRoute,
+  AppStockPricingRoute: AppStockPricingRoute,
   AppCardsIndexRoute: AppCardsIndexRoute,
   AppDealsIndexRoute: AppDealsIndexRoute,
   AppStockIndexRoute: AppStockIndexRoute,
