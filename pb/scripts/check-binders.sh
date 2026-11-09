@@ -11,8 +11,14 @@
 #   - layout batches refuse two cards in one pocket;
 #   - a wanted request is one open row per customer per card, cancellable,
 #     and the staff list counts it while customers cannot reach that list;
-#   - a Pokedex binder for one generation has a sprite in every pocket.
-# Also runs the pure helper tests in binders_lib.test.cjs.
+#   - a Pokedex binder for one generation has a sprite in every pocket;
+#   - "In stock at GG": availability flags only needed pockets holding the
+#     exact print (never a Japanese item on an English pocket), leaks no
+#     qty, price or SKU, follows the item's status, shows on the share
+#     view, and one stock arrival writes at most one alert per customer,
+#     honouring the per-binder alerts switch.
+# Also runs the pure helper tests in binders_lib.test.cjs and
+# binders_stock.test.cjs.
 #
 # Uses made-up names only. Requires pb/pocketbase, curl and node.
 set -euo pipefail
@@ -80,6 +86,8 @@ out() { cat "$TMP_DIR/out.json"; }
 echo "== pure helper tests"
 node --test "$ROOT/pb/scripts/binders_lib.test.cjs" >/dev/null || fail "binders_lib.test.cjs failed (run node --test pb/scripts/binders_lib.test.cjs)"
 ok "binders_v2.js helper tests pass"
+node --test "$ROOT/pb/scripts/binders_stock.test.cjs" >/dev/null || fail "binders_stock.test.cjs failed (run node --test pb/scripts/binders_stock.test.cjs)"
+ok "binders_stock.js matching tests pass"
 
 [ -x "$PB" ] || fail "pb/pocketbase not found - see pb/scripts/dev.sh"
 "$PB" --dir "$TMP_DIR" superuser upsert "$SUPER_EMAIL" "$SUPER_PASSWORD" >/dev/null
@@ -230,6 +238,149 @@ ok "a generation 1 Pokedex binder has 151 pockets with sprites, in dex order"
 [ "$(req DELETE "/api/collections/binders/records/$BID" "$ALICE")" = "204" ] || fail "delete binder: $(out)"
 [ "$(req GET "/api/collections/binder_cards/records/${P[1]}" "$SUPER")" = "404" ] || fail "pockets survived their binder"
 ok "deleting a binder removes its pockets"
+
+# ---------------------------------------------------------------------
+# In stock at GG: catalogue prints, shop items, availability and alerts.
+# ---------------------------------------------------------------------
+[ "$(req GET "/api/collections/games/records?filter=key%3D%22pokemon%22" "$SUPER")" = "200" ] || fail "games list"
+GAME_ID="$(out | jval items.0.id)"
+[ -n "$GAME_ID" ] || fail "no seeded pokemon game"
+
+mkset() {
+  # $1 code -> prints the card_sets id
+  curl -s -X POST "$BASE/api/collections/card_sets/records" -H "Authorization: $SUPER" -H "Content-Type: application/json" \
+    -d "{\"game\":\"$GAME_ID\",\"code\":\"$1\",\"name\":\"Check Set $1\"}" | jval id
+}
+mkprint() {
+  # $1 set id, $2 number, $3 name, $4 language, $5 tcgdex id -> prints the cards id
+  curl -s -X POST "$BASE/api/collections/cards/records" -H "Authorization: $SUPER" -H "Content-Type: application/json" \
+    -d "{\"game\":\"$GAME_ID\",\"set\":\"$1\",\"number\":\"$2\",\"name\":\"$3\",\"language\":\"$4\",\"external_ids\":{\"tcgdex\":\"$5\"}}" | jval id
+}
+mkshopitem() {
+  # $1 cards id, $2 status, $3 qty -> prints the items id
+  curl -s -X POST "$BASE/api/collections/items/records" -H "Authorization: $STAFF" -H "Content-Type: application/json" \
+    -d "{\"kind\":\"single\",\"game\":\"$GAME_ID\",\"card\":\"$1\",\"title\":\"Check stock item\",\"qty\":$3,\"cost\":100,\"price\":500,\"status\":\"$2\",\"tax_scheme\":\"margin\",\"source\":\"supplier\"}" | jval id
+}
+
+SET_EN="$(mkset chken)"
+SET_JA="$(mkset chkja)"
+[ -n "$SET_EN" ] && [ -n "$SET_JA" ] || fail "could not create the check card sets"
+CARD_EN="$(mkprint "$SET_EN" 199 "Check Charizard" en chkset-199)"
+CARD_JA="$(mkprint "$SET_JA" 199 "Check Charizard" ja chkset-199)"
+[ -n "$CARD_EN" ] && [ -n "$CARD_JA" ] || fail "could not create the check catalogue prints"
+
+# Alice's stock binder: the English print needed, the same print owned in a
+# second pocket, and the Japanese print needed.
+[ "$(req POST /api/vault/binders "$ALICE" '{"kind":"custom","name":"Stock binder","grid":"2x2","color":"volt"}')" = "200" ] || fail "stock binder: $(out)"
+SBID="$(out | jval id)"
+mkpocket() {
+  # $1 binder, $2 card_id, $3 lang, $4 slot, $5 owned, $6 variant -> prints the pocket id
+  curl -s -X POST "$BASE/api/collections/binder_cards/records" -H "Authorization: $SUPER" -H "Content-Type: application/json" \
+    -d "{\"binder\":\"$1\",\"card_id\":\"$2\",\"name\":\"Check Charizard\",\"number\":\"199\",\"set_id\":\"chk\",\"set_name\":\"Check Set\",\"lang\":\"$3\",\"slot\":$4,\"sort\":$4,\"owned\":$5,\"variant\":\"${6:-}\"}" | jval id
+}
+PK_NEED_EN="$(mkpocket "$SBID" chkset-199 en 0 false)"
+# Same print, owned, as a holo variant (one card and variant per binder).
+PK_OWNED_EN="$(mkpocket "$SBID" chkset-199 en 1 true holo)"
+# The Japanese pocket lives in its own binder: a binder holds one row per
+# card and variant, whatever the language.
+[ "$(req POST /api/vault/binders "$ALICE" '{"kind":"custom","name":"Stock binder JA","grid":"2x2","color":"cyan"}')" = "200" ] || fail "ja binder: $(out)"
+SBID_JA="$(out | jval id)"
+PK_NEED_JA="$(mkpocket "$SBID_JA" chkset-199 ja 0 false)"
+[ -n "$PK_NEED_EN" ] && [ -n "$PK_OWNED_EN" ] && [ -n "$PK_NEED_JA" ] || fail "could not seed the stock binder pockets"
+
+# No stock yet: nothing is flagged.
+[ "$(req GET "/api/vault/binder-availability/$SBID" "$ALICE")" = "200" ] || fail "availability (empty): $(out)"
+[ "$(out | jval in_stock)" = "[]" ] || fail "availability should start empty: $(out)"
+
+# Unavailable statuses and qty 0 never flag a pocket.
+for status in reserved listed_ebay sold written_off; do
+  UNAVAIL_ID="$(mkshopitem "$CARD_EN" "$status" 1)"
+  [ -n "$UNAVAIL_ID" ] || fail "could not create a $status item"
+done
+ZERO_ID="$(mkshopitem "$CARD_EN" in_stock 0)"
+[ -n "$ZERO_ID" ] || fail "could not create the qty-0 item"
+[ "$(req GET "/api/vault/binder-availability/$SBID" "$ALICE")" = "200" ] || fail "availability (unavailable statuses): $(out)"
+[ "$(out | jval in_stock)" = "[]" ] || fail "reserved, listed, sold, written off or qty-0 stock was flagged: $(out)"
+[ "$(req GET "/api/collections/binder_alerts/records" "$ALICE")" = "200" ] && [ "$(out | jval totalItems)" = "0" ] \
+  || fail "unavailable stock raised an alert: $(out)"
+ok "reserved, listed_ebay, sold, written_off and qty-0 items never flag a pocket or alert anyone"
+
+# A real arrival: the English print only, on the needed English pocket only.
+ITEM_EN="$(mkshopitem "$CARD_EN" in_stock 1)"
+[ -n "$ITEM_EN" ] || fail "could not create the in-stock item"
+[ "$(req GET "/api/vault/binder-availability/$SBID" "$ALICE")" = "200" ] || fail "availability: $(out)"
+AVAIL="$(out)"
+echo "$AVAIL" | no_price_keys || fail "availability carries a price-like key: $AVAIL"
+echo "$AVAIL" | grep -qiE '"(sku|qty|location)"' && fail "availability leaks sku, qty or location: $AVAIL"
+[ "$(echo "$AVAIL" | jval in_stock)" = "[\"$PK_NEED_EN\"]" ] \
+  || fail "only the needed English pocket should be flagged (need $PK_NEED_EN): $AVAIL"
+[ "$(req GET "/api/vault/binder-availability/$SBID_JA" "$ALICE")" = "200" ] && [ "$(out | jval in_stock)" = "[]" ] \
+  || fail "an English item flagged the Japanese pocket: $(out)"
+ok "an in-stock English print flags the needed English pocket only: never owned pockets, never the Japanese print"
+
+[ "$(req GET "/api/vault/binder-availability/$SBID" "$BOB")" = "404" ] || fail "B read A's availability"
+[ "$(req GET "/api/vault/binder-availability/$SBID")" = "401" ] || fail "anonymous read availability"
+ok "availability is the owner's only"
+
+# The share view carries the same boolean and nothing more.
+[ "$(req POST "/api/vault/binders/$SBID/share" "$ALICE")" = "200" ] || fail "share stock binder: $(out)"
+STOKEN="$(out | jval token)"
+[ "$(req GET "/api/vault/binder-share/$STOKEN")" = "200" ] || fail "stock share view: $(out)"
+SSHARE="$(out)"
+echo "$SSHARE" | no_price_keys || fail "stock share view carries a price-like key"
+echo "$SSHARE" | grep -qiE '"(sku|qty|location)"' && fail "stock share view leaks sku, qty or location"
+[ "$(echo "$SSHARE" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const p=JSON.parse(d).pockets;console.log(p.filter(x=>x.in_stock===true).length+" "+(p.find(x=>x.owned)?.in_stock===undefined));})')" = "1 true" ] \
+  || fail "share view should flag exactly the needed English pocket: $SSHARE"
+ok "the share view shows in_stock true on the needed pocket, nothing on owned ones, and no price"
+
+# The arrival wrote exactly one alert, for Alice, with the agreed sentence.
+[ "$(req GET "/api/collections/binder_alerts/records" "$ALICE")" = "200" ] || fail "alerts list: $(out)"
+[ "$(out | jval totalItems)" = "1" ] || fail "one arrival should mean one alert: $(out)"
+ALERT_ID="$(out | jval items.0.id)"
+[ "$(out | jval items.0.message)" = "Good news: Check Charizard for your Stock binder binder is in at GG Entertainment. Pop in before it goes." ] \
+  || fail "alert message is wrong: $(out)"
+out | no_price_keys || fail "alert carries a price-like key"
+[ "$(req GET "/api/collections/binder_alerts/records" "$BOB")" = "200" ] && [ "$(out | jval totalItems)" = "0" ] \
+  || fail "B can see A's alerts: $(out)"
+[ "$(req POST /api/collections/binder_alerts/records "$ALICE" '{"card_id":"x","dedupe_key":"y"}')" != "200" ] \
+  || fail "a customer wrote binder_alerts directly"
+[ "$(req PATCH "/api/collections/binder_alerts/records/$ALERT_ID" "$ALICE" '{"message":"changed"}')" != "200" ] \
+  || fail "a customer rewrote an alert's message"
+ok "one arrival, one alert, private to the customer, with the agreed sentence and no price"
+
+# A second copy while the first is on the shelf says nothing new; the same
+# item re-saved says nothing; a fresh arrival after everything sold, with
+# the old alert read, speaks again.
+ITEM_EN2="$(mkshopitem "$CARD_EN" in_stock 1)"
+[ -n "$ITEM_EN2" ] || fail "could not create the second copy"
+[ "$(req PATCH "/api/collections/items/records/$ITEM_EN" "$STAFF" '{"notes":"still here"}')" = "200" ] || fail "re-save item"
+[ "$(req GET "/api/collections/binder_alerts/records" "$ALICE")" = "200" ] && [ "$(out | jval totalItems)" = "1" ] \
+  || fail "a second copy or a re-save alerted again: $(out)"
+[ "$(req PATCH "/api/collections/items/records/$ITEM_EN" "$STAFF" '{"status":"sold"}')" = "200" ] || fail "sell copy 1"
+[ "$(req PATCH "/api/collections/items/records/$ITEM_EN2" "$STAFF" '{"status":"sold"}')" = "200" ] || fail "sell copy 2"
+[ "$(req GET "/api/vault/binder-availability/$SBID" "$ALICE")" = "200" ] && [ "$(out | jval in_stock)" = "[]" ] \
+  || fail "sold stock still flagged: $(out)"
+[ "$(req PATCH "/api/collections/binder_alerts/records/$ALERT_ID" "$ALICE" "{\"read_at\":\"2026-01-01 00:00:00.000Z\"}")" = "200" ] \
+  || fail "customer could not mark the alert read: $(out)"
+ITEM_EN3="$(mkshopitem "$CARD_EN" in_stock 1)"
+[ -n "$ITEM_EN3" ] || fail "could not create the third copy"
+[ "$(req GET "/api/collections/binder_alerts/records" "$ALICE")" = "200" ] && [ "$(out | jval totalItems)" = "2" ] \
+  || fail "a fresh arrival after a read alert should alert again: $(out)"
+ok "copies and re-saves stay quiet; a fresh arrival after the alert was read speaks once more"
+
+# Alerts off for the binder: the next arrival says nothing.
+[ "$(req PATCH "/api/collections/binders/records/$SBID" "$ALICE" '{"alerts_off":true}')" = "200" ] || fail "turn alerts off: $(out)"
+[ "$(req PATCH "/api/collections/items/records/$ITEM_EN3" "$STAFF" '{"status":"sold"}')" = "200" ] || fail "sell copy 3"
+[ "$(req GET "/api/collections/binder_alerts/records?filter=read_at%3D%22%22" "$ALICE")" = "200" ] || fail "unread alerts list: $(out)"
+ALERT2_ID="$(out | jval items.0.id)"
+[ -n "$ALERT2_ID" ] || fail "no unread second alert to mark read"
+[ "$(req PATCH "/api/collections/binder_alerts/records/$ALERT2_ID" "$ALICE" '{"read_at":"2026-01-01 00:00:00.000Z"}')" = "200" ] \
+  || fail "could not read the second alert: $(out)"
+ITEM_EN4="$(mkshopitem "$CARD_EN" in_stock 1)"
+[ -n "$ITEM_EN4" ] || fail "could not create the fourth copy"
+[ "$(req GET "/api/collections/binder_alerts/records" "$ALICE")" = "200" ] && [ "$(out | jval totalItems)" = "2" ] \
+  || fail "an arrival alerted a binder with alerts off: $(out)"
+ok "a binder with alerts off is left alone, while the badge still shows"
 
 echo
 echo "All $PASS_COUNT binder checks passed."

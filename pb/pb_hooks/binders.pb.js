@@ -11,6 +11,7 @@
  *   POST   /api/vault/binders/{id}/add          {card_id, slot?}
  *   POST   /api/vault/binders/{id}/bulk         {cards: [...]}
  *   POST   /api/vault/binders/{id}/layout       {pockets: [{id, slot?, owned?}], min_slots?}
+ *   GET    /api/vault/binder-availability/{id}  needed pocket ids the shop has in stock
  *   POST   /api/vault/binders/{id}/share        make (or return) the share link
  *   DELETE /api/vault/binders/{id}/share        switch the share link off
  *   POST   /api/vault/binder-wanted             {pocket} -> ask the shop for that card
@@ -424,6 +425,32 @@ routerAdd(
   $apis.requireAuth("customers")
 );
 
+// Which of this binder's needed pockets the shop has on the shelf right
+// now. One batched catalogue join however many pockets there are, and the
+// answer is pocket ids only: no qty, price, SKU or location ever leaves.
+routerAdd(
+  "GET",
+  "/api/vault/binder-availability/{id}",
+  (e) => {
+    const L = require(`${__hooks}/lib/binders.js`);
+    const S = require(`${__hooks}/lib/binders_stock.js`);
+    const binder = L.ownBinder(e.app, e.auth, e.request.pathValue("id"));
+    const rows = e.app.findRecordsByFilter(
+      "binder_cards",
+      "binder = {:b} && owned = false && slot >= 0",
+      "",
+      0,
+      0,
+      { b: binder.id }
+    );
+    const pockets = S.pocketsOf(rows);
+    const keys = S.availableKeysFor(e.app, pockets.map((p) => p.card_id));
+    e.response.header().set("Cache-Control", "no-store");
+    return e.json(200, { in_stock: S.matchNeededPockets(pockets, keys) });
+  },
+  $apis.requireAuth("customers")
+);
+
 routerAdd(
   "POST",
   "/api/vault/binders/{id}/share",
@@ -462,6 +489,7 @@ routerAdd(
 // it, their customer record, their wanted list or any value.
 routerAdd("GET", "/api/vault/binder-share/{token}", (e) => {
   const V = require(`${__hooks}/lib/binders_v2.js`);
+  const S = require(`${__hooks}/lib/binders_stock.js`);
   const token = String(e.request.pathValue("token") || "");
   const gone = "This share link has been switched off or never existed. Ask for a new link.";
   if (token.length < 24 || token.length > 64 || !/^[A-Za-z0-9]+$/.test(token)) {
@@ -473,13 +501,23 @@ routerAdd("GET", "/api/vault/binder-share/{token}", (e) => {
   const rows = e.app.findRecordsByFilter("binder_cards", "binder = {:b} && slot >= 0", "slot", 0, 0, {
     b: binder.id,
   });
+  // The badge shows on the share page too: a boolean per needed pocket,
+  // never a quantity or a value.
+  const simple = S.pocketsOf(rows);
+  const keys = S.availableKeysFor(e.app, simple.map((p) => p.card_id));
+  const flagged = {};
+  for (const id of S.matchNeededPockets(simple, keys)) flagged[id] = true;
   e.response.header().set("Cache-Control", "no-store");
   e.response.header().set("X-Robots-Tag", "noindex");
   return e.json(
     200,
     V.stripPrices({
       binder: V.shareBinderOut(binder),
-      pockets: rows.map((r) => V.pocketOut(r)),
+      pockets: rows.map((r) => {
+        const out = V.pocketOut(r);
+        if (flagged[r.id]) out.in_stock = true;
+        return out;
+      }),
     })
   );
 });
@@ -661,5 +699,6 @@ onRecordEnrich(
   },
   "binders",
   "binder_cards",
-  "binder_wanted"
+  "binder_wanted",
+  "binder_alerts"
 );
