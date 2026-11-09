@@ -130,7 +130,23 @@ test.describe("signing in", () => {
   })
 })
 
-test.describe("quotes", () => {
+/*
+ * The customer offers flow is parked behind VITE_CUSTOMER_OFFERS
+ * (src/features/estimate/offers-flag.ts) and this suite builds with the flag
+ * off, so the flow tests are skipped until it comes back; the redirect is
+ * what ships today.
+ */
+test.describe("quotes (parked)", () => {
+  test("the quotes routes bounce to binders while offers are parked", async ({ page }) => {
+    await signIn(page)
+    await page.goto("/account/quotes")
+    await expect(page.getByRole("heading", { name: "Binders" })).toBeVisible()
+    await page.goto("/account/quotes/new")
+    await expect(page.getByRole("heading", { name: "Binders" })).toBeVisible()
+  })
+})
+
+test.describe.skip("quotes (needs VITE_CUSTOMER_OFFERS=1)", () => {
   test("shows the offer, its timeline and accepts it", async ({ page }) => {
     await signIn(page)
     await page.goto("/account/quotes")
@@ -233,14 +249,13 @@ test.describe("want list", () => {
 })
 
 test.describe("credit and trade-ins", () => {
-  test("shows the balance and the rows behind it", async ({ page }) => {
+  test("the wallet shows the balance and the refreshing code", async ({ page }) => {
     await signIn(page)
     await page.goto("/account/credit")
 
+    await expect(page.getByRole("heading", { name: "Wallet" })).toBeVisible()
     await expect(page.getByTestId("credit-balance")).toHaveText("£45.00")
-    await expect(page.getByText("Sold to us")).toBeVisible()
-    await expect(page.getByText("Spent in the shop")).toBeVisible()
-    await expect(page.getByText("- £15.00")).toBeVisible()
+    await expect(page.getByText("The code refreshes itself every minute.")).toBeVisible()
   })
 
   test("opens a trade-in and shows what was sold and paid", async ({ page }) => {
@@ -502,12 +517,14 @@ test.describe("notifications", () => {
     await expect(page.getByRole("heading", { name: "Points" })).toBeVisible()
   })
 
-  test("opens the quote a notification points at", async ({ page }) => {
+  // Parked with the offers flow: the demo quote notification's target
+  // redirects to binders while VITE_CUSTOMER_OFFERS is off.
+  test("a quote notification's link lands on binders while offers are parked", async ({ page }) => {
     await signIn(page)
     await page.goto("/account/notifications")
 
     await page.getByRole("link", { name: /Your quote offer/ }).click()
-    await expect(page.getByTestId("quote-offer-total")).toHaveText("£42.00")
+    await expect(page.getByRole("heading", { name: "Binders" })).toBeVisible()
   })
 })
 
@@ -519,9 +536,9 @@ test.describe("the bottom bar", () => {
     // 900px, the text links above it. So the same five names work at both
     // of the widths this suite runs at.
     for (const [label, heading] of [
-      ["Quotes", "Quotes"],
+      ["Binders", "Binders"],
       ["Wants", "Want list"],
-      ["Credit", "Store credit"],
+      ["Wallet", "Wallet"],
       ["Me", "Profile"],
       ["Card", "My card"],
     ] as const) {

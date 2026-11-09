@@ -17,8 +17,13 @@
 #     qty, price or SKU, follows the item's status, shows on the share
 #     view, and one stock arrival writes at most one alert per customer,
 #     honouring the per-binder alerts switch.
-# Also runs the pure helper tests in binders_lib.test.cjs and
-# binders_stock.test.cjs.
+#   - the wallet: the mirrored balance is read-only and private, missing or
+#     old mirrors read as "no balance", and the QR token is a signed,
+#     short-lived blob naming only the customer record id;
+#   - the magnifier card detail refuses bad ids; the artist endpoint needs a
+#     customer token.
+# Also runs the pure helper tests in binders_lib.test.cjs,
+# binders_stock.test.cjs, binders_detail.test.cjs and binders_wallet.test.cjs.
 #
 # Uses made-up names only. Requires pb/pocketbase, curl and node.
 set -euo pipefail
@@ -381,6 +386,63 @@ ITEM_EN4="$(mkshopitem "$CARD_EN" in_stock 1)"
 [ "$(req GET "/api/collections/binder_alerts/records" "$ALICE")" = "200" ] && [ "$(out | jval totalItems)" = "2" ] \
   || fail "an arrival alerted a binder with alerts off: $(out)"
 ok "a binder with alerts off is left alone, while the badge still shows"
+
+
+echo "== pure detail and wallet tests"
+node --test "$ROOT/pb/scripts/binders_detail.test.cjs" >/dev/null || fail "binders_detail.test.cjs failed (run node --test pb/scripts/binders_detail.test.cjs)"
+ok "binders_detail.js whitelist tests pass"
+node --test "$ROOT/pb/scripts/binders_wallet.test.cjs" >/dev/null || fail "binders_wallet.test.cjs failed (run node --test pb/scripts/binders_wallet.test.cjs)"
+ok "binders_wallet.js token tests pass"
+
+echo "== the wallet"
+[ "$(req GET /api/vault/wallet "")" = "401" ] || fail "anonymous wallet read should be 401, got $(out)"
+[ "$(req POST /api/vault/wallet/token "")" = "401" ] || fail "anonymous wallet token should be 401, got $(out)"
+[ "$(req GET /api/vault/wallet "$ALICE")" = "200" ] || fail "wallet read: $(out)"
+[ "$(out | jval balance_minor)" = "" ] && [ "$(out | jval stale)" = "true" ] || fail "no mirror row should read as no balance: $(out)"
+out | no_price_keys || fail "wallet response carries a price-like key"
+ok "the wallet needs a customer token and says no balance until the shop mirrors one"
+
+ALICE_ID="$(curl -s "$BASE/api/collections/customers/records?filter=email%3D%22binders-a%40local.test%22" -H "Authorization: $SUPER" | jval items.0.id)"
+[ -n "$ALICE_ID" ] || fail "could not find customer A's id"
+FRESH="$(node -e 'const d=new Date();console.log(d.toISOString().replace("T"," ").replace(/\.\d+Z/,".000Z"))')"
+[ "$(req POST /api/collections/credit_mirror/records "$SUPER" "{\"customer\":\"$ALICE_ID\",\"balance_minor\":2350,\"balance_at\":\"$FRESH\",\"source\":\"check\"}")" = "200" ]   || fail "superuser could not write the mirror: $(out)"
+MIRROR_ID="$(out | jval id)"
+[ "$(req GET /api/vault/wallet "$ALICE")" = "200" ] && [ "$(out | jval balance_minor)" = "2350" ] && [ "$(out | jval stale)" = "false" ]   || fail "a fresh mirror should show as the balance: $(out)"
+[ "$(req GET /api/vault/wallet "$BOB")" = "200" ] && [ "$(out | jval balance_minor)" = "" ]   || fail "customer B sees A's balance: $(out)"
+[ "$(req POST /api/collections/credit_mirror/records "$BOB" "{\"customer\":\"$ALICE_ID\",\"balance_minor\":999999}")" != "200" ]   || fail "a customer could create a mirror row"
+[ "$(req PATCH "/api/collections/credit_mirror/records/$MIRROR_ID" "$ALICE" '{"balance_minor":999999}')" != "200" ]   || fail "a customer could edit their own balance"
+[ "$(req GET "/api/collections/credit_mirror/records" "$BOB")" = "200" ] && [ "$(out | jval totalItems)" = "0" ]   || fail "customer B can list A's mirror row: $(out)"
+STALE_AT="2026-01-01 00:00:00.000Z"
+[ "$(req PATCH "/api/collections/credit_mirror/records/$MIRROR_ID" "$SUPER" "{\"balance_at\":\"$STALE_AT\"}")" = "200" ] || fail "age the mirror: $(out)"
+[ "$(req GET /api/vault/wallet "$ALICE")" = "200" ] && [ "$(out | jval stale)" = "true" ]   || fail "a day-old mirror should read stale: $(out)"
+ok "the balance is read-only, private to its customer and honest about being stale"
+
+[ "$(req POST /api/vault/wallet/token "$ALICE")" = "200" ] || fail "wallet token: $(out)"
+TOKEN="$(out | jval token)"
+TTL="$(out | jval ttl)"
+[ "$TTL" = "120" ] || fail "token ttl should be 120, got $TTL"
+case "$TOKEN" in GGW1.*) : ;; *) fail "token has the wrong shape: $TOKEN";; esac
+[ "$(req GET "/api/collections/wallet_keys/records" "$ALICE")" != "200" ] || [ "$(out | jval totalItems)" = "0" ]   || fail "a customer can read the signing key"
+SECRET="$(curl -s "$BASE/api/collections/wallet_keys/records" -H "Authorization: $SUPER" | jval items.0.secret)"
+[ -n "$SECRET" ] || fail "no wallet_qr secret row after the first token"
+VERIFY="$(node -e '
+  const path = require("node:path"); const crypto = require("node:crypto");
+  const W = require(path.join(process.argv[1], "pb/pb_hooks/lib/binders_wallet.js"));
+  const hs256 = (d, k) => crypto.createHmac("sha256", k).update(d).digest("hex");
+  const eq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+  const got = W.verifyWalletToken(process.argv[2], Date.now() / 1000, process.argv[3], hs256, eq);
+  const late = W.verifyWalletToken(process.argv[2], Date.now() / 1000 + 121, process.argv[3], hs256, eq);
+  console.log(got && !late ? got.customer : "BAD");
+' "$ROOT" "$TOKEN" "$SECRET")"
+[ "$VERIFY" = "$ALICE_ID" ] || fail "the token did not verify to customer A (got $VERIFY)"
+ok "the QR token is signed, names only the record id and dies after two minutes"
+
+echo "== the magnifier and artist endpoints"
+[ "$(req GET "/api/vault/binders/card/..%2Fsecrets" "")" = "404" ] || fail "a path-shaped card id should 404, got $(out)"
+[ "$(req GET "/api/vault/binders/card/x" "")" = "404" ] || fail "a too-short card id should 404: $(out)"
+[ "$(req GET "/api/vault/binders/artist/Someone" "")" = "401" ] || fail "anonymous artist read should be 401: $(out)"
+[ "$(req GET "/api/vault/binders/artist/a%22b" "$ALICE")" = "404" ] || fail "a quoted artist name should 404: $(out)"
+ok "card detail refuses bad ids and the artist page needs a customer"
 
 echo
 echo "All $PASS_COUNT binder checks passed."
