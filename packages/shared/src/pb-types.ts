@@ -10,6 +10,8 @@ export const Collections = {
 	Superusers: "_superusers",
 	AdapterState: "adapter_state",
 	AuditLog: "audit_log",
+	BinderCards: "binder_cards",
+	Binders: "binders",
 	BookingEvents: "booking_events",
 	Bookings: "bookings",
 	CardSets: "card_sets",
@@ -177,6 +179,53 @@ export type AuditLogRecord<Tmeta = unknown> = {
 	ip?: string
 	meta?: null | Tmeta
 	record?: string
+	updated: IsoAutoDateString
+}
+
+export type BinderCardsRecord = {
+	binder: RecordIdString
+	card_id: string
+	created: IsoAutoDateString
+	group_name?: string
+	group_shape?: string
+	id: string
+	image?: string
+	lang?: string
+	manual?: boolean
+	name?: string
+	number?: string
+	owned?: boolean
+	owned_at?: IsoDateString
+	rarity?: string
+	set_id?: string
+	set_name?: string
+	set_total?: string
+	sort?: number
+	updated: IsoAutoDateString
+	variant?: string
+}
+
+export const BindersKindOptions = {
+	"pokemon": "pokemon",
+	"set": "set",
+	"illustrator": "illustrator",
+	"custom": "custom",
+} as const
+export type BindersKindOptions = typeof BindersKindOptions[keyof typeof BindersKindOptions]
+export type BindersRecord = {
+	color?: string
+	cover?: string
+	created: IsoAutoDateString
+	customer: RecordIdString
+	id: string
+	kind: BindersKindOptions
+	logo?: string
+	master?: boolean
+	name: string
+	owner?: string
+	query?: string
+	query_label?: string
+	sort?: number
 	updated: IsoAutoDateString
 }
 
@@ -466,9 +515,11 @@ export type CustomerPrivateRecord = {
 	id_type?: string
 	id_verified_at?: IsoDateString
 	id_verified_by?: RecordIdString
+	marketing_consent_pending?: boolean
 	notes?: HTMLString
 	points_balance?: number
 	points_expiry_warned_at?: IsoDateString
+	terms_accepted_at?: IsoDateString
 	tier?: RecordIdString
 	updated: IsoAutoDateString
 }
@@ -1735,9 +1786,10 @@ export const TradeInLinesCosmeticGradeOptions = {
 	"C": "C",
 } as const
 export type TradeInLinesCosmeticGradeOptions = typeof TradeInLinesCosmeticGradeOptions[keyof typeof TradeInLinesCosmeticGradeOptions]
-export type TradeInLinesRecord = {
+export type TradeInLinesRecord<Tcash_pct = unknown, Ttrade_pct = unknown> = {
 	accepted?: boolean
 	card?: RecordIdString
+	cash_pct?: null | Tcash_pct
 	completeness?: TradeInLinesCompletenessOptions
 	condition?: TradeInLinesConditionOptions
 	cosmetic_grade?: TradeInLinesCosmeticGradeOptions
@@ -1760,6 +1812,7 @@ export type TradeInLinesRecord = {
 	qty?: number
 	retro_title?: RecordIdString
 	trade_in: RecordIdString
+	trade_pct?: null | Ttrade_pct
 	updated: IsoAutoDateString
 }
 
@@ -1786,17 +1839,40 @@ export const TradeInsPayoutTypeOptions = {
 	"part_exchange": "part_exchange",
 } as const
 export type TradeInsPayoutTypeOptions = typeof TradeInsPayoutTypeOptions[keyof typeof TradeInsPayoutTypeOptions]
+
+export const TradeInsTradeOverrideKindOptions = {
+	"amount": "amount",
+	"pct": "pct",
+} as const
+export type TradeInsTradeOverrideKindOptions = typeof TradeInsTradeOverrideKindOptions[keyof typeof TradeInsTradeOverrideKindOptions]
+
+export const TradeInsCashOverrideKindOptions = {
+	"amount": "amount",
+	"pct": "pct",
+} as const
+export type TradeInsCashOverrideKindOptions = typeof TradeInsCashOverrideKindOptions[keyof typeof TradeInsCashOverrideKindOptions]
 export type TradeInsRecord = {
+	calculated_cash?: number
+	calculated_trade?: number
+	cash_override_kind?: TradeInsCashOverrideKindOptions
+	cash_override_pct?: number
+	cash_override_pence?: number
+	cash_pct?: number
 	cash_session?: RecordIdString
 	channel?: TradeInsChannelOptions
 	completed_at?: IsoDateString
 	created: IsoAutoDateString
 	customer: RecordIdString
+	deal_cash_total?: number
+	deal_trade_total?: number
 	id: string
 	id_checked?: boolean
 	id_checked_by?: RecordIdString
 	id_document?: RecordIdString
 	number?: string
+	override_at?: IsoDateString
+	override_by?: RecordIdString
+	override_reason?: string
 	part_exchange_value?: number
 	payout_cash?: number
 	payout_credit?: number
@@ -1813,6 +1889,10 @@ export type TradeInsRecord = {
 	status?: TradeInsStatusOptions
 	total_market?: number
 	total_offer?: number
+	trade_override_kind?: TradeInsTradeOverrideKindOptions
+	trade_override_pct?: number
+	trade_override_pence?: number
+	trade_pct?: number
 	updated: IsoAutoDateString
 }
 
@@ -1857,6 +1937,8 @@ export type OtpsResponse<Texpand = unknown> = Required<OtpsRecord> & BaseSystemF
 export type SuperusersResponse<Texpand = unknown> = Required<SuperusersRecord> & AuthSystemFields<Texpand>
 export type AdapterStateResponse<Tvalue = unknown, Texpand = unknown> = Required<AdapterStateRecord<Tvalue>> & BaseSystemFields<Texpand>
 export type AuditLogResponse<Tmeta = unknown, Texpand = unknown> = Required<AuditLogRecord<Tmeta>> & BaseSystemFields<Texpand>
+export type BinderCardsResponse<Texpand = unknown> = Required<BinderCardsRecord> & BaseSystemFields<Texpand>
+export type BindersResponse<Texpand = unknown> = Required<BindersRecord> & BaseSystemFields<Texpand>
 export type BookingEventsResponse<Texpand = unknown> = Required<BookingEventsRecord> & BaseSystemFields<Texpand>
 export type BookingsResponse<Texpand = unknown> = Required<BookingsRecord> & BaseSystemFields<Texpand>
 export type CardSetsResponse<Texternal_ids = unknown, Texpand = unknown> = Required<CardSetsRecord<Texternal_ids>> & BaseSystemFields<Texpand>
@@ -1921,7 +2003,7 @@ export type TillKeysResponse<Texpand = unknown> = Required<TillKeysRecord> & Bas
 export type TillOverridesResponse<Tcontext = unknown, Texpand = unknown> = Required<TillOverridesRecord<Tcontext>> & BaseSystemFields<Texpand>
 export type TillProductsResponse<Texpand = unknown> = Required<TillProductsRecord> & BaseSystemFields<Texpand>
 export type TillReportsResponse<Tdata = unknown, Texpand = unknown> = Required<TillReportsRecord<Tdata>> & BaseSystemFields<Texpand>
-export type TradeInLinesResponse<Texpand = unknown> = Required<TradeInLinesRecord> & BaseSystemFields<Texpand>
+export type TradeInLinesResponse<Tcash_pct = unknown, Ttrade_pct = unknown, Texpand = unknown> = Required<TradeInLinesRecord<Tcash_pct, Ttrade_pct>> & BaseSystemFields<Texpand>
 export type TradeInsResponse<Texpand = unknown> = Required<TradeInsRecord> & BaseSystemFields<Texpand>
 export type UsersResponse<Texpand = unknown> = Required<UsersRecord> & AuthSystemFields<Texpand>
 export type WantListResponse<Texpand = unknown> = Required<WantListRecord> & BaseSystemFields<Texpand>
@@ -1936,6 +2018,8 @@ export type CollectionRecords = {
 	_superusers: SuperusersRecord
 	adapter_state: AdapterStateRecord
 	audit_log: AuditLogRecord
+	binder_cards: BinderCardsRecord
+	binders: BindersRecord
 	booking_events: BookingEventsRecord
 	bookings: BookingsRecord
 	card_sets: CardSetsRecord
@@ -2014,6 +2098,8 @@ export type CollectionResponses = {
 	_superusers: SuperusersResponse
 	adapter_state: AdapterStateResponse
 	audit_log: AuditLogResponse
+	binder_cards: BinderCardsResponse
+	binders: BindersResponse
 	booking_events: BookingEventsResponse
 	bookings: BookingsResponse
 	card_sets: CardSetsResponse

@@ -136,6 +136,8 @@ function openById(app, id) {
  *   session: the open session the caller already holds (the till's), or
  *   sessionId: the buy-in body's `cash_session`, resolved here with the
  *     buy-in route's own refusals when cash is paid out,
+ *   noSession: true for the Vault deal route: no cash session is looked
+ *     up, required or linked, cash or not,
  *   now: Date
  * }
  */
@@ -187,7 +189,11 @@ function prepare(app, opts) {
   // last cash buy-in), and its id goes on the trade-in.
   var idDocument = null;
   if (payoutCash > 0) {
-    if (opts.session) {
+    if (opts.noSession) {
+      // The Vault deal route (vaultdeal.pb.js): no till, so no cash session
+      // and no drawer movement. Every other cash check below still applies.
+      session = null;
+    } else if (opts.session) {
       session = opts.session;
     } else {
       var sessionId = util.asStr(opts.sessionId);
@@ -280,8 +286,9 @@ function prepare(app, opts) {
     // Nothing leaves the drawer, so nothing is refused for the lack of a
     // session; the trade-in is still linked to the one that is open, so the
     // X and Z count what it paid in credit.
-    session =
-      opts.session || openById(app, util.asStr(opts.sessionId)) || registers.openSession(app, "");
+    session = opts.noSession
+      ? null
+      : opts.session || openById(app, util.asStr(opts.sessionId)) || registers.openSession(app, "");
   }
 
   // -----------------------------------------------------------------
@@ -469,7 +476,12 @@ function unitCosts(plans, offerTotal, paid) {
  *   payoutType: "cash" | "credit" | "mixed" | "part_exchange",
  *   completedMessage: the 409 for a trade-in completed in the meantime,
  *   partExchange: { value, sale, saleNumber } when a sale takes it, else null,
- *   auditMeta: extra fields for the audit row (optional)
+ *   auditMeta: extra fields for the audit row (optional),
+ *   auditAction: the audit action, default "trade_in_complete",
+ *   noLedgers: true for the Vault deal route: no credit_ledger, points,
+ *     referral or balance writes (no cash movement either, as it has no
+ *     session); credit_balance comes back null,
+ *   extraFields: more trade_ins fields to set on completion (optional)
  * }
  * Returns { ok: true, record, number, result, pending } or a refusal.
  */
@@ -540,7 +552,9 @@ function complete(txApp, prepared, opts) {
   var createdItems = [];
   var overriddenLines = [];
   var labelsQueued = 0;
-  var costs = unitCosts(p.plans, p.offerTotal, applied + payoutCash + payoutCredit);
+  // The Vault deal route works out its own unit costs (lib/vaultdeal.js)
+  // and hands them over as prepared.unitCosts; nothing else sets it.
+  var costs = p.unitCosts || unitCosts(p.plans, p.offerTotal, applied + payoutCash + payoutCredit);
 
   for (var i = 0; i < p.plans.length; i++) {
     var plan = p.plans[i];
@@ -615,7 +629,10 @@ function complete(txApp, prepared, opts) {
   }
 
   // --- money -----------------------------------------------------------
-  if (payoutCredit > 0) {
+  // noLedgers (the Vault deal route): no till, Guild or credit ledger
+  // writes. The split is recorded on the trade-in alone.
+  var ledgers = !opts.noLedgers;
+  if (ledgers && payoutCredit > 0) {
     txApp.save(
       new Record(txApp.findCollectionByNameOrId("credit_ledger"), {
         customer: p.customerId,
@@ -656,7 +673,7 @@ function complete(txApp, prepared, opts) {
   } catch (err) {
     seller = p.customer;
   }
-  var pointsEarned = guildLib.isMember(seller)
+  var pointsEarned = ledgers && guildLib.isMember(seller)
     ? loyalty.evaluateTradeInPoints(
         p.programme,
         p.rules,
@@ -684,7 +701,7 @@ function complete(txApp, prepared, opts) {
   // pending referral, or one already earned, is a no-op - so a sale and its
   // part-exchange in one transaction pay it once.
   var referralOutcome = { pending: [] };
-  if (p.customerId) {
+  if (ledgers && p.customerId) {
     referralOutcome = referralsLib.onFirstCompletion(txApp, p.customerId, staffId, number);
   }
 
@@ -724,7 +741,11 @@ function complete(txApp, prepared, opts) {
   }
   txApp.save(t);
 
-  var fresh = balances.recompute(txApp, p.customerId);
+  var fresh = ledgers ? balances.recompute(txApp, p.customerId) : { credit: null };
+  if (opts.extraFields) {
+    for (var key in opts.extraFields) t.set(key, opts.extraFields[key]);
+    txApp.save(t);
+  }
 
   var meta = {
     number: number,
@@ -743,9 +764,12 @@ function complete(txApp, prepared, opts) {
     meta.sale = partExchange.saleNumber;
     meta.cost_spread = !!costs;
   }
+  if (opts.auditMeta) {
+    for (var mk in opts.auditMeta) meta[mk] = opts.auditMeta[mk];
+  }
   auditLib.writeAuditLog(txApp, {
     actor: staffId,
-    action: "trade_in_complete",
+    action: opts.auditAction || "trade_in_complete",
     collection: "trade_ins",
     record: t.id,
     meta: meta,
