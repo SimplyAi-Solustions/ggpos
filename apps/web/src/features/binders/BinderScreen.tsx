@@ -2,557 +2,678 @@ import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowLeftIcon, CheckIcon, LayersIcon, PlusIcon } from "lucide-react"
+import {
+  ArrowLeftIcon,
+  ArrowLeftRightIcon,
+  BookmarkPlusIcon,
+  CheckIcon,
+  CircleDashedIcon,
+  FilePlusIcon,
+  FileXIcon,
+  MoonIcon,
+  MoveIcon,
+  PlusIcon,
+  Redo2Icon,
+  Settings2Icon,
+  Share2Icon,
+  SunIcon,
+  Trash2Icon,
+  Undo2Icon,
+  XIcon,
+  ChevronsLeftIcon,
+  ChevronsRightIcon,
+} from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { MicroLabel } from "@/components/ui/micro-label"
 import { PageTitle } from "@/components/ui/page-title"
-import {
-  Sheet,
-  SheetBody,
-  SheetContent,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import { LoadFailed } from "@/features/portal/LoadFailed"
-import { SHEET_COLUMN } from "@/features/portal/sheet"
 import {
-  addCard,
+  cancelWanted,
   colorOf,
-  COLORS,
-  deleteBinder,
   getBinder,
-  img,
   KINDS,
   listPockets,
-  packPages,
-  searchCards,
-  setOwned,
-  statsFor,
+  listWanted,
+  saveLayout,
   updateBinder,
+  wantCard,
   type Binder,
   type BinderCard,
-  type SearchHit,
+  type WantedRequest,
 } from "@/features/binders/api"
+import {
+  addPage,
+  binderStats,
+  buildPages,
+  clearPockets,
+  commit,
+  diffLayouts,
+  gridOf,
+  GRIDS,
+  initHistory,
+  isEmptyDiff,
+  layoutFrom,
+  movePage,
+  movePockets,
+  pageCount,
+  redo,
+  reflowPage,
+  removePage,
+  setOwned,
+  undo,
+  type Filter,
+  type Grid,
+  type History,
+  type Layout,
+} from "@/features/binders/layout"
+import { BookView } from "@/features/binders/BookView"
+import { EmptyPocket, Pocket } from "@/features/binders/Pocket"
+import { FilterTabs, GridSwitch, PageNav, StatTiles } from "@/features/binders/BinderParts"
+import { AddCardSheet, SettingsSheet, ShareSheet } from "@/features/binders/BinderSheets"
+import { useBinderTheme, usePrefersReducedMotion, useWide } from "@/features/binders/theme"
 import "@/features/binders/binders.css"
 
-/** Pointer tilt for a card in its sleeve. Touch skips it; a tap is a tick, not a tilt. */
-function tiltMove(e: React.PointerEvent<HTMLElement>) {
-  const el = e.currentTarget.querySelector<HTMLElement>(".bx-art")
-  if (!el || e.pointerType === "touch") return
-  const r = el.getBoundingClientRect()
-  const x = (e.clientX - r.left) / r.width
-  const y = (e.clientY - r.top) / r.height
-  el.style.setProperty("--ry", `${(x - 0.5) * 16}deg`)
-  el.style.setProperty("--rx", `${(0.5 - y) * 16}deg`)
-  el.style.setProperty("--gx", `${x * 100}%`)
-  el.style.setProperty("--gy", `${y * 100}%`)
-}
-
-function tiltLeave(e: React.PointerEvent<HTMLElement>) {
-  const el = e.currentTarget.querySelector<HTMLElement>(".bx-art")
-  if (el) {
-    el.style.setProperty("--rx", "0deg")
-    el.style.setProperty("--ry", "0deg")
-  }
-}
-
-function BlankPocket() {
-  return (
-    <div className="bx-pocket blank" aria-hidden="true">
-      <div className="bx-sleeve">
-        <div className="bx-art" />
-      </div>
-      <div className="bx-cap">
-        <div className="n">&nbsp;</div>
-        <div className="s">&nbsp;</div>
-      </div>
-    </div>
-  )
-}
-
-function Pocket({ c, just, onToggle }: { c: BinderCard; just: boolean; onToggle: (c: BinderCard) => void }) {
-  const [broken, setBroken] = React.useState(false)
-  const total = c.set_total && /^\d+$/.test(c.number) ? `/${c.set_total}` : ""
-  return (
-    <div className={`bx-pocket ${c.owned ? "got" : ""} ${just ? "just" : ""}`}>
-      <button
-        type="button"
-        className="bx-sleeve"
-        onClick={() => onToggle(c)}
-        onPointerMove={tiltMove}
-        onPointerLeave={tiltLeave}
-        aria-pressed={c.owned}
-        aria-label={`${c.name} ${c.number}${total}. ${c.owned ? "Collected. Tap to take it out." : "Missing. Tap to mark it collected."}`}
-      >
-        <div className="bx-art">
-          {c.image && !broken ? (
-            <img src={img(c.image)} alt="" loading="lazy" onError={() => setBroken(true)} />
-          ) : (
-            <div className="bx-art-empty">
-              <LayersIcon size={18} />
-              <span>
-                {c.name}
-                <br />
-                {c.number}
-              </span>
-            </div>
-          )}
-          <i className="bx-glare" />
-          <i className="bx-holo" />
-        </div>
-        <AnimatePresence>
-          {c.owned ? (
-            <motion.span
-              className="bx-tick"
-              initial={{ scale: 0, rotate: -40 }}
-              animate={{ scale: 1, rotate: 0 }}
-              exit={{ scale: 0 }}
-              transition={{ type: "spring", stiffness: 500, damping: 20 }}
-            >
-              <CheckIcon size={12} strokeWidth={3} />
-            </motion.span>
-          ) : null}
-        </AnimatePresence>
-      </button>
-      <div className="bx-cap">
-        <div className="n">{c.name}</div>
-        <div className="s">
-          {c.number}
-          {total} {c.set_name}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Ring({ pct, color }: { pct: number; color: string }) {
-  const r = 30
-  const c = 2 * Math.PI * r
-  return (
-    <div className="bx-ring">
-      <svg viewBox="0 0 74 74" aria-hidden="true">
-        <circle cx="37" cy="37" r={r} fill="none" stroke="var(--hairline-soft)" strokeWidth="6" />
-        <motion.circle
-          cx="37"
-          cy="37"
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={c}
-          initial={{ strokeDashoffset: c }}
-          animate={{ strokeDashoffset: c * (1 - pct) }}
-          transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
-        />
-      </svg>
-      <b className="tnum">{Math.round(pct * 100)}%</b>
-    </div>
-  )
-}
-
-function AddCardSheet({
-  open,
-  onOpenChange,
-  binder,
-  onAdded,
-}: {
-  open: boolean
-  onOpenChange: (next: boolean) => void
-  binder: Binder
-  onAdded: () => void
-}) {
-  const [q, setQ] = React.useState("")
-  const [term, setTerm] = React.useState("")
-  const [adding, setAdding] = React.useState("")
-  const [note, setNote] = React.useState("")
-
-  // Wait for a pause in typing before asking the catalogue.
-  React.useEffect(() => {
-    const timer = setTimeout(() => setTerm(q.trim()), 300)
-    return () => clearTimeout(timer)
-  }, [q])
-
-  const search = useQuery({
-    queryKey: ["portal", "binder-search", term],
-    queryFn: () => searchCards(term),
-    enabled: term.length >= 2,
-    staleTime: 60_000,
-  })
-  const hits = term.length >= 2 ? (search.data ?? []) : []
-  const busy = term.length >= 2 && search.isFetching
-
-  async function add(c: SearchHit) {
-    setAdding(c.card_id)
-    try {
-      const r = await addCard(binder.id, c.card_id)
-      setNote(r.existed ? `${c.name} is already in this binder.` : `${c.name} added.`)
-      onAdded()
-    } catch {
-      setNote(`Could not add ${c.name}. Try again.`)
-    }
-    setAdding("")
-  }
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="bx-sheet pb-[env(safe-area-inset-bottom)]">
-        <SheetHeader className={SHEET_COLUMN}>
-          <SheetTitle>Add a card</SheetTitle>
-        </SheetHeader>
-        <SheetBody className={SHEET_COLUMN}>
-          <input
-            className="bx-search"
-            autoFocus
-            aria-label="Card name"
-            placeholder="Card name, for example Pikachu"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-          {note ? (
-            <p className="mt-3 text-[15px] text-muted-foreground" role="status">
-              {note}
-            </p>
-          ) : null}
-          <div className="bx-hits">
-            {busy && !hits.length
-              ? [0, 1, 2].map((i) => <div key={i} className="bx-skel" style={{ aspectRatio: "0.716" }} />)
-              : null}
-            {hits.map((c) => (
-              <button key={c.card_id} type="button" className="bx-hit" disabled={!!adding} onClick={() => void add(c)}>
-                {c.image ? <img src={img(c.image)} alt="" loading="lazy" /> : <span className="ph" />}
-                <b>{c.name}</b>
-                <small>
-                  {adding === c.card_id ? "Adding" : `${c.set_name}, ${c.number}`}
-                </small>
-              </button>
-            ))}
-          </div>
-          {!busy && q.trim().length >= 2 && !hits.length ? (
-            <p className="mt-3 text-[15px] text-muted-foreground">No cards match {q}. Check the spelling.</p>
-          ) : null}
-        </SheetBody>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-function SettingsSheet({
-  open,
-  onOpenChange,
-  binder,
-  onSaved,
-  onDeleted,
-}: {
-  open: boolean
-  onOpenChange: (next: boolean) => void
-  binder: Binder
-  onSaved: () => void
-  onDeleted: () => void
-}) {
-  const [name, setName] = React.useState(binder.name)
-  const [owner, setOwner] = React.useState(binder.owner)
-  const [color, setColor] = React.useState(binder.color)
-  const [confirm, setConfirm] = React.useState(false)
-  const [busy, setBusy] = React.useState(false)
-  const [error, setError] = React.useState("")
-
-  async function save() {
-    setBusy(true)
-    try {
-      await updateBinder(binder.id, { name: name.trim(), owner: owner.trim(), color })
-      onSaved()
-      onOpenChange(false)
-    } catch {
-      setError("Could not save the binder. Try again.")
-    }
-    setBusy(false)
-  }
-
-  async function remove() {
-    setBusy(true)
-    try {
-      await deleteBinder(binder.id)
-      onOpenChange(false)
-      onDeleted()
-    } catch {
-      setError("Could not delete the binder. Try again.")
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="bx-sheet pb-[env(safe-area-inset-bottom)]">
-        <SheetHeader className={SHEET_COLUMN}>
-          <SheetTitle>Binder settings</SheetTitle>
-        </SheetHeader>
-        <SheetBody className={SHEET_COLUMN}>
-          <div className="grid gap-8">
-            <label className="grid gap-1.5">
-              <MicroLabel>Name</MicroLabel>
-              <input className="bx-search" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="grid gap-1.5">
-              <MicroLabel>Who is it for</MicroLabel>
-              <input className="bx-search" value={owner} maxLength={80} onChange={(e) => setOwner(e.target.value)} />
-            </label>
-            <div className="grid gap-2">
-              <MicroLabel>Cover colour</MicroLabel>
-              <div className="bx-swatches">
-                {COLORS.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    aria-label={c.l}
-                    aria-pressed={color === c.id}
-                    className={`bx-swatch ${color === c.id ? "on" : ""}`}
-                    style={{ "--c": c.c } as React.CSSProperties}
-                    onClick={() => setColor(c.id)}
-                  />
-                ))}
-              </div>
-            </div>
-            {error ? <p className="text-[15px] text-destructive">{error}</p> : null}
-          </div>
-        </SheetBody>
-        <SheetFooter className={SHEET_COLUMN}>
-          <div className="flex w-full flex-wrap items-center justify-between gap-4">
-            {!confirm ? (
-              <Button type="button" variant="text-destructive" disabled={busy} onClick={() => setConfirm(true)}>
-                Delete binder
-              </Button>
-            ) : (
-              <Button type="button" variant="text-destructive" disabled={busy} onClick={() => void remove()}>
-                Delete {binder.name} for good
-              </Button>
-            )}
-            <Button type="button" loading={busy} disabled={busy || !name.trim()} onClick={() => void save()}>
-              Save
-            </Button>
-          </div>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
-  )
-}
+const SAVE_FAILED = "Could not save that change. Check your connection; the binder has been reloaded as it was last saved."
 
 export function BinderScreen({ id }: { id: string }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [filter, setFilter] = React.useState<"all" | "need" | "got">("all")
-  const [adding, setAdding] = React.useState(false)
-  const [settings, setSettings] = React.useState(false)
+  const [theme, toggleTheme] = useBinderTheme()
+  const reduced = usePrefersReducedMotion()
+  const wide = useWide()
+
+  const binderKey = React.useMemo(() => ["portal", "binder", id] as const, [id])
+  const binderQ = useQuery({ queryKey: binderKey, queryFn: () => getBinder(id) })
+  const cardsQ = useQuery({
+    queryKey: ["portal", "binder-cards", id],
+    queryFn: () => listPockets(id),
+    refetchOnWindowFocus: false,
+  })
+  const wantedQ = useQuery({ queryKey: ["portal", "binder-wanted"], queryFn: listWanted })
+
+  // The layout history is rebuilt whenever a fresh copy of the pockets
+  // arrives from the server (first load, after adding a card, after a failed
+  // save). Between those, it is the truth the screen draws from.
+  const [hist, setHist] = React.useState<History | null>(null)
+  const [histFor, setHistFor] = React.useState<BinderCard[] | null>(null)
+  if (cardsQ.data && binderQ.data && histFor !== cardsQ.data) {
+    setHistFor(cardsQ.data)
+    setHist(initHistory(layoutFrom(cardsQ.data, binderQ.data.min_slots)))
+  }
+
+  const [filter, setFilter] = React.useState<Filter>("all")
+  const [page, setPage] = React.useState(0)
+  const [selecting, setSelecting] = React.useState(false)
+  const [selected, setSelected] = React.useState<string[]>([])
+  const [moving, setMoving] = React.useState(false)
+  const [editPages, setEditPages] = React.useState(false)
   const [just, setJust] = React.useState("")
-  const [saveError, setSaveError] = React.useState("")
-  // Bumped each time a sheet opens, so its form starts fresh.
+  const [status, setStatus] = React.useState("")
+  const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(0)
+  const [wantBusy, setWantBusy] = React.useState("")
+  const [sheet, setSheet] = React.useState<null | "add" | "settings" | "share">(null)
+  const [addSlot, setAddSlot] = React.useState<number | undefined>(undefined)
   const [sheetRun, setSheetRun] = React.useState(0)
-  const openAdd = () => {
-    setSheetRun((n) => n + 1)
-    setAdding(true)
-  }
-  const openSettings = () => {
-    setSheetRun((n) => n + 1)
-    setSettings(true)
-  }
+  const saveChain = React.useRef<Promise<void>>(Promise.resolve())
 
-  const binder = useQuery({ queryKey: ["portal", "binder", id], queryFn: () => getBinder(id) })
-  const cardsKey = ["portal", "binder-cards", id] as const
-  const cards = useQuery({ queryKey: cardsKey, queryFn: () => listPockets(id) })
+  const b = binderQ.data
+  const grid = gridOf(b?.grid)
+  const cols = GRIDS[grid].cols
+  const rows = GRIDS[grid].rows
+  const color = colorOf(b?.color ?? "volt")
+  const all = React.useMemo(() => cardsQ.data ?? [], [cardsQ.data])
+  const layout = hist?.present ?? null
+  const byId = React.useMemo(() => new Map(all.map((c) => [c.id, c])), [all])
 
-  const all = React.useMemo(() => cards.data ?? [], [cards.data])
-  const stats = React.useMemo(() => statsFor(all), [all])
-  const list = React.useMemo(
-    () => all.filter((c) => filter === "all" || (filter === "got" ? c.owned : !c.owned)),
-    [all, filter]
+  const pages = React.useMemo(
+    () => (layout ? buildPages(all, layout, grid, filter) : []),
+    [all, layout, grid, filter]
   )
-  const grouped = all.some((c) => c.group_name)
-  const pages = React.useMemo(() => {
-    if (grouped && filter === "all") return packPages(list)
-    const p: (BinderCard | null)[][] = []
-    for (let i = 0; i < list.length; i += 9) p.push(list.slice(i, i + 9))
-    return p
-  }, [list, grouped, filter])
+  const count = Math.max(1, pages.length)
+  const spread = wide
+  const step = spread ? 2 : 1
+  const clamped = Math.min(page, count - 1)
+  const current = spread ? clamped - (clamped % 2) : clamped
+
+  const stats = React.useMemo(
+    () => (layout ? binderStats(all, layout, b?.kind ?? "custom") : null),
+    [all, layout, b?.kind]
+  )
+  const counts = React.useMemo(() => {
+    let owned = 0
+    let total = 0
+    if (layout) {
+      for (const c of all) {
+        if ((layout.slots[c.id] ?? -1) < 0) continue
+        total++
+        if (layout.owned[c.id]) owned++
+      }
+    }
+    return { all: total, owned, needed: total - owned }
+  }, [all, layout])
+
+  const wantedByCard = React.useMemo(() => {
+    const m = new Map<string, WantedRequest>()
+    for (const w of wantedQ.data ?? []) m.set(w.card_id, w)
+    return m
+  }, [wantedQ.data])
+  const wantedHere = React.useMemo(
+    () =>
+      layout
+        ? all.filter((c) => (layout.slots[c.id] ?? -1) >= 0 && !layout.owned[c.id] && wantedByCard.has(c.card_id)).length
+        : 0,
+    [all, layout, wantedByCard]
+  )
 
   function refreshShelf() {
     void queryClient.invalidateQueries({ queryKey: ["portal", "binders"] })
     void queryClient.invalidateQueries({ queryKey: ["portal", "binder-pockets"] })
   }
 
-  async function toggle(c: BinderCard) {
-    const owned = !c.owned
-    setSaveError("")
-    queryClient.setQueryData<BinderCard[]>(cardsKey, (cs) => cs?.map((x) => (x.id === c.id ? { ...x, owned } : x)))
+  function persist(prev: Layout, next: Layout) {
+    const diff = diffLayouts(prev, next)
+    if (isEmptyDiff(diff)) return
+    setSaving((n) => n + 1)
+    saveChain.current = saveChain.current
+      .then(() => saveLayout(id, diff))
+      .then(
+        () => refreshShelf(),
+        () => {
+          setError(SAVE_FAILED)
+          void cardsQ.refetch()
+        }
+      )
+      .finally(() => setSaving((n) => n - 1))
+  }
+
+  function apply(next: Layout, message = "") {
+    if (!hist || next === hist.present) return
+    setError("")
+    setStatus(message)
+    setHist(commit(hist, next))
+    persist(hist.present, next)
+  }
+
+  function doUndo() {
+    if (!hist?.past.length) return
+    const h = undo(hist)
+    setHist(h)
+    setStatus("Undone.")
+    persist(hist.present, h.present)
+  }
+
+  function doRedo() {
+    if (!hist?.future.length) return
+    const h = redo(hist)
+    setHist(h)
+    setStatus("Redone.")
+    persist(hist.present, h.present)
+  }
+
+  // Keyboard: arrows turn pages, Ctrl or Cmd Z undoes, with Shift redoes.
+  const keyRef = React.useRef({ doUndo, doRedo, turn: (d: 1 | -1) => turnPage(d) })
+  React.useEffect(() => {
+    keyRef.current = { doUndo, doRedo, turn: (d: 1 | -1) => turnPage(d) }
+  })
+  React.useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return
+      if (document.querySelector("[role=dialog]")) return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault()
+        if (e.shiftKey) keyRef.current.doRedo()
+        else keyRef.current.doUndo()
+      } else if (e.key === "ArrowRight") keyRef.current.turn(1)
+      else if (e.key === "ArrowLeft") keyRef.current.turn(-1)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  function turnPage(dir: 1 | -1) {
+    const next = current + dir * step
+    if (next < 0 || next > count - 1) return
+    setPage(next)
+  }
+
+  function changeGrid(g: Grid) {
+    if (!b || g === grid) return
+    setPage(reflowPage(current, grid, g))
+    queryClient.setQueryData<Binder>(binderKey, { ...b, grid: g })
+    updateBinder(b.id, { grid: g }).catch(() => {
+      queryClient.setQueryData<Binder>(binderKey, b)
+      setError("Could not change the page size. Check your connection and try again.")
+    })
+  }
+
+  function changeFilter(f: Filter) {
+    setFilter(f)
+    setPage(0)
+    setMoving(false)
+  }
+
+  function stopSelecting() {
+    setSelecting(false)
+    setSelected([])
+    setMoving(false)
+  }
+
+  function tapPocket(c: BinderCard) {
+    if (!layout) return
+    if (moving) return moveTo(layout.slots[c.id])
+    if (selecting) {
+      setSelected((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id]))
+      return
+    }
+    const owned = !layout.owned[c.id]
+    apply(setOwned(layout, [c.id], owned), owned ? `${c.name} collected.` : `${c.name} marked needed.`)
     if (owned) {
       setJust(c.id)
       setTimeout(() => setJust((j) => (j === c.id ? "" : j)), 1100)
     }
+  }
+
+  function moveTo(slot: number) {
+    if (!layout || slot < 0) return
+    const n = selected.length
+    apply(movePockets(layout, selected, slot), `${n} ${n === 1 ? "card" : "cards"} moved.`)
+    setMoving(false)
+    setSelected([])
+    setSelecting(false)
+  }
+
+  function tapEmpty(slot: number) {
+    if (moving) return moveTo(slot)
+    if (selecting || filter !== "all" || slot < 0) return
+    setAddSlot(slot)
+    setSheetRun((n) => n + 1)
+    setSheet("add")
+  }
+
+  function bulkOwned(owned: boolean) {
+    if (!layout || !selected.length) return
+    const n = selected.length
+    apply(
+      setOwned(layout, selected, owned),
+      `${n} ${n === 1 ? "card" : "cards"} marked ${owned ? "collected" : "needed"}.`
+    )
+    stopSelecting()
+  }
+
+  function bulkClear() {
+    if (!layout || !selected.length) return
+    const n = selected.length
+    apply(clearPockets(layout, selected), `${n} ${n === 1 ? "card" : "cards"} taken out. Undo puts them back.`)
+    stopSelecting()
+  }
+
+  async function toggleWant(c: BinderCard) {
+    const open = wantedByCard.get(c.card_id)
+    setWantBusy(c.id)
+    setError("")
     try {
-      await setOwned(c.id, owned)
-      refreshShelf()
+      if (open) await cancelWanted(open.id)
+      else await wantCard(c.id)
+      await wantedQ.refetch()
+      setStatus(open ? `You are no longer asking for ${c.name}.` : `The shop can now see you want ${c.name}.`)
     } catch {
-      queryClient.setQueryData<BinderCard[]>(cardsKey, (cs) =>
-        cs?.map((x) => (x.id === c.id ? { ...x, owned: !owned } : x))
-      )
-      setSaveError(`Could not save ${c.name}. Check your connection and tap it again.`)
+      setError(`Could not update ${c.name}. Check your connection and try again.`)
+    }
+    setWantBusy("")
+  }
+
+  async function bulkWant() {
+    if (!layout) return
+    const list = selected
+      .map((sid) => byId.get(sid))
+      .filter((c): c is BinderCard => !!c && !layout.owned[c.id] && !wantedByCard.has(c.card_id))
+    if (!list.length) {
+      setStatus("Those cards are collected or already asked for.")
+      stopSelecting()
+      return
+    }
+    setWantBusy("bulk")
+    let done = 0
+    for (const c of list) {
+      try {
+        await wantCard(c.id)
+        done++
+      } catch {
+        // Carry on with the rest; the count below says how many went through.
+      }
+    }
+    await wantedQ.refetch()
+    setWantBusy("")
+    stopSelecting()
+    if (done === list.length) setStatus(`The shop can now see you want ${done} ${done === 1 ? "card" : "cards"}.`)
+    else setError(`Only ${done} of ${list.length} went through. Check your connection and try the rest again.`)
+  }
+
+  function pageOp(kind: "insert" | "remove" | "earlier" | "later", p: number) {
+    if (!layout) return
+    if (kind === "insert") {
+      apply(addPage(layout, grid, p + 1), `Empty page added after page ${p + 1}.`)
+    } else if (kind === "remove") {
+      apply(removePage(layout, grid, p), `Page ${p + 1} removed. Undo puts it back.`)
+    } else if (kind === "earlier" && p > 0) {
+      apply(movePage(layout, grid, p, p - 1), `Page ${p + 1} is now page ${p}.`)
+      setPage(p - 1)
+    } else if (kind === "later" && p < count - 1) {
+      apply(movePage(layout, grid, p, p + 1), `Page ${p + 1} is now page ${p + 2}.`)
+      setPage(p + 1)
     }
   }
 
-  if (binder.isError) {
+  function addPageAtEnd() {
+    if (!layout) return
+    const n = pageCount(layout, grid)
+    apply(addPage(layout, grid), `Page ${n + 1} added.`)
+    setPage(n)
+  }
+
+  if (binderQ.isError || cardsQ.isError) {
     return (
       <LoadFailed
         title="Binder"
-        error={binder.error}
+        error={binderQ.error ?? cardsQ.error}
         fallback="This binder did not load. It may have been deleted. Go back to your binders and try again."
-        onRetry={() => void binder.refetch()}
+        onRetry={() => {
+          void binderQ.refetch()
+          void cardsQ.refetch()
+        }}
       />
     )
   }
 
-  const b = binder.data
-  const bc = colorOf(b?.color ?? "volt")
-  const pct = stats.total ? stats.got / stats.total : 0
+  const canEditPages = filter === "all" && !selecting
+  const compact = grid === "4x4" || (!wide && grid === "3x4")
 
-  return (
-    <div className="bx-root pt-10 sm:pt-16" style={{ "--bc": bc } as React.CSSProperties}>
-      <Link
-        to="/account/binders"
-        className="inline-flex min-h-12 items-center gap-2 font-mono text-[11px] font-bold tracking-[0.16em] uppercase"
-      >
-        <ArrowLeftIcon aria-hidden="true" className="size-4 stroke-[1.25]" />
-        All binders
-      </Link>
-
-      <PageTitle className="mt-6">{b?.name ?? "Binder"}</PageTitle>
-      {b ? (
-        <p className="mt-3 text-base text-muted-foreground">
-          {[b.owner ? `${b.owner}'s binder` : "", KINDS[b.kind], b.query_label !== b.name ? b.query_label : ""]
-            .filter(Boolean)
-            .join(", ")}
-        </p>
-      ) : null}
-
-      <div className="bx-stats">
-        <Ring pct={pct} color={bc} />
-        <div>
-          <MicroLabel>Collected</MicroLabel>
-          <div className="font-display text-[28px] leading-none tnum">
-            {stats.got} <span className="text-muted-foreground-2">/ {stats.total}</span>
-          </div>
-          <div className="mt-1 text-[13px] text-muted-foreground-2">
-            {stats.total - stats.got} to find
-          </div>
+  function renderPage(i: number, live: boolean) {
+    const cells = pages[i] ?? []
+    return (
+      <div className="bx-page" style={{ "--cols": cols, "--rows": rows } as React.CSSProperties}>
+        <div className="bx-grid">
+          {cells.map((cell, ci) => {
+            const c = cell.pocket ? byId.get(cell.pocket.id) : undefined
+            if (!c || !layout) {
+              return (
+                <EmptyPocket
+                  key={`e${i}-${ci}`}
+                  label={cell.slot >= 0 ? `pocket ${(cell.slot % (cols * rows)) + 1} on page ${i + 1}` : undefined}
+                  target={live && moving && cell.slot >= 0}
+                  onTarget={live ? () => tapEmpty(cell.slot) : undefined}
+                  onAdd={live && filter === "all" && !selecting && cell.slot >= 0 ? () => tapEmpty(cell.slot) : undefined}
+                />
+              )
+            }
+            return (
+              <Pocket
+                key={c.id}
+                c={c}
+                owned={!!layout.owned[c.id]}
+                just={just === c.id}
+                selecting={selecting}
+                selected={selected.includes(c.id)}
+                target={live && moving}
+                wanted={wantedByCard.has(c.card_id)}
+                wantBusy={wantBusy === c.id || wantBusy === "bulk"}
+                compact={compact}
+                onTap={live ? () => tapPocket(c) : undefined}
+                onWant={live ? () => void toggleWant(c) : undefined}
+              />
+            )
+          })}
         </div>
-      </div>
-
-      <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-2">
-        {(
-          [
-            ["all", `All ${stats.total}`],
-            ["need", `Need ${stats.total - stats.got}`],
-            ["got", `Got ${stats.got}`],
-          ] as const
-        ).map(([v, l]) => (
-          <Button
-            key={v}
-            type="button"
-            variant="text"
-            aria-pressed={filter === v}
-            className={filter === v ? "after:scale-x-100" : "text-muted-foreground-2"}
-            onClick={() => setFilter(v)}
-          >
-            {l}
-          </Button>
-        ))}
-        <span className="flex-1" />
-        <Button type="button" variant="text" onClick={openAdd} disabled={!b}>
-          <PlusIcon aria-hidden="true" />
-          Add card
-        </Button>
-        <Button type="button" variant="text" onClick={openSettings} disabled={!b}>
-          Settings
-        </Button>
-      </div>
-
-      {saveError ? (
-        <p className="mt-4 text-[15px] text-destructive" role="alert">
-          {saveError}
-        </p>
-      ) : null}
-
-      {cards.isPending ? (
-        <div className="bx-skel mt-6" style={{ height: 420 }} />
-      ) : !list.length ? (
-        <div className="mt-10 grid justify-items-start gap-6">
-          <p className="text-base text-muted-foreground">
-            {all.length ? "Nothing matches that filter." : "This binder is empty. Add the first card."}
-          </p>
-          {!all.length ? (
-            <Button type="button" onClick={openAdd}>
-              Add card
-            </Button>
+        <div className="bx-page-foot">
+          <span className="bx-page-no">PAGE {i + 1}</span>
+          {live && editPages && canEditPages ? (
+            <span className="bx-page-tools">
+              <button type="button" onClick={() => pageOp("earlier", i)} disabled={i === 0} aria-label={`Move page ${i + 1} earlier`}>
+                <ChevronsLeftIcon aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => pageOp("later", i)}
+                disabled={i >= count - 1}
+                aria-label={`Move page ${i + 1} later`}
+              >
+                <ChevronsRightIcon aria-hidden="true" />
+              </button>
+              <button type="button" onClick={() => pageOp("insert", i)} aria-label={`Add an empty page after page ${i + 1}`}>
+                <FilePlusIcon aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => pageOp("remove", i)}
+                disabled={count <= 1}
+                aria-label={`Remove page ${i + 1}`}
+              >
+                <FileXIcon aria-hidden="true" />
+              </button>
+            </span>
           ) : null}
         </div>
+      </div>
+    )
+  }
+
+  const subtitle = b
+    ? [b.owner ? `${b.owner}'s binder` : "", KINDS[b.kind], b.query_label && b.query_label !== b.name ? b.query_label : ""]
+        .filter(Boolean)
+        .join(", ")
+    : ""
+
+  return (
+    <div className="bx-root bx-screen pt-8 sm:pt-14" style={{ "--bc": color } as React.CSSProperties}>
+      <div className="bx-topbar">
+        <Link to="/account/binders" className="bx-back">
+          <ArrowLeftIcon aria-hidden="true" className="size-4 stroke-[1.25]" />
+          All binders
+        </Link>
+        <span className="flex-1" />
+        <button type="button" className="bx-icon" onClick={toggleTheme} aria-label={theme === "dark" ? "Light pages" : "Dark pages"}>
+          {theme === "dark" ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
+        </button>
+        <button
+          type="button"
+          className="bx-icon"
+          disabled={!b}
+          onClick={() => {
+            setSheetRun((n) => n + 1)
+            setSheet("share")
+          }}
+          aria-label="Share this binder"
+        >
+          <Share2Icon aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="bx-icon"
+          disabled={!b}
+          onClick={() => {
+            setSheetRun((n) => n + 1)
+            setSheet("settings")
+          }}
+          aria-label="Binder settings"
+        >
+          <Settings2Icon aria-hidden="true" />
+        </button>
+      </div>
+
+      <PageTitle className="mt-5 bx-title-main">{b?.name ?? "Binder"}</PageTitle>
+      {subtitle ? <p className="bx-sub">{subtitle}</p> : null}
+
+      {stats ? (
+        <StatTiles
+          stats={stats}
+          kind={b?.kind ?? "custom"}
+          color={color}
+          pages={layout ? pageCount(layout, grid) : 1}
+          grid={grid}
+          wanted={wantedHere}
+        />
       ) : (
-        <div className="bx-pages-list">
-          {pages.map((page, pi) => (
-            <motion.div
-              key={`${pi}-${filter}`}
-              className="bx-page"
-              style={{ "--bc": bc } as React.CSSProperties}
-              initial={{ opacity: 0, y: 40, rotateX: 8 }}
-              whileInView={{ opacity: 1, y: 0, rotateX: 0 }}
-              viewport={{ once: true, margin: "-40px" }}
-              transition={{ type: "spring", stiffness: 90, damping: 18 }}
-            >
-              <div className="bx-grid9">
-                {page.map((c, ci) =>
-                  !c ? (
-                    <BlankPocket key={`b${ci}`} />
-                  ) : (
-                    <Pocket key={c.id} c={c} just={just === c.id} onToggle={(x) => void toggle(x)} />
-                  )
-                )}
-                {!grouped && pi === pages.length - 1 && page.length < 9 && filter === "all" ? (
-                  <button type="button" className="bx-pocket-add" onClick={openAdd}>
-                    <PlusIcon size={18} />
-                    Add card
-                  </button>
-                ) : null}
-              </div>
-              <div className="bx-page-no">PAGE {pi + 1}</div>
-            </motion.div>
-          ))}
-        </div>
+        <div className="bx-skel mt-6" style={{ height: 96 }} />
       )}
+
+      <div className="bx-controls">
+        <FilterTabs filter={filter} counts={counts} onChange={changeFilter} />
+        <GridSwitch grid={grid} onChange={changeGrid} />
+        <div className="bx-tools">
+          <button
+            type="button"
+            className={`bx-chip ${selecting ? "on" : ""}`}
+            aria-pressed={selecting}
+            onClick={() => (selecting ? stopSelecting() : setSelecting(true))}
+          >
+            <CheckIcon aria-hidden="true" />
+            Select
+          </button>
+          <button
+            type="button"
+            className={`bx-chip ${editPages ? "on" : ""}`}
+            aria-pressed={editPages}
+            disabled={filter !== "all"}
+            onClick={() => setEditPages((v) => !v)}
+          >
+            <ArrowLeftRightIcon aria-hidden="true" />
+            Pages
+          </button>
+          <button type="button" className="bx-icon" onClick={doUndo} disabled={!hist?.past.length} aria-label="Undo">
+            <Undo2Icon aria-hidden="true" />
+          </button>
+          <button type="button" className="bx-icon" onClick={doRedo} disabled={!hist?.future.length} aria-label="Redo">
+            <Redo2Icon aria-hidden="true" />
+          </button>
+          <span className="bx-saving" aria-live="polite">
+            {saving ? "Saving" : ""}
+          </span>
+        </div>
+      </div>
+
+      <div className="bx-status" aria-live="polite">
+        {error ? (
+          <p className="bx-error" role="alert">
+            {error}
+          </p>
+        ) : status ? (
+          <p>{status}</p>
+        ) : null}
+      </div>
+
+      {moving ? (
+        <div className="bx-banner" role="status">
+          <MoveIcon aria-hidden="true" />
+          <span>Tap the pocket where the first chosen card should go. Turn the page to move them further.</span>
+          <button type="button" onClick={() => setMoving(false)}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
+
+      {!layout ? (
+        <div className="bx-skel mt-6" style={{ aspectRatio: spread ? "1.45" : "0.78" }} />
+      ) : (
+        <BookView count={count} page={current} spread={spread} reduced={reduced} onSwipe={turnPage} renderPage={renderPage} />
+      )}
+      {layout && !counts.all && filter === "all" ? (
+        <p className="bx-hint">This binder is empty. Tap a pocket to add the first card.</p>
+      ) : null}
+
+      {layout ? (
+        <PageNav page={current} count={count} step={step} onPage={(p) => setPage(spread ? p - (p % 2) : p)}>
+          {filter === "all" && !selecting ? (
+            <button type="button" className="bx-chip" onClick={addPageAtEnd}>
+              <PlusIcon aria-hidden="true" />
+              Add page
+            </button>
+          ) : null}
+        </PageNav>
+      ) : null}
+
+      <AnimatePresence>
+        {selecting ? (
+          <motion.div
+            className="bx-actionbar"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            transition={reduced ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 32 }}
+            role="toolbar"
+            aria-label="Chosen cards"
+          >
+            <div className="bx-actionbar-count tnum">
+              {selected.length ? `${selected.length} chosen` : "Tap cards to choose them"}
+            </div>
+            <div className="bx-actionbar-btns">
+              <button type="button" disabled={!selected.length} onClick={() => bulkOwned(true)}>
+                <CheckIcon aria-hidden="true" />
+                <span>Owned</span>
+              </button>
+              <button type="button" disabled={!selected.length} onClick={() => bulkOwned(false)}>
+                <CircleDashedIcon aria-hidden="true" />
+                <span>Needed</span>
+              </button>
+              <button type="button" disabled={!selected.length || !!wantBusy} onClick={() => void bulkWant()}>
+                <BookmarkPlusIcon aria-hidden="true" />
+                <span>Want</span>
+              </button>
+              <button
+                type="button"
+                disabled={!selected.length || filter !== "all"}
+                className={moving ? "on" : ""}
+                onClick={() => setMoving((m) => !m)}
+              >
+                <MoveIcon aria-hidden="true" />
+                <span>Move</span>
+              </button>
+              <button type="button" disabled={!selected.length} onClick={bulkClear}>
+                <Trash2Icon aria-hidden="true" />
+                <span>Clear</span>
+              </button>
+              <button type="button" onClick={stopSelecting} aria-label="Stop choosing">
+                <XIcon aria-hidden="true" />
+                <span>Done</span>
+              </button>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {b ? (
         <>
           <AddCardSheet
             key={`add-${sheetRun}`}
-            open={adding}
-            onOpenChange={setAdding}
+            open={sheet === "add"}
+            onOpenChange={(o) => setSheet(o ? "add" : null)}
             binder={b}
+            slot={addSlot}
             onAdded={() => {
-              void cards.refetch()
+              void cardsQ.refetch()
               refreshShelf()
             }}
           />
           <SettingsSheet
             key={`settings-${sheetRun}`}
-            open={settings}
-            onOpenChange={setSettings}
+            open={sheet === "settings"}
+            onOpenChange={(o) => setSheet(o ? "settings" : null)}
             binder={b}
             onSaved={() => {
-              void binder.refetch()
+              void binderQ.refetch()
               refreshShelf()
             }}
             onDeleted={() => {
               refreshShelf()
               void navigate({ to: "/account/binders" })
             }}
+          />
+          <ShareSheet
+            key={`share-${sheetRun}`}
+            open={sheet === "share"}
+            onOpenChange={(o) => setSheet(o ? "share" : null)}
+            binder={b}
+            onChanged={(token) => queryClient.setQueryData<Binder>(binderKey, { ...b, share_token: token })}
           />
         </>
       ) : null}
