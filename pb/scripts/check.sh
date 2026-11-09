@@ -3062,13 +3062,18 @@ COMPARE_MONTH_CHECK="$(echo "$COMPARE_MONTH_JSON" | node -e '
 ok "compare=previous is a same-length window immediately before the range, not the previous calendar month"
 
 # --- 21r. The sales heatmap reads in Europe/London time, not raw UTC - a
-#     sale at 10:00 UTC today (British Summer Time, +1 hour, in September)
-#     lands in the 11:00 local bucket, not the 10:00 UTC one --------------
+#     sale at 10:00 UTC today lands in the local-hour bucket (11:00 under
+#     British Summer Time, 10:00 under GMT), worked out for today's date so
+#     the check holds in every season --------------------------------------
 HEATMAP_WEEKDAY="$(node -e '
   const d = new Date(process.argv[1] + "T00:00:00.000Z");
   process.stdout.write(String((d.getUTCDay() + 6) % 7));
 ' "$TODAY")"
-HEATMAP_BEFORE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.heatmap.$HEATMAP_WEEKDAY.11")"
+HEATMAP_LOCAL_HOUR="$(TZ=Europe/London node -e '
+  const d = new Date(process.argv[1] + "T10:00:00.000Z");
+  process.stdout.write(String(d.getHours()));
+' "$TODAY")"
+HEATMAP_BEFORE_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY" | jval "totals.heatmap.$HEATMAP_WEEKDAY.$HEATMAP_LOCAL_HOUR")"
 HEATMAP_ITEM_ID="$(make_item "Heatmap London Time Item" 1 100 500)"
 [ -n "$HEATMAP_ITEM_ID" ] || fail "could not create the heatmap-check item"
 HEATMAP_SALE_JSON="$(curl -s -w '\n%{http_code}' -X POST "$BASE/api/collections/sales/records" \
@@ -3078,11 +3083,10 @@ HEATMAP_SALE_STATUS="$(echo "$HEATMAP_SALE_JSON" | tail -n1)"
 [ "$HEATMAP_SALE_STATUS" = "200" ] || fail "creating the heatmap-check sale at 10:00 UTC returned $HEATMAP_SALE_STATUS: $(echo "$HEATMAP_SALE_JSON" | head -n -1)"
 
 HEATMAP_AFTER_JSON="$(curl -s -H "Authorization: $STAFF_TOKEN" "$BASE/api/vault/reports/sales?from=$TODAY&to=$TODAY")"
-HEATMAP_AFTER_1100="$(echo "$HEATMAP_AFTER_JSON" | jval "totals.heatmap.$HEATMAP_WEEKDAY.11")"
-HEATMAP_AFTER_1000="$(echo "$HEATMAP_AFTER_JSON" | jval "totals.heatmap.$HEATMAP_WEEKDAY.10")"
-[ "$((HEATMAP_AFTER_1100 - HEATMAP_BEFORE_JSON))" = "1" ] \
-  || fail "a sale at 10:00 UTC (11:00 BST) did not add one count to the heatmap's 11:00 local bucket (before $HEATMAP_BEFORE_JSON, after $HEATMAP_AFTER_1100)"
-ok "the sales heatmap buckets a 10:00 UTC sale at 11:00, Europe/London's British Summer Time, not raw UTC"
+HEATMAP_AFTER_LOCAL="$(echo "$HEATMAP_AFTER_JSON" | jval "totals.heatmap.$HEATMAP_WEEKDAY.$HEATMAP_LOCAL_HOUR")"
+[ "$((HEATMAP_AFTER_LOCAL - HEATMAP_BEFORE_JSON))" = "1" ] \
+  || fail "a sale at 10:00 UTC did not add one count to the heatmap's $HEATMAP_LOCAL_HOUR:00 Europe/London bucket (before $HEATMAP_BEFORE_JSON, after $HEATMAP_AFTER_LOCAL)"
+ok "the sales heatmap buckets a 10:00 UTC sale at $HEATMAP_LOCAL_HOUR:00 Europe/London time, not raw UTC"
 
 # --- 21s. Stock ageing: the 180+ bucket's max is JSON null (never
 #     Infinity, which breaks response encoding), a very old item lands in
