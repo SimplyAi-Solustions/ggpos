@@ -224,8 +224,54 @@ function getPrices(store, apiKey, query, cacheKey, haircutPct, bypassCache, tran
   return result;
 }
 
+/**
+ * The graded slabs the vault's "Worth grading?" panel compares a raw card
+ * against. ACE Grading is the UK grader; PSA 10 and PSA 9 are what the
+ * market quotes everywhere.
+ */
+var GRADES = [
+  { grader: "PSA", grade: "10" },
+  { grader: "PSA", grade: "9" },
+  { grader: "ACE", grade: "10" },
+];
+
+/**
+ * getPrices, once per slab in GRADES: the same UK live-listing read with the
+ * grader and grade added to the query ("Umbreon VMAX Evolving Skies 215 PSA
+ * 10"), the same median-of-five-lowest and the same asking-to-sold haircut.
+ * Each candidate carries `grader` and `grade`, which pricing_policy's
+ * writeSnapshot files on the row so a slab's figure never reaches the raw
+ * market (snapshotsFor reads blank grades only). Cached per slab under
+ * `cacheKey:<grader> <grade>` for CACHE_HOURS like the raw read. Returns []
+ * with no key, so the caller can simply concatenate.
+ */
+function getGradedPrices(store, apiKey, baseQuery, cacheKey, haircutPct, bypassCache, transport) {
+  if (!apiKey || !apiKey.client_id || !apiKey.client_secret) return [];
+  var out = [];
+  for (var i = 0; i < GRADES.length; i++) {
+    var slab = GRADES[i];
+    var label = slab.grader + " " + slab.grade;
+    var rows = [];
+    try {
+      rows = getPrices(store, apiKey, baseQuery + " " + label, cacheKey ? cacheKey + ":" + label : "", haircutPct, bypassCache, transport);
+    } catch (err) {
+      console.log("[ebay] graded read failed for " + label + ": " + err);
+      rows = [];
+    }
+    for (var j = 0; j < rows.length; j++) {
+      var row = rows[j];
+      row.grader = slab.grader;
+      row.grade = slab.grade;
+      out.push(row);
+    }
+  }
+  return out;
+}
+
 module.exports = {
   getPrices: getPrices,
+  getGradedPrices: getGradedPrices,
+  GRADES: GRADES,
   medianAskingCandidate: medianAskingCandidate,
   parseListings: parseListings,
   getToken: getToken,

@@ -1,0 +1,242 @@
+/*
+ * CardArt: one trading card with tilt, glare, glow and holo shine.
+ * Ported from the customer binder sleeves (apps/web/src/features/binders/
+ * binders.css: .bx-art, .bx-glare, .bx-holo) and scoped under .ca.
+ * The component writes --ca-* on the root; nothing here re-renders React.
+ */
+
+.ca {
+  --ca-rx: 0deg;
+  --ca-ry: 0deg;
+  --ca-gx: 50%;
+  --ca-gy: 28%;
+  --ca-hx: 50%;
+  --ca-hy: 50%;
+  --ca-i: 0;
+  --ca-radius: 4.6% / 3.3%;
+  position: relative;
+  aspect-ratio: 5 / 7;
+  isolation: isolate;
+  perspective: 900px;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+/* Horizontal drags tilt; vertical drags still scroll the page. */
+.ca.ca-tilt {
+  touch-action: pan-y;
+}
+
+/* ---------- the glow: the card's own colours, blurred, under it ---------- */
+.ca-glow {
+  position: absolute;
+  inset: 8% 6% -2%;
+  z-index: -1;
+  border-radius: 10%;
+  pointer-events: none;
+  transform: translateY(4%) scale(0.96);
+  opacity: 0.42;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--volt) 55%, transparent), transparent);
+  filter: blur(22px) saturate(1.5);
+  transition: opacity 0.4s var(--ease-gg);
+}
+.ca-glow img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+:root.dark .ca-glow {
+  opacity: 0.72;
+}
+.ca[data-finish="holo"] .ca-glow {
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--violet) 60%, transparent), transparent);
+}
+.ca[data-finish="reverse"] .ca-glow {
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--cyan) 50%, transparent), transparent);
+}
+.ca[data-active="true"] .ca-glow {
+  opacity: 0.55;
+}
+:root.dark .ca[data-active="true"] .ca-glow {
+  opacity: 0.9;
+}
+
+/* ---------- the card ---------- */
+.ca-card {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--ca-radius);
+  background: var(--bg-2);
+  transform: rotateX(var(--ca-rx)) rotateY(var(--ca-ry));
+  transform-style: preserve-3d;
+  transition: transform 0.5s var(--ease-gg), box-shadow 0.4s var(--ease-gg);
+  box-shadow:
+    0 1px 1px rgba(11, 11, 11, 0.08),
+    0 14px 28px -12px rgba(11, 11, 11, 0.42);
+}
+:root.dark .ca-card {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 18px 36px -12px rgba(0, 0, 0, 0.8);
+}
+.ca[data-active="true"] .ca-card {
+  transition: transform 0.12s linear, box-shadow 0.4s var(--ease-gg);
+  box-shadow:
+    0 1px 1px rgba(11, 11, 11, 0.08),
+    0 24px 44px -14px rgba(11, 11, 11, 0.5);
+}
+.ca-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+.ca-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 8%;
+  text-align: center;
+  color: var(--fg-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.3;
+  border: 1px dashed var(--line-2);
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(135deg, var(--line) 0 6px, transparent 6px 12px),
+    var(--panel-2);
+}
+.ca-empty svg {
+  width: 40%;
+  max-width: 28px;
+  height: auto;
+}
+
+/* ---------- holo: a rainbow foil that slides with the light ---------- */
+.ca-holo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: color-dodge;
+  opacity: calc(0.3 + var(--ca-i) * 0.5);
+  background-image:
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 46, 107, 0.55) 0%,
+      rgba(254, 223, 1, 0.5) 7%,
+      rgba(156, 255, 110, 0.45) 14%,
+      rgba(62, 230, 255, 0.55) 21%,
+      rgba(167, 139, 250, 0.55) 28%,
+      rgba(255, 46, 107, 0.55) 35%
+    ),
+    radial-gradient(circle at var(--ca-gx) var(--ca-gy), rgba(255, 255, 255, 0.35), transparent 55%);
+  background-size: 260% 260%, 100% 100%;
+  background-position: var(--ca-hx) var(--ca-hy), center;
+  filter: saturate(1.15);
+  transition: opacity 0.3s;
+}
+/* Reverse holo: the foil sits on the frame and text, not the art box. */
+.ca[data-finish="reverse"] .ca-holo {
+  opacity: calc(0.28 + var(--ca-i) * 0.45);
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.5) 0.6px, transparent 1.2px),
+    repeating-linear-gradient(
+      115deg,
+      rgba(62, 230, 255, 0.5) 0%,
+      rgba(167, 139, 250, 0.5) 9%,
+      rgba(254, 223, 1, 0.45) 18%,
+      rgba(62, 230, 255, 0.5) 27%
+    );
+  background-size: 5px 5px, 240% 240%;
+  background-position: 0 0, var(--ca-hx) var(--ca-hy);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0 10.5%,
+    transparent 10.5% 53%,
+    #000 53% 100%
+  );
+  mask-image: linear-gradient(to bottom, #000 0 10.5%, transparent 10.5% 53%, #000 53% 100%);
+}
+
+/* A single sweep across a holo card as it arrives. */
+.ca-sweep {
+  position: absolute;
+  inset: -30%;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: color-dodge;
+  background: linear-gradient(
+    115deg,
+    transparent 36%,
+    rgba(255, 46, 107, 0.5) 43%,
+    rgba(254, 223, 1, 0.7) 48%,
+    rgba(62, 230, 255, 0.6) 53%,
+    rgba(167, 139, 250, 0.5) 58%,
+    transparent 65%
+  );
+  animation: ca-sweep 1.4s var(--ease-gg) 0.25s forwards;
+}
+@keyframes ca-sweep {
+  0% {
+    opacity: 1;
+    transform: translateX(-55%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(55%);
+  }
+}
+
+/* ---------- glare and edge ---------- */
+.ca-glare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  opacity: 0.35;
+  background: radial-gradient(
+    farthest-corner circle at var(--ca-gx) var(--ca-gy),
+    rgba(255, 255, 255, 0.75) 0%,
+    rgba(255, 255, 255, 0.12) 32%,
+    rgba(0, 0, 0, 0.28) 95%
+  );
+  transition: opacity 0.35s;
+}
+.ca[data-active="true"] .ca-glare {
+  opacity: 0.9;
+}
+.ca-edge {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* ---------- reduced motion: still, but the finish still reads ---------- */
+.ca[data-motion="reduced"] .ca-card {
+  transform: none;
+  transition: none;
+}
+.ca[data-motion="reduced"] .ca-glow,
+.ca[data-motion="reduced"] .ca-glare,
+.ca[data-motion="reduced"] .ca-holo {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ca-card {
+    transform: none !important;
+    transition: none !important;
+  }
+  .ca-sweep {
+    display: none;
+  }
+}

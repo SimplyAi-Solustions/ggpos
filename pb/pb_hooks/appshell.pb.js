@@ -65,6 +65,30 @@ routerUse(
       }
 
       e.response.header().set("Cache-Control", "no-cache");
+
+      // Two apps share pb_public (apps/vault/scripts/publish-pb.mjs): the
+      // staff vault app is index.html and PocketBase's own SPA fallback
+      // serves it for every other path. The customer pages still live in
+      // the old app (apps/web), published as account.html, and are answered
+      // here for their paths. Without an account.html (a vault-only
+      // publish, or the old layout where index.html is apps/web) this does
+      // nothing and the fallback serves index.html as before.
+      const customerPath =
+        path === "/account" ||
+        path.indexOf("/account/") === 0 ||
+        path.indexOf("/c/") === 0 ||
+        path === "/estimate" ||
+        path.indexOf("/estimate/") === 0;
+      if (customerPath && path.indexOf("..") < 0) {
+        const accountHtml = `${__hooks}/../pb_public/account.html`;
+        let html = null;
+        try {
+          html = toString($os.readFile(accountHtml));
+        } catch (err) {
+          html = null;
+        }
+        if (html !== null) return e.html(200, html);
+      }
       return e.next();
     },
     -1000,

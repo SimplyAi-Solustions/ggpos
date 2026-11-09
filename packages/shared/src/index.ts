@@ -16,3 +16,4 @@ export * from "./online";
 export * from "./dashboard";
 export * from "./vatreturn";
 export * from "./reorder";
+export * from "./deal";

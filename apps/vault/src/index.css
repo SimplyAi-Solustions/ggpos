@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@import "@fontsource/anton/400.css";
+@import "@fontsource/poppins/400.css";
+@import "@fontsource/poppins/500.css";
+@import "@fontsource/poppins/600.css";
+@import "@fontsource/poppins/700.css";
+@import "@fontsource/space-mono/400.css";
+@import "@fontsource/space-mono/700.css";
+
+@import "./styles/tokens.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tailwind names for the tokens: bg-panel, text-fg-2, border-line, font-display... */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-volt: var(--volt);
+  --color-volt-deep: var(--volt-deep);
+  --color-pop: var(--pop);
+  --color-pop-text: var(--pop-text);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-cyan: var(--cyan);
+  --color-lime: var(--lime);
+  --color-orange: var(--orange);
+  --color-violet: var(--violet);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+  --color-accent-violet: var(--accent-violet);
+  --color-on-volt: var(--on-volt);
+  --color-on-pop: var(--on-pop);
+
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-lg);
+
+  --shadow-panel: var(--shadow-panel);
+  --shadow-sheet: var(--shadow-sheet);
+  --shadow-volt: var(--shadow-volt);
+
+  --ease-gg: var(--ease-gg);
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Dark mode atmosphere: two faint brand glows behind the glass. */
+  :root.dark body {
+    background:
+      radial-gradient(60rem 40rem at 110% -10%, rgba(255, 46, 107, 0.09), transparent 60%),
+      radial-gradient(50rem 36rem at -20% 0%, rgba(254, 223, 1, 0.06), transparent 60%),
+      var(--bg);
+    background-attachment: fixed;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--volt);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--volt);
+    color: var(--ink);
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Micro-label: Space Mono, tracked, uppercase. */
+  .label-mono {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .glass {
+    background: var(--panel);
+    -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(140%);
+    backdrop-filter: blur(var(--panel-blur)) saturate(140%);
+  }
+
+  .pt-safe {
+    padding-top: var(--safe-top);
+  }
+  .pb-safe {
+    padding-bottom: var(--safe-bottom);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes gg-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

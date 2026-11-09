@@ -77,6 +77,16 @@ The shop's price labels come from a Niimbot D110 on the counter Mac mini, separa
 - draws each label in the browser at 8 dots per mm: 12 x 40 mm is a 320 x 96 landscape with the item's name (Jost 500 at 17 dots, two lines at most, the second cut with an ellipsis), the GG logo in one colour (`GGLogo mono`, 24 dots tall) on the bottom line and the price in Anton (38 dots, smaller only to fit) right-aligned beside it. 12 x 30 mm keeps the same layout; 12 x 22 mm drops the name, moves the logo to the top and gives the price 48 dots. The layout is the receipt's draw ops (`features/printing/receipt/draw.ts`, which gained a `logo` op) painted one bit deep by the receipt painter;
 - sends it with niimbluelib (MIT, the library behind niim.blue) over Web Bluetooth: Chrome or Edge, or Brave with its Web Bluetooth flag on. The label is turned a quarter for the D110's 96-dot head (`printDirection: "left"`), the label type is "with gaps", the density follows the sheet's Light, Normal or Dark within the model's own range, and the print runs as niim.blue's does: heartbeat off, one page per item with its copies, each page waited for, the print ended and the heartbeat back on whatever happens.
 
+### The Vault's price label carries a Code 128 barcode for the Epos Now till
+
+In the Vault app (`apps/vault/src/features/stock/labels/`), a price label for an item with a SKU also carries a **Code 128 (set B) barcode of the SKU in its encoded form, no hyphen** (`GGS7F3K2Q`). That is exactly the `Barcode` the shop Mac sync gives the item's Epos Now product (`eposBarcode` in `labels/code128.ts`; `deploy/mac/lib/epos-stock.mjs` calls the same shared `encodeCode`), so staff can scan the label at the Epos Now till. The layout:
+
+- the bars across the top, `PAD_Y` (8 dots) down, 30 dots tall on a named label and 36 on a 22 mm one;
+- whole printer dots per module, as wide as the label allows with at least the standard 10-module quiet zone each side: **2 dots (0.25 mm) a module on 12 x 40 mm**, 1 dot (0.125 mm) on 12 x 30 and 12 x 22 mm. A 9-character SKU is 134 modules. Use the 40 mm roll for anything sold on the Epos till; the 1-dot labels decode in the tests but need a good scanner;
+- the name on one line under the bars (Poppins 500, 15 dots), and the GG logo (20 dots) and the price (Anton, 28 dots, smaller only to fit) on the bottom line. A 22 mm label has the bars and the price only.
+
+The encoder is in the app (`labels/code128.ts`, no new dependency; apps/web's bwip-js is not used). The painter draws one integer rectangle per run of bar modules on the label-sized canvas, with image smoothing off, before the one-bit threshold, so every edge sits on a printer dot. `labels/code128.test.ts` paints the bars the painter's way at each roll size and decodes them with zxing-wasm (already a Vault dependency), checking the value equals the Epos barcode. A label with no SKU keeps the older layout above.
+
 The library loads only when the sheet opens. Nothing is queued on the server: the D110 belongs to the Mac it is paired with, so a phone can preview a label but only the Mac prints it. The runbook's section 16 (`deploy/README.md`) covers the Mac's one-off setup.
 
 ## Printing path 1: browser print, day one

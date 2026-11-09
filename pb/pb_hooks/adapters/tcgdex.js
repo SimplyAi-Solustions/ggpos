@@ -150,6 +150,18 @@ function getPrices(card, finish, transport) {
   var cmAvg7 = wantsHolo && cm && cm["avg7-holo"] != null ? cm["avg7-holo"] : cm ? cm.avg7 : null;
   var cmTrend = wantsHolo && cm && cm["trend-holo"] != null ? cm["trend-holo"] : cm ? cm.trend : null;
   if (cm && (cmAvg || cmLow)) {
+    // Cardmarket's rolling averages, as decimal strings too. Not a price
+    // candidate's own fields (pricing_policy.fromAdapterCandidate ignores
+    // them); vault_snapshots.pb.js writes them once as dated trend points so
+    // a card's chart has a real recent trend before the nightly history
+    // builds up (1789821560_cardintel_graded_snapshots.js, `basis`).
+    var averages = {};
+    var keys = ["avg1", "avg7", "avg30"];
+    for (var i = 0; i < keys.length; i++) {
+      var holoValue = cm[keys[i] + "-holo"];
+      var value = wantsHolo && holoValue != null ? holoValue : cm[keys[i]];
+      if (value != null && isFinite(Number(value)) && Number(value) > 0) averages[keys[i]] = String(value);
+    }
     out.push({
       source: "cardmarket",
       currency: "EUR",
@@ -159,6 +171,7 @@ function getPrices(card, finish, transport) {
       trend: cmTrend != null ? String(cmTrend) : null,
       fetchedAt: cm.updated || new Date().toISOString(),
       evidenceUrl: "",
+      averages: averages,
     });
   }
 
