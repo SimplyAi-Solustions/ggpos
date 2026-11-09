@@ -88,18 +88,20 @@ function cardRow(app, record, look, withPrice) {
     game: game ? game.getString("key") : "",
     game_name: game ? game.getString("name") : "",
     name: record.getString("name"),
+    name_en: record.getString("name_en"),
     number: record.getString("number"),
     rarity: record.getString("rarity"),
     set_id: set ? set.id : "",
     set_code: set ? set.getString("code") : "",
     set_name: set ? set.getString("name") : "",
+    set_abbr: set ? set.getString("abbr") : "",
     set_total: set ? set.getInt("total") || null : null,
     release_date: set ? String(set.getString("release_date") || "").slice(0, 10) : "",
     series: set ? set.getString("series") : "",
     image_small: record.getString("image_small"),
     image_large: record.getString("image_large"),
     finishes: finishes,
-    language: scan.languageOf(ext, setExt),
+    language: record.getString("language") || scan.languageOf(ext, setExt),
     variant: "",
     illustrator: ext.illustrator || "",
     nm_pence: null,
@@ -122,8 +124,10 @@ function scoringShape(row) {
   return {
     id: row.id,
     name: row.name,
+    name_en: row.name_en,
     number: row.number,
     set_code: row.set_code,
+    set_abbr: row.set_abbr,
     set_name: row.set_name,
     set_total: row.set_total,
     release_date: row.release_date,
@@ -167,41 +171,181 @@ function searchPool(app, parsed, gameKey) {
   return safeFind(app, clauses.join(" && "), "-set.release_date", 400, params);
 }
 
-/** Cards a photo read could be: by collector number, and by name. */
-function identifyPool(app, read, gameKey) {
+/**
+ * TCG Pocket set ids on TCGdex ("A1", "A3a", "B1", "P-A"). Digital only, so
+ * never a card on the counter, but the English search adapter can still
+ * write one through.
+ */
+function isDigitalSetCode(code) {
+  return /^(A\d+[a-z]?|B\d+[a-z]?|P-[AB])$/.test(String(code || ""));
+}
+
+/** The forms a printed collector number may be stored in: "099", "99", "TG05". */
+function numberForms(cnum) {
+  var scan = require(__hooks + "/lib/vault_scan.js");
+  var raw = String(cnum).trim();
+  var stripped = scan.num(raw);
+  var digits = stripped.replace(/^[a-z]+/, "");
+  var padded = digits.length && digits.length < 3 ? ("000" + digits).slice(-3) : digits;
+  return { a: raw, b: digits, c: padded, d: raw.toUpperCase() };
+}
+
+/** LIKE fragments for a name: the whole name, and its longest word cut to 4 letters so a misread ending still finds it. */
+function nameTerms(read) {
+  var out = [];
+  var names = [read.name_en, read.name_printed].filter(Boolean);
+  for (var i = 0; i < names.length; i++) {
+    var full = String(names[i]).toLowerCase().trim();
+    if (full && out.indexOf(full) < 0) out.push(full);
+    var words = full.split(/[^0-9a-zÀ-ɏ぀-ヿ一-鿿가-힯]+/).filter(function (w) {
+      return w.length >= 4;
+    });
+    words.sort(function (x, y) {
+      return y.length - x.length;
+    });
+    if (words[0]) {
+      var cut = /^[a-z]/.test(words[0]) ? words[0].slice(0, 4) : words[0].slice(0, 2);
+      if (out.indexOf(cut) < 0) out.push(cut);
+    }
+  }
+  return out;
+}
+
+/** TCGdex's language code for a read's language. */
+function tcgdexLang(lang) {
+  var l = String(lang || "en").toLowerCase();
+  if (l === "zh" || l === "zh-hk") return "zh-tw";
+  var known = ["en", "ja", "ko", "zh-tw", "zh-cn", "th", "id", "fr", "de", "it", "es", "pt"];
+  return known.indexOf(l) >= 0 ? l : "en";
+}
+
+/**
+ * The catalogue missed: ask TCGdex live for the card by number and name in
+ * the read's language (then English), and save what it finds so the next
+ * scan of that card is local. Returns how many cards were written.
+ */
+function liveTcgdex(app, read) {
+  var sync = require(__hooks + "/lib/catalogue_sync.js");
+  var cnum = require(__hooks + "/lib/vault_scan.js").readNumber(read);
+  if (!cnum) return 0;
+  var forms = numberForms(cnum);
+  var langs = [tcgdexLang(read.language)];
+  if (langs[0] !== "en") langs.push("en");
+  var written = 0;
+  for (var li = 0; li < langs.length && !written; li++) {
+    var lang = langs[li];
+    var ids = [];
+    if (read.set_code) {
+      var direct = sync.tcgdexGet("/" + lang + "/sets/" + encodeURIComponent(read.set_code) + "/" + encodeURIComponent(forms.a), 6);
+      if (direct && direct.id) ids.push(direct.id);
+    }
+    var names = lang === "en" ? [read.name_en, read.name_printed] : [read.name_printed, read.name_en];
+    for (var n = 0; n < names.length && !ids.length; n++) {
+      if (!names[n]) continue;
+      var tries = [forms.a, forms.c, forms.b].filter(function (v, i, arr) {
+        return v && arr.indexOf(v) === i;
+      });
+      for (var t = 0; t < tries.length && !ids.length; t++) {
+        var list = sync.tcgdexGet("/" + lang + "/cards?name=" + encodeURIComponent(names[n]) + "&localId=" + encodeURIComponent(tries[t]), 6);
+        for (var k = 0; Array.isArray(list) && k < list.length && ids.length < 5; k++) {
+        var at = String(list[k].id).lastIndexOf("-");
+        if (!isDigitalSetCode(String(list[k].id).slice(0, at))) ids.push(list[k].id);
+      }
+      }
+    }
+    var table = sync.speciesFor(app, lang);
+    for (var j = 0; j < ids.length; j++) {
+      var detail = sync.tcgdexGet("/" + lang + "/cards/" + encodeURIComponent(ids[j]), 6);
+      if (!detail || !detail.id || !detail.set) continue;
+      var rows = sync.tcgdexDetail(lang, detail, table);
+      if (!rows.card) continue;
+      try {
+        sync.upsertBatch(app, { game: "pokemon", sets: [rows.set], cards: [rows.card] });
+        written++;
+      } catch (err) {
+        console.log("[vault_scan] saving live TCGdex card failed: " + err);
+      }
+    }
+  }
+  return written;
+}
+
+/**
+ * Cards a photo read could be, most specific query first:
+ *   1. its number within the read's set (printed total, code or abbreviation)
+ *   2. its number with its name
+ *   3. its name alone
+ *   4. its number alone, only when nothing above found anything
+ * Ranking (lib/vault_scan.js rankForRead) decides the order and drops cards
+ * whose name does not match. When no card matches both name and number, a
+ * Pokemon read asks TCGdex live and saves the result (liveTcgdex).
+ */
+function identifyPool(app, read, gameKey, opts) {
   var scan = require(__hooks + "/lib/vault_scan.js");
   var seen = {};
   var out = [];
+  var setLook = lookups(app);
   function add(rows) {
     for (var i = 0; i < rows.length; i++) {
       if (rows[i] && !seen[rows[i].id]) {
         seen[rows[i].id] = true;
+        var set = setLook.set(rows[i].getString("set"));
+        if (set && isDigitalSetCode(set.getString("code"))) continue;
         out.push(rows[i]);
       }
     }
   }
   var gameClause = gameKey ? " && game.key = {:game}" : "";
-  var cnum = read.collector_number;
-  if (!cnum && read.promo_code) {
-    var m = String(read.promo_code).match(/(\d+)\s*$/);
-    cnum = m ? m[1] : null;
+  var cnum = scan.readNumber(read);
+  var forms = cnum ? numberForms(cnum) : null;
+  var numClause = "(number = {:a} || number = {:b} || number = {:c} || number = {:d})";
+  function params(extra) {
+    var p = { game: gameKey };
+    if (forms) {
+      p.a = forms.a;
+      p.b = forms.b;
+      p.c = forms.c;
+      p.d = forms.d;
+    }
+    for (var k in extra || {}) p[k] = extra[k];
+    return p;
   }
-  if (cnum) {
-    var raw = String(cnum).trim();
-    var stripped = scan.num(raw);
-    var digits = stripped.replace(/^[a-z]+/, "");
-    var padded = digits.length && digits.length < 3 ? ("000" + digits).slice(-3) : digits;
-    add(safeFind(app, "(number = {:a} || number = {:b} || number = {:c} || number = {:d})" + gameClause, "-set.release_date", 300, {
-      a: raw,
-      b: digits,
-      c: padded,
-      d: raw.toUpperCase(),
-      game: gameKey,
-    }));
+  var terms = nameTerms(read);
+
+  if (forms) {
+    var setParts = [];
+    var sp = {};
+    var total = read.set_total ? parseInt(scan.num(read.set_total).replace(/^[a-z]+/, ""), 10) : 0;
+    if (total > 0) {
+      setParts.push("set.total = {:tot}");
+      sp.tot = total;
+    }
+    var code = scan.setcode(read.set_code);
+    if (code) {
+      setParts.push("set.code ~ {:sc} || set.abbr = {:sa}");
+      sp.sc = String(read.set_code).trim();
+      sp.sa = String(read.set_code).trim().toUpperCase();
+    }
+    if (setParts.length) add(safeFind(app, numClause + " && (" + setParts.join(" || ") + ")" + gameClause, "-set.release_date", 200, params(sp)));
+    for (var t = 0; t < terms.length; t++) {
+      add(safeFind(app, numClause + " && (search_text ~ {:q} || name_en ~ {:q})" + gameClause, "-set.release_date", 200, params({ q: terms[t] })));
+    }
   }
-  var names = [read.name_en, read.name_printed].filter(Boolean);
-  for (var j = 0; j < names.length; j++) {
-    add(safeFind(app, "search_text ~ {:q}" + gameClause, "-set.release_date", 120, { q: String(names[j]).toLowerCase(), game: gameKey }));
+  for (var j = 0; j < terms.length; j++) {
+    add(safeFind(app, "(search_text ~ {:q} || name_en ~ {:q})" + gameClause, "-set.release_date", j === 0 ? 150 : 80, params({ q: terms[j] })));
+  }
+  if (forms && !out.length) add(safeFind(app, numClause + gameClause, "-set.release_date", 300, params()));
+
+  // Nothing local matches both the name and the number: ask TCGdex once.
+  var noLive = opts && opts.noLive;
+  if (!noLive && forms && (gameKey === "pokemon" || (!gameKey && read.language && read.language !== "en")) && (read.name_en || read.name_printed)) {
+    var look = lookups(app);
+    var hit = false;
+    for (var r = 0; r < out.length && !hit; r++) {
+      var why = scan.readScore(read, scoringShape(cardRow(app, out[r], look, false))).why;
+      hit = why.indexOf("number") >= 0 && (why.indexOf("name") >= 0 || why.indexOf("name~") >= 0);
+    }
+    if (!hit && liveTcgdex(app, read) > 0) return identifyPool(app, read, gameKey, { noLive: true });
   }
   return out;
 }
@@ -214,4 +358,9 @@ module.exports = {
   scoringShape: scoringShape,
   searchPool: searchPool,
   identifyPool: identifyPool,
+  nameTerms: nameTerms,
+  isDigitalSetCode: isDigitalSetCode,
+  numberForms: numberForms,
+  tcgdexLang: tcgdexLang,
+  liveTcgdex: liveTcgdex,
 };

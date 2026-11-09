@@ -214,28 +214,57 @@ function searchScore(parsed, card) {
   return score;
 }
 
-/** How well a catalogue card matches what the model read off the photo. */
-function readScore(read, card) {
-  var score = 0;
-  var why = [];
+/**
+ * How well a card's name answers the read: 3 for an exact name (printed or
+ * English, against the card's own name or its English name), 1.5 for a
+ * near one (one contains the other, or a typo or two), else 0.
+ */
+function nameScore(read, card) {
   var names = [norm(read.name_printed), norm(read.name_en)].filter(Boolean);
-  var cname = norm(card.name);
-  if (names.length && names.indexOf(cname) >= 0) {
-    score += 3;
-    why.push("name");
-  } else if (names.length && names.some(function (n) { return n && (cname.indexOf(n) >= 0 || n.indexOf(cname) >= 0); })) {
-    score += 1.5;
-    why.push("name~");
+  var cnames = [norm(card.name), norm(card.name_en)].filter(Boolean);
+  if (!names.length || !cnames.length) return 0;
+  for (var i = 0; i < names.length; i++) if (cnames.indexOf(names[i]) >= 0) return 3;
+  for (var j = 0; j < names.length; j++) {
+    for (var k = 0; k < cnames.length; k++) {
+      var a = names[j];
+      var b = cnames[k];
+      if (Math.min(a.length, b.length) >= 3 && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0)) return 1.5;
+      var allowed = Math.min(a.length, b.length) >= 10 ? 2 : Math.min(a.length, b.length) >= 5 ? 1 : 0;
+      if (allowed && distance(a, b, allowed) <= allowed) return 1.5;
+    }
   }
+  return 0;
+}
+
+/** The collector number a read carries, from the number itself or a promo code. */
+function readNumber(read) {
   var cnum = read.collector_number || null;
   if (!cnum && read.promo_code) {
     var m = String(read.promo_code).match(/(\d+)\s*$/);
     cnum = m ? m[1] : null;
   }
+  return cnum;
+}
+
+/** How well a catalogue card matches what the model read off the photo. */
+function readScore(read, card) {
+  var score = 0;
+  var why = [];
+  var ns = nameScore(read, card);
+  if (ns >= 3) {
+    score += 3;
+    why.push("name");
+  } else if (ns > 0) {
+    score += ns;
+    why.push("name~");
+  }
+  var cnum = readNumber(read);
   if (cnum && num(card.number) === num(cnum)) {
     score += 2;
     why.push("number");
   }
+  // The printed total ("099/094") tells sets apart that share a name and
+  // a number. Secret rares print a number above it, so it counts on its own.
   if (read.set_total && card.set_total && num(card.set_total) === num(read.set_total)) {
     score += 2;
     why.push("set_total");
@@ -245,17 +274,40 @@ function readScore(read, card) {
     score += 2;
     why.push("set_code");
   }
+  // A Japanese read prefers the Japanese print and still offers the English ones.
+  var lang = read.language || "en";
+  var clang = card.language || "en";
+  if (clang === lang) score += 0.75;
+  // Another Asian print of the same card (a Chinese one for a Japanese read)
+  // shares name, number and total: it must not crowd the read's own language.
+  // English prints stay as the equivalent on offer.
+  else if (read.language && clang !== "en") score -= 1.5;
   if (read.game && card.game_key && read.game === card.game_key) score += 0.5;
   return { score: score, why: why };
 }
 
-/** Candidates ranked best first, each with its score and reasons. Newer sets break ties. */
+/**
+ * Candidates ranked best first, each with its score and reasons. Newer sets
+ * break ties. A card whose name does not match the read is dropped while
+ * any card does match; when none does, the cards are kept and each carries
+ * "no_name_match" so the screen and the verdict can say so.
+ */
 function rankForRead(read, cards) {
   var ranked = [];
+  var named = 0;
+  var hasName = !!(read.name_printed || read.name_en);
   for (var i = 0; i < cards.length; i++) {
     var r = readScore(read, cards[i]);
-    if (r.score <= 0) continue;
+    if (!r.why.length) continue;
+    if (r.why.indexOf("name") >= 0 || r.why.indexOf("name~") >= 0) named++;
     ranked.push({ card: cards[i], score: r.score, why: r.why });
+  }
+  if (hasName && named > 0) {
+    ranked = ranked.filter(function (e) {
+      return e.why.indexOf("name") >= 0 || e.why.indexOf("name~") >= 0;
+    });
+  } else if (hasName) {
+    for (var j = 0; j < ranked.length; j++) ranked[j].why.push("no_name_match");
   }
   ranked.sort(function (a, b) {
     if (b.score !== a.score) return b.score - a.score;
@@ -290,7 +342,8 @@ function agreement(read, ranked) {
   else if (read.confidence.collector_number < 0.8) reasons.push("Collector number unclear");
   var nameConf = Math.max(read.confidence.name_printed || 0, read.confidence.name_en || 0);
   if (nameConf < 0.8) reasons.push("Name unclear");
-  if (top.why.indexOf("name") < 0) reasons.push("Name does not match");
+  if (top.why.indexOf("no_name_match") >= 0) reasons.push("No card with this name found, check the name");
+  else if (top.why.indexOf("name") < 0) reasons.push("Name does not match");
   if (top.why.indexOf("number") < 0) reasons.push("Number does not match");
   if (top.why.indexOf("set_total") < 0 && top.why.indexOf("set_code") < 0) reasons.push("Set not confirmed");
   var lang = read.language || "en";
@@ -342,6 +395,8 @@ module.exports = {
   parseQuery: parseQuery,
   likeTerms: likeTerms,
   searchScore: searchScore,
+  nameScore: nameScore,
+  readNumber: readNumber,
   readScore: readScore,
   rankForRead: rankForRead,
   needsDeepDive: needsDeepDive,

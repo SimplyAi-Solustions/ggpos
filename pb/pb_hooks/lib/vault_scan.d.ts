@@ -21,6 +21,8 @@ export interface ScoreCard {
   release_date?: string
   game_key?: string
   language?: string
+  name_en?: string
+  set_abbr?: string
 }
 export interface ParsedQuery {
   number: string | null
@@ -44,6 +46,9 @@ export function distance(a: string, b: string, max: number): number
 export function parseQuery(q: string): ParsedQuery
 export function likeTerms(parsed: ParsedQuery): string[]
 export function searchScore(parsed: ParsedQuery, card: ScoreCard): number
+export function nameScore(read: ScanRead, card: ScoreCard): number
+export function readNumber(read: ScanRead): string | null
+export function readScore(read: ScanRead, card: ScoreCard): { score: number; why: string[] }
 export function rankForRead(read: ScanRead, cards: ScoreCard[]): Ranked[]
 export function needsDeepDive(read: ScanRead | null): boolean
 export function agreement(read: ScanRead, ranked: Ranked[]): { accept: boolean; reasons: string[] }
