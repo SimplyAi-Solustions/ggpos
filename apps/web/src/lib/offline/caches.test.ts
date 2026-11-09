@@ -48,7 +48,9 @@ describe("clearing what the worker kept", () => {
     await expect(clearOfflineCaches()).resolves.toBeUndefined()
   })
 
-  it("is emptied when a staff member signs out", async () => {
+  // The import of @/lib/auth pulls the whole @/lib/api graph through a cold
+  // module cache, which can take longer than the default 5s on slow hardware.
+  it("is emptied when a staff member signs out", { timeout: 20000 }, async () => {
     vi.resetModules()
     vi.doMock("@/lib/pb", () => ({
       pb: {

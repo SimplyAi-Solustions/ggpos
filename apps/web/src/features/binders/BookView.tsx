@@ -113,7 +113,7 @@ export function BookView({
     )
 
   const step = spread ? 2 : 1
-  let left: React.ReactNode = null
+  let left: React.ReactNode
   let right: React.ReactNode = null
   let leafFront: React.ReactNode = null
   let leafBack: React.ReactNode = null

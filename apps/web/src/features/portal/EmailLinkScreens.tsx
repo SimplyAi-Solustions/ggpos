@@ -9,13 +9,12 @@ import { confirmEmail, setNewPassword } from "@/lib/api/portal"
 
 /** Opened from the confirmation email: confirms the address, then offers sign-in. */
 export function VerifyEmailScreen({ token }: { token?: string }) {
-  const [state, setState] = React.useState<"working" | "done" | "failed">("working")
+  // A missing token fails before anything runs, so the effect never has to
+  // set state synchronously.
+  const [state, setState] = React.useState<"working" | "done" | "failed">(token ? "working" : "failed")
 
   React.useEffect(() => {
-    if (!token) {
-      setState("failed")
-      return
-    }
+    if (!token) return
     confirmEmail(token).then(
       () => setState("done"),
       () => setState("failed")
