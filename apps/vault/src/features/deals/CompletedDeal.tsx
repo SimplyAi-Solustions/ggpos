@@ -23,7 +23,9 @@ export function CompletedDeal({ deal: draft }: { deal: DealDraft }) {
         Deals
       </Link>
       <PageHeader
-        eyebrow={at ? `Completed ${at.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : "Completed"}
+        eyebrow={[done?.number, at ? at.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "Completed"]
+          .filter(Boolean)
+          .join(" · ")}
         title={draft.name}
       />
 
@@ -42,7 +44,8 @@ export function CompletedDeal({ deal: draft }: { deal: DealDraft }) {
 
       {done && (
         <dl className="flex flex-col divide-y divide-line border-y border-line text-sm">
-          <Row label="Market value" value={formatGBP(done.market)} />
+          {draft.seller && <Row label="Seller" value={draft.seller.name} />}
+          <Row label="Market value" value={formatGBP(done.market || deal.market)} />
           <Row label="Sweep rates" value={`${formatPct(draft.rates.tradePct)} trade, ${formatPct(draft.rates.cashPct)} cash`} />
           <Row
             label="Trade total"
@@ -54,7 +57,7 @@ export function CompletedDeal({ deal: draft }: { deal: DealDraft }) {
             value={formatGBP(done.cash)}
             struck={done.cashOverridden ? formatGBP(done.calculatedCash) : undefined}
           />
-          <Row label="Value captured" value={formatGBP(done.market - done.payout.cash - done.payout.credit)} />
+          <Row label="Value captured" value={formatGBP((done.market || deal.market) - done.payout.cash - done.payout.credit)} />
         </dl>
       )}
 

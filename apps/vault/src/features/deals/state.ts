@@ -8,6 +8,7 @@ import {
   computeDeal,
   DEFAULT_DEAL_RATES,
   dealPayout,
+  payoutLines,
   type Deal,
   type DealLineInput,
   type DealPayout,
@@ -25,6 +26,7 @@ import type {
   CustomLine,
   DealDraft,
   DraftLine,
+  Seller,
 } from "./types"
 
 export type Side = "trade" | "cash"
@@ -44,19 +46,28 @@ export const RATE_PRESETS: ReadonlyArray<{ pct: number; label: string }> = [
 /** The per-line quick chips. */
 export const LINE_QUICK_PCTS = [90, 80, 70] as const
 
-/** Rates the builder allows: 0 to 100, matching the server's line check. */
+/** Rates the builder allows: 0 to 200, the range clampDealPct and the server take. */
 export const RATE_MIN = 0
-export const RATE_MAX = 100
+export const RATE_MAX = 200
 
 export function clampRate(pct: number): number {
-  return Math.min(RATE_MAX, clampDealPct(Math.round(pct)))
+  return clampDealPct(Math.round(pct))
 }
 
+const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+/**
+ * A PocketBase record id (15 characters, a to z and 0 to 9), made here so a
+ * deal and its lines keep one id from the first keystroke to the server.
+ */
 export function newId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID()
+  const bytes = new Uint8Array(15)
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes)
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
   }
-  return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+  return Array.from(bytes, (b) => ID_CHARS[b % ID_CHARS.length]).join("")
 }
 
 export function newDraft(id: string = newId(), now: Date = new Date()): DealDraft {
@@ -72,6 +83,7 @@ export function newDraft(id: string = newId(), now: Date = new Date()): DealDraf
     overrides: {},
     payout: { type: "credit", cashTaken: 0 },
     note: "",
+    seller: null,
     completed: null,
   }
 }
@@ -107,8 +119,15 @@ export function cardLineFromHit(hit: CardHit, variant: string, id: string = newI
   }
 }
 
+/** The game a custom item is stocked under, unless staff picked one (sealed). */
+export function customGame(category: CustomCategory, picked?: string): string {
+  if (category === "retro") return "retro"
+  if (category === "sealed" && picked) return picked
+  return "other"
+}
+
 export function customLine(
-  input: { name: string; category: CustomCategory; marketPence: number; qty: number },
+  input: { name: string; category: CustomCategory; marketPence: number; qty: number; game?: string },
   id: string = newId()
 ): CustomLine {
   return {
@@ -116,6 +135,7 @@ export function customLine(
     kind: "custom",
     name: input.name.trim(),
     category: input.category,
+    game: customGame(input.category, input.game),
     manualMarket: Math.max(0, Math.floor(input.marketPence)),
     qty: Math.max(1, Math.floor(input.qty)),
   }
@@ -159,9 +179,20 @@ export function priceDraft(draft: Pick<DealDraft, "lines" | "rates" | "overrides
   return computeDeal(draft.lines.map(toLineInput), draft.rates, draft.overrides)
 }
 
-/** What the customer would be paid with the payout chosen on review. */
-export function draftPayout(draft: Pick<DealDraft, "payout">, deal: Pick<Deal, "trade" | "cash">): DealPayout {
-  return dealPayout(draft.payout.type, deal, draft.payout.cashTaken)
+/**
+ * What the customer is paid with the payout chosen on review, after
+ * `payoutLines` has placed it on the lines: on the rare deal where every line
+ * has several units the credit can give up a penny it cannot place. This is
+ * exactly what POST /api/vault/deals/{id}/complete checks `credit_given`
+ * against.
+ */
+export function draftPayout(
+  draft: Pick<DealDraft, "payout" | "lines">,
+  deal: Pick<Deal, "trade" | "cash" | "lines">
+): DealPayout {
+  const payout = dealPayout(draft.payout.type, deal, draft.payout.cashTaken)
+  if (deal.lines.length === 0) return payout
+  return payoutLines(deal, draft.lines.map((line) => line.qty), payout).payout
 }
 
 /** Any cash at all, however small, needs ID on file. */
@@ -231,7 +262,7 @@ export type DealAction =
   | { type: "setPayoutType"; payoutType: DealPayoutType }
   | { type: "setCashTaken"; pence: number }
   | { type: "setNote"; note: string }
-  | { type: "complete"; at: string }
+  | { type: "setSeller"; seller: Seller | null }
 
 function mapLine(draft: DealDraft, lineId: string, fn: (line: DraftLine) => DraftLine): DealDraft {
   let changed = false
@@ -252,8 +283,8 @@ function withRate(line: DraftLine, side: Side, pct: number | null): DraftLine {
 }
 
 export function dealReducer(draft: DealDraft, action: DealAction): DealDraft {
-  if (draft.status === "completed" && action.type !== "load" && action.type !== "rename") {
-    // A completed deal is a record; only its name can change.
+  if (draft.status === "completed" && action.type !== "load") {
+    // A completed deal is a record.
     return draft
   }
   switch (action.type) {
@@ -312,25 +343,8 @@ export function dealReducer(draft: DealDraft, action: DealAction): DealDraft {
       return { ...draft, payout: { ...draft.payout, cashTaken: Math.max(0, Math.floor(action.pence)) } }
     case "setNote":
       return { ...draft, note: action.note.slice(0, 1000) }
-    case "complete": {
-      const deal = priceDraft(draft)
-      const payout = draftPayout(draft, deal)
-      return {
-        ...draft,
-        status: "completed",
-        completed: {
-          at: action.at,
-          payout,
-          market: deal.market,
-          trade: deal.trade,
-          cash: deal.cash,
-          calculatedTrade: deal.calculatedTrade,
-          calculatedCash: deal.calculatedCash,
-          tradeOverridden: deal.tradeOverridden,
-          cashOverridden: deal.cashOverridden,
-        },
-      }
-    }
+    case "setSeller":
+      return { ...draft, seller: action.seller }
     default:
       return draft
   }

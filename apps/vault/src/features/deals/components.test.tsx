@@ -7,8 +7,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import * as api from "./api"
 import { DealLineRow } from "./components/DealLineRow"
 import { FinalOverridePanel } from "./components/FinalOverridePanel"
+import { CompleteSheet } from "./components/CompleteSheet"
 import { ReviewSheet } from "./components/ReviewSheet"
-import { cardLineFromHit, dealReducer, newDraft, priceDraft } from "./state"
+import { cardLineFromHit, dealReducer, draftPayout, newDraft, priceDraft } from "./state"
 import type { CardLine, DealDraft } from "./types"
 import { useDealBuilder } from "./useDealBuilder"
 
@@ -109,29 +110,21 @@ describe("FinalOverridePanel", () => {
 })
 
 describe("ReviewSheet", () => {
-  function renderReview(initial: DealDraft, onComplete = vi.fn()) {
+  function renderReview(initial: DealDraft, onContinue = vi.fn()) {
     // Stable, as the builder's own close callback is: the Sheet refocuses when it changes.
     const onClose = vi.fn()
     render(
       <Harness initial={initial}>
         {(draft, dispatch) => (
-          <ReviewSheet
-            open
-            onClose={onClose}
-            draft={draft}
-            deal={priceDraft(draft)}
-            dispatch={dispatch}
-            onComplete={onComplete}
-            completing={false}
-          />
+          <ReviewSheet open onClose={onClose} draft={draft} deal={priceDraft(draft)} dispatch={dispatch} onContinue={onContinue} />
         )}
       </Harness>
     )
-    return onComplete
+    return onContinue
   }
 
-  it("splits cash and credit, shows the ID requirement and offers no way round it", async () => {
-    const onComplete = renderReview({ ...newDraft("d"), lines: [line("a", 12500)] })
+  it("splits £100 trade / £87.50 cash, £35 taken, into £60 credit and flags the ID check", async () => {
+    const onContinue = renderReview({ ...newDraft("d"), lines: [line("a", 12500)] })
     expect(screen.queryByTestId("id-required")).toBeNull()
 
     await userEvent.click(screen.getByRole("radio", { name: "Split" }))
@@ -140,10 +133,8 @@ describe("ReviewSheet", () => {
     expect(payout).toHaveTextContent("£60.00")
     expect(payout).toHaveTextContent("£35.00")
     expect(screen.getByTestId("id-required")).toHaveTextContent("ID on file required")
-    const complete = screen.getByRole("button", { name: /Complete deal/ })
-    expect(complete).toBeDisabled()
-    await userEvent.click(complete)
-    expect(onComplete).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole("button", { name: "Seller and ID check" }))
+    expect(onContinue).toHaveBeenCalled()
   })
 
   it("needs ID for a penny of cash", async () => {
@@ -154,19 +145,119 @@ describe("ReviewSheet", () => {
   })
 
   it("rounds the final figure and shows value captured for credit", async () => {
-    const onComplete = renderReview({ ...newDraft("d"), lines: [line("a", 24389)] }) // trade £195.11
+    renderReview({ ...newDraft("d"), lines: [line("a", 24389)] }) // trade £195.11
     expect(screen.getByText("Value captured")).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: /£195\.00/ }))
     expect(screen.getByTestId("payout")).toHaveTextContent("£195.00")
     expect(screen.getByText(/Final figure overridden/)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole("button", { name: "Complete deal, £195.00" }))
-    expect(onComplete).toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: "Seller and terms" })).toBeEnabled()
+  })
+})
+
+describe("CompleteSheet", () => {
+  const seller = { id: "c1", name: "Sam Hill", code: "GGC1", phone: "07700900456", email: "" }
+
+  function renderComplete(draft: DealDraft, onDone = vi.fn()) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const onClose = vi.fn()
+    const flush = vi.fn().mockResolvedValue(undefined)
+    function Wrapper() {
+      const [state, dispatch] = React.useReducer(dealReducer, draft)
+      const deal = priceDraft(state)
+      return (
+        <CompleteSheet
+          open
+          onClose={onClose}
+          draft={state}
+          deal={deal}
+          payout={draftPayout(state, deal)}
+          onSeller={(s) => dispatch({ type: "setSeller", seller: s })}
+          flush={flush}
+          onDone={onDone}
+        />
+      )
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <Wrapper />
+      </QueryClientProvider>
+    )
+    return { flush, onDone }
+  }
+
+  it("needs a seller first", () => {
+    renderComplete({ ...newDraft("d"), lines: [line("a", 12500)] })
+    expect(screen.getByTestId("complete-blocker")).toHaveTextContent("Pick or add the seller.")
+    expect(screen.getByRole("button", { name: /Complete deal/ })).toBeDisabled()
+  })
+
+  it("completes a credit deal: terms, then the server books it in", async () => {
+    vi.spyOn(api, "getServerDeal").mockResolvedValue({ trade_total: 10000, cash_total: 8750, market_total: 12500, lines: [] })
+    const complete = vi.spyOn(api, "completeDeal").mockResolvedValue({
+      tradeIn: { id: "d", number: "GG-BI-000007", payoutType: "credit", cashTaken: 0, creditGiven: 10000 },
+      items: [{ id: "i1", sku: "GGS7F3K2Q", title: "Charizard" }],
+      labelsQueued: 1,
+    })
+    const { flush } = renderComplete({ ...newDraft("d"), seller, lines: [line("a", 12500)] })
+    expect(screen.queryByText("ID check")).toBeNull()
+    expect(screen.getByTestId("complete-blocker")).toHaveTextContent(/terms/)
+    await userEvent.click(screen.getByRole("checkbox"))
+    await userEvent.click(screen.getByRole("button", { name: "Complete deal, £100.00" }))
+    expect(flush).toHaveBeenCalled()
+    expect(complete).toHaveBeenCalledWith("d", { cash_taken: 0, credit_given: 10000, terms_accepted: true, id_check: null })
+    const done = await screen.findByTestId("completion")
+    expect(done).toHaveTextContent("GG-BI-000007")
+    expect(done).toHaveTextContent("GGS7F3K2Q")
+    expect(done).toHaveTextContent("1 label queued")
+  })
+
+  it("asks for the full ID check before any cash, and will not complete without it", async () => {
+    vi.spyOn(api, "getSellerFacts").mockResolvedValue({ idStatus: "none", idExpiry: "", dob: "", address: "", flags: [], hasPhoto: false })
+    const complete = vi.spyOn(api, "completeDeal")
+    renderComplete({ ...newDraft("d"), seller, lines: [line("a", 12500)], payout: { type: "mixed", cashTaken: 1 } })
+    expect(await screen.findByRole("button", { name: "Photograph the ID" })).toBeInTheDocument()
+    expect(screen.getByTestId("complete-blocker")).toHaveTextContent("Photograph the ID before you continue.")
+    const button = screen.getByRole("button", { name: /Complete deal/ })
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(complete).not.toHaveBeenCalled()
+  })
+
+  it("passes a seller whose ID and photo are on file", async () => {
+    vi.spyOn(api, "getSellerFacts").mockResolvedValue({
+      idStatus: "verified",
+      idExpiry: "2031-06-30",
+      dob: "1990-01-01",
+      address: "12 Castle Street, Bolsover, S44 6PP",
+      flags: [],
+      hasPhoto: true,
+    })
+    renderComplete({ ...newDraft("d"), seller, lines: [line("a", 12500)], payout: { type: "cash", cashTaken: 0 } })
+    expect(await screen.findByTestId("id-on-file")).toBeInTheDocument()
+  })
+
+  it("refuses cash to a seller marked no cash", async () => {
+    vi.spyOn(api, "getSellerFacts").mockResolvedValue({ idStatus: "verified", idExpiry: "2031-06-30", dob: "", address: "x", flags: ["no_cash"], hasPhoto: true })
+    renderComplete({ ...newDraft("d"), seller, lines: [line("a", 12500)], payout: { type: "cash", cashTaken: 0 } })
+    expect(await screen.findByRole("alert")).toHaveTextContent("marked no cash")
+    expect(screen.getByRole("button", { name: /Complete deal/ })).toBeDisabled()
+  })
+
+  it("stops when the server prices the deal differently", async () => {
+    vi.spyOn(api, "getServerDeal").mockResolvedValue({ trade_total: 9999, cash_total: 8750, market_total: 12500, lines: [] })
+    const complete = vi.spyOn(api, "completeDeal")
+    renderComplete({ ...newDraft("d"), seller, lines: [line("a", 12500)] })
+    await userEvent.click(screen.getByRole("checkbox"))
+    await userEvent.click(screen.getByRole("button", { name: /Complete deal/ }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("not what is on screen")
+    expect(complete).not.toHaveBeenCalled()
   })
 })
 
 describe("useDealBuilder", () => {
-  it("autosaves edits and fetches prices for an added card", async () => {
+  it("autosaves the difference and fetches prices for an added card", async () => {
     vi.spyOn(api, "getConditionPrices").mockResolvedValue({ NM: { pence: 2000, basis: "comp" } })
+    const save = vi.spyOn(api, "saveDeal").mockResolvedValue(undefined)
     const client = new QueryClient()
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -180,8 +271,34 @@ describe("useDealBuilder", () => {
     await waitFor(() => expect((result.current.draft.lines[0] as CardLine).priceStatus).toBe("ready"))
     expect(priceDraft(result.current.draft).trade).toBe(1600)
 
-    await waitFor(() => expect(result.current.saveState).toBe("saved"), { timeout: 2000 })
-    const stored = await api.getDeal("auto")
-    expect(stored?.lines).toHaveLength(1)
+    await waitFor(() => expect(result.current.saveState).toBe("saved"), { timeout: 3000 })
+    const [previous, next] = save.mock.calls.at(-1)!
+    expect(previous).toBe(initial)
+    expect(next.lines).toHaveLength(1)
+  })
+
+  it("saves a pending edit straight away when the builder closes inside the debounce", async () => {
+    const save = vi.spyOn(api, "saveDeal").mockResolvedValue(undefined)
+    const client = new QueryClient()
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    )
+    const { result, unmount } = renderHook(() => useDealBuilder(newDraft("leave")), { wrapper })
+    act(() => result.current.dispatch({ type: "rename", name: "Tom's binder" }))
+    unmount()
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0]![1].name).toBe("Tom's binder")
+  })
+
+  it("shows a save failure in plain words", async () => {
+    vi.spyOn(api, "saveDeal").mockRejectedValue(new Error("Could not reach the server. Check the connection and try again."))
+    const client = new QueryClient()
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useDealBuilder(newDraft("x")), { wrapper })
+    act(() => result.current.dispatch({ type: "rename", name: "Tom" }))
+    await waitFor(() => expect(result.current.saveState).toBe("error"), { timeout: 3000 })
+    expect(result.current.saveError).toMatch(/Could not reach the server/)
   })
 })

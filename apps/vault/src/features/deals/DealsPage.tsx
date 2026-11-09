@@ -3,9 +3,9 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ChevronRight, Handshake, Plus } from "lucide-react"
 
-import { Badge, buttonClasses, EmptyState, Money, PageHeader, Segmented, Skeleton } from "@/ui"
+import { Badge, Button, buttonClasses, EmptyState, Money, PageHeader, Segmented, Skeleton } from "@/ui"
 
-import { listDeals } from "./api"
+import { explain, listDeals } from "./api"
 import { formatUpdated } from "./format"
 import { itemCount, priceDraft } from "./state"
 import type { DealDraft } from "./types"
@@ -20,7 +20,7 @@ const TABS: ReadonlyArray<{ value: Tab; label: string }> = [
 
 export function DealsPage() {
   const [tab, setTab] = React.useState<Tab>("open")
-  const deals = useQuery({ queryKey: ["deals", "list"], queryFn: listDeals, staleTime: 0 })
+  const deals = useQuery({ queryKey: ["deals", "list"], queryFn: listDeals, staleTime: 0, refetchOnMount: "always" })
 
   const shown = (deals.data ?? []).filter((d) => tab === "all" || (tab === "open" ? d.status === "open" : d.status === "completed"))
   const openCount = (deals.data ?? []).filter((d) => d.status === "open").length
@@ -52,6 +52,14 @@ export function DealsPage() {
             <Skeleton className="h-20" />
             <Skeleton className="h-20" />
           </div>
+        ) : deals.isError ? (
+          <EmptyState
+            icon={<Handshake aria-hidden />}
+            title="Deals did not load"
+            action={<Button onClick={() => void deals.refetch()}>Try again</Button>}
+          >
+            {explain(deals.error, "The deals list did not load. Try again.")}
+          </EmptyState>
         ) : shown.length === 0 ? (
           <EmptyState
             icon={<Handshake aria-hidden />}
@@ -75,7 +83,6 @@ export function DealsPage() {
           </ul>
         )}
       </div>
-      <p className="mt-4 text-center text-xs text-fg-3">Drafts are saved on this device until the server keeps them.</p>
     </div>
   )
 }
@@ -101,6 +108,7 @@ function DealRow({ deal: draft, showStatus }: { deal: DealDraft; showStatus: boo
             </Badge>
           )}
           <p className="font-mono text-xs text-fg-3 tnum">
+            {draft.seller ? `${draft.seller.name} · ` : ""}
             {items} {items === 1 ? "item" : "items"} · {formatUpdated(draft.updatedAt)}
           </p>
         </div>

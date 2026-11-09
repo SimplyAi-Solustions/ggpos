@@ -1,20 +1,22 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { Handshake } from "lucide-react"
 
-import { buttonClasses, EmptyState, Skeleton } from "@/ui"
+import { Button, buttonClasses, EmptyState, Skeleton } from "@/ui"
 
-import { getDeal } from "./api"
+import { explain, getDeal } from "./api"
 import { CompletedDeal } from "./CompletedDeal"
-import { DealBuilder } from "./DealBuilder"
+import { DealBuilder, type AddFromScan } from "./DealBuilder"
 
-export function DealDetailPage({ id }: { id: string }) {
+export function DealDetailPage({ id, addFromScan }: { id: string; addFromScan?: AddFromScan }) {
+  const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ["deals", "one", id],
     queryFn: () => getDeal(id),
     // The builder owns the draft once it is open; a refetch must not reset it.
     staleTime: Infinity,
     gcTime: 0,
+    refetchOnMount: "always",
   })
 
   if (query.isPending) {
@@ -31,18 +33,32 @@ export function DealDetailPage({ id }: { id: string }) {
     return (
       <EmptyState
         icon={<Handshake aria-hidden />}
-        title="Deal not found"
+        title={query.isError ? "Deal did not load" : "Deal not found"}
         action={
-          <Link to="/deals" className={buttonClasses("secondary")}>
-            Back to deals
-          </Link>
+          <div className="flex gap-2">
+            <Link to="/deals" className={buttonClasses("secondary")}>
+              Back to deals
+            </Link>
+            {query.isError && <Button onClick={() => void query.refetch()}>Try again</Button>}
+          </div>
         }
       >
-        Drafts are kept on the device that made them for now. Open it there, or start a new deal.
+        {query.isError
+          ? explain(query.error, "The deal did not load. Try again.")
+          : "It may have been deleted. Check the deals list or start a new one."}
       </EmptyState>
     )
   }
 
   if (query.data.status === "completed") return <CompletedDeal deal={query.data} />
-  return <DealBuilder key={query.data.id} initial={query.data} />
+  return (
+    <DealBuilder
+      key={query.data.id}
+      initial={query.data}
+      addFromScan={addFromScan}
+      onCompleted={() => {
+        void queryClient.invalidateQueries({ queryKey: ["deals"] })
+      }}
+    />
+  )
 }

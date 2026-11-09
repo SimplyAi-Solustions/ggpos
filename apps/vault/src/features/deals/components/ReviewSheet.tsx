@@ -1,5 +1,5 @@
 import * as React from "react"
-import { IdCard, ShieldAlert } from "lucide-react"
+import { ArrowRight, IdCard, ShieldAlert } from "lucide-react"
 import type { Deal, DealPayoutType } from "@gg/shared/deal"
 import { formatGBP } from "@gg/shared/money"
 
@@ -15,10 +15,8 @@ export interface ReviewSheetProps {
   draft: DealDraft
   deal: Deal
   dispatch: React.Dispatch<DealAction>
-  onComplete: () => void
-  completing: boolean
-  /** Set when completing failed, shown above the button. */
-  error?: string | null
+  /** Goes on to the seller, the ID check and the terms. */
+  onContinue: () => void
 }
 
 const PAYOUTS: ReadonlyArray<{ value: DealPayoutType; label: string }> = [
@@ -28,7 +26,7 @@ const PAYOUTS: ReadonlyArray<{ value: DealPayoutType; label: string }> = [
 ]
 
 /** Choose how the customer is paid, settle the final figure, and complete. */
-export function ReviewSheet({ open, onClose, draft, deal, dispatch, onComplete, completing, error }: ReviewSheetProps) {
+export function ReviewSheet({ open, onClose, draft, deal, dispatch, onContinue }: ReviewSheetProps) {
   const type = draft.payout.type
   const payout = draftPayout(draft, deal)
   const paid = payout.cash + payout.credit
@@ -53,22 +51,9 @@ export function ReviewSheet({ open, onClose, draft, deal, dispatch, onComplete, 
       title="Review deal"
       description={`${draft.name}, ${deal.lines.length} ${deal.lines.length === 1 ? "line" : "lines"}`}
       footer={
-        <div className="flex flex-col gap-2">
-          {idNeeded && (
-            <p className="text-sm font-medium text-pop-text" role="note" data-testid="cash-blocked">
-              Cash needs ID on file, and that check is not connected here yet. Pay as trade credit, or complete it on
-              the counter.
-            </p>
-          )}
-          {error && !idNeeded && (
-            <p className="text-sm font-medium text-pop-text" role="alert">
-              {error}
-            </p>
-          )}
-          <Button block size="lg" onClick={onComplete} loading={completing} disabled={idNeeded || paid <= 0}>
-            Complete deal, {formatGBP(paid)}
-          </Button>
-        </div>
+        <Button block size="lg" onClick={onContinue} disabled={paid <= 0} iconRight={<ArrowRight className="size-4" aria-hidden />}>
+          {idNeeded ? "Seller and ID check" : "Seller and terms"}
+        </Button>
       }
     >
       <div className="flex flex-col gap-5 pt-1">
@@ -151,7 +136,7 @@ export function ReviewSheet({ open, onClose, draft, deal, dispatch, onComplete, 
               <p className="font-semibold">ID on file required</p>
               <p className="text-sm text-fg-2">
                 This deal pays {formatGBP(payout.cash)} in cash. Any cash, however small, needs the seller's photo ID
-                checked and on file first.
+                checked and on file. That comes next, before anything is paid.
               </p>
             </div>
           </div>
