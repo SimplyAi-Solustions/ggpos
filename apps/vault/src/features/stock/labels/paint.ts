@@ -16,7 +16,9 @@
  */
 import { LOGO } from "@/brand/logo-paths"
 
+import { code128Modules } from "./code128"
 import {
+  type BarcodeOp,
   fontString,
   type DrawOp,
   type FontSpec,
@@ -115,6 +117,32 @@ function drawLogo(ctx: Context, op: LogoOp) {
   ctx.restore()
 }
 
+/**
+ * Whole-dot bars, one fillRect per run of bar modules, at integer
+ * positions: the canvas has nothing to smooth, so every edge lands on a dot.
+ */
+export function barcodeRects(op: BarcodeOp): { x: number; width: number }[] {
+  const module = Math.max(1, Math.floor(op.module ?? 1))
+  const modules = code128Modules(op.value)
+  const rects: { x: number; width: number }[] = []
+  let i = 0
+  while (i < modules.length) {
+    if (!modules[i]) {
+      i++
+      continue
+    }
+    let j = i
+    while (j < modules.length && modules[j]) j++
+    rects.push({ x: Math.round(op.x) + i * module, width: (j - i) * module })
+    i = j
+  }
+  return rects
+}
+
+function drawBarcode(ctx: Context, op: BarcodeOp) {
+  for (const rect of barcodeRects(op)) ctx.fillRect(rect.x, Math.round(op.y), rect.width, Math.round(op.height))
+}
+
 function drawOp(ctx: Context, op: DrawOp) {
   switch (op.kind) {
     case "text":
@@ -133,8 +161,10 @@ function drawOp(ctx: Context, op: DrawOp) {
       }
       return
     case "barcode":
+      drawBarcode(ctx, op)
+      return
     case "qr":
-      // Price labels carry neither; the counter's TSPL labels do.
+      // Price labels carry none; the counter's TSPL labels do.
       return
     case "logo":
       drawLogo(ctx, op)
@@ -152,6 +182,7 @@ export function paintLayout(layout: Layout): HTMLCanvasElement {
   ctx.fillRect(0, 0, layout.width, layout.height)
   ctx.fillStyle = "#000000"
   ctx.textRendering = "geometricPrecision"
+  ctx.imageSmoothingEnabled = false
   for (const op of layout.ops) drawOp(ctx, op)
 
   const image = ctx.getImageData(0, 0, layout.width, layout.height)

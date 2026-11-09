@@ -39,7 +39,7 @@ export function EposStatus({ itemId, className }: { itemId: string; className?: 
         <p className="text-xs text-fg-3">{copy.line}</p>
         {sold && (
           <p className="text-xs text-fg-3">
-            Sold on the Epos till for <Money pence={sold.unit_price} className="text-xs text-fg-3" />
+            Sold on the Epos till for <Money pence={sold.sale_price} className="text-xs text-fg-3" />
             {sold.sold_at ? `, ${eposTime(sold.sold_at)}` : ""}
           </p>
         )}

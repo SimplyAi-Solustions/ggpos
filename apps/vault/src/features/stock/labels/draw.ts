@@ -47,7 +47,11 @@ export interface RuleOp {
   dashed: boolean
 }
 
-/** A Code 128 barcode, fitted by the painter inside this box and centred in it. */
+/**
+ * A Code 128 barcode. With `module` set (the price label), the bars start
+ * at `x` and each module is exactly that many dots, so nothing is scaled;
+ * `width` is then the bars' own width, quiet zone not included.
+ */
 export interface BarcodeOp {
   kind: "barcode"
   value: string
@@ -55,6 +59,7 @@ export interface BarcodeOp {
   y: number
   width: number
   height: number
+  module?: number
 }
 
 /** A QR code, fitted by the painter inside this square and centred in it. */

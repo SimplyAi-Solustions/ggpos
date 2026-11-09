@@ -8,18 +8,27 @@
  * (`printDirection: "left"` in niimbluelib). One unit is one dot.
  *
  *   ┌──────────────────────────────────────┐
- *   │ Wednesday: Creatures and Outcasts    │  the name, Poppins 500, two lines at most
- *   │                                      │
+ *   │   ||| |||| | ||| || |||| | || |||    │  Code 128 of the SKU, for the Epos Now till
+ *   │ Wednesday: Creatures and Outc…       │  the name, one line
  *   │ GG                           £15.00  │  the logo and the price share the bottom
  *   └──────────────────────────────────────┘
  *
- * A label shorter than 30 mm has no room for the name, so it carries the
- * logo and a bigger price only. Nothing here touches a canvas: the painter in
+ * The barcode is the SKU exactly as Epos Now has it as the product's Barcode
+ * (`eposBarcode`), as wide as the label allows in whole dots per module with
+ * at least the standard 10-module quiet zone each side: 2 dots a module on a
+ * 40 mm label, 1 dot on 30 and 22 mm, which only good scanners read. Use
+ * the 40 mm roll for anything sold on the Epos till.
+ *
+ * A label shorter than 30 mm has no room for the name. A label with no SKU
+ * keeps the older layout: the name on two lines, the logo and the price. Nothing here touches a canvas: the painter in
  * `features/printing/receipt/paint.ts` draws the same ops a receipt uses.
  */
 import { formatGBP } from "@gg/shared"
 
+import { code128Modules, eposBarcode, QUIET_ZONE } from "./code128"
+
 import {
+  type BarcodeOp,
   lineBox,
   logoWidth,
   wrapText,
@@ -60,10 +69,11 @@ export function priceLabelSize(key: string | null | undefined): PriceLabelSize {
   )
 }
 
-/** What one label says. `price` is pence. */
+/** What one label says. `price` is pence. With a `sku` it carries the barcode. */
 export interface PriceLabelContent {
   title: string
   price: number
+  sku?: string
 }
 
 /** Kept clear at the ends of the label, where a roll can drift a dot or two. */
@@ -114,16 +124,39 @@ function fitPrice(text: string, room: number, start: number, measure: Measure): 
   return font(size)
 }
 
+/** Bars on a named label, and on a short one where the name is left off. */
+export const BARCODE_HEIGHT = { named: 30, alone: 36 } as const
+const BARCODE_TITLE_FONT: FontSpec = { family: "Poppins", size: 15, weight: 500 }
+const BARCODE_LOGO_HEIGHT = 20
+const BARCODE_PRICE_SIZE = { named: 28, alone: 40 } as const
+
+/**
+ * The barcode op for a value across a label `width` dots long: whole dots
+ * per module, centred, with at least QUIET_ZONE modules clear each side.
+ * Null when even one dot a module will not fit.
+ */
+export function barcodeOp(value: string, width: number, y: number, height: number): BarcodeOp | null {
+  const modules = code128Modules(value).length
+  const module = Math.floor(width / (modules + QUIET_ZONE * 2))
+  if (module < 1) return null
+  const bars = modules * module
+  return { kind: "barcode", value, x: Math.floor((width - bars) / 2), y, width: bars, height, module }
+}
+
 export function priceLabelLayout(
   content: PriceLabelContent,
   size: PriceLabelSize,
   measure: Measure
 ): Layout {
   const { width, height } = size
+  const named = width >= NAMED_FROM
+  const barcode = content.sku
+    ? barcodeOp(eposBarcode(content.sku), width, PAD_Y, named ? BARCODE_HEIGHT.named : BARCODE_HEIGHT.alone)
+    : null
+  if (barcode) return barcodeLabel(content, size, barcode, measure)
   const inner = width - PAD_X * 2
   const ops: DrawOp[] = []
   const baseline = height - PAD_Y
-  const named = width >= NAMED_FROM
 
   // The logo sits on the bottom line on a named label, and in the top
   // corner on a short one, where the price takes the bottom line alone.
@@ -149,6 +182,34 @@ export function priceLabelLayout(
   const font = fitPrice(price, room, named ? PRICE_SIZE.named : PRICE_SIZE.alone, measure)
   ops.push({ kind: "text", text: price, x: width - PAD_X, y: baseline, align: "right", font })
 
+  return { width, height, ops }
+}
+
+/** The barcode across the top, the name on one line, the logo and the price below. */
+function barcodeLabel(content: PriceLabelContent, size: PriceLabelSize, barcode: BarcodeOp, measure: Measure): Layout {
+  const { width, height } = size
+  const inner = width - PAD_X * 2
+  const baseline = height - PAD_Y
+  const named = width >= NAMED_FROM
+  const ops: DrawOp[] = [barcode]
+
+  if (named && content.title.trim()) {
+    const box = lineBox(BARCODE_TITLE_FONT)
+    const [line] = clampLines(content.title, inner, 1, BARCODE_TITLE_FONT, measure)
+    if (line) {
+      ops.push({ kind: "text", text: line, x: PAD_X, y: barcode.y + barcode.height + 3 + box.above, align: "left", font: BARCODE_TITLE_FONT })
+    }
+  }
+
+  // The logo only where there is room for it beside the price.
+  let room = inner
+  if (named) {
+    ops.push({ kind: "logo", x: PAD_X, y: baseline - BARCODE_LOGO_HEIGHT, height: BARCODE_LOGO_HEIGHT })
+    room = inner - logoWidth(BARCODE_LOGO_HEIGHT) - GAP
+  }
+  const price = formatGBP(content.price)
+  const font = fitPrice(price, room, named ? BARCODE_PRICE_SIZE.named : BARCODE_PRICE_SIZE.alone, measure)
+  ops.push({ kind: "text", text: price, x: width - PAD_X, y: baseline, align: "right", font })
   return { width, height, ops }
 }
 

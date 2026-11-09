@@ -125,7 +125,7 @@ function statusFor(app, item) {
     sold_on_till: item.getString("epos_transaction_id")
       ? {
           transaction_id: item.getString("epos_transaction_id"),
-          unit_price: item.getInt("epos_sale_price"),
+          sale_price: item.getInt("epos_sale_price"),
           sold_at: item.getString("epos_sold_at") || null,
         }
       : null,
@@ -228,6 +228,7 @@ function applySale(txApp, line) {
   log.set("product_id", line.product_id);
   log.set("qty", line.qty);
   log.set("unit_price", line.unit_price);
+  log.set("sale_price", line.sale_price);
   log.set("refund", line.refund);
   log.set("applied", false);
   if (line.occurred_at) log.set("occurred_at", line.occurred_at);
@@ -270,7 +271,7 @@ function applySale(txApp, line) {
   }
   item.set("qty", left);
   if (left === 0) item.set("status", "sold");
-  item.set("epos_sale_price", line.unit_price);
+  item.set("epos_sale_price", line.sale_price);
   item.set("epos_transaction_id", line.transaction_id);
   if (line.occurred_at) item.set("epos_sold_at", line.occurred_at);
   txApp.save(item);

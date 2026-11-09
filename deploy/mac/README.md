@@ -106,9 +106,9 @@ Files:
 
 ### The rules it keeps
 
-- **It only touches products it made.** A Vault product has `Barcode` = the Vault SKU as encoded on the label (`GGS7F3K2Q`) and `Sku` = `GGV-GGS7F3K2Q`. Before an update or archive it reads the product (`GET v4/Product/{id}`) and stops unless the `Sku` is exactly `GGV-` + the item's SKU. The id itself only ever comes from the Vault item (which staff cannot set) or the queue row. Hundreds of other products belong to the shop's other processes; the worker never changes, archives or deletes them.
+- **It only touches products it made.** A Vault product has `Barcode` = the Vault SKU in its encoded form, no hyphen (`GGS7F3K2Q`), which is what the price label's Code 128 barcode carries and `Sku` = `GGV-GGS7F3K2Q`. Before an update or archive it reads the product (`GET v4/Product/{id}`) and stops unless the `Sku` is exactly `GGV-` + the item's SKU. The id itself only ever comes from the Vault item (which staff cannot set) or the queue row. Hundreds of other products belong to the shop's other processes; the worker never changes, archives or deletes them.
 - **It never deletes.** There is no DELETE call anywhere. Leaving the shelf is `PUT v4/Product` with `IsArchived: true`.
-- **No duplicate products.** Before any create it lists every product (`GET v4/Product?page=N`, 200 a page) and, if one already carries the `GGV-` Sku, adopts it instead. If a product it did not make already has the barcode, it stops. The row is set to `sending`, and that write confirmed, before `POST v4/Product`. A create that gets a 5xx, a timeout or a dropped connection goes to `needs_check` and is never sent again by the worker. A row found in `sending` with no product id at the start of a run goes to `needs_check` too.
+- **No duplicate products.** Before any create it lists every product (`GET v4/Product?page=N`, 200 a page) and searches archived products by barcode (`GET v4/catalogue/Products?Barcode=..&Archived=true`), and if one already carries the `GGV-` Sku, adopts it instead (un-archiving it). An item that comes back into stock keeps its own `epos_product_id`: the worker reads that product and un-archives it with the update, never making a second one. If a product it did not make already has the barcode, it stops. The row is set to `sending`, and that write confirmed, before `POST v4/Product`. A create that gets a 5xx, a timeout or a dropped connection goes to `needs_check` and is never sent again by the worker. A row found in `sending` with no product id at the start of a run goes to `needs_check` too.
 - **Updates are safe to repeat.** An update or archive sets absolute values, so an unknown outcome there is `failed` and retried (up to 5 attempts), and a row left in `sending` with a product id is retried.
 - **A till sale is applied once.** Each Vault line is posted to `POST /api/vault/epos/sales/apply`, which logs it in `epos_sales_log` under a unique (transaction, line) index and changes the item in the same transaction. Pulling the same day again changes nothing.
 - **Refunds are never applied.** A line with a `RefundReasonId` or a negative quantity is logged with `refund` and `needs_check`; the item stays as it is for a person to put back.
@@ -119,6 +119,7 @@ Files:
 | When | Call |
 |---|---|
 | A create, once per run with creates due | `GET v4/Product?page=1..n` |
+| Each create, and an update whose product is not returned by id | `GET v4/catalogue/Products?Barcode=<barcode>&Archived=true` |
 | Create | `POST v4/Product` `[{Name, Barcode, Sku, SalePrice, CostPrice, EatOutPrice, CategoryId, SalePriceTaxGroupId, CostPriceTaxGroupId, IsSalePriceIncTax: true, IsCostPriceIncTax: true, ProductType: 0, SellOnTill: true, IsArchived: false}]` |
 | Update | `GET v4/Product/{id}`, then `PUT v4/Product` `[{Id, ...the same fields}]` |
 | Archive | `GET v4/Product/{id}`, then `PUT v4/Product` `[{Id, Name, SalePrice, CostPrice, EatOutPrice, IsArchived: true}]` with the values Epos returned |
@@ -140,6 +141,7 @@ The same `VAULT_PB_URL`, `VAULT_PB_EMAIL`, `VAULT_PB_KEYCHAIN_SERVICE`, `EPOS_BI
 | `EPOS_CATEGORY_REFRESH_HOURS` | no | Default `6`. |
 | `EPOS_SET_STOCK` | no | `1` to set the Epos stock level to the Vault quantity after each create or update. Off by default until checked (see below). |
 | `EPOS_LOCATION_ID` | no | Default `14037`, for `EPOS_SET_STOCK`. |
+| `EPOS_ARCHIVED_LOOKUP` | no | `0` skips the archived product search before a create. On by default. |
 | `EPOS_STOCK_LOCK` | no | Lock file, default `$TMPDIR/uk.co.ggentertainment.epos-stock-sync.lock`. |
 
 ### Install
@@ -160,17 +162,21 @@ Stock, Epos Now in the Vault lists everything waiting for a person, with **Mark 
 - **A refund.** Check the item. If it is back on the shelf, set it back to in stock in the Vault (that puts it back on the till). Then Mark resolved.
 - **A double sale or a short count** ("already has it as sold", "the till sold 2 but the Vault held 1"). Count it, fix the item, then Mark resolved.
 
-### Assumptions to check on the first supervised run
+### Assumptions
 
-These come from the brief and the public swagger, not from a real call; check each against the live account before leaving it running.
+Confirmed against the live account with read-only calls (November 2026):
 
-1. `GET v4/Product?page=N` returns a bare JSON array of up to 200 products with `Id`, `Sku`, `Barcode`, `IsArchived`, **including archived products**. If archived products are left out, a Vault item that comes back into stock after its product was archived would get a second product instead of the old one being unarchived.
-2. `GET v4/Product/{id}` returns a single product object (not an array), and 404 for an unknown id.
-3. `POST v4/Product` replies 200 or 201 with an array of the created products, each with its new `Id`. PascalCase field names are accepted on input (the swagger shows camelCase; ASP.NET binds both).
-4. `PUT v4/Product` accepts `[{Id, Name, SalePrice, CostPrice, EatOutPrice, ...}]` with those required fields and leaves fields it was not sent unchanged, and `IsArchived: true` hides the product from the till. A 200 means applied.
-5. The label's scanned value is what the Epos till matches against `Barcode`. The Vault stores and encodes the SKU without its hyphen (`GGS7F3K2Q`); the item labels carry it as a QR code, so the till scanner must read QR (the Niimbot price label has no code at all). Scan one label at the till before relying on it.
-6. `GET v4/Transaction/GetByDate` returns a bare array of up to 200 transactions per page, each with `Id`, `DateTime` (UTC, no marker) and `TransactionItems` with `Id`, `ProductId`, `Quantity` (whole), `UnitPrice` (the price actually charged per unit, in pounds) and `RefundReasonId`. A line without an `Id` is keyed by its position, which is only stable if Epos returns lines in the same order every time. Check whether `UnitPrice` is before or after a line discount.
-7. `status=1` means completed. The dates in `startDate`/`endDate` are taken as UTC days; the worker reads yesterday as well until 02:00 UTC so a sale near midnight is not missed in either reading.
-8. `GET v4/Category?page=N` returns a bare array with `Id`, `Name`, `ParentId`, 200 a page.
-9. `POST v4/Inventory/{id}/Update` with `[{LocationId, ProductId, CurrentStock}]` sets the absolute stock level for that location (from the stocks swagger's `InventoryUpdateStockRequest`); it may need stock tracking switched on for the product. That is why `EPOS_SET_STOCK` is off by default. With it off, Epos Now stock levels for Vault products are not managed; the Vault quantity is the record.
-10. The request budget: whether "about 5,000 per period" is per day or per hour changes how low `EPOS_SALES_EVERY_MIN` can safely go.
+- `GET v4/Product/{id}` for an unknown id is **HTTP 200 with an empty body**, not a 404. The worker treats an empty body, `null`, `[]` or `{}` as not found everywhere (and still a 404).
+- `GET v4/Product?page=N` is a bare array of up to 200 products.
+- `GET v4/Transaction/GetByDate` transactions have `Id`, `DateTime` and `TransactionItems[]` with `Id`, `ProductId`, `Quantity`, `UnitPrice` (pounds, before discounts), `DiscountAmount` and `BasketDiscountPortion` (both nullable) and `RefundReasonId`. Lines are keyed by their `Id`; a line without one is flagged for a person. The price recorded is UnitPrice x Quantity less both discounts, nulls as 0, each amount turned to pence first.
+- `GET v4/Category` is a bare array with `Id`, `Name`, `Children` and so on. Children are walked and cached too.
+
+Still to check on the first supervised run:
+
+1. Whether `GET v4/Product?page=N` includes archived products. The worker no longer depends on it: before any create it also calls `GET v4/catalogue/Products?Barcode=<barcode>&Archived=true` (from the products swagger; a paged `{ data: [...] }` with camelCase `id`, `sku`, `barcode`), and an item that comes back into stock reuses its own stored `epos_product_id`, read by id and un-archived with a PUT. Check that the catalogue search returns archived products with that filter and that `GET v4/Product/{id}` still returns an archived product (if it does not, the worker finds it through the catalogue search instead). If the catalogue search is refused, every create fails and retries; `EPOS_ARCHIVED_LOOKUP=0` turns it off and falls back to the plain list.
+2. `POST v4/Product` replies 200 or 201 with an array of the created products, each with its new `Id`, and accepts PascalCase field names.
+3. `PUT v4/Product` with `[{Id, Name, SalePrice, CostPrice, EatOutPrice, ...}]` leaves fields it was not sent unchanged; `IsArchived: true` takes the product off the till and `IsArchived: false` puts it back.
+4. The till scanner reads the price label's Code 128 (2 dots a module on the 40 mm roll) and finds the product by `Barcode`. Print one label and scan it at the Epos till before relying on it.
+5. `status=1` means completed, and the dates are taken as UTC days.
+6. `POST v4/Inventory/{id}/Update` with `[{LocationId, ProductId, CurrentStock}]` sets the absolute level (it may need stock tracking on). That is why `EPOS_SET_STOCK` is off by default; with it off, Epos stock levels for Vault products are not managed.
+7. The request budget period (per day or per hour). Each create now costs one more call (the archived search).

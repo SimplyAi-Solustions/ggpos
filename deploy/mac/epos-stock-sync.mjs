@@ -17,6 +17,7 @@
  *   EPOS_CATEGORY_REFRESH_HOURS optional, default 6
  *   EPOS_SET_STOCK              optional, "1" to set Epos stock levels (off by default)
  *   EPOS_LOCATION_ID            optional, default 14037, for EPOS_SET_STOCK
+ *   EPOS_ARCHIVED_LOOKUP        optional, "0" to skip the archived product search before a create
  *   SECURITY_BIN                optional, default /usr/bin/security
  *   EPOS_STOCK_LOCK             optional lock file path
  *
@@ -157,6 +158,7 @@ async function main() {
       epos: makeEposRunner(process.env.EPOS_BIN || "/usr/local/bin/epos", Number(process.env.EPOS_TIMEOUT_MS) || 60000),
       log,
       now: () => new Date(),
+      archivedLookup: process.env.EPOS_ARCHIVED_LOOKUP !== "0",
       stock: process.env.EPOS_SET_STOCK === "1" ? { locationId: Number(process.env.EPOS_LOCATION_ID) || 14037 } : null,
       salesEveryMs: (Number(process.env.EPOS_SALES_EVERY_MIN) || 5) * 60000,
       categoryRefreshMs: (Number(process.env.EPOS_CATEGORY_REFRESH_HOURS) || 6) * 3600000,

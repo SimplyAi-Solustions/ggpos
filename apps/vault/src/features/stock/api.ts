@@ -478,7 +478,7 @@ export interface EposItem {
   epos_product_id: number | null
   synced_at: string | null
   last_error?: string | null
-  sold_on_till: null | { transaction_id: string; unit_price: number; sold_at: string | null }
+  sold_on_till: null | { transaction_id: string; sale_price: number; sold_at: string | null }
 }
 
 export function useEposItem(itemId: string | undefined) {
@@ -511,6 +511,8 @@ export interface EposCheck {
   refund?: boolean
   qty?: number
   unit_price?: number
+  /** What the line took after discounts, pence. */
+  sale_price?: number
 }
 
 export interface EposSettingsView {

@@ -39,6 +39,9 @@ import { classify, poundsToPence, redact } from "./epos-credit.mjs"
 
 const require = createRequire(import.meta.url)
 const money = require("../../../pb/pb_hooks/lib/shared/money.js")
+// The same encodeCode the Vault label uses for its barcode
+// (apps/vault/src/features/stock/labels/code128.ts, eposBarcode).
+const skuCodes = require("../../../pb/pb_hooks/lib/shared/sku.js")
 
 export const MAX_ATTEMPTS = 5
 export const SKU_PREFIX = "GGV-"
@@ -58,9 +61,28 @@ export function field(rec, name) {
   return rec[camel]
 }
 
+/**
+ * True for a reply with nothing in it. Epos Now answers an unknown product
+ * id with HTTP 200 and an empty body, so "found nothing" is an empty body,
+ * null, an empty array or an empty object, never only a 404.
+ */
+export function isEmptyReply(json) {
+  if (json === undefined || json === null || json === "") return true
+  if (Array.isArray(json)) return json.length === 0
+  return typeof json === "object" && Object.keys(json).length === 0
+}
+
 function first(json) {
-  if (Array.isArray(json)) return json.length > 0 ? json[0] : null
-  return json && typeof json === "object" ? json : null
+  if (isEmptyReply(json)) return null
+  if (Array.isArray(json)) return json[0]
+  return typeof json === "object" ? json : null
+}
+
+/** What the label's barcode encodes and Epos Now has as Barcode: the SKU without its hyphen. */
+export function eposBarcode(vaultSku) {
+  const sku = String(vaultSku || "").trim()
+  if (!sku) throw new Error("The item has no SKU")
+  return skuCodes.encodeCode(sku)
 }
 
 function idOf(rec) {
@@ -70,9 +92,7 @@ function idOf(rec) {
 
 /** The Sku the Vault gives its own products. */
 export function ownedSku(vaultSku) {
-  const sku = String(vaultSku || "").trim()
-  if (!sku) throw new Error("The item has no SKU")
-  return SKU_PREFIX + sku
+  return SKU_PREFIX + eposBarcode(vaultSku)
 }
 
 /**
@@ -129,9 +149,10 @@ export function categoryFor(item, gameKey, map) {
 }
 
 class RowError extends Error {
-  constructor(message, { permanent = false } = {}) {
+  constructor(message, { permanent = false, notFound = false } = {}) {
     super(message)
     this.permanent = permanent
+    this.notFound = notFound
   }
 }
 
@@ -154,7 +175,7 @@ export function productFields(item, gameKey, settings) {
   }
   return {
     Name: productName(item),
-    Barcode: String(item.sku),
+    Barcode: eposBarcode(item.sku),
     Sku: ownedSku(item.sku),
     SalePrice: pounds(price),
     CostPrice: pounds(cost),
@@ -211,31 +232,71 @@ export async function scanProducts(deps) {
   for (let page = 1; page <= MAX_PAGES; page++) {
     const r = classify(await deps.epos("GET", `v4/Product?page=${page}`))
     if (r.outcome !== "ok") throw new Error(`Could not list Epos Now products (page ${page}, ${r.detail})`)
-    if (!Array.isArray(r.json)) throw new Error(`Epos Now product list page ${page} was not a list`)
-    for (const p of r.json) {
+    const list = isEmptyReply(r.json) ? [] : r.json
+    if (!Array.isArray(list)) throw new Error(`Epos Now product list page ${page} was not a list`)
+    for (const p of list) {
       const sku = String(field(p, "Sku") ?? "")
       const barcode = String(field(p, "Barcode") ?? "")
       if (sku) bySku.set(sku, [...(bySku.get(sku) || []), p])
       if (barcode) byBarcode.set(barcode, [...(byBarcode.get(barcode) || []), p])
     }
-    if (r.json.length < PRODUCT_PAGE_SIZE) return { bySku, byBarcode }
+    if (list.length < PRODUCT_PAGE_SIZE) return { bySku, byBarcode }
   }
   throw new Error(`Epos Now product list ran past ${MAX_PAGES} pages`)
 }
 
 async function fetchProduct(deps, id) {
   const r = classify(await deps.epos("GET", `v4/Product/${id}`))
+  if ((r.outcome === "ok" && isEmptyReply(r.json)) || r.code === 404) {
+    throw new RowError(`Epos Now has no product ${id} (or did not return it).`, { permanent: true, notFound: true })
+  }
   if (r.outcome === "ok") {
     const p = first(r.json)
-    if (!p || idOf(p) !== id) throw new RowError(`Epos Now returned no product ${id}.`)
+    if (!p || idOf(p) !== id) throw new RowError(`Epos Now returned a different product for ${id}.`)
     return p
   }
-  if (r.code === 404) {
-    throw new RowError(`Epos Now has no product ${id}. Clear epos_product_id on the item if it was removed in Back Office.`, {
-      permanent: true,
-    })
-  }
   throw new RowError(`Could not read Epos Now product ${id}: ${r.detail}`)
+}
+
+/**
+ * Archived products with this barcode, through the catalogue search
+ * (`GET v4/catalogue/Products?Barcode=..&Archived=true`, a paged
+ * `{ data: [...] }`), so a duplicate check sees them whether or not the
+ * plain product list includes archived products. Off with
+ * deps.archivedLookup === false.
+ */
+export async function archivedByBarcode(deps, barcode) {
+  if (deps.archivedLookup === false) return []
+  const q = new URLSearchParams({ Barcode: barcode, Archived: "true" })
+  const r = classify(await deps.epos("GET", `v4/catalogue/Products?${q}`))
+  if (r.outcome !== "ok") throw new Error(`Could not search archived Epos Now products (${r.detail})`)
+  if (isEmptyReply(r.json)) return []
+  const list = Array.isArray(r.json) ? r.json : field(r.json, "Data")
+  if (list === null || list === undefined) return []
+  if (!Array.isArray(list)) throw new Error("The archived product search reply had no data list")
+  // Marked, because the catalogue grid has no IsArchived of its own.
+  return list.filter((p) => String(field(p, "Barcode") ?? "") === barcode).map((p) => ({ ...p, IsArchived: true }))
+}
+
+/**
+ * Every Epos product that carries this item's Sku or barcode: the full list
+ * (cached for the run) plus the archived search. Returns { owned, clash }:
+ * owned have the GGV- Sku; clash use the barcode but are not the Vault's.
+ */
+async function findExisting(deps, ctx, sku) {
+  if (!ctx.index) ctx.index = await scanProducts(deps)
+  const barcode = eposBarcode(sku)
+  const seen = new Map()
+  for (const p of [
+    ...(ctx.index.bySku.get(ownedSku(sku)) || []),
+    ...(ctx.index.byBarcode.get(barcode) || []),
+    ...(await archivedByBarcode(deps, barcode)),
+  ]) {
+    const id = idOf(p)
+    if (id && !seen.has(id)) seen.set(id, p)
+  }
+  const all = [...seen.values()]
+  return { owned: all.filter((p) => isOwned(p, sku)), clash: all.filter((p) => !isOwned(p, sku)) }
 }
 
 function guard(product, sku, id) {
@@ -297,7 +358,15 @@ export async function processRow(row, deps, ctx) {
     let product
     try {
       if (!sku) throw new RowError("No SKU to check the product against.", { permanent: true })
-      product = await fetchProduct(deps, productId)
+      try {
+        product = await fetchProduct(deps, productId)
+      } catch (err) {
+        if (!(err instanceof RowError && err.notFound)) throw err
+        // Not returned by id: already archived and hidden, or gone.
+        const found = await findExisting(deps, ctx, sku)
+        product = found.owned.find((p) => idOf(p) === productId) || null
+        if (!product) throw err
+      }
       guard(product, sku, productId)
     } catch (err) {
       return fail(err)
@@ -321,35 +390,46 @@ export async function processRow(row, deps, ctx) {
   let product = null
   try {
     fields = productFields(item, item.expand && item.expand.game ? item.expand.game.key : "", ctx.settings)
+    // An item back in stock keeps its own product: it is read by id and
+    // un-archived by the PUT below (IsArchived false), never made again.
+    let lookForIt = !productId
     if (productId) {
-      product = await fetchProduct(deps, productId)
-      guard(product, sku, productId)
-    } else {
-      if (!ctx.index) {
-        try {
-          ctx.index = await scanProducts(deps)
-        } catch (err) {
-          throw new RowError(`${err.message}. Nothing was created; it will try again.`)
-        }
+      try {
+        product = await fetchProduct(deps, productId)
+        guard(product, sku, productId)
+      } catch (err) {
+        if (!(err instanceof RowError && err.notFound)) throw err
+        lookForIt = true // not returned by id: find it by Sku, archived or not
+        productId = 0
       }
-      const same = ctx.index.bySku.get(fields.Sku) || []
-      if (same.length > 1) {
-        throw new RowError(`Several Epos Now products carry Sku ${fields.Sku}. Archive the extras in Back Office.`, { permanent: true })
+    }
+    if (lookForIt) {
+      let found
+      try {
+        found = await findExisting(deps, ctx, sku)
+      } catch (err) {
+        throw new RowError(`${err.message}. Nothing was created; it will try again.`)
       }
-      if (same.length === 1) {
-        product = same[0]
+      if (found.owned.length > 1) {
+        throw new RowError(`Several Epos Now products carry Sku ${fields.Sku}. Archive the extras in Back Office, then mark this resolved.`, { permanent: true })
+      }
+      if (found.owned.length === 1) {
+        product = found.owned[0]
         productId = idOf(product)
         if (!productId) throw new RowError(`An Epos Now product carries Sku ${fields.Sku} but has no id.`, { permanent: true })
-        // Adopt it: the create went through on an earlier run.
+        // Adopt it: made on an earlier run, or archived when the item left stock.
         await retry(() => deps.pb.updateItem(item.id, { epos_product_id: productId }))
-      } else {
-        const clash = (ctx.index.byBarcode.get(fields.Barcode) || []).filter((p) => !isOwned(p, sku))
-        if (clash.length > 0) {
-          throw new RowError(
-            `Epos Now product ${idOf(clash[0]) || "?"} already uses barcode ${fields.Barcode} and was not made by the Vault. Nothing was created.`,
-            { permanent: true }
-          )
-        }
+      } else if (found.clash.length > 0) {
+        throw new RowError(
+          `Epos Now product ${idOf(found.clash[0]) || "?"} already uses barcode ${fields.Barcode} and was not made by the Vault. Nothing was created.`,
+          { permanent: true }
+        )
+      } else if (item.epos_product_id || row.epos_product_id) {
+        // It had a product and Epos Now no longer has it anywhere: a person decides.
+        throw new RowError(
+          `Epos Now has no product ${item.epos_product_id || row.epos_product_id} and none with Sku ${fields.Sku}. If it was removed in Back Office, a superuser clears epos_product_id on the item, then mark this resolved.`,
+          { permanent: true }
+        )
       }
     }
   } catch (err) {
@@ -405,14 +485,19 @@ export async function syncCategories(deps, refreshMs) {
   const items = []
   for (let page = 1; page <= MAX_PAGES; page++) {
     const r = classify(await deps.epos("GET", `v4/Category?page=${page}`))
+    if (r.outcome === "ok" && isEmptyReply(r.json)) break
     if (r.outcome !== "ok" || !Array.isArray(r.json)) {
       deps.log(`categories not refreshed: ${r.detail}`)
       return { refreshed: false }
     }
-    for (const c of r.json) {
+    const walk = (c, parent) => {
       const id = idOf(c)
-      if (id) items.push({ id, name: String(field(c, "Name") ?? ""), parent_id: Number(field(c, "ParentId")) || null })
+      if (id && !items.some((x) => x.id === id)) {
+        items.push({ id, name: String(field(c, "Name") ?? ""), parent_id: Number(field(c, "ParentId")) || parent || null })
+      }
+      for (const child of field(c, "Children") || []) walk(child, id)
     }
+    for (const c of r.json) walk(c, null)
     if (r.json.length < PRODUCT_PAGE_SIZE) break
   }
   items.sort((a, b) => a.name.localeCompare(b.name))
@@ -432,6 +517,27 @@ export function eposTime(text) {
   return Number.isFinite(t) ? new Date(t).toISOString() : ""
 }
 
+/** A nullable pounds amount to pence: null and absent are 0; unreadable is null. */
+function optionalPence(value) {
+  if (value === null || value === undefined || value === "") return 0
+  return poundsToPence(value)
+}
+
+/**
+ * What a till line actually took, in pence: UnitPrice (before discounts)
+ * times Quantity, less the line's DiscountAmount and its BasketDiscountPortion
+ * (nulls are 0). Each amount goes to pence through the shared parse helper
+ * first, so this is integer maths only. null when an amount is unreadable.
+ */
+export function lineSalePence(ti) {
+  const unit = poundsToPence(field(ti, "UnitPrice"))
+  const qty = Number(field(ti, "Quantity"))
+  const discount = optionalPence(field(ti, "DiscountAmount"))
+  const basket = optionalPence(field(ti, "BasketDiscountPortion"))
+  if (unit === null || discount === null || basket === null || !Number.isSafeInteger(qty)) return null
+  return Math.abs(unit * qty) - Math.abs(discount) - Math.abs(basket)
+}
+
 /** Turn one till line into what the apply route takes. */
 export function saleLine(txn, ti, index) {
   const tid = idOf(txn)
@@ -440,17 +546,21 @@ export function saleLine(txn, ti, index) {
   const refundReason = field(ti, "RefundReasonId")
   const refund = (refundReason !== null && refundReason !== undefined && Number(refundReason) !== 0) || rawQty < 0
   const unit = poundsToPence(field(ti, "UnitPrice"))
+  const total = lineSalePence(ti)
   const out = {
     transaction_id: String(tid),
-    line: lineId ? String(lineId) : `i${index}`,
+    line: lineId ? String(lineId) : `noid-${index}`,
     product_id: Number(field(ti, "ProductId")) || 0,
     qty: Number.isSafeInteger(rawQty) ? Math.abs(rawQty) : 0,
     unit_price: unit === null ? 0 : Math.abs(unit),
+    sale_price: total === null ? 0 : Math.max(0, total),
     refund,
     occurred_at: eposTime(field(txn, "DateTime")),
   }
   if (!refund && !Number.isSafeInteger(rawQty)) out.flag = `The till quantity ${field(ti, "Quantity")} is not a whole number. Check it by hand.`
-  if (unit === null) out.flag = "The till line had no readable unit price. Check the sale price by hand."
+  if (total === null) out.flag = "The till line had an unreadable price or discount. Check the sale price by hand."
+  else if (total < 0) out.flag = "The till line's discounts are more than its price. Check the sale price by hand."
+  if (!lineId) out.flag = "The till line had no Id, so it cannot be told apart from the others in the sale. Check it by hand."
   return out
 }
 
@@ -514,7 +624,7 @@ export async function syncSales(deps, { everyMs, pageSize = 200 }) {
       else if (result === "duplicate") counts.duplicate++
       else counts.flagged++
       if (result !== "duplicate") {
-        deps.log(`sale txn=${line.transaction_id} line=${line.line} product=${line.product_id} qty=${line.qty} ${money.formatGBP(line.unit_price)}${line.refund ? " refund" : ""}: ${result}`)
+        deps.log(`sale txn=${line.transaction_id} line=${line.line} product=${line.product_id} qty=${line.qty} ${money.formatGBP(line.sale_price)}${line.refund ? " refund" : ""}: ${result}`)
       }
     } catch (err) {
       counts.errors++
