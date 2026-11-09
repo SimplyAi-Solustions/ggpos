@@ -2,7 +2,7 @@ import * as React from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
-import { MoonIcon, PlusIcon, SunIcon } from "lucide-react"
+import { PlusIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Lede, PageTitle } from "@/components/ui/page-title"
@@ -23,7 +23,6 @@ import {
   type BinderCard,
   type BinderStats,
 } from "@/features/binders/api"
-import { useBinderTheme } from "@/features/binders/theme"
 import "@/features/binders/binders.css"
 
 /**
@@ -34,7 +33,6 @@ import "@/features/binders/binders.css"
 export function ShelfScreen() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [theme, toggleTheme] = useBinderTheme()
   const [creating, setCreating] = React.useState(false)
   // Bumped on every open, so the create sheet always starts at step one.
   const [run, setRun] = React.useState(0)
@@ -104,12 +102,6 @@ export function ShelfScreen() {
 
   return (
     <div className="bx-root bx-screen pt-16 sm:pt-24">
-      <div className="bx-topbar">
-        <span className="flex-1" />
-        <button type="button" className="bx-icon" onClick={toggleTheme} aria-label={theme === "dark" ? "Light pages" : "Dark pages"}>
-          {theme === "dark" ? <SunIcon aria-hidden="true" /> : <MoonIcon aria-hidden="true" />}
-        </button>
-      </div>
       <PageTitle>Binders</PageTitle>
       <Lede>
         Build a binder for a set, a Pokédex, a Pokémon or an artist. Tick cards off as you collect them, and tell the

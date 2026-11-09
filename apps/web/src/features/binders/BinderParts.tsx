@@ -58,7 +58,7 @@ export function StatTiles({
     completion = {
       label: "Set completion",
       value: `${Math.round(p * 100)}%`,
-      note: `${stats.mainSet.got} of ${stats.mainSet.total} in the main set`,
+      note: `${stats.mainSet.got} of ${stats.mainSet.total} in the set`,
       pct: p,
     }
   } else if (kind === "pokedex") {
@@ -102,7 +102,7 @@ export function StatTiles({
           <div className="bx-tile-label">In stock at GG</div>
           <div className="bx-tile-value tnum">{inShop}</div>
           <div className="bx-tile-note">
-            {inShop === 1 ? "Card you need is in the shop" : "Cards you need are in the shop"}
+            {inShop === 1 ? "Needed card in the shop" : "Needed cards in the shop"}
           </div>
         </div>
       ) : null}
@@ -110,7 +110,7 @@ export function StatTiles({
         <div className="bx-tile">
           <div className="bx-tile-label">Wanted</div>
           <div className="bx-tile-value tnum">{wanted}</div>
-          <div className="bx-tile-note">{wanted === 1 ? "Card asked for at the shop" : "Cards asked for at the shop"}</div>
+          <div className="bx-tile-note">Asked for at the shop</div>
         </div>
       ) : null}
       <div className="bx-tile">

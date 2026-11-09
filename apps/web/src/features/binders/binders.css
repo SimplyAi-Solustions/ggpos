@@ -4,8 +4,8 @@
  * The binder itself is a physical object: a coloured zip binder with sleeve
  * pages, a real page turn over the rings, and a holo sweep when a card goes
  * in. Everything around it (titles, labels, sheets, buttons) is the Vault's
- * own paper-and-ink system. The pages default to the GG HQ night look and
- * flip to paper when `bx-dark` is off <html> (theme.ts keeps the choice).
+ * own cosmos system (design/cosmos.css). The pages follow the app theme:
+ * the GG HQ night look in dark (the customer default), paper in light.
  * Every rule is scoped under .bx-root or .bx-sheet so nothing leaks into the
  * rest of the app.
  */
@@ -90,13 +90,37 @@
 }
 
 /* ---------- stat tiles ---------- */
+/* Stat tiles in the glass language: smoked glass with a faint accent edge
+   from the binder's own colour, white panels with the same edge on paper. */
 .bx-root .bx-tiles { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
 .bx-root .bx-tile {
-  flex: 1 1 140px; min-width: 0; padding: 14px 16px; border-radius: 14px;
+  --accent: var(--bc);
+  position: relative; isolation: isolate; overflow: hidden;
+  flex: 1 1 140px; min-width: 0; padding: 14px 16px; border-radius: 16px;
   display: grid; gap: 5px; align-content: start;
-  background: linear-gradient(165deg, color-mix(in srgb, var(--foreground) 7%, transparent), color-mix(in srgb, var(--foreground) 3%, transparent));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 10%, transparent), 0 16px 32px -24px #000c;
+  background: linear-gradient(160deg, rgba(30, 30, 40, 0.5), rgba(12, 12, 16, 0.5));
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 18px 44px -30px rgba(0, 0, 0, 0.9);
 }
+.bx-root .bx-tile::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; z-index: -1;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 50%, transparent), transparent 40%, transparent 72%, color-mix(in srgb, var(--accent) 22%, transparent));
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.65;
+}
+.bx-root .bx-tile::after {
+  content: ""; position: absolute; z-index: -2; width: 70%; height: 70%; right: -22%; top: -32%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%);
+  pointer-events: none;
+}
+.bx-root .bx-tile.bx-tile-instock { --accent: var(--volt); }
+html:not(.dark) .bx-root .bx-tile {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.78));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 16px 36px -28px rgba(11, 11, 11, 0.4);
+}
+html:not(.dark) .bx-root .bx-tile::before { opacity: 0.5; }
 .bx-root .bx-tile.wide { flex: 2 1 100%; display: flex; align-items: center; gap: 16px; }
 .bx-root .bx-tile.wide > div { display: grid; gap: 5px; min-width: 0; }
 @media (min-width: 760px) { .bx-root .bx-tile.wide { flex: 2 1 300px; } }
@@ -240,16 +264,27 @@
   background: var(--bc); color: #000; padding: 3px 8px; border-radius: 999px; box-shadow: 0 0 16px var(--bc);
 }
 
+/* The "New binder" slot: a dashed volt outline with a glowing plus, as on
+   the HQ shelf. In light the glow softens so it still reads on paper. */
 .bx-root .bx-new {
   position: relative; width: 100%; aspect-ratio: 100 / 122; border-radius: 10px 18px 18px 10px;
-  border: 1.5px dashed var(--line-2); background: transparent; color: var(--text);
+  border: 1.5px dashed color-mix(in srgb, var(--volt) 55%, transparent);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--volt) 6%, transparent), transparent);
+  color: var(--text);
   display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 12px;
-  cursor: pointer; transition: border-color 0.2s, transform 0.3s var(--bx-ease);
+  cursor: pointer; transition: border-color 0.2s, background 0.2s, transform 0.3s var(--bx-ease);
 }
-.bx-root .bx-new:hover { border-color: var(--text); transform: translateY(-4px); }
+.bx-root .bx-new:hover { border-color: var(--volt); background: linear-gradient(160deg, color-mix(in srgb, var(--volt) 11%, transparent), transparent); transform: translateY(-4px); }
 .bx-root .bx-new b { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; }
 .bx-root .bx-new small { color: var(--text-3); font-size: 13px; max-width: 170px; }
-.bx-root .bx-new .bx-plus { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--primary); color: var(--primary-foreground); }
+.bx-root .bx-new .bx-plus {
+  width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid color-mix(in srgb, var(--volt) 70%, transparent);
+  background: color-mix(in srgb, var(--volt) 12%, transparent);
+  color: color-mix(in srgb, var(--volt) 60%, var(--text));
+  box-shadow: 0 0 30px color-mix(in srgb, var(--volt) 30%, transparent);
+}
+html:not(.dark) .bx-root .bx-new .bx-plus { color: #6b5d00; box-shadow: 0 0 24px color-mix(in srgb, var(--volt) 45%, transparent); }
 
 /* ---------- opening stage ---------- */
 .bx-stage {
@@ -575,36 +610,203 @@
 @keyframes bx-skel { to { background-position: -200% 0; } }
 
 /* ---------- light pages ---------- */
-/* theme.ts holds `bx-dark` on <html> while the binder is in night mode; the
- * rest of the time the pages read as paper and the sleeves as clear plastic. */
-html:not(.bx-dark) .bx-root .bx-page {
+/* In light mode (the app theme, dark is the customer default) the pages
+ * read as paper and the sleeves as clear plastic. */
+html:not(.dark) .bx-root .bx-page {
   --text: #0b0b0b; --text-2: #3d3d3a; --text-3: #73736d; --line: #0b0b0b1f; --line-2: #0b0b0b38;
   background: linear-gradient(90deg, #00000012, transparent 6%), linear-gradient(160deg, #f7f7f3, #ecece6);
   border-color: #0000001c; box-shadow: 0 24px 40px -28px #0007;
 }
-html:not(.bx-dark) .bx-root .spread .left .bx-page,
-html:not(.bx-dark) .bx-root .bx-leaf-face.back .bx-page {
+html:not(.dark) .bx-root .spread .left .bx-page,
+html:not(.dark) .bx-root .bx-leaf-face.back .bx-page {
   background: linear-gradient(270deg, #00000012, transparent 6%), linear-gradient(200deg, #f7f7f3, #ecece6);
 }
-html:not(.bx-dark) .bx-root .bx-page-blank { background: transparent; border-color: #0000001a; box-shadow: none; }
-html:not(.bx-dark) .bx-root .bx-page-back { background: linear-gradient(160deg, #efefe9, #e2e2db); }
-html:not(.bx-dark) .bx-root .bx-sleeve {
+html:not(.dark) .bx-root .bx-page-blank { background: transparent; border-color: #0000001a; box-shadow: none; }
+html:not(.dark) .bx-root .bx-page-back { background: linear-gradient(160deg, #efefe9, #e2e2db); }
+html:not(.dark) .bx-root .bx-sleeve {
   background: linear-gradient(180deg, #0000000a, #00000004);
   box-shadow: inset 0 0 0 1px #00000016, inset 0 10px 18px -12px #0002;
 }
-html:not(.bx-dark) .bx-root .bx-sleeve::before { background: linear-gradient(#ffffffcc, #ffffff40); box-shadow: 0 1px 0 #00000012; }
-html:not(.bx-dark) .bx-root .bx-sleeve::after { background: linear-gradient(118deg, transparent 18%, #ffffff8c 30%, transparent 42%, transparent 64%, #ffffff59 74%, transparent 84%); }
-html:not(.bx-dark) .bx-root .bx-art { background: #00000008; }
-html:not(.bx-dark) .bx-root .bx-art img { filter: grayscale(1) contrast(0.9) brightness(1.04); opacity: 0.42; }
-html:not(.bx-dark) .bx-root .bx-pocket.got .bx-art img { filter: none; opacity: 1; }
-html:not(.bx-dark) .bx-root .bx-pocket.got .bx-art {
+html:not(.dark) .bx-root .bx-sleeve::before { background: linear-gradient(#ffffffcc, #ffffff40); box-shadow: 0 1px 0 #00000012; }
+html:not(.dark) .bx-root .bx-sleeve::after { background: linear-gradient(118deg, transparent 18%, #ffffff8c 30%, transparent 42%, transparent 64%, #ffffff59 74%, transparent 84%); }
+html:not(.dark) .bx-root .bx-art { background: #00000008; }
+html:not(.dark) .bx-root .bx-art img { filter: grayscale(1) contrast(0.9) brightness(1.04); opacity: 0.42; }
+html:not(.dark) .bx-root .bx-pocket.got .bx-art img { filter: none; opacity: 1; }
+html:not(.dark) .bx-root .bx-pocket.got .bx-art {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bc) 70%, #0b0b0b26), 0 10px 24px -12px #0008;
 }
-html:not(.bx-dark) .bx-root .bx-pocket.dex .bx-art { background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--bc) 10%, transparent), transparent 70%), #00000006; }
-html:not(.bx-dark) .bx-root .bx-check { background: #ffffffd9; box-shadow: inset 0 0 0 1.5px #0b0b0b59; }
-html:not(.bx-dark) .bx-root .bx-pocket.sel .bx-check { background: var(--bc); box-shadow: 0 0 0 1px #0b0b0b26; }
-html:not(.bx-dark) .bx-root .bx-shade { background: linear-gradient(90deg, #0008, #0003 40%, #0005); }
-html:not(.bx-dark) .bx-root .bx-rings i { border-color: #b9b9c4; border-top-color: #eeeef2; border-left-color: #d6d6de; border-bottom-color: #8a8a96; box-shadow: 0 2px 5px #0005, inset 0 1px 1px #ffffffb3; }
+html:not(.dark) .bx-root .bx-pocket.dex .bx-art { background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--bc) 10%, transparent), transparent 70%), #00000006; }
+html:not(.dark) .bx-root .bx-check { background: #ffffffd9; box-shadow: inset 0 0 0 1.5px #0b0b0b59; }
+html:not(.dark) .bx-root .bx-pocket.sel .bx-check { background: var(--bc); box-shadow: 0 0 0 1px #0b0b0b26; }
+html:not(.dark) .bx-root .bx-shade { background: linear-gradient(90deg, #0008, #0003 40%, #0005); }
+html:not(.dark) .bx-root .bx-rings i { border-color: #b9b9c4; border-top-color: #eeeef2; border-left-color: #d6d6de; border-bottom-color: #8a8a96; box-shadow: 0 2px 5px #0005, inset 0 1px 1px #ffffffb3; }
+
+/* ---------- the artist page ---------- */
+.bx-root .bx-section {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.bx-root .bx-artist-wiki {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 4px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-2); text-decoration: none; transition: color 0.15s;
+}
+.bx-root .bx-artist-wiki:hover { color: var(--text); }
+.bx-root .bx-artist-wiki svg { width: 13px; height: 13px; }
+.bx-root .bx-artist-make { border: 0; }
+.bx-root .bx-artist-make:disabled { opacity: 0.6; cursor: default; }
+.bx-root .bx-ideas { display: grid; gap: 12px; margin-top: 14px; }
+@media (min-width: 760px) { .bx-root .bx-ideas { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.bx-root .bx-idea { display: flex; align-items: center; gap: 16px; text-align: left; color: var(--foreground); border-radius: 18px; }
+.bx-root .bx-idea:disabled { opacity: 0.6; cursor: default; }
+.bx-root .bx-idea-fan { position: relative; width: 86px; height: 86px; flex: none; }
+.bx-root .bx-idea-fan img {
+  position: absolute; left: 50%; bottom: 2px; width: 52px; margin-left: -26px; border-radius: 4.5% / 3.2%;
+  box-shadow: 0 8px 18px -6px #000c; transform-origin: 50% 120%;
+}
+html:not(.dark) .bx-root .bx-idea-fan img { box-shadow: 0 8px 18px -8px #0008; }
+.bx-root .bx-idea-text { display: grid; gap: 4px; min-width: 0; }
+.bx-root .bx-idea-text b { font-size: 15px; font-weight: 600; line-height: 1.25; }
+.bx-root .bx-idea-text small { font-size: 12.5px; color: var(--text-3); font-family: var(--font-mono); letter-spacing: 0.02em; }
+.bx-root .bx-artist-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 2vw, 16px) clamp(8px, 1.6vw, 12px);
+  margin-top: 14px;
+}
+@media (min-width: 760px) { .bx-root .bx-artist-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1040px) { .bx-root .bx-artist-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+
+/* ---------- the magnifier button on a pocket ---------- */
+.bx-root .bx-find {
+  position: absolute; top: 4%; left: 4%; z-index: 5; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; border: 1px solid #ffffff38; background: #08080ccc; color: #f4f4f0;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); cursor: pointer;
+  opacity: 0; transform: translateY(4px) scale(0.9);
+  transition: opacity 0.2s, transform 0.2s, color 0.2s, border-color 0.2s;
+}
+.bx-root .bx-find::after { content: ""; position: absolute; inset: -8px; }
+.bx-root .bx-pocket:hover .bx-find, .bx-root .bx-find:focus-visible { opacity: 1; transform: none; }
+.bx-root .bx-find:hover { color: var(--bx-volt); border-color: #fedf01b3; }
+.bx-root .bx-find svg { width: 15px; height: 15px; }
+html:not(.dark) .bx-root .bx-find { border-color: #0b0b0b2e; background: #ffffffd9; color: #0b0b0b; }
+html:not(.dark) .bx-root .bx-find:hover { color: #6b5d00; border-color: #b39e00; }
+/* Touch screens cannot hover: the magnifier stays visible. */
+@media (hover: none), (width <= 980px) {
+  .bx-root .bx-find { opacity: 1; transform: none; width: 26px; height: 26px; }
+}
+/* The wanted ribbon moves off the magnifier's corner. */
+.bx-root .bx-ribbon { top: auto; bottom: 7%; left: -3%; }
+
+/* ---------- the magnifier sheet ---------- */
+.bx-detail .bx-detail-stage {
+  --bc: #fedf01;
+  position: relative; display: grid; place-items: center; padding: 26px 44px 20px;
+  margin: 0 -24px; border-radius: 0;
+  background: radial-gradient(ellipse at 50% 30%, #17171e, #0a0a0e 75%);
+  touch-action: pan-y;
+}
+.bx-detail .bx-detail-art {
+  width: min(62vw, 300px); aspect-ratio: 0.716; height: auto;
+  border-radius: 4.5% / 3.2%;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--bc) 85%, transparent),
+    0 0 36px -4px color-mix(in srgb, var(--bc) 55%, transparent),
+    0 26px 60px -20px #000;
+}
+.bx-detail .bx-detail-art img { filter: none; opacity: 1; }
+.bx-detail .bx-detail-art.bx-detail-need img { filter: grayscale(1) brightness(0.62); opacity: 0.9; }
+.bx-detail .bx-detail-arrow { position: absolute; top: 50%; transform: translateY(-50%); }
+.bx-detail .bx-detail-arrow.prev { left: 6px; }
+.bx-detail .bx-detail-arrow.next { right: 6px; }
+.bx-detail .bx-detail-arrow { background: #0c0c12cc; border-color: #ffffff2b; color: #e4e4de; }
+.bx-detail .bx-detail-arrow:hover:not(:disabled) { color: #fff; border-color: #ffffff66; }
+
+.bx-detail .bx-detail-body { padding: 18px 2px 8px; }
+.bx-detail .bx-detail-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.bx-detail .bx-detail-pill {
+  display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.bx-detail .bx-detail-pill.owned { background: color-mix(in srgb, var(--bc) 18%, transparent); color: var(--foreground); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc) 55%, transparent); }
+.bx-detail .bx-detail-pill.needed { background: color-mix(in srgb, #ff2e6b 12%, transparent); color: var(--destructive); box-shadow: inset 0 0 0 1px #ff2e6b59; }
+.bx-detail .bx-detail-pill.wanted { background: color-mix(in srgb, #fedf01 14%, transparent); color: var(--foreground); box-shadow: inset 0 0 0 1px #fedf0166; }
+.bx-detail .bx-detail-pill.instock { background: transparent; color: var(--foreground); box-shadow: inset 0 0 0 1px var(--hairline); }
+.bx-detail .bx-detail-pill .bx-instock { position: static; width: 18px; height: 18px; animation: none; box-shadow: none; }
+.bx-detail .bx-detail-name {
+  margin-top: 12px; font-family: var(--font-display); font-size: 30px; line-height: 1; letter-spacing: 0.01em;
+  text-transform: uppercase; color: var(--foreground); overflow-wrap: anywhere;
+}
+.bx-detail .bx-detail-set { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 14px; color: var(--muted-foreground); }
+.bx-detail .bx-detail-set img { height: 22px; width: auto; max-width: 84px; object-fit: contain; }
+.bx-detail .bx-detail-facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.bx-detail .bx-detail-fact {
+  display: grid; gap: 2px; padding: 8px 12px; border-radius: 12px; font-size: 13px; color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 9%, transparent);
+}
+.bx-detail .bx-detail-fact small {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted-foreground-2);
+}
+.bx-detail .bx-detail-cost { display: inline-flex; align-items: center; gap: 3px; }
+.bx-detail .bx-energy { width: 11px; height: 11px; border-radius: 50%; display: inline-block; box-shadow: inset 0 -1px 2px #0006, 0 0 0 1px #00000033; }
+.bx-detail .bx-detail-artist {
+  display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 14px; padding: 12px 14px;
+  border-radius: 14px; border: 0; cursor: pointer; text-align: left; color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 9%, transparent);
+  transition: box-shadow 0.15s;
+}
+.bx-detail .bx-detail-artist:hover { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 28%, transparent); }
+.bx-detail .bx-detail-artist svg { width: 16px; height: 16px; flex: none; color: var(--muted-foreground); }
+.bx-detail .bx-detail-artist span { display: grid; gap: 1px; font-size: 14.5px; font-weight: 500; }
+.bx-detail .bx-detail-artist small {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted-foreground-2);
+}
+.bx-detail .bx-detail-artist-plain { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; color: var(--muted-foreground); }
+.bx-detail .bx-detail-artist-plain svg { width: 15px; height: 15px; }
+.bx-detail .bx-detail-moves { display: grid; gap: 10px; margin-top: 16px; }
+.bx-detail .bx-detail-move {
+  display: grid; gap: 5px; padding: 11px 13px; border-radius: 12px;
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.bx-detail .bx-detail-move-head { display: flex; align-items: center; gap: 9px; font-size: 14.5px; }
+.bx-detail .bx-detail-move-head b { font-weight: 600; color: var(--foreground); }
+.bx-detail .bx-detail-move-kind {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--bx-cyan); background: color-mix(in srgb, var(--bx-cyan) 12%, transparent); padding: 2px 7px; border-radius: 999px;
+}
+html:not(.dark) .bx-detail .bx-detail-move-kind { color: #087a92; background: #087a921a; }
+.bx-detail .bx-detail-damage { margin-left: auto; font-family: var(--font-mono); font-weight: 700; color: var(--foreground); }
+.bx-detail .bx-detail-move p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--muted-foreground); }
+.bx-detail .bx-detail-flavour { margin-top: 16px; font-size: 13.5px; line-height: 1.55; font-style: italic; color: var(--muted-foreground-2); }
+.bx-detail .bx-detail-note { margin-top: 14px; font-size: 14px; color: var(--muted-foreground); }
+.bx-detail .bx-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 20px; }
+:is(.bx-detail, .bx-root) .bx-detail-main {
+  display: inline-flex; align-items: center; gap: 9px; height: 48px; padding: 0 22px; border-radius: 999px; border: 0;
+  background: var(--volt); color: #0b0b0b; font: 600 14px var(--font-sans); cursor: pointer;
+  box-shadow: var(--shadow-volt); transition: background-color 0.15s, transform 0.15s;
+}
+:is(.bx-detail, .bx-root) .bx-detail-main:hover { background: var(--volt-deep); }
+:is(.bx-detail, .bx-root) .bx-detail-main:active { transform: translateY(1px); }
+:is(.bx-detail, .bx-root) .bx-detail-main svg { width: 17px; height: 17px; }
+.bx-detail .bx-detail-makes { display: grid; gap: 8px; margin-top: 18px; justify-items: start; }
+.bx-detail .bx-detail-count {
+  margin-top: 18px; text-align: center; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--muted-foreground-2);
+}
+/* Inside the sheet, the chips read from the sheet's own palette. */
+.bx-detail .bx-chip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--hairline); background: transparent; color: var(--muted-foreground);
+  font: 500 13px var(--font-sans); cursor: pointer; white-space: normal; text-align: left;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+.bx-detail .bx-chip:hover:not(:disabled):not(.on) { color: var(--foreground); border-color: var(--foreground); }
+.bx-detail .bx-chip.on { background: var(--foreground); color: var(--background); border-color: transparent; }
+.bx-detail .bx-chip:disabled { opacity: 0.5; cursor: default; }
+.bx-detail .bx-chip svg { width: 14px; height: 14px; flex: none; }
 
 /* ---------- reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {

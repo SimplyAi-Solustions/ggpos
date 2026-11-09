@@ -141,6 +141,9 @@ importers:
       '@fontsource/anton':
         specifier: ^5.3.0
         version: 5.3.0
+      '@fontsource/poppins':
+        specifier: ^5.2.0
+        version: 5.3.0
       '@fontsource/space-mono':
         specifier: ^5.3.0
         version: 5.3.0
