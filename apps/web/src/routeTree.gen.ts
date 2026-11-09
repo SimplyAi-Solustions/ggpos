@@ -45,6 +45,7 @@ import { Route as CounterStaffRouteImport } from "./routes/counter.staff"
 import { Route as CounterTillRouteImport } from "./routes/counter.till"
 import { Route as CounterTutorialsRouteImport } from "./routes/counter.tutorials"
 import { Route as LabelsPrintRouteImport } from "./routes/labels.print"
+import { Route as AccountArtistsNameRouteImport } from "./routes/account.artists.$name"
 import { Route as AccountBindersIndexRouteImport } from "./routes/account.binders.index"
 import { Route as AccountBindersIdRouteImport } from "./routes/account.binders.$id"
 import { Route as AccountQuotesIndexRouteImport } from "./routes/account.quotes.index"
@@ -54,6 +55,7 @@ import { Route as AccountRewardsIndexRouteImport } from "./routes/account.reward
 import { Route as AccountRewardsIdRouteImport } from "./routes/account.rewards.$id"
 import { Route as AccountTradeInsIndexRouteImport } from "./routes/account.trade-ins.index"
 import { Route as AccountTradeInsIdRouteImport } from "./routes/account.trade-ins.$id"
+import { Route as CBTokenRouteImport } from "./routes/c.b.$token"
 import { Route as CounterCustomersIndexRouteImport } from "./routes/counter.customers.index"
 import { Route as CounterCustomersNewRouteImport } from "./routes/counter.customers.new"
 import { Route as CounterQuotesIndexRouteImport } from "./routes/counter.quotes.index"
@@ -255,6 +257,11 @@ const LabelsPrintRoute = LabelsPrintRouteImport.update({
   path: "/labels/print",
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccountArtistsNameRoute = AccountArtistsNameRouteImport.update({
+  id: "/artists/$name",
+  path: "/artists/$name",
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountBindersIndexRoute = AccountBindersIndexRouteImport.update({
   id: "/binders/",
   path: "/binders/",
@@ -299,6 +306,11 @@ const AccountTradeInsIdRoute = AccountTradeInsIdRouteImport.update({
   id: "/trade-ins/$id",
   path: "/trade-ins/$id",
   getParentRoute: () => AccountRoute,
+} as any)
+const CBTokenRoute = CBTokenRouteImport.update({
+  id: "/c/b/$token",
+  path: "/c/b/$token",
+  getParentRoute: () => rootRouteImport,
 } as any)
 const CounterCustomersIndexRoute = CounterCustomersIndexRouteImport.update({
   id: "/customers/",
@@ -440,11 +452,13 @@ export interface FileRoutesByFullPath {
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
+  "/account/artists/$name": typeof AccountArtistsNameRoute
   "/account/binders/$id": typeof AccountBindersIdRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
+  "/c/b/$token": typeof CBTokenRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
@@ -505,11 +519,13 @@ export interface FileRoutesByTo {
   "/labels/print": typeof LabelsPrintRoute
   "/account": typeof AccountIndexRoute
   "/counter": typeof CounterIndexRoute
+  "/account/artists/$name": typeof AccountArtistsNameRoute
   "/account/binders/$id": typeof AccountBindersIdRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
+  "/c/b/$token": typeof CBTokenRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
@@ -573,11 +589,13 @@ export interface FileRoutesById {
   "/labels/print": typeof LabelsPrintRoute
   "/account/": typeof AccountIndexRoute
   "/counter/": typeof CounterIndexRoute
+  "/account/artists/$name": typeof AccountArtistsNameRoute
   "/account/binders/$id": typeof AccountBindersIdRoute
   "/account/quotes/$id": typeof AccountQuotesIdRoute
   "/account/quotes/new": typeof AccountQuotesNewRoute
   "/account/rewards/$id": typeof AccountRewardsIdRoute
   "/account/trade-ins/$id": typeof AccountTradeInsIdRoute
+  "/c/b/$token": typeof CBTokenRoute
   "/counter/customers/new": typeof CounterCustomersNewRoute
   "/counter/quotes/$id": typeof CounterQuotesIdRoute
   "/counter/reports/$key": typeof CounterReportsKeyRoute
@@ -642,11 +660,13 @@ export interface FileRouteTypes {
     | "/labels/print"
     | "/account/"
     | "/counter/"
+    | "/account/artists/$name"
     | "/account/binders/$id"
     | "/account/quotes/$id"
     | "/account/quotes/new"
     | "/account/rewards/$id"
     | "/account/trade-ins/$id"
+    | "/c/b/$token"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
@@ -707,11 +727,13 @@ export interface FileRouteTypes {
     | "/labels/print"
     | "/account"
     | "/counter"
+    | "/account/artists/$name"
     | "/account/binders/$id"
     | "/account/quotes/$id"
     | "/account/quotes/new"
     | "/account/rewards/$id"
     | "/account/trade-ins/$id"
+    | "/c/b/$token"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
@@ -774,11 +796,13 @@ export interface FileRouteTypes {
     | "/labels/print"
     | "/account/"
     | "/counter/"
+    | "/account/artists/$name"
     | "/account/binders/$id"
     | "/account/quotes/$id"
     | "/account/quotes/new"
     | "/account/rewards/$id"
     | "/account/trade-ins/$id"
+    | "/c/b/$token"
     | "/counter/customers/new"
     | "/counter/quotes/$id"
     | "/counter/reports/$key"
@@ -815,6 +839,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   CTokenRoute: typeof CTokenRoute
   LabelsPrintRoute: typeof LabelsPrintRoute
+  CBTokenRoute: typeof CBTokenRoute
   PrintReceiptIdRoute: typeof PrintReceiptIdRoute
 }
 
@@ -1072,6 +1097,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof LabelsPrintRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/account/artists/$name": {
+      id: "/account/artists/$name"
+      path: "/artists/$name"
+      fullPath: "/account/artists/$name"
+      preLoaderRoute: typeof AccountArtistsNameRouteImport
+      parentRoute: typeof AccountRoute
+    }
     "/account/binders/": {
       id: "/account/binders/"
       path: "/binders"
@@ -1134,6 +1166,13 @@ declare module "@tanstack/react-router" {
       fullPath: "/account/trade-ins/$id"
       preLoaderRoute: typeof AccountTradeInsIdRouteImport
       parentRoute: typeof AccountRoute
+    }
+    "/c/b/$token": {
+      id: "/c/b/$token"
+      path: "/c/b/$token"
+      fullPath: "/c/b/$token"
+      preLoaderRoute: typeof CBTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     "/counter/customers/": {
       id: "/counter/customers/"
@@ -1292,6 +1331,7 @@ interface AccountRouteChildren {
   AccountWantListRoute: typeof AccountWantListRoute
   AccountWantsRoute: typeof AccountWantsRoute
   AccountIndexRoute: typeof AccountIndexRoute
+  AccountArtistsNameRoute: typeof AccountArtistsNameRoute
   AccountBindersIdRoute: typeof AccountBindersIdRoute
   AccountQuotesIdRoute: typeof AccountQuotesIdRoute
   AccountQuotesNewRoute: typeof AccountQuotesNewRoute
@@ -1317,6 +1357,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountWantListRoute: AccountWantListRoute,
   AccountWantsRoute: AccountWantsRoute,
   AccountIndexRoute: AccountIndexRoute,
+  AccountArtistsNameRoute: AccountArtistsNameRoute,
   AccountBindersIdRoute: AccountBindersIdRoute,
   AccountQuotesIdRoute: AccountQuotesIdRoute,
   AccountQuotesNewRoute: AccountQuotesNewRoute,
@@ -1416,6 +1457,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   CTokenRoute: CTokenRoute,
   LabelsPrintRoute: LabelsPrintRoute,
+  CBTokenRoute: CBTokenRoute,
   PrintReceiptIdRoute: PrintReceiptIdRoute,
 }
 export const routeTree = rootRouteImport

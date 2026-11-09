@@ -9,6 +9,7 @@ import { Field, FieldError, FieldRow } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { MicroLabel, SectionHeading } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
+import { ThemeChoice } from "@/features/portal/ThemeToggle"
 import {
   Select,
   SelectContent,
@@ -276,6 +277,9 @@ export function ProfileScreen() {
     <section className="pt-12 sm:pt-20">
       <PageTitle>Profile</PageTitle>
       <Lede>Your details, what we send you, and what we hold.</Lede>
+
+      <SectionHeading className="mt-14">Appearance</SectionHeading>
+      <ThemeChoice />
 
       <SectionHeading className="mt-14">Your details</SectionHeading>
       <FieldRow>

@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "motion/react"
-import { BrushIcon, LayoutGridIcon, LibraryIcon, SparklesIcon } from "lucide-react"
+import { BrushIcon, GaugeIcon, LayoutGridIcon, LibraryIcon, SparklesIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { MicroLabel } from "@/components/ui/micro-label"
@@ -15,10 +15,13 @@ import {
 } from "@/components/ui/sheet"
 import { SHEET_COLUMN } from "@/features/portal/sheet"
 import { BinderCover } from "@/features/binders/BinderObject"
+import { GridSwitch } from "@/features/binders/BinderParts"
+import type { Grid } from "@/features/binders/layout"
 import {
   artwork,
   COLORS,
   createBinder,
+  DEX_SCOPES,
   img,
   listIllustrators,
   listSets,
@@ -33,8 +36,15 @@ import {
 const TYPES: { id: BinderKind; l: string; d: string; c: string; I: typeof SparklesIcon }[] = [
   { id: "pokemon", l: "A Pokémon", d: "Every English card printed for one Pokémon.", c: "#fedf01", I: SparklesIcon },
   { id: "set", l: "A set", d: "Complete a whole expansion, secret rares included.", c: "#3ee6ff", I: LibraryIcon },
+  {
+    id: "pokedex",
+    l: "A Pokédex",
+    d: "One pocket per Pokémon, national or one generation, with a sprite until the card goes in.",
+    c: "#ff2e6b",
+    I: GaugeIcon,
+  },
   { id: "illustrator", l: "An artist", d: "Every card drawn by one illustrator.", c: "#a78bfa", I: BrushIcon },
-  { id: "custom", l: "Your own picks", d: "Start empty and add any cards you like.", c: "#ff9a3c", I: LayoutGridIcon },
+  { id: "custom", l: "An empty binder", d: "Start empty and add any cards you like, in any pocket.", c: "#ff9a3c", I: LayoutGridIcon },
 ]
 
 interface Pick {
@@ -62,6 +72,7 @@ export function CreateBinderSheet({
   const [name, setName] = React.useState("")
   const [owner, setOwner] = React.useState("")
   const [color, setColor] = React.useState("volt")
+  const [grid, setGrid] = React.useState<Grid>("3x3")
   const [busy, setBusy] = React.useState(false)
 
   const listQuery = useQuery({
@@ -72,7 +83,7 @@ export function CreateBinderSheet({
         : kind === "set"
           ? { sets: await listSets() }
           : { artists: await listIllustrators() },
-    enabled: kind !== "" && kind !== "custom",
+    enabled: kind !== "" && kind !== "custom" && kind !== "pokedex",
     staleTime: 60 * 60_000,
   })
   const species = listQuery.data?.species ?? null
@@ -110,7 +121,12 @@ export function CreateBinderSheet({
     () => (artists ?? []).filter((x) => !s || x.toLowerCase().includes(s)).slice(0, 80),
     [artists, s]
   )
-  const listLoaded = kind === "pokemon" ? !!species : kind === "set" ? !!sets : !!artists
+  const dexHits = React.useMemo(
+    () => (kind === "pokedex" ? DEX_SCOPES.filter((g) => !s || `${g.label} ${g.id}`.toLowerCase().includes(s)) : []),
+    [kind, s]
+  )
+  const listLoaded =
+    kind === "pokedex" ? true : kind === "pokemon" ? !!species : kind === "set" ? !!sets : !!artists
 
   function choose(p: Pick) {
     setPick(p)
@@ -139,6 +155,7 @@ export function CreateBinderSheet({
         name: name.trim(),
         owner: owner.trim(),
         color,
+        grid,
       })
       onCreated(r.id)
     } catch (err) {
@@ -165,7 +182,9 @@ export function CreateBinderSheet({
           ? "Which Pokémon?"
           : kind === "set"
             ? "Which set?"
-            : "Which artist?"
+            : kind === "pokedex"
+              ? "Which Pokédex?"
+              : "Which artist?"
         : "Name the binder"
 
   return (
@@ -203,7 +222,15 @@ export function CreateBinderSheet({
                 className="bx-search"
                 autoFocus
                 aria-label="Search"
-                placeholder={kind === "pokemon" ? "Pikachu" : kind === "set" ? "Base Set, Surging Sparks" : "Mitsuhiro Arita"}
+                placeholder={
+                  kind === "pokemon"
+                    ? "Pikachu"
+                    : kind === "set"
+                      ? "Base Set, Surging Sparks"
+                      : kind === "pokedex"
+                        ? "Kanto, generation 3"
+                        : "Mitsuhiro Arita"
+                }
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -268,6 +295,31 @@ export function CreateBinderSheet({
                       </React.Fragment>
                     ))
                   : null}
+                {kind === "pokedex"
+                  ? dexHits.map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        className={`bx-opt ${pick?.query === g.id ? "on" : ""}`}
+                        onClick={() => choose({ query: g.id, label: g.label })}
+                      >
+                        <img
+                          className="sprite pixel"
+                          src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${g.from}.png`}
+                          alt=""
+                          loading="lazy"
+                          onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+                        />
+                        <span>
+                          <span className="t">{g.label}</span>
+                          <br />
+                          <span className="s">
+                            #{String(g.from).padStart(4, "0")} to #{String(g.to).padStart(4, "0")}, {g.to - g.from + 1} pockets
+                          </span>
+                        </span>
+                      </button>
+                    ))
+                  : null}
                 {kind === "illustrator"
                   ? artistHits.map((n) => (
                       <button
@@ -280,7 +332,7 @@ export function CreateBinderSheet({
                       </button>
                     ))
                   : null}
-                {listLoaded && s && !speciesHits.length && !setHits.length && !artistHits.length ? (
+                {listLoaded && s && !speciesHits.length && !setHits.length && !artistHits.length && !dexHits.length ? (
                   <p className="text-[15px] text-muted-foreground">Nothing matches {q}.</p>
                 ) : null}
               </div>
@@ -331,6 +383,10 @@ export function CreateBinderSheet({
                   onChange={(e) => setOwner(e.target.value)}
                 />
               </label>
+              <div className="grid gap-2">
+                <MicroLabel>Pockets per page</MicroLabel>
+                <GridSwitch grid={grid} onChange={setGrid} />
+              </div>
               <div className="grid gap-2">
                 <MicroLabel>Cover colour</MicroLabel>
                 <div className="bx-swatches">

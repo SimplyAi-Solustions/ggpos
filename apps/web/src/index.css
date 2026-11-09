@@ -2,3 +2,12 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "./design/theme.css";
+/* The Counter's brand tokens (apps/vault) are the one source of truth for the
+   customer side. Imported, never copied: cosmos.css re-asserts the few names
+   the counter screens need back, scoped to html:not(.gg-customer). */
+@import "../../vault/src/styles/tokens.css";
+@import "@fontsource/poppins/400.css";
+@import "@fontsource/poppins/500.css";
+@import "@fontsource/poppins/600.css";
+@import "@fontsource/poppins/700.css";
+@import "./design/cosmos.css";

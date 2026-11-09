@@ -1,14 +1,17 @@
 /**
  * Binders: collections a customer is building, ported from GG HQ.
  *
- * Reading and ticking pockets go through the `binders` and `binder_cards`
- * collection rules (own rows only). Creating a binder, the catalogue lists
- * and adding cards go through `/api/vault/binders/*` so card data always
- * comes from the catalogue. Nothing here carries a price.
+ * Reading binders and pockets goes through the `binders` and `binder_cards`
+ * collection rules (own rows only). Creating a binder, the catalogue lists,
+ * adding cards, moving and ticking pockets, share links and wanted requests
+ * go through `/api/vault/binders/*` and `/api/vault/binder-*` so card data
+ * always comes from the catalogue. Nothing here carries a price, and every
+ * response passes through stripPrices before a screen sees it.
  */
 import { pbCustomer } from "@/lib/pb-customer"
+import { stripPrices, type Grid, type LayoutDiff } from "@/features/binders/layout"
 
-export type BinderKind = "pokemon" | "set" | "illustrator" | "custom"
+export type BinderKind = "pokemon" | "set" | "illustrator" | "custom" | "pokedex"
 
 export interface Binder {
   id: string
@@ -21,6 +24,12 @@ export interface Binder {
   cover: string
   logo: string
   sort: number
+  grid: string
+  min_slots: number
+  share_token: string
+  dex_scope: string
+  /** Stock alerts are on unless the customer switched them off. */
+  alerts_off: boolean
 }
 
 export interface BinderCard {
@@ -30,15 +39,28 @@ export interface BinderCard {
   variant: string
   name: string
   number: string
+  set_id: string
   set_name: string
   set_total: string
   rarity: string
   image: string
   sort: number
+  slot: number
   owned: boolean
+  dex: number
+  sprite: string
   group_name: string
   group_shape: string
   manual: boolean
+}
+
+export interface WantedRequest {
+  id: string
+  card_id: string
+  card_name: string
+  binder: string
+  status: "open" | "cancelled" | "fulfilled"
+  created: string
 }
 
 export interface SetEntry {
@@ -68,6 +90,20 @@ export interface Preview {
   sample: { name: string; image: string; set_name: string }[]
 }
 
+/** National Pokedex and the nine generations. Mirrors pb/pb_hooks/lib/binders_v2.js. */
+export const DEX_SCOPES = [
+  { id: "national", label: "National Pokédex", from: 1, to: 1025 },
+  { id: "gen1", label: "Generation 1, Kanto", from: 1, to: 151 },
+  { id: "gen2", label: "Generation 2, Johto", from: 152, to: 251 },
+  { id: "gen3", label: "Generation 3, Hoenn", from: 252, to: 386 },
+  { id: "gen4", label: "Generation 4, Sinnoh", from: 387, to: 493 },
+  { id: "gen5", label: "Generation 5, Unova", from: 494, to: 649 },
+  { id: "gen6", label: "Generation 6, Kalos", from: 650, to: 721 },
+  { id: "gen7", label: "Generation 7, Alola", from: 722, to: 809 },
+  { id: "gen8", label: "Generation 8, Galar", from: 810, to: 905 },
+  { id: "gen9", label: "Generation 9, Paldea", from: 906, to: 1025 },
+] as const
+
 export const COLORS = [
   { id: "volt", c: "#fedf01", l: "Volt" },
   { id: "pop", c: "#ff2e6b", l: "Pop" },
@@ -85,6 +121,7 @@ export const KINDS: Record<BinderKind, string> = {
   set: "Set",
   illustrator: "Artist",
   custom: "Your picks",
+  pokedex: "Pokédex",
 }
 
 /** TCGdex hands out image bases; the file is `<base>/<quality>.webp`. */
@@ -100,9 +137,12 @@ export interface BinderStats {
   cover: string
 }
 
-export function statsFor(cards: Pick<BinderCard, "owned" | "image">[]): BinderStats {
-  const s = { total: cards.length, got: 0, cover: "" }
+/** Shelf progress. Cards taken out of the binder (slot -1) do not count. */
+export function statsFor(cards: (Pick<BinderCard, "owned" | "image"> & Partial<Pick<BinderCard, "slot">>)[]): BinderStats {
+  const s = { total: 0, got: 0, cover: "" }
   for (const c of cards) {
+    if (typeof c.slot === "number" && c.slot < 0) continue
+    s.total++
     if (c.owned) {
       s.got++
       if (!s.cover && c.image) s.cover = c.image
@@ -111,53 +151,243 @@ export function statsFor(cards: Pick<BinderCard, "owned" | "image">[]): BinderSt
   return s
 }
 
-export function listBinders(): Promise<Binder[]> {
-  return pbCustomer.collection("binders").getFullList<Binder>({ sort: "-sort" })
+export async function listBinders(): Promise<Binder[]> {
+  return stripPrices(await pbCustomer.collection("binders").getFullList<Binder>({ sort: "-sort" }))
 }
 
-export function getBinder(id: string): Promise<Binder> {
-  return pbCustomer.collection("binders").getOne<Binder>(id)
+export async function getBinder(id: string): Promise<Binder> {
+  return stripPrices(await pbCustomer.collection("binders").getOne<Binder>(id))
 }
 
 /** A light list of every pocket, for the shelf's progress bars. */
-export function listAllPockets(): Promise<Pick<BinderCard, "id" | "binder" | "owned" | "image">[]> {
-  return pbCustomer
-    .collection("binder_cards")
-    .getFullList({ fields: "id,binder,owned,image", sort: "sort", batch: 1000 })
+export async function listAllPockets(): Promise<Pick<BinderCard, "id" | "binder" | "owned" | "image" | "slot">[]> {
+  return stripPrices(
+    await pbCustomer
+      .collection("binder_cards")
+      .getFullList<Pick<BinderCard, "id" | "binder" | "owned" | "image" | "slot">>({
+        fields: "id,binder,owned,image,slot",
+        sort: "sort",
+        batch: 1000,
+      })
+  )
 }
 
-export function listPockets(binderId: string): Promise<BinderCard[]> {
-  return pbCustomer.collection("binder_cards").getFullList<BinderCard>({
-    filter: pbCustomer.filter("binder = {:b}", { b: binderId }),
-    sort: "sort",
-    batch: 1000,
-  })
+export async function listPockets(binderId: string): Promise<BinderCard[]> {
+  return stripPrices(
+    await pbCustomer.collection("binder_cards").getFullList<BinderCard>({
+      filter: pbCustomer.filter("binder = {:b}", { b: binderId }),
+      sort: "slot,sort",
+      batch: 1000,
+    })
+  )
 }
 
-export function setOwned(cardId: string, owned: boolean) {
-  return pbCustomer.collection("binder_cards").update<BinderCard>(cardId, {
-    owned,
-    owned_at: owned ? new Date().toISOString() : null,
-  })
-}
-
-export function updateBinder(id: string, patch: { name?: string; owner?: string; color?: string }) {
+export function updateBinder(
+  id: string,
+  patch: { name?: string; owner?: string; color?: string; grid?: Grid; alerts_off?: boolean }
+) {
   return pbCustomer.collection("binders").update<Binder>(id, patch)
+}
+
+/**
+ * Which of this binder's needed pockets the shop has on the shelf right
+ * now. The server answers with pocket ids only, nothing about the item.
+ */
+export async function getAvailability(binderId: string): Promise<ReadonlySet<string>> {
+  const r = stripPrices(
+    await pbCustomer.send<{ in_stock: string[] }>(
+      `/api/vault/binder-availability/${encodeURIComponent(binderId)}`,
+      {}
+    )
+  )
+  return new Set(r.in_stock ?? [])
+}
+
+export interface BinderAlert {
+  id: string
+  card_id: string
+  card_name: string
+  binder: string
+  binder_name: string
+  message: string
+  read_at: string
+  created: string
+}
+
+/** Unread "in stock at GG" alerts, newest first. */
+export async function listAlerts(): Promise<BinderAlert[]> {
+  return stripPrices(
+    await pbCustomer.collection("binder_alerts").getFullList<BinderAlert>({
+      filter: "read_at = ''",
+      fields: "id,card_id,card_name,binder,binder_name,message,read_at,created",
+      sort: "-created",
+      batch: 200,
+    })
+  )
+}
+
+export function dismissAlert(id: string) {
+  return pbCustomer.collection("binder_alerts").update(id, { read_at: new Date().toISOString() })
 }
 
 export function deleteBinder(id: string) {
   return pbCustomer.collection("binders").delete(id)
 }
 
-export function removePocket(id: string) {
-  return pbCustomer.collection("binder_cards").delete(id)
+/** Moves, ticks and page changes in one batch (multi-select, pages, undo, redo). */
+export function saveLayout(binderId: string, diff: LayoutDiff): Promise<{ changed: number }> {
+  return pbCustomer.send(`/api/vault/binders/${encodeURIComponent(binderId)}/layout`, {
+    method: "POST",
+    body: diff,
+  })
+}
+
+export function shareBinder(binderId: string): Promise<{ token: string }> {
+  return pbCustomer.send(`/api/vault/binders/${encodeURIComponent(binderId)}/share`, { method: "POST" })
+}
+
+export function unshareBinder(binderId: string): Promise<{ token: string }> {
+  return pbCustomer.send(`/api/vault/binders/${encodeURIComponent(binderId)}/share`, { method: "DELETE" })
+}
+
+// Share links live under /c/ so the PocketBase app shell
+// (pb/pb_hooks/appshell.pb.js) serves the customer page for them.
+export const shareUrl = (token: string) =>
+  `${typeof window === "undefined" ? "" : window.location.origin}/c/b/${encodeURIComponent(token)}`
+
+export async function listWanted(): Promise<WantedRequest[]> {
+  return stripPrices(
+    await pbCustomer.collection("binder_wanted").getFullList<WantedRequest>({
+      filter: "status = 'open'",
+      fields: "id,card_id,card_name,binder,status,created",
+      batch: 500,
+    })
+  )
+}
+
+export function wantCard(pocketId: string): Promise<{ id: string; card_id: string; existed?: boolean }> {
+  return pbCustomer.send("/api/vault/binder-wanted", { method: "POST", body: { pocket: pocketId } })
+}
+
+export function cancelWanted(id: string): Promise<{ id: string; status: string }> {
+  return pbCustomer.send(`/api/vault/binder-wanted/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+export interface SharedBinder {
+  binder: Pick<Binder, "name" | "kind" | "query_label" | "color" | "cover" | "logo" | "grid" | "min_slots">
+  pockets: (Omit<BinderCard, "binder" | "manual"> & { in_stock?: boolean })[]
+}
+
+/** The public share view. No session needed; the token is the key. */
+export async function getShared(token: string): Promise<SharedBinder> {
+  const res = await fetch(pbCustomer.buildURL(`/api/vault/binder-share/${encodeURIComponent(token)}`), {
+    headers: { accept: "application/json" },
+  })
+  const body = (await res.json().catch(() => ({}))) as { message?: string }
+  if (!res.ok) {
+    throw new Error(
+      res.status === 404
+        ? "This share link has been switched off or never existed. Ask for a new link."
+        : "The binder did not load. Check your connection and try again."
+    )
+  }
+  return stripPrices(body as SharedBinder)
+}
+
+export interface CardMove {
+  type: string
+  /** Energy cost, named so the price stripper leaves it alone. */
+  energy: string[]
+  name: string
+  effect: string
+  damage: string
+}
+
+export interface CardDetail {
+  card_id: string
+  name: string
+  number: string
+  image: string
+  rarity: string
+  illustrator: string
+  category: string
+  hp: string
+  types: string[]
+  stage: string
+  evolve_from: string
+  description: string
+  dex: number
+  attacks: CardMove[]
+  abilities: CardMove[]
+  set: { id: string; name: string; logo: string; total: string; release_date: string }
+}
+
+/**
+ * The magnifier's card detail. A plain fetch rather than pbCustomer.send so
+ * the share page (no session) can use it too; the server whitelists the
+ * fields and never sends a price, and stripPrices here is the second lock.
+ */
+export async function getCardDetail(cardId: string): Promise<CardDetail> {
+  const res = await fetch(pbCustomer.buildURL(`/api/vault/binders/card/${encodeURIComponent(cardId)}`), {
+    headers: { accept: "application/json" },
+  })
+  if (!res.ok) {
+    throw new Error(
+      res.status === 404
+        ? "That card is not in the catalogue."
+        : "The card catalogue is not answering. Try again in a minute."
+    )
+  }
+  return stripPrices((await res.json()) as CardDetail)
+}
+
+export interface ArtistCard {
+  card_id: string
+  name: string
+  number: string
+  set_id: string
+  set_name: string
+  set_total: string
+  serie: string
+  serie_name: string
+  set_order: number
+  image: string
+}
+
+export interface Artist {
+  name: string
+  count: number
+  cards: ArtistCard[]
+  sets: { id: string; name: string; serie: string; serie_name: string; order: number; count: number }[]
+}
+
+export async function getArtist(name: string): Promise<Artist> {
+  return stripPrices(await pbCustomer.send<Artist>(`/api/vault/binders/artist/${encodeURIComponent(name)}`, {}))
+}
+
+/** Every card id this customer owns, across all their binders. */
+export async function listOwnedCardIds(): Promise<ReadonlySet<string>> {
+  const rows = await pbCustomer.collection("binder_cards").getFullList<{ card_id: string }>({
+    filter: "owned = true",
+    fields: "card_id",
+    batch: 1000,
+  })
+  return new Set(rows.map((r) => r.card_id))
+}
+
+/** Fills a custom binder with cards the client already has (binder ideas). */
+export function bulkAdd(binderId: string, cards: Pick<ArtistCard, "card_id" | "name" | "number" | "set_id" | "set_name" | "set_total" | "image">[]) {
+  return pbCustomer.send<{ added: number }>(`/api/vault/binders/${encodeURIComponent(binderId)}/bulk`, {
+    method: "POST",
+    body: { cards },
+  })
 }
 
 const catalogueCache: Record<string, Promise<unknown> | undefined> = {}
 function catalogue<T>(what: string): Promise<T> {
   let hit = catalogueCache[what] as Promise<T> | undefined
   if (!hit) {
-    hit = pbCustomer.send<T>(`/api/vault/binders/catalog/${what}`, {})
+    hit = pbCustomer.send<T>(`/api/vault/binders/catalog/${what}`, {}).then((r) => stripPrices(r))
     hit.catch(() => {
       delete catalogueCache[what]
     })
@@ -171,11 +401,13 @@ export const listSpecies = () => catalogue<{ species: Species[] }>("pokemon").th
 export const listIllustrators = () =>
   catalogue<{ illustrators: string[] }>("illustrators").then((r) => r.illustrators)
 
-export function previewBinder(kind: BinderKind, query: string): Promise<Preview> {
-  return pbCustomer.send<Preview>("/api/vault/binders/preview", {
-    method: "POST",
-    body: { kind, query },
-  })
+export async function previewBinder(kind: BinderKind, query: string): Promise<Preview> {
+  return stripPrices(
+    await pbCustomer.send<Preview>("/api/vault/binders/preview", {
+      method: "POST",
+      body: { kind, query },
+    })
+  )
 }
 
 export function createBinder(input: {
@@ -185,71 +417,23 @@ export function createBinder(input: {
   name: string
   owner: string
   color: string
+  grid: Grid
 }): Promise<{ id: string; cards: number }> {
   return pbCustomer.send("/api/vault/binders", { method: "POST", body: input })
 }
 
-export function searchCards(q: string): Promise<SearchHit[]> {
-  return pbCustomer
-    .send<{ cards: SearchHit[] }>(`/api/vault/binders/search`, { query: { q } })
-    .then((r) => r.cards)
+export async function searchCards(q: string): Promise<SearchHit[]> {
+  const r = await pbCustomer.send<{ cards: SearchHit[] }>(`/api/vault/binders/search`, { query: { q } })
+  return stripPrices(r.cards)
 }
 
-export function addCard(binderId: string, cardId: string): Promise<{ id: string; existed?: boolean }> {
+export function addCard(
+  binderId: string,
+  cardId: string,
+  slot?: number
+): Promise<{ id: string; slot: number; existed?: boolean; restored?: boolean }> {
   return pbCustomer.send(`/api/vault/binders/${encodeURIComponent(binderId)}/add`, {
     method: "POST",
-    body: { card_id: cardId },
+    body: slot === undefined ? { card_id: cardId } : { card_id: cardId, slot },
   })
-}
-
-/** Lays pockets onto 3x3 pages. Grouped scenes never split across a page. */
-export function packPages<T extends Pick<BinderCard, "group_name" | "group_shape">>(
-  cards: T[]
-): (T | null)[][] {
-  const blocks: { col: boolean; cards: T[]; w: number; h: number }[] = []
-  let i = 0
-  while (i < cards.length) {
-    const key = cards[i].group_name || ""
-    const run: T[] = []
-    while (i < cards.length && (cards[i].group_name || "") === key && (key || run.length < 9)) {
-      run.push(cards[i])
-      i++
-      if (run.length === 9) break
-    }
-    const col = cards[i - 1]?.group_shape === "col" && run.length <= 3 && !!key
-    blocks.push({
-      col,
-      cards: run,
-      w: col ? 1 : Math.min(3, run.length),
-      h: col ? run.length : Math.ceil(run.length / 3),
-    })
-  }
-  const pages: (T | null | "blank")[][] = []
-  let cur: (T | null | "blank")[] | null = null
-  const fits = (p: (T | null | "blank")[], r: number, c: number, b: { w: number; h: number }) => {
-    for (let y = r; y < r + b.h; y++) for (let x = c; x < c + b.w; x++) if (p[y * 3 + x] !== null) return false
-    return true
-  }
-  for (const b of blocks) {
-    let spot: [number, number] | null = null
-    if (cur) {
-      for (let r = 0; r + b.h <= 3 && !spot; r++)
-        for (let c = 0; c + b.w <= 3 && !spot; c++) if (fits(cur, r, c, b)) spot = [r, c]
-    }
-    if (!spot || !cur) {
-      if (cur) pages.push(cur)
-      cur = Array<T | null | "blank">(9).fill(null)
-      spot = [0, 0]
-    }
-    const page = cur
-    const [r, c] = spot
-    for (let y = r; y < r + b.h; y++) for (let x = c; x < c + b.w; x++) page[y * 3 + x] = "blank"
-    b.cards.forEach((card, k) => {
-      const y = b.col ? r + k : r + Math.floor(k / 3)
-      const x = b.col ? c : c + (k % 3)
-      page[y * 3 + x] = card
-    })
-  }
-  if (cur) pages.push(cur)
-  return pages.map((p) => p.map((cell) => (cell === "blank" ? null : cell)))
 }

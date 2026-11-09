@@ -7,6 +7,39 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GG Vault</title>
+    <script>
+      // Runs before first paint so the page never flashes the wrong theme.
+      // Keep in step with src/lib/customer-path.ts and
+      // src/components/theme-provider.tsx (same storage key, same classes).
+      ;(function () {
+        var path = window.location.pathname
+        var customer =
+          path === "/account" ||
+          path.indexOf("/account/") === 0 ||
+          path === "/c" ||
+          path.indexOf("/c/") === 0 ||
+          path === "/estimate" ||
+          path.indexOf("/estimate/") === 0
+        var pref = null
+        try {
+          pref = localStorage.getItem("theme")
+        } catch (e) {
+          // Private browsing: fall through to the defaults.
+        }
+        var dark
+        if (pref === "dark") dark = true
+        else if (pref === "light") dark = false
+        else if (pref === "system" || !customer)
+          dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+        else dark = true // customers start in the dark
+        var root = document.documentElement
+        root.classList.toggle("gg-customer", customer)
+        root.classList.toggle("dark", dark)
+        root.classList.toggle("light", !dark)
+        var meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.setAttribute("content", dark ? (customer ? "#040406" : "#0b0b0b") : customer ? "#f3f3ef" : "#fbfbfa")
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

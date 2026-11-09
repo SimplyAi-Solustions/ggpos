@@ -15,10 +15,13 @@ import { cn } from "cn"
 import { Badge } from "@/components/ui/badge"
 import { Wordmark } from "@/components/ui/wordmark"
 import { Hint } from "@/components/ui/micro-label"
+import { Space } from "@/components/space/Space"
 import { isDemo } from "@/lib/api/mode"
 import { listMyNotifications } from "@/lib/api/notifications"
 import { PageMain } from "@/app/page-transition"
 import { PortalDockContext } from "@/features/portal/dock"
+import { offersEnabled } from "@/features/estimate/offers-flag"
+import { ThemeToggleButton } from "@/features/portal/ThemeToggle"
 import { useCustomerSession } from "@/features/portal/session"
 
 /**
@@ -31,16 +34,18 @@ import { useCustomerSession } from "@/features/portal/session"
  * for one person in one hand should look like on a desk.
  */
 
-const BAR = [
+const TABS = [
   { to: "/account", label: "Card", exact: true, Icon: CreditCardIcon },
   // Bookings are out of the Vault rebuild (Richard, 09/11/2026), so Binders
-  // takes their slot; /account/bookings itself still works.
+  // takes their slot. Quotes are parked behind the offers flag.
   { to: "/account/quotes", label: "Quotes", exact: false, Icon: CameraIcon },
   { to: "/account/binders", label: "Binders", exact: false, Icon: BookOpenIcon },
   { to: "/account/wants", label: "Wants", exact: false, Icon: HeartIcon },
-  { to: "/account/credit", label: "Credit", exact: false, Icon: WalletIcon },
+  { to: "/account/credit", label: "Wallet", exact: false, Icon: WalletIcon },
   { to: "/account/me", label: "Me", exact: false, Icon: UserIcon },
 ] as const
+
+const BAR = TABS.filter((t) => t.to !== "/account/quotes" || offersEnabled())
 
 function NotificationsLink() {
   const signedIn = useCustomerSession()
@@ -86,7 +91,7 @@ export function PortalShell() {
   // button included, so the column reserves exactly that much room.
   React.useEffect(() => {
     const dock = dockRef.current
-    if (!dock) return undefined
+    if (!dock || typeof ResizeObserver === "undefined") return undefined
     const root = document.documentElement
     const apply = () => {
       root.style.setProperty("--gg-portal-dock-h", `${dock.offsetHeight}px`)
@@ -102,13 +107,15 @@ export function PortalShell() {
 
   return (
     <PortalDockContext.Provider value={dockSlot}>
-      <div className="flex min-h-svh w-full flex-col bg-background">
+      <div className="flex min-h-svh w-full flex-col">
+        <Space />
         <header className="mx-auto flex w-full max-w-[560px] items-center justify-between gap-6 px-5 py-6 sm:px-10">
           <Link to="/account" className="rounded-[var(--radius)] outline-none">
             <Wordmark mark name="My Vault" />
           </Link>
-          <div className="flex items-center gap-3">
-            {demo ? <Hint>Demo</Hint> : null}
+          <div className="flex items-center gap-1">
+            {demo ? <Hint className="mr-2">Demo</Hint> : null}
+            <ThemeToggleButton />
             <NotificationsLink />
           </div>
         </header>
@@ -116,7 +123,7 @@ export function PortalShell() {
         {signedIn ? (
           <nav
             aria-label="My Vault"
-            className="mx-auto hidden w-full max-w-[560px] px-5 pb-2 min-[900px]:block sm:px-10"
+            className="gg-topnav mx-auto hidden w-full max-w-[560px] px-5 pb-2 min-[900px]:block sm:px-10"
           >
             <ul className="flex items-center gap-8">
               {BAR.map((item) => (
@@ -159,7 +166,7 @@ export function PortalShell() {
             <div ref={setDockSlot} />
             <nav
               aria-label="Sections"
-              className="border-t border-hairline-soft bg-background pb-[env(safe-area-inset-bottom)]"
+              className="gg-dock pb-[env(safe-area-inset-bottom)]"
             >
               <ul className="flex items-stretch">
                 {BAR.map(({ to, label, exact, Icon }) => (

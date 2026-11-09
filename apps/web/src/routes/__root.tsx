@@ -1,5 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query"
-import { createRootRoute, Link, Outlet, redirect } from "@tanstack/react-router"
+import { createRootRoute, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router"
+import * as React from "react"
 
 import { Button } from "@/components/ui/button"
 import { Lede, PageTitle } from "@/components/ui/page-title"
@@ -7,13 +8,29 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { ThemeProvider } from "@/components/theme-provider"
 import { lockedRedirect } from "@/features/auth/gate"
 import { currentStaff } from "@/lib/auth"
+import { isCustomerPath, onCustomerPage } from "@/lib/customer-path"
 import { queryClient } from "@/lib/query"
+
+/**
+ * Keeps `gg-customer` on <html> in step with the route, so the cosmos skin
+ * (design/cosmos.css) follows SPA navigation. index.html set it before first
+ * paint; this only matters when a dev session walks between the two sides.
+ */
+function CustomerClass() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  React.useEffect(() => {
+    document.documentElement.classList.toggle("gg-customer", isCustomerPath(pathname))
+  }, [pathname])
+  return null
+}
 
 function RootLayout() {
   return (
-    <ThemeProvider>
+    // Customers start in the dark; the counter keeps following the system.
+    <ThemeProvider defaultTheme={onCustomerPage() ? "dark" : "system"}>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
+          <CustomerClass />
           <Outlet />
         </TooltipProvider>
       </QueryClientProvider>
