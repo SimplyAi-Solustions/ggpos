@@ -6,6 +6,9 @@
  *   GET  /api/vault/stock/inventory
  *   POST /api/vault/stock/reprice
  *   POST /api/vault/stock/proposals/decide
+ *   GET  /api/vault/stock/items/{id}/epos      (pb_hooks/epos_products.pb.js)
+ *   GET  /api/vault/stock/epos, POST /api/vault/stock/epos/settings,
+ *   POST /api/vault/stock/epos/resolve
  * Plus the existing GET /api/vault/cards/{id}/prices and
  * POST /api/vault/imports/card-uploader, and the collection API for items,
  * locations, games, categories, stock_print_list, sell_price_rules,
@@ -99,7 +102,7 @@ export interface ItemOrigin {
   supplier_ref: string
   market_at_intake: number
   acquired_at: string
-  /** Set by the Epos Now sync once it exists; absent until then. */
+  /** The Epos Now product the sync made for this item, "" when none. */
   epos_product_id: string
   deal: null | {
     id: string
@@ -118,7 +121,7 @@ interface ItemOriginRecord {
   supplier_ref?: string
   market_at_intake?: number
   acquired_at?: string
-  epos_product_id?: string
+  epos_product_id?: number | string
   expand?: {
     trade_in_line?: {
       offer_price?: number
@@ -138,7 +141,7 @@ export function toItemOrigin(record: ItemOriginRecord): ItemOrigin {
     supplier_ref: record.supplier_ref ?? "",
     market_at_intake: record.market_at_intake ?? 0,
     acquired_at: record.acquired_at ?? "",
-    epos_product_id: typeof record.epos_product_id === "string" ? record.epos_product_id : "",
+    epos_product_id: record.epos_product_id ? String(record.epos_product_id) : "",
     deal: deal
       ? {
           id: deal.id,
@@ -461,6 +464,80 @@ export async function importCardUploader(file: File): Promise<ImportResult> {
   form.append("file", file)
   form.append("type", "card_uploader")
   return pb.send<ImportResult>("/api/vault/imports/card-uploader", { method: "POST", body: form })
+}
+
+// ---------------------------------------------------------------------------
+// Epos Now (the shop Mac worker does the Epos calls; these read its state)
+// ---------------------------------------------------------------------------
+
+export type EposItemStatus = "synced" | "waiting" | "needs_check" | "archived" | "none"
+
+export interface EposItem {
+  status: EposItemStatus
+  message: string
+  epos_product_id: number | null
+  synced_at: string | null
+  last_error?: string | null
+  sold_on_till: null | { transaction_id: string; unit_price: number; sold_at: string | null }
+}
+
+export function useEposItem(itemId: string | undefined) {
+  return useQuery({
+    queryKey: [...STOCK_KEY, "epos", itemId],
+    enabled: Boolean(itemId),
+    queryFn: async () =>
+      (await pb.send<{ epos: EposItem }>(`/api/vault/stock/items/${encodeURIComponent(itemId ?? "")}/epos`, { method: "GET" })).epos,
+  })
+}
+
+export interface EposCategoryMap {
+  default: number
+  game: Record<string, number>
+  kind: Record<string, number>
+}
+
+export interface EposCheck {
+  kind: "product" | "sale"
+  id: string
+  item: string | null
+  sku: string
+  title: string
+  message: string
+  at: string
+  epos_product_id: number | null
+  action?: "upsert" | "archive"
+  status?: string
+  transaction_id?: string
+  refund?: boolean
+  qty?: number
+  unit_price?: number
+}
+
+export interface EposSettingsView {
+  settings: { tax_group_id: number; category_map: EposCategoryMap }
+  kinds: string[]
+  games: { key: string; name: string }[]
+  categories: { id: number; name: string; parent_id: number | null }[]
+  categories_refreshed_at: string | null
+  sales_polled_at: string | null
+  waiting: number
+  checks: EposCheck[]
+}
+
+export function useEposSettings(enabled = true) {
+  return useQuery({
+    queryKey: [...STOCK_KEY, "epos-settings"],
+    enabled,
+    queryFn: () => pb.send<EposSettingsView>("/api/vault/stock/epos", { method: "GET" }),
+  })
+}
+
+export async function saveEposSettings(body: { tax_group_id: number; category_map: EposCategoryMap }): Promise<{ requeued: number }> {
+  return pb.send("/api/vault/stock/epos/settings", { method: "POST", body })
+}
+
+export async function resolveEposCheck(check: Pick<EposCheck, "kind" | "id">): Promise<void> {
+  await pb.send("/api/vault/stock/epos/resolve", { method: "POST", body: { kind: check.kind, id: check.id } })
 }
 
 // ---------------------------------------------------------------------------

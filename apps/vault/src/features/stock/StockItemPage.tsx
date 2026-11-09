@@ -353,7 +353,7 @@ function ItemView({ item }: { item: InventoryItem }) {
           </Block>
 
           {/* ---------------- Epos Now slot ---------------- */}
-          <EposStatus productId={origin.data?.epos_product_id} />
+          <EposStatus itemId={item.id} />
 
           {/* ---------------- card page ---------------- */}
           {item.card ? (

@@ -22,6 +22,7 @@ import { Route as AppDealsIdRouteImport } from "./routes/_app.deals.$id"
 import { Route as AppDealsNewRouteImport } from "./routes/_app.deals.new"
 import { Route as AppStockIndexRouteImport } from "./routes/_app.stock.index"
 import { Route as AppStockIdRouteImport } from "./routes/_app.stock.$id"
+import { Route as AppStockEposRouteImport } from "./routes/_app.stock.epos"
 import { Route as AppStockHealthRouteImport } from "./routes/_app.stock.health"
 import { Route as AppStockImportRouteImport } from "./routes/_app.stock.import"
 import { Route as AppStockLabelsRouteImport } from "./routes/_app.stock.labels"
@@ -92,6 +93,11 @@ const AppStockIdRoute = AppStockIdRouteImport.update({
   path: "/stock/$id",
   getParentRoute: () => AppRoute,
 } as any)
+const AppStockEposRoute = AppStockEposRouteImport.update({
+  id: "/stock/epos",
+  path: "/stock/epos",
+  getParentRoute: () => AppRoute,
+} as any)
 const AppStockHealthRoute = AppStockHealthRouteImport.update({
   id: "/stock/health",
   path: "/stock/health",
@@ -128,6 +134,7 @@ export interface FileRoutesByFullPath {
   "/deals/$id": typeof AppDealsIdRoute
   "/deals/new": typeof AppDealsNewRoute
   "/stock/$id": typeof AppStockIdRoute
+  "/stock/epos": typeof AppStockEposRoute
   "/stock/health": typeof AppStockHealthRoute
   "/stock/import": typeof AppStockImportRoute
   "/stock/labels": typeof AppStockLabelsRoute
@@ -147,6 +154,7 @@ export interface FileRoutesByTo {
   "/deals/$id": typeof AppDealsIdRoute
   "/deals/new": typeof AppDealsNewRoute
   "/stock/$id": typeof AppStockIdRoute
+  "/stock/epos": typeof AppStockEposRoute
   "/stock/health": typeof AppStockHealthRoute
   "/stock/import": typeof AppStockImportRoute
   "/stock/labels": typeof AppStockLabelsRoute
@@ -168,6 +176,7 @@ export interface FileRoutesById {
   "/_app/deals/$id": typeof AppDealsIdRoute
   "/_app/deals/new": typeof AppDealsNewRoute
   "/_app/stock/$id": typeof AppStockIdRoute
+  "/_app/stock/epos": typeof AppStockEposRoute
   "/_app/stock/health": typeof AppStockHealthRoute
   "/_app/stock/import": typeof AppStockImportRoute
   "/_app/stock/labels": typeof AppStockLabelsRoute
@@ -189,6 +198,7 @@ export interface FileRouteTypes {
     | "/deals/$id"
     | "/deals/new"
     | "/stock/$id"
+    | "/stock/epos"
     | "/stock/health"
     | "/stock/import"
     | "/stock/labels"
@@ -208,6 +218,7 @@ export interface FileRouteTypes {
     | "/deals/$id"
     | "/deals/new"
     | "/stock/$id"
+    | "/stock/epos"
     | "/stock/health"
     | "/stock/import"
     | "/stock/labels"
@@ -228,6 +239,7 @@ export interface FileRouteTypes {
     | "/_app/deals/$id"
     | "/_app/deals/new"
     | "/_app/stock/$id"
+    | "/_app/stock/epos"
     | "/_app/stock/health"
     | "/_app/stock/import"
     | "/_app/stock/labels"
@@ -337,6 +349,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AppStockIdRouteImport
       parentRoute: typeof AppRoute
     }
+    "/_app/stock/epos": {
+      id: "/_app/stock/epos"
+      path: "/stock/epos"
+      fullPath: "/stock/epos"
+      preLoaderRoute: typeof AppStockEposRouteImport
+      parentRoute: typeof AppRoute
+    }
     "/_app/stock/health": {
       id: "/_app/stock/health"
       path: "/stock/health"
@@ -383,6 +402,7 @@ interface AppRouteChildren {
   AppDealsIdRoute: typeof AppDealsIdRoute
   AppDealsNewRoute: typeof AppDealsNewRoute
   AppStockIdRoute: typeof AppStockIdRoute
+  AppStockEposRoute: typeof AppStockEposRoute
   AppStockHealthRoute: typeof AppStockHealthRoute
   AppStockImportRoute: typeof AppStockImportRoute
   AppStockLabelsRoute: typeof AppStockLabelsRoute
@@ -401,6 +421,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDealsIdRoute: AppDealsIdRoute,
   AppDealsNewRoute: AppDealsNewRoute,
   AppStockIdRoute: AppStockIdRoute,
+  AppStockEposRoute: AppStockEposRoute,
   AppStockHealthRoute: AppStockHealthRoute,
   AppStockImportRoute: AppStockImportRoute,
   AppStockLabelsRoute: AppStockLabelsRoute,
