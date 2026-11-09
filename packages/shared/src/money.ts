@@ -43,6 +43,22 @@ export function formatGBP(pence: number): string {
 }
 
 /**
+ * Pence as a plain decimal-pounds string for an API that takes pounds, such
+ * as Epos Now's "BalanceToAdd": 6324 -> "63.24", 5 -> "0.05", -100 -> "-1.00".
+ * Integer arithmetic only, so no float ever touches the amount; put the
+ * string into the JSON body as a bare number literal. Throws on anything
+ * that is not a whole number of pence.
+ */
+export function penceToDecimal(pence: number): string {
+  if (!Number.isSafeInteger(pence)) throw new Error(`Not a whole number of pence: ${pence}`)
+  const negative = pence < 0
+  const abs = Math.abs(pence)
+  const pounds = Math.floor(abs / 100)
+  const rem = abs % 100
+  return `${negative ? "-" : ""}${pounds}.${rem.toString().padStart(2, "0")}`
+}
+
+/**
  * Convert minor units of a foreign currency to GBP pence at a rate expressed
  * as GBP per one unit of the foreign currency (for example 0.8606 GBP per EUR).
  * Rounds half-up after conversion, never before.

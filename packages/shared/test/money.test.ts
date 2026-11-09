@@ -5,6 +5,7 @@ import {
   eurDecimalToGbpPence,
   formatGBP,
   parseDecimalToMinor,
+  penceToDecimal,
   roundHalfUp,
   roundToRetailEnding,
   roundToStep,
@@ -80,5 +81,23 @@ describe("offer maths", () => {
     expect(roundToRetailEnding(1250)).toBe(1299)
     expect(roundToRetailEnding(1249)).toBe(1249)
     expect(roundToRetailEnding(1200)).toBe(1249)
+  })
+})
+
+describe("penceToDecimal", () => {
+  it("writes pence as decimal pounds without float maths", () => {
+    expect(penceToDecimal(6324)).toBe("63.24")
+    expect(penceToDecimal(5)).toBe("0.05")
+    expect(penceToDecimal(100)).toBe("1.00")
+    expect(penceToDecimal(0)).toBe("0.00")
+    expect(penceToDecimal(-100)).toBe("-1.00")
+    expect(penceToDecimal(123456789)).toBe("1234567.89")
+  })
+  it("round-trips through parseDecimalToMinor", () => {
+    for (const p of [1, 10, 99, 101, 6324, 800000]) expect(parseDecimalToMinor(penceToDecimal(p))).toBe(p)
+  })
+  it("refuses anything that is not whole pence", () => {
+    expect(() => penceToDecimal(1.5)).toThrow()
+    expect(() => penceToDecimal(Number.NaN)).toThrow()
   })
 })

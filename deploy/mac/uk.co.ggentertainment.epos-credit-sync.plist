@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template. Copy to ~/Library/LaunchAgents/ and replace every __PLACEHOLDER__
+  (see deploy/mac/README.md). Runs the Epos Now store-credit sync every
+  minute as the logged-in user, so `security` and `epos` can read the login
+  keychain. No secrets go in this file.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>uk.co.ggentertainment.epos-credit-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__REPO__/deploy/mac/epos-credit-sync.mjs</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VAULT_PB_URL</key>
+    <string>__VAULT_PB_URL__</string>
+    <key>VAULT_PB_EMAIL</key>
+    <string>__VAULT_PB_EMAIL__</string>
+    <key>VAULT_PB_KEYCHAIN_SERVICE</key>
+    <string>__VAULT_PB_KEYCHAIN_SERVICE__</string>
+    <key>EPOS_BIN</key>
+    <string>/usr/local/bin/epos</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/epos-credit-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/epos-credit-sync.log</string>
+</dict>
+</plist>
