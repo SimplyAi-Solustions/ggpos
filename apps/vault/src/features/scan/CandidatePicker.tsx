@@ -1,15 +1,23 @@
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { Camera, CircleCheck, Handshake, ScanSearch, Search, Sparkles, TriangleAlert } from "lucide-react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Camera, CircleCheck, Handshake, Layers, ScanSearch, Search, Sparkles, TriangleAlert } from "lucide-react"
 
-import { buttonClasses, Badge, Button, EmptyState, Money, Skeleton } from "@/ui"
+import { buttonClasses, Badge, Button, EmptyState, Money, Skeleton, useToast } from "@/ui"
 import { cn } from "@/lib/cn"
+import { useStaff } from "@/lib/auth"
+import { errorMessage, requestGradedCheck, saveGradingConfig, useCardDetail } from "@/features/cards/api"
 import { CardImage } from "@/features/cards/CardImage"
+import { HeldBadge } from "@/features/cards/CardDetailPage"
+import { conditionPrices, eraFor, type CardCondition } from "@/features/cards/condition-prices"
 import { numberLabel } from "@/features/cards/format"
+import { summariseGraded, type GradingConfig } from "@/features/cards/grading"
+import { GradingPanel } from "@/features/cards/GradingPanel"
 import { LanguageFlag } from "@/features/cards/LanguageFlag"
 
 import { addToDeal } from "./addToDeal"
 import { modelLabel, searchTextFor, type Candidate, type IdentifyResult } from "./api"
+import { rememberScan } from "./history"
 
 export interface CandidatePickerProps {
   photo: string
@@ -20,21 +28,34 @@ export interface CandidatePickerProps {
   dealId?: string
   onRetake: () => void
   onDeepDive: () => void
+  /** Batch mode: adds the chosen card at the chosen condition to the tray, then the caller scans the next. */
+  onAddToTray: (card: Candidate, condition: CardCondition, pence: number | null) => void
 }
 
 /**
  * After the shot: the photo beside the selected match, then the closest
  * 3 to 6 catalogue cards to pick from. Auto-accepted only when every signal
  * agreed (server side, lib/vault_scan.js `agreement`); otherwise the top
- * match is highlighted but staff choose.
+ * match is highlighted but staff choose. Once a card is chosen: its
+ * condition prices, how many the shop already holds, and whether it is
+ * worth grading.
  */
-export function CandidatePicker({ photo, result, pending, deepPending, error, dealId, onRetake, onDeepDive }: CandidatePickerProps) {
+export function CandidatePicker({ photo, result, pending, deepPending, error, dealId, onRetake, onDeepDive, onAddToTray }: CandidatePickerProps) {
   const navigate = useNavigate()
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [condition, setCondition] = React.useState<CardCondition>("NM")
   const candidates = result?.candidates ?? []
   const selected = candidates.find((c) => c.id === selectedId) ?? candidates[0] ?? null
   const busy = pending || deepPending
   const q = searchTextFor(result?.read)
+
+  // The chosen card goes into this device's recent scans.
+  const rememberedId = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!selected || busy || rememberedId.current === selected.id) return
+    rememberedId.current = selected.id
+    rememberScan(selected)
+  }, [selected, busy])
 
   return (
     <div className="flex flex-col gap-5">
@@ -58,9 +79,12 @@ export function CandidatePicker({ photo, result, pending, deepPending, error, de
           <p className="text-sm font-medium text-pop-text">{error}</p>
         ) : result ? (
           result.auto_accept ? (
-            <Badge tone="ok" dot>
-              All signals agree
-            </Badge>
+            <>
+              <Badge tone="ok" dot>
+                All signals agree
+              </Badge>
+              {selected && <HeldBadge held={selected.held} />}
+            </>
           ) : (
             <p className="flex items-start gap-2 text-sm text-warn">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -70,6 +94,7 @@ export function CandidatePicker({ photo, result, pending, deepPending, error, de
             </p>
           )
         ) : null}
+        {result && !busy && !result.auto_accept && selected && <HeldBadge held={selected.held} />}
       </div>
 
       {/* Photo beside the selected match. */}
@@ -93,17 +118,19 @@ export function CandidatePicker({ photo, result, pending, deepPending, error, de
         </figure>
       </section>
 
-      {/* Choose. */}
+      {/* The chosen card's prices, hold count and grading check. */}
       {selected && !busy && (
-        <div className="flex gap-2 sm:max-w-md">
-          <Button className="flex-[1.4]" icon={<Handshake className="size-5" aria-hidden />} onClick={() => addToDeal(navigate, dealId, selected.id)}>
-            {dealId ? "Add to this deal" : "Add to deal"}
-          </Button>
-          <Link to="/cards/$id" params={{ id: selected.id }} search={{ deal: dealId }} className={cn(buttonClasses("secondary", "md"), "flex-1")}>
-            Open card
-          </Link>
-        </div>
+        <SelectedIntel
+          key={selected.id}
+          candidate={selected}
+          dealId={dealId}
+          condition={condition}
+          onCondition={setCondition}
+          onAddToDeal={() => addToDeal(navigate, dealId, selected.id, condition)}
+          onAddToTray={(pence) => onAddToTray(selected, condition, pence)}
+        />
       )}
+
       {result && !busy && (
         <p className="font-mono text-xs leading-relaxed text-fg-3">
           Read by {modelLabel(result.model)}
@@ -154,7 +181,118 @@ export function CandidatePicker({ photo, result, pending, deepPending, error, de
           </Link>
         </div>
       )}
+    </div>
+  )
+}
 
+/**
+ * What staff need once a card is chosen: the actions, a condition chip row
+ * with each condition's price (own UK sales, else estimated from NM), and
+ * the "Worth grading?" panel. Reads the card route (database only) for the
+ * comps, graded rows and fee config.
+ */
+function SelectedIntel({
+  candidate,
+  dealId,
+  condition,
+  onCondition,
+  onAddToDeal,
+  onAddToTray,
+}: {
+  candidate: Candidate
+  dealId?: string
+  condition: CardCondition
+  onCondition: (c: CardCondition) => void
+  onAddToDeal: () => void
+  onAddToTray: (pence: number | null) => void
+}) {
+  const detail = useCardDetail(candidate.id)
+  const toast = useToast()
+  const staff = useStaff()
+  const queryClient = useQueryClient()
+  const data = detail.data
+  const nm = data?.market.chosen?.gbp_market ?? candidate.nm_pence
+  const rows = React.useMemo(() => conditionPrices(nm, data?.comps ?? [], eraFor(candidate.release_date)), [nm, data, candidate.release_date])
+  const slabs = React.useMemo(() => summariseGraded(data?.graded_comps ?? []), [data])
+  const chosen = rows.find((r) => r.condition === condition) ?? null
+  const finish = data?.market.finish || candidate.finishes[0] || ""
+
+  const graded$ = useMutation({
+    mutationFn: ({ grader, grade }: { grader: string; grade: string }) => requestGradedCheck(candidate.id, finish, grader, grade),
+    onSuccess: (res, { grader, grade }) => {
+      toast({ message: res.existing ? `A ${grader} ${grade} check is already in the queue.` : `${grader} ${grade} check requested.`, tone: "ok" })
+      void queryClient.invalidateQueries({ queryKey: ["vault-card", candidate.id] })
+    },
+    onError: (error) => toast({ message: errorMessage(error, "The graded check was not requested. Try again."), tone: "alert" }),
+  })
+  const saveFees = async (config: GradingConfig) => {
+    await saveGradingConfig(config)
+    toast({ message: "Grading fees saved.", tone: "ok" })
+    void queryClient.invalidateQueries({ queryKey: ["vault-card", candidate.id] })
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex gap-2 sm:max-w-md">
+        <Button className="flex-[1.4]" icon={<Handshake className="size-5" aria-hidden />} onClick={onAddToDeal}>
+          {dealId ? "Add to this deal" : "Add to deal"}
+        </Button>
+        <Link to="/cards/$id" params={{ id: candidate.id }} search={{ deal: dealId }} className={cn(buttonClasses("secondary", "md"), "flex-1")}>
+          Open card
+        </Link>
+      </div>
+
+      {/* Condition chips, each with its price. */}
+      <div role="radiogroup" aria-label="Condition" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] md:mx-0 md:px-0">
+        {rows.map((row) => {
+          const active = row.condition === condition
+          return (
+            <button
+              key={row.condition}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onCondition(row.condition)}
+              className={cn(
+                "flex min-w-[84px] shrink-0 flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition-[border-color,background-color,transform] duration-200 ease-gg active:scale-[0.97]",
+                active ? "border-volt bg-panel ring-2 ring-volt dark:[box-shadow:var(--glow-volt)]" : "border-line bg-panel-2 hover:border-line-2"
+              )}
+            >
+              <span className="flex w-full items-center justify-between gap-2">
+                <span className="font-mono text-xs font-bold">{row.condition}</span>
+                {row.estimated && <span className="label-mono text-[9px] text-warn">est</span>}
+              </span>
+              {detail.isPending && row.condition !== "NM" ? (
+                <Skeleton className="h-4 w-12" />
+              ) : row.pence != null ? (
+                <Money pence={row.pence} size="sm" className="font-bold" />
+              ) : (
+                <span className="text-xs text-fg-3">No data</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      <Button variant="secondary" block icon={<Layers className="size-5" aria-hidden />} onClick={() => onAddToTray(chosen?.pence ?? null)} className="sm:max-w-md">
+        Add {condition} to tray and scan next
+      </Button>
+
+      {detail.isPending ? (
+        <Skeleton className="h-40 rounded-lg" />
+      ) : (
+        <GradingPanel
+          compact
+          raw={nm}
+          slabs={slabs}
+          config={data?.grading ?? { ace_standard_pence: 1500, psa_value_pence: 2500, postage_pence: 800, min_profit_pence: 1000, fees_checked_on: "" }}
+          openRequests={data?.open_requests ?? []}
+          onRequest={(grader, grade) => graded$.mutate({ grader, grade })}
+          requesting={graded$.isPending}
+          canEdit={staff?.role === "admin" || staff?.role === "manager"}
+          onSaveConfig={saveFees}
+        />
+      )}
     </div>
   )
 }
@@ -184,6 +322,7 @@ function CandidateTile({ candidate, rank, selected, onSelect }: { candidate: Can
             <LanguageFlag language={candidate.language} />
           </span>
           {candidate.variant && <Badge className="max-w-full truncate">{candidate.variant}</Badge>}
+          {candidate.held > 0 && <span className="label-mono text-[9px] text-info">Hold {candidate.held}</span>}
           <span className="mt-0.5 flex items-baseline justify-between">
             <span className="label-mono text-[10px] text-fg-3">NM</span>
             {candidate.nm_pence != null ? <Money pence={candidate.nm_pence} size="sm" className="font-bold" /> : <span className="text-xs text-fg-3">No price</span>}

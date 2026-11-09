@@ -4,11 +4,11 @@
  * research.pb.js - research requests (docs/api-contract-launch.md,
  * section 5).
  *
- *   POST /api/vault/research                 (staff)  { query?, card?, retro_title?, item?, trade_in_line?, condition?, finish? }
+ *   POST /api/vault/research                 (staff)  { query?, card?, retro_title?, item?, trade_in_line?, condition?, finish?, grader?, grade? }
  *   GET  /api/vault/research?status=         (staff)  also trade_in_line=, item=, card=, retro_title=, page=
  *   GET  /api/vault/research/{id}            (staff)
  *   POST /api/vault/research/{id}/claim      (staff)
- *   POST /api/vault/research/{id}/complete   (staff)  { result, comps: [{ price, currency, sold_at, url, title, condition }] }
+ *   POST /api/vault/research/{id}/complete   (staff)  { result, comps: [{ price, currency, sold_at, url, title, condition, grader?, grade? }] }
  *   POST /api/vault/research/{id}/cancel     (staff)
  *
  * A request is asked for from a trade-in line, the item page or price
@@ -62,6 +62,8 @@ routerAdd(
       record.set("trade_in_line", fields.trade_in_line);
       record.set("condition", fields.condition);
       record.set("finish", fields.finish);
+      record.set("grader", fields.grader || "");
+      record.set("grade", fields.grade || "");
       record.set("status", "open");
       record.set("requested_by", caller.id);
       record.set("comps", []);

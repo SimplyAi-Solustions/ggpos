@@ -110,6 +110,12 @@ function writeSnapshot(app, params) {
     gbp_market: params.gbpMarket,
     fetched_at: params.fetchedAt,
     evidence_url: params.evidenceUrl || "",
+    // A graded slab's price, or a dated Cardmarket average (see
+    // 1789821560_cardintel_graded_snapshots.js). Blank for a raw spot price,
+    // which is the only kind snapshotsFor reads.
+    grader: params.grader || "",
+    grade: params.grade || "",
+    basis: params.basis || "",
   });
   app.save(record);
   return record;
@@ -306,10 +312,12 @@ function conditionMultipliers(settingsRow) {
  * the file banner), as PriceCandidate[]. A blank `finish` matches rows
  * whose finish is itself blank, never every finish at once - a route that
  * forgot to ask for one must not have its chosen price silently mix a
- * holo snapshot in with a normal one.
+ * holo snapshot in with a normal one. Raw spot prices only: a graded slab's
+ * row (grade set) or a dated rolling average (basis set) is history for the
+ * chart and the grading panel, never a candidate for the raw market.
  */
 function snapshotsFor(app, ownerField, ownerId, finish) {
-  var filter = ownerField + " = {:owner} && finish = {:finish}";
+  var filter = ownerField + " = {:owner} && finish = {:finish} && grade = '' && basis = ''";
   var rows = [];
   try {
     rows = app.findRecordsByFilter("price_snapshots", filter, "-fetched_at", 100, 0, {
