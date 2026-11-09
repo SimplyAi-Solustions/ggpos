@@ -1,58 +1,30 @@
 import * as React from "react"
-import { Handshake } from "lucide-react"
-import { applyPercent } from "@gg/shared/money"
+import { useQueryClient } from "@tanstack/react-query"
+import { useNavigate } from "@tanstack/react-router"
 
-import { FeaturePlaceholder } from "@/shell/FeaturePlaceholder"
-import { Money, MoneyInput, Panel, PercentStepper, Segmented } from "@/ui"
+import { Skeleton } from "@/ui"
 
-type Payout = "cash" | "credit"
+import { createDraft } from "./useDealBuilder"
 
-/** A placeholder that already shows the kit pieces a deal is built from. */
+/** Makes a fresh draft and opens it, so it has an id for Scan and autosave from the start. */
 export function NewDealPage() {
-  const [payout, setPayout] = React.useState<Payout>("credit")
-  const [market, setMarket] = React.useState<number | null>(1000)
-  const [cashRate, setCashRate] = React.useState(50)
-  const [creditRate, setCreditRate] = React.useState(65)
-  const rate = payout === "cash" ? cashRate : creditRate
-  const offer = applyPercent(market ?? 0, rate)
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const started = React.useRef(false)
+
+  React.useEffect(() => {
+    if (started.current) return
+    started.current = true
+    void createDraft().then((draft) => {
+      void queryClient.invalidateQueries({ queryKey: ["deals"] })
+      void navigate({ to: "/deals/$id", params: { id: draft.id }, replace: true })
+    })
+  }, [navigate, queryClient])
 
   return (
-    <FeaturePlaceholder
-      eyebrow="Buy-in"
-      title="New deal"
-      lede="Build an offer line by line, then pay in cash or trade credit."
-      icon={<Handshake aria-hidden />}
-      plans={[
-        "Add cards from Scan or Cards",
-        "Per-line condition and buy rate",
-        "Cash needs ID on file first",
-      ]}
-    >
-      <Panel className="flex flex-col gap-4">
-        <Segmented<Payout>
-          label="Pay out as"
-          block
-          tone={payout === "credit" ? "pop" : "volt"}
-          value={payout}
-          onChange={setPayout}
-          options={[
-            { value: "credit", label: "Trade credit" },
-            { value: "cash", label: "Cash" },
-          ]}
-        />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <MoneyInput label="Market value" value={market} onChange={setMarket} />
-          {payout === "cash" ? (
-            <PercentStepper label="Cash rate" value={cashRate} onChange={setCashRate} />
-          ) : (
-            <PercentStepper label="Credit rate" tone="pop" value={creditRate} onChange={setCreditRate} />
-          )}
-        </div>
-        <div className="flex items-baseline justify-between border-t border-line pt-4">
-          <span className="label-mono text-fg-2">Offer</span>
-          <Money pence={offer} tween size="xl" tone={payout === "credit" ? "pop" : "volt"} />
-        </div>
-      </Panel>
-    </FeaturePlaceholder>
+    <div className="flex flex-col gap-4" aria-busy="true" aria-label="Starting a new deal">
+      <Skeleton className="h-10 w-2/3" />
+      <Skeleton className="h-20" />
+    </div>
   )
 }
