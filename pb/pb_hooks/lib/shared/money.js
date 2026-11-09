@@ -17,6 +17,7 @@ exports.eurDecimalToGbpPence = eurDecimalToGbpPence;
 exports.applyPercent = applyPercent;
 exports.roundToStep = roundToStep;
 exports.roundToRetailEnding = roundToRetailEnding;
+exports.allocatePence = allocatePence;
 /** Round half-up to an integer, symmetric for negatives. */
 function roundHalfUp(value) {
     const sign = value < 0 ? -1 : 1;
@@ -82,4 +83,75 @@ function roundToRetailEnding(pence) {
     if (rem <= 49)
         return pounds * 100 + 49;
     return pounds * 100 + 99;
+}
+/**
+ * Split `total` pence across lines in proportion to `weights`, so the parts
+ * add back up to `total` to the penny.
+ *
+ * Largest remainder, per unit: line i holds `units[i]` identical units (a
+ * quantity), so its part is always a whole number of pence per unit times
+ * that quantity, which is how a per-unit offer price is stored. Every unit
+ * is first given the floor of its fair share; the pennies left over then go
+ * one per unit to the lines with the largest fractional remainder, ties to
+ * the earlier line, so the same inputs always give the same answer.
+ *
+ * With every quantity at 1 (the default) the parts always sum to `total`
+ * exactly. A line of several units can only move in steps of its quantity,
+ * so when every line has more than one unit a penny or two may be left that
+ * no line can take; the parts then sum to slightly less than `total`, never
+ * more, and the caller reads the real sum off the parts.
+ *
+ * Weights that are all zero share the total out equally per unit. A total
+ * of zero or less gives zeros.
+ */
+function allocatePence(total, weights, units = weights.map(() => 1)) {
+    const count = weights.length;
+    if (count === 0)
+        return [];
+    const qty = weights.map((_, i) => { var _a; return Math.max(1, Math.floor((_a = units[i]) !== null && _a !== void 0 ? _a : 1)); });
+    if (!(total > 0))
+        return qty.map(() => 0);
+    const clean = weights.map((w) => (Number.isFinite(w) && w > 0 ? w : 0));
+    let sum = clean.reduce((acc, w) => acc + w, 0);
+    // Nothing to go on: an equal share per unit.
+    const basis = sum > 0 ? clean : qty.slice();
+    if (sum <= 0)
+        sum = qty.reduce((acc, q) => acc + q, 0);
+    const perUnit = [];
+    const fraction = [];
+    let given = 0;
+    for (let i = 0; i < count; i++) {
+        const ideal = (total * basis[i]) / sum / qty[i];
+        const floor = Math.floor(ideal);
+        perUnit.push(floor);
+        fraction.push(ideal - floor);
+        given += floor * qty[i];
+    }
+    let left = total - given;
+    // Largest fractional remainder first, earlier line on a tie.
+    const order = perUnit
+        .map((_, i) => i)
+        .sort((a, b) => fraction[b] - fraction[a] || a - b);
+    for (const i of order) {
+        const step = qty[i];
+        if (left >= step) {
+            perUnit[i] = perUnit[i] + 1;
+            left -= step;
+        }
+    }
+    // Whatever a multi-unit line could not take goes to any line it fits,
+    // in line order, until nothing that fits is left.
+    let moved = true;
+    while (left > 0 && moved) {
+        moved = false;
+        for (let i = 0; i < count && left > 0; i++) {
+            const step = qty[i];
+            if (left >= step) {
+                perUnit[i] = perUnit[i] + 1;
+                left -= step;
+                moved = true;
+            }
+        }
+    }
+    return perUnit.map((unit, i) => unit * qty[i]);
 }
