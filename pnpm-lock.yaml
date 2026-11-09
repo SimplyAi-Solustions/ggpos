@@ -21,6 +21,109 @@ importers:
         specifier: ^0.8.1
         version: 0.8.1(prettier@3.9.8)
 
+  apps/vault:
+    dependencies:
+      '@fontsource/anton':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/poppins':
+        specifier: ^5.2.0
+        version: 5.3.0
+      '@fontsource/space-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@gg/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@tailwindcss/vite':
+        specifier: ^4
+        version: 4.3.3(vite@8.3.0(@types/node@20.19.43)(jiti@2.7.0)(terser@5.51.2))
+      '@tanstack/react-query':
+        specifier: ^5.103.1
+        version: 5.103.1(react@19.3.0)
+      '@tanstack/react-router':
+        specifier: ^1.170.38
+        version: 1.170.38(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      lucide-react:
+        specifier: ^1.47.0
+        version: 1.47.0(react@19.3.0)
+      motion:
+        specifier: ^13.4.0
+        version: 13.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      pocketbase:
+        specifier: ^0.28.1
+        version: 0.28.1
+      react:
+        specifier: ^19.2.8
+        version: 19.3.0
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.3.0(react@19.3.0)
+      tailwindcss:
+        specifier: ^4
+        version: 4.3.3
+    devDependencies:
+      '@eslint/js':
+        specifier: ^10
+        version: 10.0.1(eslint@10.11.0(jiti@2.7.0))
+      '@tanstack/router-plugin':
+        specifier: ^1.168.40
+        version: 1.168.40(@tanstack/react-router@1.170.38(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(rolldown@1.2.9)(rollup@4.63.4)(vite@8.3.0(@types/node@20.19.43)(jiti@2.7.0)(terser@5.51.2))
+      '@testing-library/jest-dom':
+        specifier: ^7.0.1
+        version: 7.0.1(@testing-library/dom@10.4.2)(vitest@4.1.11(@types/node@20.19.43)(jsdom@30.1.0)(vite@8.3.0(@types/node@20.19.43)(jiti@2.7.0)(terser@5.51.2)))
+      '@testing-library/react':
+        specifier: ^16.3.3
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@testing-library/user-event':
+        specifier: ^14.6.7
+        version: 14.6.7(@testing-library/dom@10.4.2)
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      '@types/react':
+        specifier: ^19
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: ^6
+        version: 6.1.1(vite@8.3.0(@types/node@20.19.43)(jiti@2.7.0)(terser@5.51.2))
+      eslint:
+        specifier: ^10
+        version: 10.11.0(jiti@2.7.0)
+      eslint-plugin-react-hooks:
+        specifier: ^7.1.1
+        version: 7.1.1(eslint@10.11.0(jiti@2.7.0))
+      eslint-plugin-react-refresh:
+        specifier: ^0.5.2
+        version: 0.5.7(eslint@10.11.0(jiti@2.7.0))
+      globals:
+        specifier: ^17
+        version: 17.12.0
+      jsdom:
+        specifier: ^30.1.0
+        version: 30.1.0
+      prettier:
+        specifier: ^3.9.6
+        version: 3.9.8
+      prettier-plugin-tailwindcss:
+        specifier: ^0.8.1
+        version: 0.8.1(prettier@3.9.8)
+      typescript:
+        specifier: ~6
+        version: 6.0.3
+      typescript-eslint:
+        specifier: ^8
+        version: 8.70.0(eslint@10.11.0(jiti@2.7.0))(typescript@6.0.3)
+      vite:
+        specifier: ^8
+        version: 8.3.0(@types/node@20.19.43)(jiti@2.7.0)(terser@5.51.2)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@20.19.43)(jsdom@30.1.0)(vite@8.3.0(@types/node@20.19.43)(jiti@2.7.0)(terser@5.51.2))
+
   apps/web:
     dependencies:
       '@base-ui/react':
@@ -895,6 +998,9 @@ packages:
 
   '@fontsource/anton@5.3.0':
     resolution: {integrity: sha512-OR1D5n124n2XRs66SbX7IjcOSptljEJE8FcDNnlni2y1/M6KpTx7cU2PIWzTSsBj4WFkHPw24On8qw3qkQZuTw==}
+
+  '@fontsource/poppins@5.3.0':
+    resolution: {integrity: sha512-cms1nM7U6SN8epIV1WMVOV8VsA645aSm3wHfzIQnkk188U341ThbJGSl2Sv54V29gnDbT2arMPfLzvVIIVCceQ==}
 
   '@fontsource/space-mono@5.3.0':
     resolution: {integrity: sha512-FrpBMOVWn3PRdRHlrZWC55X3kZG/2BTH7SM5ZyS/bky3iKya2BturI5lk+t0RoDQL2JyHzURsVq/EisCsxpI5A==}
@@ -5607,6 +5713,8 @@ snapshots:
   '@fontsource-variable/jost@5.3.0': {}
 
   '@fontsource/anton@5.3.0': {}
+
+  '@fontsource/poppins@5.3.0': {}
 
   '@fontsource/space-mono@5.3.0': {}
 

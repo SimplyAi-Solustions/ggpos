@@ -1,0 +1,99 @@
+/*
+ * GG Vault brand tokens. One source of truth for colour, type, radius,
+ * shadow and easing. Light is the brand site's paper and ink; dark is the
+ * GG HQ dashboard: near-black, glassy panels, neon accents.
+ *
+ * Components use the semantic names (--bg, --panel, --fg, --line...) through
+ * the Tailwind theme in index.css (bg-bg, bg-panel, text-fg, border-line).
+ * Brand constants (--volt, --pop, --ink, --paper) are the same in both modes.
+ */
+
+:root {
+  /* Brand constants, ggentertainment.co.uk */
+  --volt: #fedf01;
+  --volt-deep: #e3c700;
+  --pop: #ff2e6b;
+  --ink: #0b0b0b;
+  --paper: #ffffff;
+  --paper-2: #f3f3ef;
+  --paper-3: #e8e8e2;
+  --ink-2: #3d3d3a;
+  --ink-3: #7a7a74; /* non-text marks only: 4.2:1 on paper fails AA for text */
+  --cyan: #3ee6ff;
+  --lime: #9cff6e;
+  --orange: #ff9a3c;
+  --violet: #a78bfa;
+
+  /* Light (default) */
+  --bg: #f3f3ef;
+  --bg-2: #e8e8e2;
+  --panel: #ffffff;
+  --panel-2: #f8f8f5;
+  --line: rgba(11, 11, 11, 0.08);
+  --line-2: rgba(11, 11, 11, 0.16);
+  --fg: #0b0b0b;
+  --fg-2: #3d3d3a;
+  --fg-3: #6e6e68; /* AA on paper and panel */
+  --on-volt: #0b0b0b;
+  --on-pop: #ffffff;
+  /* Text-safe accents. Pop and the neons fail AA as text on paper, so text
+     uses these darker partners in light mode and the raw neons in dark. */
+  --pop-text: #c4174c;
+  --ok: #2c7a12;
+  --warn: #a8530a;
+  --info: #087a92;
+  --accent-violet: #6d4fd8;
+
+  --panel-blur: 0px;
+  --shadow-panel: 0 1px 2px rgba(11, 11, 11, 0.05), 0 12px 32px rgba(11, 11, 11, 0.07);
+  --shadow-sheet: 0 -8px 40px rgba(11, 11, 11, 0.18);
+  --shadow-volt: 0 6px 20px rgba(227, 199, 0, 0.35);
+  --glow-volt: 0 0 0 transparent;
+  --glow-pop: 0 0 0 transparent;
+  --backdrop: rgba(11, 11, 11, 0.4);
+
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 22px;
+
+  --ease-gg: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-display: "Anton", "Impact", sans-serif;
+  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, monospace;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --tabbar-h: 64px;
+
+  color-scheme: light;
+}
+
+:root.dark {
+  --bg: #040406;
+  --bg-2: #0a0a0f;
+  --panel: rgba(16, 16, 22, 0.58);
+  --panel-2: rgba(24, 24, 32, 0.66);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.14);
+  --fg: #f4f4f0;
+  --fg-2: #b4b4ae;
+  --fg-3: #8a8a84; /* the HQ #74746f is 4.1:1 on bg, lifted for AA text */
+  --pop-text: #ff2e6b;
+  --ok: #9cff6e;
+  --warn: #ff9a3c;
+  --info: #3ee6ff;
+  --accent-violet: #a78bfa;
+
+  --panel-blur: 18px;
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 50px rgba(0, 0, 0, 0.45);
+  --shadow-sheet: 0 -12px 60px rgba(0, 0, 0, 0.6);
+  --shadow-volt: 0 0 24px rgba(254, 223, 1, 0.35);
+  --glow-volt: 0 0 18px rgba(254, 223, 1, 0.45);
+  --glow-pop: 0 0 18px rgba(255, 46, 107, 0.45);
+  --backdrop: rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
