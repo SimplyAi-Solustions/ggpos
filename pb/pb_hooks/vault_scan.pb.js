@@ -192,8 +192,8 @@ routerAdd(
     }
     const byId = {};
     for (let i = 0; i < records.length; i++) byId[records[i].id] = records[i];
-    const candidates = ranked.slice(0, 6).map((entry) => {
-      const row = db.cardRow(e.app, byId[entry.card.id], look, true);
+    const candidates = ranked.slice(0, 6).map((entry, i) => {
+      const row = db.cardRow(e.app, byId[entry.card.id], look, true, i < 3);
       row.score = entry.score;
       row.why = entry.why;
       return row;
@@ -246,7 +246,7 @@ routerAdd(
       if (score > 0) scored.push({ record: pool[i], row: row, score: score });
     }
     scored.sort((a, b) => b.score - a.score || String(b.row.release_date).localeCompare(String(a.row.release_date)));
-    const cards = scored.slice(0, limit).map((entry) => db.cardRow(e.app, entry.record, look, true));
+    const cards = scored.slice(0, limit).map((entry, i) => db.cardRow(e.app, entry.record, look, true, i < 5));
     return e.json(200, { cards: cards, parsed: parsed });
   },
   $apis.requireAuth("staff")
@@ -288,7 +288,7 @@ routerAdd(
     }
 
     const card = db.cardRow(e.app, record, look, false);
-    const market = db.marketFor(e.app, record);
+    const market = db.ensurePriced(e.app, record);
     card.nm_pence = market.chosen ? market.chosen.gbp_market : null;
     card.nm_source = market.chosen ? market.chosen.source : "";
 

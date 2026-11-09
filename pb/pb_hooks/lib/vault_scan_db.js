@@ -75,7 +75,25 @@ function gradedFor(record) {
 }
 
 /** The row every vault card list reads. `withPrice` adds the NM market and the "already hold" count (a few reads per card). */
-function cardRow(app, record, look, withPrice) {
+/**
+ * The card's market, fetching a first snapshot through the adapters when it
+ * has none yet. The bulk catalogue import brings cards in without prices, so
+ * the first scan or search of a card prices it on the spot rather than
+ * showing "No data". snapshotCard is stamp limited (20 hours) and never
+ * throws, so a slow or failed source just leaves the card unpriced.
+ */
+function ensurePriced(app, record) {
+  var market = marketFor(app, record);
+  if (market.chosen) return market;
+  try {
+    require(__hooks + "/lib/vault_snapshots_db.js").snapshotCard(app, record, {});
+  } catch (err) {
+    return market;
+  }
+  return marketFor(app, record);
+}
+
+function cardRow(app, record, look, withPrice, fetchMissing) {
   var scan = require(__hooks + "/lib/vault_scan.js");
   var u = util();
   var set = look.set(record.getString("set"));
@@ -112,7 +130,7 @@ function cardRow(app, record, look, withPrice) {
   };
   row.variant = scan.variantTag({ name: row.name, set_name: row.set_name, rarity: row.rarity, finishes: finishes });
   if (withPrice) {
-    var market = marketFor(app, record);
+    var market = fetchMissing ? ensurePriced(app, record) : marketFor(app, record);
     if (market.chosen) {
       row.nm_pence = market.chosen.gbp_market;
       row.nm_source = market.chosen.source;
@@ -354,6 +372,7 @@ function identifyPool(app, read, gameKey, opts) {
 }
 
 module.exports = {
+  ensurePriced: ensurePriced,
   lookups: lookups,
   marketFor: marketFor,
   gradedFor: gradedFor,
