@@ -38,7 +38,22 @@ var SENTENCES = {
   result: "Keep the result to 2,000 characters or fewer.",
   compsList: "Send the comps as a list.",
   compsMany: "Send 20 comps at most. Keep the closest matches.",
+  grade: "Say both the grader and the grade, for example PSA 10.",
 };
+
+/**
+ * A grader and grade pair ("PSA" "10", "ACE" "9.5") cleaned, or null when
+ * both are blank; `{ error }` when only one is given or either is malformed.
+ * Letters only for the grader, a number with an optional .5 for the grade.
+ */
+function cleanGrade(graderRaw, gradeRaw) {
+  var grader = asStr(graderRaw).toUpperCase();
+  var grade = asStr(gradeRaw).replace(/\.0$/, "");
+  if (!grader && !grade) return null;
+  if (!grader || !grade) return { error: SENTENCES.grade };
+  if (!/^[A-Z]{2,10}$/.test(grader) || !/^(10|[1-9](\.5)?)$/.test(grade)) return { error: SENTENCES.grade };
+  return { grader: grader, grade: grade };
+}
 
 function asStr(value) {
   if (value === null || value === undefined) return "";
@@ -120,6 +135,8 @@ function shape(app, record) {
     trade_in_line: record.getString("trade_in_line"),
     condition: record.getString("condition"),
     finish: record.getString("finish"),
+    grader: record.getString("grader"),
+    grade: record.getString("grade"),
     title: titleFor(app, record),
     requested_by: person(app, record.getString("requested_by")),
     claimed_by: person(app, record.getString("claimed_by")),
@@ -151,9 +168,22 @@ function resolve(app, body) {
     trade_in_line: "",
     condition: asStr(body.condition),
     finish: asStr(body.finish),
+    grader: "",
+    grade: "",
   };
   var kind = "";
   var grade = "";
+  // A graded request: "PSA 10" of this card, from the vault's grading panel
+  // (1789821560_cardintel_graded_snapshots.js). Its comps are written as
+  // graded snapshots, never as the raw market.
+  var slab = cleanGrade(body.grader, body.grade);
+  if (slab && slab.error) return { ok: false, status: 400, message: slab.error };
+  if (slab) {
+    fields.grader = slab.grader;
+    fields.grade = slab.grade;
+    kind = "graded";
+    grade = slab.grader + " " + slab.grade;
+  }
   // A line or an item with no catalogue row behind it is searched by its title.
   var fallbackTitle = "";
 
@@ -188,7 +218,7 @@ function resolve(app, body) {
     }
     kind = kind || item.getString("kind");
     fallbackTitle = fallbackTitle || item.getString("title");
-    if (item.getString("grade_company") || item.getString("grade")) {
+    if (!grade && (item.getString("grade_company") || item.getString("grade"))) {
       grade = [item.getString("grade_company"), item.getString("grade")].filter(Boolean).join(" ");
     }
   }
@@ -258,11 +288,14 @@ function liveTwin(app, fields) {
     params.item = fields.item;
   } else if (fields.card || fields.retro_title) {
     filter += " && card = {:card} && retro_title = {:retro} && finish = {:finish} && condition = {:condition}";
+    filter += " && grader = {:grader} && grade = {:grade}";
     filter += " && trade_in_line = '' && item = ''";
     params.card = fields.card;
     params.retro = fields.retro_title;
     params.finish = fields.finish;
     params.condition = fields.condition;
+    params.grader = fields.grader || "";
+    params.grade = fields.grade || "";
   } else {
     filter += " && card = '' && retro_title = '' && item = '' && trade_in_line = '' && query = {:query}";
     params.query = fields.query;
@@ -323,6 +356,8 @@ function cleanComps(raw) {
     if (checked.url.length > 500) {
       return { ok: false, message: "Comp " + n + ": that link is too long. Paste the listing's own URL." };
     }
+    var compSlab = cleanGrade(comp.grader, comp.grade);
+    if (compSlab && compSlab.error) return { ok: false, message: "Comp " + n + ": " + compSlab.error };
     comps.push({
       price: checked.price,
       currency: "GBP",
@@ -330,6 +365,8 @@ function cleanComps(raw) {
       url: checked.url,
       title: asStr(comp.title).slice(0, 200),
       condition: asStr(comp.condition).slice(0, 20),
+      grader: compSlab ? compSlab.grader : "",
+      grade: compSlab ? compSlab.grade : "",
       // Kept for the write; dropped before the comps are stored.
       _soldDate: checked.soldDate,
     });
@@ -355,6 +392,10 @@ function writeComps(txApp, request, comps, actorId, ip) {
   var written = 0;
   for (var i = 0; i < comps.length; i++) {
     var comp = comps[i];
+    // A comp's own slab wins; otherwise the request's ("PSA 10" asked for,
+    // every comp sent is a PSA 10). Blank for a raw card.
+    var grader = comp.grader || request.getString("grader") || "";
+    var grade = comp.grade || request.getString("grade") || "";
     var snapshot = policy.writeSnapshot(txApp, {
       card: card || "",
       retroTitle: card ? "" : retro,
@@ -370,10 +411,16 @@ function writeComps(txApp, request, comps, actorId, ip) {
       gbpMarket: comp.price,
       fetchedAt: comp._soldDate.toISOString(),
       evidenceUrl: comp.url,
+      grader: card ? grader : "",
+      grade: card ? grade : "",
     });
     var meta = card
       ? { card: card, finish: finish, condition: request.getString("condition") || "NM", price: comp.price }
       : { retro_title: retro, completeness: completeness, price: comp.price };
+    if (card && grade) {
+      meta.grader = grader;
+      meta.grade = grade;
+    }
     meta.research = request.id;
     auditLib.writeAuditLog(txApp, {
       actor: actorId,
@@ -400,6 +447,8 @@ function storedComps(comps) {
       url: comp.url,
       title: comp.title,
       condition: comp.condition,
+      grader: comp.grader || "",
+      grade: comp.grade || "",
     });
   }
   return out;
@@ -427,4 +476,5 @@ module.exports = {
   writeComps: writeComps,
   storedComps: storedComps,
   stateRefusal: stateRefusal,
+  cleanGrade: cleanGrade,
 };

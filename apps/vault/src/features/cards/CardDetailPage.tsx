@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, ExternalLink, Handshake, PackagePlus, PencilLine, SearchCheck } from "lucide-react"
 
 import { addToDeal } from "@/features/scan/addToDeal"
+import { useStaff } from "@/lib/auth"
 import {
   Badge,
   Button,
@@ -19,13 +20,24 @@ import {
   useToast,
 } from "@/ui"
 
-import { errorMessage, requestUkPriceCheck, setUkMarketPrice, useCardDetail, type CardDetail, type CardRow } from "./api"
+import {
+  errorMessage,
+  requestGradedCheck,
+  requestUkPriceCheck,
+  saveGradingConfig,
+  setUkMarketPrice,
+  snapshotCard,
+  useCardDetail,
+  type CardDetail,
+  type CardRow,
+} from "./api"
 import { CardImage } from "./CardImage"
 import { averageOfLast, conditionPrices, CONDITIONS, eraFor, type CardCondition } from "./condition-prices"
 import { languageName, multipleLabel, numberLabel, shortDate } from "./format"
+import { findSlab, SLABS, summariseGraded, type GradingConfig } from "./grading"
+import { GradingPanel } from "./GradingPanel"
 import { LanguageFlag } from "./LanguageFlag"
 import { cardmarketUrl, ebaySoldUrl, formatNative, sourceLabel } from "./links"
-import { pickSeries } from "./chart-data"
 import { PriceChart } from "./PriceChart"
 
 export interface CardDetailPageProps {
@@ -33,6 +45,9 @@ export interface CardDetailPageProps {
   /** The deal Scan or Cards was opened from, when there is one. */
   dealId?: string
 }
+
+/** A snapshot older than this asks the server for a fresh one when the page opens. */
+const SNAPSHOT_STALE_HOURS = 20
 
 export function CardDetailPage({ id, dealId }: CardDetailPageProps) {
   const query = useCardDetail(id)
@@ -101,34 +116,74 @@ function Meta({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+/** Asks the server for a fresh snapshot once per card when the last one is missing or a day old, then refreshes the page. */
+function useFreshSnapshot(detail: CardDetail) {
+  const queryClient = useQueryClient()
+  const asked = React.useRef<string | null>(null)
+  const { id } = detail.card
+  const at = detail.snapshotted_at
+  React.useEffect(() => {
+    if (asked.current === id) return
+    const ageHours = at ? (Date.now() - new Date(at).getTime()) / 36e5 : Infinity
+    if (ageHours < SNAPSHOT_STALE_HOURS) return
+    asked.current = id
+    snapshotCard(id)
+      .then((result) => {
+        if (result.written || result.seeded || result.graded) void queryClient.invalidateQueries({ queryKey: ["vault-card", id] })
+      })
+      .catch(() => {
+        // The page still shows what is stored; the daily job will catch up.
+      })
+  }, [id, at, queryClient])
+}
+
 function CardDetailView({ detail, dealId }: { detail: CardDetail; dealId?: string }) {
-  const { card, market, comps, history, versions, research } = detail
+  const { card, market, comps, history, versions, research, graded_comps: gradedComps, held, grading, open_requests: openRequests } = detail
   const navigate = useNavigate()
   const toast = useToast()
+  const staff = useStaff()
   const queryClient = useQueryClient()
   const [compFilter, setCompFilter] = React.useState<CardCondition | "ALL">("ALL")
   const [priceSheet, setPriceSheet] = React.useState(false)
+  useFreshSnapshot(detail)
 
   const era = eraFor(card.release_date)
   const nm = market.chosen?.gbp_market ?? null
   const rows = conditionPrices(nm, comps, era)
   const anyEstimated = rows.some((r) => r.estimated)
-  const grade10 =
-    card.graded.find((g) => g.grader === "PSA" && /^10\b/.test(g.grade)) ?? card.graded.find((g) => /^10\b/.test(g.grade))
+  const slabs = React.useMemo(() => summariseGraded(gradedComps), [gradedComps])
+  const psa10 = findSlab(slabs, SLABS[0]!) ?? findSlab(slabs, SLABS[2]!)
   const lastSold = comps[0] ?? null
   const avg5 = averageOfLast(comps)
   const finish = market.finish || card.finishes[0] || ""
-  const series = pickSeries(history, market.chosen?.source)
   const shownComps = compFilter === "ALL" ? comps : comps.filter((c) => c.condition.toUpperCase() === compFilter)
+  const canEditFees = staff?.role === "admin" || staff?.role === "manager"
+
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["vault-card", card.id] })
 
   const research$ = useMutation({
     mutationFn: () => requestUkPriceCheck(card.id, finish, "NM"),
     onSuccess: (res) => {
       toast({ message: res.existing ? "A UK price check is already in the queue." : "UK price check requested.", tone: "ok" })
-      void queryClient.invalidateQueries({ queryKey: ["vault-card", card.id] })
+      invalidate()
     },
     onError: (error) => toast({ message: errorMessage(error, "The price check was not requested. Try again."), tone: "alert" }),
   })
+
+  const graded$ = useMutation({
+    mutationFn: ({ grader, grade }: { grader: string; grade: string }) => requestGradedCheck(card.id, finish, grader, grade),
+    onSuccess: (res, { grader, grade }) => {
+      toast({ message: res.existing ? `A ${grader} ${grade} check is already in the queue.` : `${grader} ${grade} check requested.`, tone: "ok" })
+      invalidate()
+    },
+    onError: (error) => toast({ message: errorMessage(error, "The graded check was not requested. Try again."), tone: "alert" }),
+  })
+
+  const saveFees = async (config: GradingConfig) => {
+    await saveGradingConfig(config)
+    toast({ message: "Grading fees saved.", tone: "ok" })
+    invalidate()
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -141,12 +196,12 @@ function CardDetailView({ detail, dealId }: { detail: CardDetail; dealId?: strin
             <CardImage src={card.image_large || card.image_small} alt={`${card.name}, ${card.set_name} ${numberLabel(card)}`} width={150} priority className="sm:!h-[307px] sm:!w-[220px]" />
           </Card>
           <div className="min-w-0 flex-1 sm:hidden">
-            <HeaderText card={card} />
+            <HeaderText card={card} held={held} />
           </div>
         </div>
         <div className="flex min-w-0 flex-col gap-4">
           <div className="hidden sm:block">
-            <HeaderText card={card} />
+            <HeaderText card={card} held={held} />
           </div>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
             <Meta label="Set" value={card.set_name} />
@@ -191,10 +246,10 @@ function CardDetailView({ detail, dealId }: { detail: CardDetail; dealId?: strin
           {nm != null ? <Money pence={nm} size="lg" /> : <span className="text-lg font-semibold text-fg-3">No price</span>}
         </Tile>
         <Tile
-          label={grade10 ? `${grade10.grader} ${grade10.grade}` : "Grade 10"}
-          foot={grade10 && nm ? `${multipleLabel(grade10.pence / nm)} NM` : grade10 ? "" : "No graded sales yet"}
+          label={psa10 ? `${psa10.grader} ${psa10.grade}` : "PSA 10"}
+          foot={psa10 ? `${nm ? `${multipleLabel(psa10.pence / nm)} NM · ` : ""}${psa10.fromSales ? "UK sold" : "from UK listings"}` : "No graded sales yet"}
         >
-          {grade10 ? <Money pence={grade10.pence} size="lg" /> : <span className="text-lg font-semibold text-fg-3">None</span>}
+          {psa10 ? <Money pence={psa10.pence} size="lg" /> : <span className="text-lg font-semibold text-fg-3">None</span>}
         </Tile>
         <Tile label="Last sold, UK" foot={lastSold ? `${lastSold.condition} · ${shortDate(lastSold.sold_at)}` : "No UK sales recorded"}>
           {lastSold ? <Money pence={lastSold.pence} size="lg" /> : <span className="text-lg font-semibold text-fg-3">None</span>}
@@ -239,7 +294,25 @@ function CardDetailView({ detail, dealId }: { detail: CardDetail; dealId?: strin
         </ul>
       </section>
 
-      {series.points.length >= 2 && <PriceChart points={series.points} sourceLabel={sourceLabel(series.source)} />}
+      <PriceChart
+        history={history}
+        preferredSource={market.chosen?.source}
+        comps={comps}
+        openRequests={openRequests}
+        onRequestGraded={(grader, grade) => graded$.mutate({ grader, grade })}
+        requesting={graded$.isPending}
+      />
+
+      <GradingPanel
+        raw={nm}
+        slabs={slabs}
+        config={grading}
+        openRequests={openRequests}
+        onRequest={(grader, grade) => graded$.mutate({ grader, grade })}
+        requesting={graded$.isPending}
+        canEdit={canEditFees}
+        onSaveConfig={saveFees}
+      />
 
       {/* Sold list. */}
       <section aria-labelledby="sold-heading" className="flex flex-col gap-3">
@@ -327,7 +400,7 @@ function CardDetailView({ detail, dealId }: { detail: CardDetail; dealId?: strin
   )
 }
 
-function HeaderText({ card }: { card: CardRow }) {
+function HeaderText({ card, held }: { card: CardRow; held: number }) {
   return (
     <div className="flex flex-col gap-2">
       <p className="label-mono flex items-center gap-2 text-pop-text">
@@ -340,8 +413,19 @@ function HeaderText({ card }: { card: CardRow }) {
         <LanguageFlag language={card.language} />
         {card.variant && <Badge>{card.variant}</Badge>}
         <span className="font-mono text-sm text-fg-2 tnum">#{numberLabel(card)}</span>
+        <HeldBadge held={held} />
       </div>
     </div>
+  )
+}
+
+/** "Already hold 2": items of this card in stock, reserved or listed. Says nothing at zero. */
+export function HeldBadge({ held, className }: { held: number; className?: string }) {
+  if (!held) return null
+  return (
+    <Badge tone="info" dot className={className}>
+      Already hold {held}
+    </Badge>
   )
 }
 
@@ -368,23 +452,30 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10)
 }
 
+type SlabChoice = "RAW" | "PSA 10" | "PSA 9" | "ACE 10"
+
 /**
  * The custom market price: saved through the uk-comp route as a staff UK
- * sold comp, which leads every other source while it is fresh (30 days).
+ * sold comp, which leads every other source while it is fresh (30 days). A
+ * slab choice files it as a graded comp instead, for the grading panel.
  */
 function CustomPriceSheet({ open, onClose, card, finish }: { open: boolean; onClose: () => void; card: CardRow; finish: string }) {
   const [price, setPrice] = React.useState<number | null>(null)
   const [url, setUrl] = React.useState("")
   const [soldAt, setSoldAt] = React.useState(todayIso)
   const [condition, setCondition] = React.useState<CardCondition>("NM")
+  const [slab, setSlab] = React.useState<SlabChoice>("RAW")
   const [error, setError] = React.useState<string | null>(null)
   const toast = useToast()
   const queryClient = useQueryClient()
 
   const save = useMutation({
-    mutationFn: () => setUkMarketPrice(card.id, { finish, condition, price: price ?? 0, url: url.trim(), sold_at: soldAt }),
+    mutationFn: () => {
+      const [grader, grade] = slab === "RAW" ? ["", ""] : slab.split(" ")
+      return setUkMarketPrice(card.id, { finish, condition: slab === "RAW" ? condition : "NM", price: price ?? 0, url: url.trim(), sold_at: soldAt, grader, grade })
+    },
     onSuccess: () => {
-      toast({ message: "UK market price saved.", tone: "ok" })
+      toast({ message: slab === "RAW" ? "UK market price saved." : `${slab} sale saved.`, tone: "ok" })
       void queryClient.invalidateQueries({ queryKey: ["vault-card", card.id] })
       onClose()
     },
@@ -396,7 +487,7 @@ function CustomPriceSheet({ open, onClose, card, finish }: { open: boolean; onCl
       open={open}
       onClose={onClose}
       title="Set market price"
-      description="Saved as a UK sold price. It leads every other source for 30 days."
+      description={slab === "RAW" ? "Saved as a UK sold price. It leads every other source for 30 days." : `Saved as a UK sold ${slab} slab. It sets the graded figure and never the raw price.`}
       footer={
         <Button block loading={save.isPending} disabled={!price || !url.trim()} onClick={() => save.mutate()}>
           Save price
@@ -404,8 +495,9 @@ function CustomPriceSheet({ open, onClose, card, finish }: { open: boolean; onCl
       }
     >
       <div className="flex flex-col gap-4">
+        <Segmented label="Raw or slab" options={(["RAW", "PSA 10", "PSA 9", "ACE 10"] as const).map((s) => ({ value: s, label: s === "RAW" ? "Raw" : s }))} value={slab} onChange={setSlab} block size="sm" />
         <MoneyInput label="Sold for" value={price} onChange={setPrice} size="lg" />
-        <Segmented label="Condition" options={CONDITIONS.map((c) => ({ value: c, label: c }))} value={condition} onChange={setCondition} block />
+        {slab === "RAW" && <Segmented label="Condition" options={CONDITIONS.map((c) => ({ value: c, label: c }))} value={condition} onChange={setCondition} block />}
         <Input label="eBay UK listing" hint="The sold listing's own link, ebay.co.uk/itm/..." inputMode="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.ebay.co.uk/itm/" />
         <Input label="Sold on" type="date" value={soldAt} max={todayIso()} onChange={(e) => setSoldAt(e.target.value)} error={error} />
       </div>

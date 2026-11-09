@@ -74,7 +74,7 @@ function gradedFor(record) {
   return rows;
 }
 
-/** The row every vault card list reads. `withPrice` adds the NM market (a few reads per card). */
+/** The row every vault card list reads. `withPrice` adds the NM market and the "already hold" count (a few reads per card). */
 function cardRow(app, record, look, withPrice) {
   var scan = require(__hooks + "/lib/vault_scan.js");
   var u = util();
@@ -86,6 +86,7 @@ function cardRow(app, record, look, withPrice) {
   var row = {
     id: record.id,
     game: game ? game.getString("key") : "",
+    game_id: game ? game.id : "",
     game_name: game ? game.getString("name") : "",
     name: record.getString("name"),
     number: record.getString("number"),
@@ -105,6 +106,7 @@ function cardRow(app, record, look, withPrice) {
     nm_pence: null,
     nm_source: "",
     graded: gradedFor(record),
+    held: 0,
   };
   row.variant = scan.variantTag({ name: row.name, set_name: row.set_name, rarity: row.rarity, finishes: finishes });
   if (withPrice) {
@@ -113,6 +115,7 @@ function cardRow(app, record, look, withPrice) {
       row.nm_pence = market.chosen.gbp_market;
       row.nm_source = market.chosen.source;
     }
+    row.held = require(__hooks + "/lib/vault_snapshots_db.js").heldCount(app, record.id);
   }
   return row;
 }

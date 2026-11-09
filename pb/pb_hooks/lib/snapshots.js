@@ -64,14 +64,24 @@ function isoWeekKey(date) {
   return d.getUTCFullYear() + "-W" + (week < 10 ? "0" + week : String(week));
 }
 
-/** What a snapshot is a price for: the card or the retro title, its finish and its source. */
+/**
+ * What a snapshot is a price for: the card or the retro title, its finish,
+ * its source, and (1789821560_cardintel_graded_snapshots.js) the grade and
+ * basis, so a PSA 10 row never displaces the raw row from the same week.
+ */
 function targetKey(row) {
   return (
     (row.getString("card") || "retro:" + row.getString("retro_title")) +
     "|" +
     row.getString("finish") +
     "|" +
-    row.getString("source")
+    row.getString("source") +
+    "|" +
+    row.getString("grader") +
+    " " +
+    row.getString("grade") +
+    "|" +
+    row.getString("basis")
   );
 }
 

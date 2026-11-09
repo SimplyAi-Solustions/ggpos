@@ -7,6 +7,12 @@
  *   GET  /api/vault/scan/cards        (staff)  ?q=&game=&limit=
  *   GET  /api/vault/scan/cards/{id}   (staff)
  *
+ * The card route also returns what the vault's price intelligence needs
+ * (history points labelled by grade and basis, graded comps, the "already
+ * hold" count, the grading fee config and the open research requests),
+ * all read from the database; the on-demand snapshot is a separate POST in
+ * vault_snapshots.pb.js.
+ *
  * identify reads a card photo with Claude Haiku 5.5 and reruns it on
  * Claude Sonnet 5.5 when Haiku cannot read the collector number or is
  * unsure, or when staff ask for a deep dive (`deep: true`). The read is
@@ -178,6 +184,12 @@ routerAdd(
     const ranked = matched.ranked;
 
     const verdict = scan.agreement(read, ranked);
+    // The top match counts as "scanned" for the daily snapshot job
+    // (lib/vault_snapshots.js, the 30-day scan window). Best effort.
+    if (ranked.length) {
+      const intel = require(`${__hooks}/lib/vault_snapshots_db.js`);
+      intel.recordScan(e.app, ranked[0].card.id, e.auth ? e.auth.id : "", "photo");
+    }
     const byId = {};
     for (let i = 0; i < records.length; i++) byId[records[i].id] = records[i];
     const candidates = ranked.slice(0, 6).map((entry) => {
@@ -283,9 +295,11 @@ routerAdd(
     // UK sold comps: staff-entered and research-completed rows, with the
     // condition from the audit row that recorded them and the listing title
     // from the research request that found them.
+    // Raw only: a graded slab's sale (grade set) belongs to the grading
+    // panel and the chart's slab series, never to the condition prices.
     const sold = e.app.findRecordsByFilter(
       "price_snapshots",
-      "card = {:card} && source = 'uk_sold_manual'",
+      "card = {:card} && source = 'uk_sold_manual' && grade = ''",
       "-fetched_at",
       200,
       0,
@@ -303,12 +317,21 @@ routerAdd(
     }
     const titleByUrl = {};
     let research = null;
+    const openRequests = [];
     try {
       const requests = e.app.findRecordsByFilter("research_requests", "card = {:card}", "-created", 30, 0, { card: record.id });
       for (let i = 0; i < requests.length; i++) {
         const status = requests[i].getString("status");
-        if (!research && (status === "open" || status === "claimed")) {
-          research = { id: requests[i].id, status: status, condition: requests[i].getString("condition") };
+        if (status === "open" || status === "claimed") {
+          const live = {
+            id: requests[i].id,
+            status: status,
+            condition: requests[i].getString("condition"),
+            grader: requests[i].getString("grader"),
+            grade: requests[i].getString("grade"),
+          };
+          openRequests.push(live);
+          if (!research && !live.grade) research = live;
         }
         const comps = util.jsonField(requests[i], "comps", []) || [];
         for (let j = 0; j < comps.length; j++) {
@@ -342,11 +365,43 @@ routerAdd(
       0,
       { card: record.id, finish: market.finish || "" }
     );
+    // Every point says what it is: a graded slab (grader, grade), a dated
+    // Cardmarket average (basis) or a raw spot price (both blank), so the
+    // chart can keep each series on its own line.
     const history = historyRows.map((row) => ({
       at: String(row.getString("fetched_at")).slice(0, 10),
       pence: row.getInt("gbp_market"),
       source: row.getString("source"),
+      grader: row.getString("grader"),
+      grade: row.getString("grade"),
+      basis: row.getString("basis"),
     }));
+
+    // Graded UK sold comps: staff-entered or research-completed rows with a
+    // grade, at any finish, for the grading panel and the chart's slab series.
+    let gradedComps = [];
+    try {
+      gradedComps = e.app
+        .findRecordsByFilter("price_snapshots", "card = {:card} && grade != ''", "-fetched_at", 300, 0, { card: record.id })
+        .map((row) => ({
+          at: String(row.getString("fetched_at")).slice(0, 10),
+          pence: row.getInt("gbp_market"),
+          source: row.getString("source"),
+          grader: row.getString("grader"),
+          grade: row.getString("grade"),
+          basis: "",
+          url: row.getString("evidence_url"),
+        }));
+    } catch (err) {
+      gradedComps = [];
+    }
+
+    const intel = require(`${__hooks}/lib/vault_snapshots_db.js`);
+    const held = intel.heldCount(e.app, record.id);
+    const grading = intel.gradingConfig(e.app);
+    const statestore = require(`${__hooks}/adapters/statestore.js`);
+    const stamp = statestore.forApp(e.app).get(intel.stampKey(record.id));
+    intel.recordScan(e.app, record.id, e.auth ? e.auth.id : "", "view");
 
     // Other versions: the same name in the same game.
     let versions = [];
@@ -369,8 +424,15 @@ routerAdd(
       market: { finish: market.finish, chosen: market.chosen, sources: market.sources },
       comps: comps,
       history: history,
+      graded_comps: gradedComps,
+      held: held,
+      grading: grading,
+      // When this card was last snapshotted by the daily job or on demand
+      // (null: never), so the page knows whether to ask for one.
+      snapshotted_at: stamp && stamp.at ? stamp.at : null,
       versions: versions,
       research: research,
+      open_requests: openRequests,
     });
   },
   $apis.requireAuth("staff")

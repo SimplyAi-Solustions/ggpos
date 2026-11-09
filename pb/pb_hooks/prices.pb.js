@@ -6,7 +6,7 @@
  *
  *   GET  /api/vault/cards/:id/prices?finish=&condition=
  *   POST /api/vault/cards/:id/refresh-prices   { finish, condition }
- *   POST /api/vault/cards/:id/uk-comp          { finish, condition, price, url, sold_at }
+ *   POST /api/vault/cards/:id/uk-comp          { finish, condition, price, url, sold_at, grader?, grade? }
  *   GET  /api/vault/retro/:id/prices?completeness=
  *   POST /api/vault/retro/:id/refresh-prices   { completeness }
  *   POST /api/vault/retro/:id/uk-comp          { completeness, price, url, sold_at }
@@ -232,7 +232,7 @@ routerAdd(
 );
 
 // ---------------------------------------------------------------------
-// POST /api/vault/cards/{id}/uk-comp   { finish, condition, price, url, sold_at }
+// POST /api/vault/cards/{id}/uk-comp   { finish, condition, price, url, sold_at, grader?, grade? }
 // ---------------------------------------------------------------------
 routerAdd(
   "POST",
@@ -241,6 +241,7 @@ routerAdd(
     const util = require(`${__hooks}/lib/vaultutil.js`);
     const auditLib = require(`${__hooks}/lib/audit.js`);
     const policy = require(`${__hooks}/adapters/pricing_policy.js`);
+    const research = require(`${__hooks}/lib/research.js`);
 
     const staff = e.auth;
     const cardId = e.request.pathValue("id");
@@ -258,6 +259,10 @@ routerAdd(
     }
 
     const ukComp = policy.validateUkComp(e, util, body);
+    // A graded slab's sold price ("PSA" "10"): filed with its grade so it
+    // feeds the grading panel and chart, never the raw NM market.
+    const slab = research.cleanGrade(body.grader, body.grade);
+    if (slab && slab.error) throw e.badRequestError(slab.error, null);
 
     let snapshot = null;
     e.app.runInTransaction((txApp) => {
@@ -275,14 +280,21 @@ routerAdd(
         gbpMarket: ukComp.price,
         fetchedAt: ukComp.soldDate.toISOString(),
         evidenceUrl: ukComp.url,
+        grader: slab ? slab.grader : "",
+        grade: slab ? slab.grade : "",
       });
 
+      const meta = { card: cardId, finish: finish, condition: condition, price: ukComp.price };
+      if (slab) {
+        meta.grader = slab.grader;
+        meta.grade = slab.grade;
+      }
       auditLib.writeAuditLog(txApp, {
         actor: staff.id,
         action: "uk_comp",
         collection: "price_snapshots",
         record: snapshot.id,
-        meta: { card: cardId, finish: finish, condition: condition, price: ukComp.price },
+        meta: meta,
         ip: e.realIP(),
       });
     });

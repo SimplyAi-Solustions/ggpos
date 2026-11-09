@@ -3,13 +3,20 @@ import { Link } from "@tanstack/react-router"
 import { useMutation } from "@tanstack/react-query"
 import { ImageUp, Search } from "lucide-react"
 
-import { buttonClasses, Button, PageHeader } from "@/ui"
+import { buttonClasses, Button, PageHeader, useToast } from "@/ui"
 import { errorMessage } from "@/features/cards/api"
+import type { CardCondition } from "@/features/cards/condition-prices"
 
 import { fileToJpeg, hasCamera } from "./camera"
 import { CameraView } from "./CameraView"
 import { CandidatePicker } from "./CandidatePicker"
-import { identifyCard } from "./api"
+import { identifyCard, type Candidate } from "./api"
+import { RecentScans } from "./RecentScans"
+import { readRecentScans } from "./history"
+import { addLine, trayCount } from "./tray"
+import { TrayBar } from "./TrayBar"
+import { useTray } from "./tray-state"
+import { useRecentScans } from "./use-recent-scans"
 
 export interface ScanPageProps {
   /** Set when Scan was opened from a deal: "Add to deal" adds to that one. */
@@ -23,6 +30,9 @@ export function ScanPage({ dealId }: ScanPageProps) {
   const [photo, setPhoto] = React.useState<string | null>(null)
   const [fileError, setFileError] = React.useState<string | null>(null)
   const fileRef = React.useRef<HTMLInputElement>(null)
+  const toast = useToast()
+  const recent = useRecentScans()
+  const tray = useTray()
 
   const identify = useMutation({
     mutationFn: ({ image, deep }: { image: string; deep: boolean }) => identifyCard(image, deep),
@@ -53,9 +63,22 @@ export function ScanPage({ dealId }: ScanPageProps) {
 
   const onUnavailable = React.useCallback((message: string) => setCameraProblem(message), [])
 
+  /** Batch mode: the chosen card joins the tray and the camera comes back for the next one. */
+  const addToTray = (card: Candidate, condition: CardCondition, pence: number | null) => {
+    tray.setLines((lines) => {
+      const next = addLine(lines, card, condition, pence)
+      toast({ message: `${card.name} ${condition} added. ${trayCount(next)} in the tray.`, tone: "ok" })
+      return next
+    })
+    recent.setScans(readRecentScans())
+    identify.reset()
+    setPhoto(null)
+  }
+
   const picker = (
     <input ref={fileRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => void onFile(e)} />
   )
+  const trayBar = <TrayBar lines={tray.lines} onChange={tray.setLines} dealId={dealId} />
 
   if (photo) {
     const deep = identify.variables?.deep ?? false
@@ -70,11 +93,14 @@ export function ScanPage({ dealId }: ScanPageProps) {
           error={identify.isError ? errorMessage(identify.error, "The card was not read. Retake the photo or search instead.") : null}
           dealId={dealId}
           onRetake={() => {
+            recent.setScans(readRecentScans())
             identify.reset()
             setPhoto(null)
           }}
           onDeepDive={() => identify.mutate({ image: photo, deep: true })}
+          onAddToTray={addToTray}
         />
+        {trayBar}
       </>
     )
   }
@@ -84,6 +110,11 @@ export function ScanPage({ dealId }: ScanPageProps) {
       <>
         {picker}
         <CameraView onCapture={start} onPickFile={() => fileRef.current?.click()} onUnavailable={onUnavailable} />
+        {/* Under the viewfinder from tablet width; on a phone the camera fills the screen and the strip waits behind it. */}
+        <div className="hidden md:block md:pt-5">
+          <RecentScans scans={recent.scans} onClear={recent.clear} />
+        </div>
+        {trayBar}
       </>
     )
   }
@@ -127,6 +158,8 @@ export function ScanPage({ dealId }: ScanPageProps) {
           Search instead
         </Link>
       </div>
+      <RecentScans scans={recent.scans} onClear={recent.clear} className="pt-2" />
+      {trayBar}
     </div>
   )
 }
