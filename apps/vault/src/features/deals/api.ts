@@ -699,3 +699,19 @@ export async function completeDeal(id: string, body: CompleteBody): Promise<Comp
 
 /** The live customer view. Not available until the server can share a deal safely. */
 export const customerViewAvailable = false
+
+export interface EposCreditStatus {
+  status: "none" | "pending" | "sending" | "done" | "failed" | "needs_check"
+  synced: boolean
+  amount: number
+  message: string
+}
+
+/** Where a completed deal's trade credit is in the sync to Epos Now. */
+export async function getEposCredit(id: string): Promise<EposCreditStatus> {
+  const res = await pb.send<{ epos_credit: EposCreditStatus }>(
+    `/api/vault/deals/${encodeURIComponent(id)}/epos-credit`,
+    { method: "GET" },
+  )
+  return res.epos_credit
+}

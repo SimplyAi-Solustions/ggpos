@@ -349,11 +349,7 @@ export function CompletionSummary({ result }: { result: CompletionResult }) {
           </p>
         </div>
       </div>
-      {tradeIn.creditGiven > 0 && (
-        <p className="rounded-md border border-warn/40 px-3 py-2 text-sm text-fg-2">
-          The credit is recorded on this buy-in, not on the customer's balance yet. Note it for the till.
-        </p>
-      )}
+      {tradeIn.creditGiven > 0 && <EposCreditNote tradeInId={tradeIn.id} />}
       <div>
         <p className="label-mono mb-1.5 text-fg-2">
           {result.items.length} {result.items.length === 1 ? "item" : "items"} into stock
@@ -372,5 +368,30 @@ export function CompletionSummary({ result }: { result: CompletionResult }) {
         {result.labelsQueued} {result.labelsQueued === 1 ? "label" : "labels"} queued to print.
       </p>
     </div>
+  )
+}
+
+/** Polls the Epos Now credit sync until it settles. */
+function EposCreditNote({ tradeInId }: { tradeInId: string }) {
+  const status = useQuery({
+    queryKey: ["deal-epos-credit", tradeInId],
+    queryFn: () => api.getEposCredit(tradeInId),
+    refetchInterval: (q) => {
+      const s = q.state.data?.status
+      return s === "done" || s === "needs_check" || s === "none" ? false : 5000
+    },
+  })
+  const s = status.data?.status
+  const tone =
+    s === "done" ? "border-ok/40" : s === "needs_check" || s === "failed" ? "border-pop/50" : "border-warn/40"
+  const text = status.isError
+    ? "Could not check the Epos Now credit sync. Open the deal again in a minute."
+    : s === "needs_check"
+      ? "Epos Now did not confirm the credit. Check the customer's balance in Epos Now Back Office before adding it by hand."
+      : (status.data?.message ?? "Checking the Epos Now credit sync.")
+  return (
+    <p className={cn("rounded-md border px-3 py-2 text-sm text-fg-2", tone)} data-testid="epos-credit">
+      {text}
+    </p>
   )
 }
