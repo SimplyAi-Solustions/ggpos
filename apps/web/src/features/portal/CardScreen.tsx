@@ -13,6 +13,7 @@ import { GuildCardFront } from "@/features/customers/GuildCard"
 import { getMe } from "@/lib/api/portal"
 import { getGuild } from "@/lib/api/guild"
 import { LoadFailed } from "@/features/portal/LoadFailed"
+import { offersEnabled } from "@/features/estimate/offers-flag"
 
 /**
  * My card: the thing a customer opens at the counter.
@@ -211,9 +212,11 @@ export function CardScreen() {
         <Button variant="text" render={<Link to="/account/trade-ins" />}>
           My trade-ins
         </Button>
-        <Button variant="text" render={<Link to="/account/estimate" />}>
-          Get an estimate
-        </Button>
+        {offersEnabled() ? (
+          <Button variant="text" render={<Link to="/account/estimate" />}>
+            Get an estimate
+          </Button>
+        ) : null}
       </div>
     </section>
   )
