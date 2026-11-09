@@ -89,6 +89,81 @@ export function usePriceHistory(itemId: string | undefined) {
   })
 }
 
+/**
+ * What the inventory feed leaves out: where the item came from (the deal
+ * line it was bought on, through items.trade_in_line), the value captured
+ * at intake, and the Epos Now product id if the sync has stamped one.
+ */
+export interface ItemOrigin {
+  source: "" | "trade_in" | "supplier" | "opening_stock"
+  supplier_ref: string
+  market_at_intake: number
+  acquired_at: string
+  /** Set by the Epos Now sync once it exists; absent until then. */
+  epos_product_id: string
+  deal: null | {
+    id: string
+    number: string
+    completed_at: string
+    created: string
+    payout_type: string
+    /** What the line was bought at, all units, pence. */
+    line_offer: number
+    line_qty: number
+  }
+}
+
+interface ItemOriginRecord {
+  source?: ItemOrigin["source"]
+  supplier_ref?: string
+  market_at_intake?: number
+  acquired_at?: string
+  epos_product_id?: string
+  expand?: {
+    trade_in_line?: {
+      offer_price?: number
+      qty?: number
+      expand?: {
+        trade_in?: { id: string; number?: string; completed_at?: string; created?: string; payout_type?: string }
+      }
+    }
+  }
+}
+
+export function toItemOrigin(record: ItemOriginRecord): ItemOrigin {
+  const line = record.expand?.trade_in_line
+  const deal = line?.expand?.trade_in
+  return {
+    source: record.source ?? "",
+    supplier_ref: record.supplier_ref ?? "",
+    market_at_intake: record.market_at_intake ?? 0,
+    acquired_at: record.acquired_at ?? "",
+    epos_product_id: typeof record.epos_product_id === "string" ? record.epos_product_id : "",
+    deal: deal
+      ? {
+          id: deal.id,
+          number: deal.number ?? "",
+          completed_at: deal.completed_at ?? "",
+          created: deal.created ?? "",
+          payout_type: deal.payout_type ?? "",
+          line_offer: line?.offer_price ?? 0,
+          line_qty: line?.qty ?? 1,
+        }
+      : null,
+  }
+}
+
+export function useItemOrigin(itemId: string | undefined) {
+  return useQuery({
+    queryKey: [...STOCK_KEY, "origin", itemId],
+    enabled: Boolean(itemId),
+    queryFn: async () =>
+      toItemOrigin(
+        await pb.collection("items").getOne<ItemOriginRecord>(itemId ?? "", { expand: "trade_in_line.trade_in" })
+      ),
+  })
+}
+
 /** A card from the catalogue, for Add stock's ?card=. */
 export interface CatalogueCard {
   id: string
@@ -218,6 +293,8 @@ export interface ItemPatch {
   cost?: number
   location?: string
   notes?: string
+  /** Only the soft removal: the row stays, with its history, off the shelf. */
+  status?: "written_off"
 }
 
 export async function updateItem(id: string, patch: ItemPatch): Promise<void> {

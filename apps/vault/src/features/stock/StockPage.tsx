@@ -1,15 +1,17 @@
 import * as React from "react"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { AnimatePresence, motion } from "motion/react"
-import { CheckSquare, MapPin, Package, Plus, Printer, Search, SlidersHorizontal, Tag, X } from "lucide-react"
+import { BookOpen, CheckSquare, List, MapPin, Package, Plus, Printer, Search, SlidersHorizontal, Tag, X } from "lucide-react"
 import { displayCode } from "@gg/shared/sku"
 
 import { cn } from "@/lib/cn"
-import { Badge, Button, buttonClasses, EmptyState, IconButton, Input, Money, PageHeader, Sheet, Skeleton, useToast } from "@/ui"
+import { Badge, Button, buttonClasses, EmptyState, IconButton, Input, Money, PageHeader, Segmented, Sheet, Skeleton, useToast } from "@/ui"
 
 import { addToPrintList, errorText, moveItems, reprice, useInventory, useLookups, useStockMutation } from "./api"
 import { ChangePriceSheet } from "./components/ChangePriceSheet"
-import { ItemThumb } from "./components/ItemThumb"
+import { BinderGrid } from "./components/BinderGrid"
+import { ItemArt } from "./components/ItemArt"
+import { QuickViewSheet } from "./components/QuickViewSheet"
 import { healthRule } from "./health/health"
 import { SelectField } from "./components/SelectField"
 import { StatTile } from "./components/StatTile"
@@ -26,9 +28,21 @@ import {
   type SortKey,
   type StockFilters,
 } from "./lib/inventory"
+import { marginTone, variantTag } from "./lib/item-view"
 import { CONDITIONS, type InventoryItem } from "./types"
 
 const PAGE = 60
+const VIEW_KEY = "gg-vault-stock-view"
+
+export type StockView = "list" | "binder"
+
+function savedView(): StockView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "binder" ? "binder" : "list"
+  } catch {
+    return "list"
+  }
+}
 
 export interface StockSearch {
   q?: string
@@ -49,6 +63,22 @@ export function StockPage({ search = {} }: { search?: StockSearch }) {
   const [sheet, setSheet] = React.useState<"price" | "move" | null>(null)
   const [moveTo, setMoveTo] = React.useState("")
   const [shown, setShown] = React.useState(PAGE)
+  const [view, setViewState] = React.useState<StockView>(savedView)
+  const [quick, setQuick] = React.useState<InventoryItem | null>(null)
+  const [quickOpen, setQuickOpen] = React.useState(false)
+
+  const setView = (next: StockView) => {
+    setViewState(next)
+    try {
+      localStorage.setItem(VIEW_KEY, next)
+    } catch {
+      // Private browsing: the choice lasts for this visit only.
+    }
+  }
+  const openQuick = (item: InventoryItem) => {
+    setQuick(item)
+    setQuickOpen(true)
+  }
 
   const all = React.useMemo(() => inventory.data ?? [], [inventory.data])
   const alert = search.alert ? healthRule(search.alert) : undefined
@@ -182,7 +212,12 @@ export function StockPage({ search = {} }: { search?: StockSearch }) {
         <IconButton
           label={selecting ? "Stop selecting" : "Select items"}
           variant={selecting ? "primary" : "secondary"}
-          onClick={() => (selecting ? stopSelecting() : setSelecting(true))}
+          onClick={() => {
+            if (selecting) return stopSelecting()
+            // Picking items is a list job; the binder is for looking.
+            setView("list")
+            setSelecting(true)
+          }}
           className="size-12 shrink-0"
         >
           <CheckSquare aria-hidden />
@@ -190,6 +225,19 @@ export function StockPage({ search = {} }: { search?: StockSearch }) {
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        {!selecting && (
+          <Segmented
+            label="Stock view"
+            size="sm"
+            value={view}
+            onChange={setView}
+            className="order-last ml-auto"
+            options={[
+              { value: "list", label: "List", icon: <List className="size-4" aria-hidden /> },
+              { value: "binder", label: "Binder", icon: <BookOpen className="size-4" aria-hidden /> },
+            ]}
+          />
+        )}
         <span className="text-fg-3">
           {rows.length.toLocaleString("en-GB")} {rows.length === 1 ? "line" : "lines"}, {SORTS.find((s) => s.value === filters.sort)?.label.toLowerCase()} first
         </span>
@@ -249,6 +297,8 @@ export function StockPage({ search = {} }: { search?: StockSearch }) {
         >
           {all.length === 0 ? "Add an item or import a CSV and it shows up here." : "Try the SKU, or clear the filters."}
         </EmptyState>
+      ) : view === "binder" && !selecting ? (
+        <BinderGrid items={rows.slice(0, Math.ceil(shown / 9) * 9)} onOpen={openQuick} />
       ) : (
         <ul className="glass divide-y divide-line overflow-hidden rounded-lg border border-line shadow-panel">
           {rows.slice(0, shown).map((item) => (
@@ -258,12 +308,12 @@ export function StockPage({ search = {} }: { search?: StockSearch }) {
               selecting={selecting}
               selected={selected.has(item.id)}
               onToggle={() => toggle(item.id)}
-              onOpen={() => navigate({ to: "/stock/$id", params: { id: item.sku } })}
+              onOpen={() => openQuick(item)}
             />
           ))}
         </ul>
       )}
-      {rows.length > shown && (
+      {rows.length > (view === "binder" && !selecting ? Math.ceil(shown / 9) * 9 : shown) && (
         <div className="mt-4 flex justify-center">
           <Button variant="secondary" onClick={() => setShown((n) => n + PAGE)}>
             Show {Math.min(PAGE, rows.length - shown)} more
@@ -304,6 +354,16 @@ export function StockPage({ search = {} }: { search?: StockSearch }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <QuickViewSheet
+        item={quick}
+        open={quickOpen}
+        onClose={() => setQuickOpen(false)}
+        onOpenItem={(item) => {
+          setQuickOpen(false)
+          navigate({ to: "/stock/$id", params: { id: item.sku } })
+        }}
+      />
 
       <Sheet
         open={filtersOpen}
@@ -430,13 +490,6 @@ function ActionButton({
   )
 }
 
-function marginTone(margin: number | null): "ok" | "warn" | "pop" | "neutral" {
-  if (margin === null) return "neutral"
-  if (margin < 10) return "pop"
-  if (margin < 20) return "warn"
-  return "ok"
-}
-
 function StockRow({
   item,
   selecting,
@@ -479,17 +532,22 @@ function StockRow({
             )}
           </span>
         )}
-        <ItemThumb item={item} />
+        <ItemArt item={item} tilt={false} glow={false} className="w-12 shrink-0" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-[15px] leading-tight font-semibold">{item.title}</span>
           <span className="truncate font-mono text-[11px] text-fg-3">
             {displayCode(item.sku)}
             {detail && ` · ${detail}`}
           </span>
-          <span className="mt-0.5 flex items-center gap-1.5">
+          <span className="mt-0.5 flex min-w-0 items-center gap-1.5 [&>span]:shrink-0 [&>span]:whitespace-nowrap">
             {item.condition && item.kind === "single" && <Badge className="h-5 px-2">{item.condition}</Badge>}
+            {variantTag(item) && item.kind !== "graded" && variantTag(item) !== "Normal" && (
+              <Badge tone="violet" className="h-5 px-2">
+                {variantTag(item)}
+              </Badge>
+            )}
             {item.qty > 1 && <Badge tone="info" className="h-5 px-2">Qty {item.qty}</Badge>}
-            {item.location_name && <span className="truncate text-xs text-fg-3">{item.location_name}</span>}
+            {item.location_name && <span className="min-w-0 !shrink truncate text-xs text-fg-3">{item.location_name}</span>}
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-end gap-0.5">
