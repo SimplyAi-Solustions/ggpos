@@ -81,6 +81,62 @@ export async function signInWithCode(otpId: string, code: string): Promise<Vault
  * the shop cannot be reached or the code has run out, and they are worth
  * pinning down.
  */
+/** A sign-in refused because the email has not been confirmed yet. */
+export class EmailNotConfirmedError extends PortalSignInError {}
+
+/** Signs in with email and password. The email must be confirmed first. */
+export async function signInWithPassword(email: string, password: string): Promise<VaultMe> {
+  try {
+    await pbCustomer.collection("customers").authWithPassword(email.trim(), password)
+  } catch (error) {
+    if (error instanceof ClientResponseError) {
+      if (error.status === 403) throw new EmailNotConfirmedError(error.message)
+      if (error.status === 400) {
+        throw new PortalSignInError("That email and password do not match. Check them, or set a new password.")
+      }
+    }
+    throw new PortalSignInError(signInMessage(error))
+  }
+  return getMe()
+}
+
+export interface SignUpInput {
+  name: string
+  email: string
+  phone: string
+  address: string
+  password: string
+  marketing_consent: boolean
+  terms_accepted: boolean
+}
+
+/** Creates an online account. The answer is the same for a known address. */
+export async function signUp(input: SignUpInput): Promise<string> {
+  const result = await pbCustomer.send<{ message: string }>("/api/vault/signup", {
+    method: "POST",
+    body: input,
+  })
+  return result.message
+}
+
+/** Sends the confirmation link again for an unconfirmed account. */
+export async function resendConfirmation(email: string): Promise<void> {
+  await pbCustomer.send("/api/vault/signup/resend", { method: "POST", body: { email: email.trim() } })
+}
+
+/** Emails a link to set a new password. */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await pbCustomer.collection("customers").requestPasswordReset(email.trim())
+}
+
+export async function confirmEmail(token: string): Promise<void> {
+  await pbCustomer.collection("customers").confirmVerification(token)
+}
+
+export async function setNewPassword(token: string, password: string): Promise<void> {
+  await pbCustomer.collection("customers").confirmPasswordReset(token, password, password)
+}
+
 export function signInMessage(error: unknown): string {
   if (error instanceof ClientResponseError) {
     if (error.status === 400) {

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,14 @@ import { Hint, MicroLabel } from "@/components/ui/micro-label"
 import { Lede, PageTitle } from "@/components/ui/page-title"
 import { StickerCards } from "@/components/ui/sticker"
 import { isDemo } from "@/lib/api/mode"
-import { requestCode, signInWithCode } from "@/lib/api/portal"
+import {
+  EmailNotConfirmedError,
+  requestCode,
+  requestPasswordReset,
+  resendConfirmation,
+  signInWithCode,
+  signInWithPassword,
+} from "@/lib/api/portal"
 import { refusalOrFallback } from "@/lib/api/refusal"
 import { DEMO_PORTAL_CODE, DEMO_PORTAL_EMAIL } from "@/lib/api/demo/portal-seed"
 import {
@@ -36,7 +43,12 @@ export function SignInScreen({ next }: { next?: string }) {
   const queryClient = useQueryClient()
   const demo = isDemo()
 
-  const [step, setStep] = React.useState<"email" | "code">("email")
+  const [step, setStep] = React.useState<"password" | "email" | "code">(
+    demo ? "email" : "password"
+  )
+  const [password, setPassword] = React.useState("")
+  const [unconfirmed, setUnconfirmed] = React.useState(false)
+  const [notice, setNotice] = React.useState<string | null>(null)
   const [email, setEmail] = React.useState(demo ? DEMO_PORTAL_EMAIL : "")
   const [otpId, setOtpId] = React.useState("")
   const [code, setCode] = React.useState("")
@@ -99,6 +111,121 @@ export function SignInScreen({ next }: { next?: string }) {
     } finally {
       setBusy(false)
     }
+  }
+
+  async function submitPassword(event: React.FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    setUnconfirmed(false)
+    try {
+      await signInWithPassword(email, password)
+      await queryClient.invalidateQueries({ queryKey: ["portal"] })
+      await navigate({ to: next ?? "/account" })
+    } catch (cause) {
+      if (cause instanceof EmailNotConfirmedError) setUnconfirmed(true)
+      setError(refusalOrFallback(cause, "We could not sign you in just now. Try again in a minute."))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendLink(kind: "confirm" | "reset") {
+    setError(null)
+    if (!email.trim()) {
+      setError("Type your email address first.")
+      return
+    }
+    setBusy(true)
+    try {
+      if (kind === "confirm") await resendConfirmation(email)
+      else await requestPasswordReset(email)
+      setNotice(
+        kind === "confirm"
+          ? `If ${email} has an account waiting, a new confirmation link is on its way.`
+          : `If ${email} has an account, a link to set a new password is on its way.`
+      )
+      setUnconfirmed(false)
+    } catch (cause) {
+      setError(refusalOrFallback(cause, "We could not send the email just now. Try again in a minute."))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (step === "password") {
+    return (
+      <section className="pt-12 sm:pt-20">
+        <PageTitle>Sign in</PageTitle>
+        <Lede>Your binders, your wanted cards and your trade-ins, in one place.</Lede>
+
+        <form className="mt-12" onSubmit={submitPassword} aria-label="Sign in">
+          <FieldRow>
+            <Field layout="stacked" label="Email" htmlFor="portal-email">
+              <Input
+                id="portal-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                autoFocus
+                required
+                value={email}
+                placeholder="you@example.co.uk"
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </Field>
+          </FieldRow>
+          <FieldRow>
+            <Field layout="stacked" label="Password" htmlFor="portal-password" error={error}>
+              <Input
+                id="portal-password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                aria-invalid={error ? true : undefined}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </Field>
+          </FieldRow>
+
+          {notice ? (
+            <p aria-live="polite" className="mt-4 text-[15px] leading-[1.5] text-muted-foreground-2">
+              {notice}
+            </p>
+          ) : null}
+
+          <div className="mt-12 flex flex-col items-start gap-6">
+            <Button type="submit" trailingArrow loading={busy}>
+              Sign in
+            </Button>
+            {unconfirmed ? (
+              <Button type="button" variant="text" disabled={busy} onClick={() => void sendLink("confirm")}>
+                Send the confirmation link again
+              </Button>
+            ) : null}
+            <Button type="button" variant="text" render={<Link to="/account/sign-up" />}>
+              Create an account
+            </Button>
+            <Button type="button" variant="text" disabled={busy} onClick={() => void sendLink("reset")}>
+              Forgot or never set a password
+            </Button>
+            <Button
+              type="button"
+              variant="text"
+              onClick={() => {
+                setStep("email")
+                setError(null)
+                setNotice(null)
+              }}
+            >
+              Email me a sign-in code instead
+            </Button>
+          </div>
+        </form>
+      </section>
+    )
   }
 
   return (

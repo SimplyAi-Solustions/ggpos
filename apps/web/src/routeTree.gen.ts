@@ -24,6 +24,9 @@ import { Route as AccountGuildRouteImport } from "./routes/account.guild"
 import { Route as AccountMeRouteImport } from "./routes/account.me"
 import { Route as AccountNotificationsRouteImport } from "./routes/account.notifications"
 import { Route as AccountPointsRouteImport } from "./routes/account.points"
+import { Route as AccountResetRouteImport } from "./routes/account.reset"
+import { Route as AccountSignUpRouteImport } from "./routes/account.sign-up"
+import { Route as AccountVerifyRouteImport } from "./routes/account.verify"
 import { Route as AccountWantListRouteImport } from "./routes/account.want-list"
 import { Route as AccountWantsRouteImport } from "./routes/account.wants"
 import { Route as CTokenRouteImport } from "./routes/c.$token"
@@ -143,6 +146,21 @@ const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
 const AccountPointsRoute = AccountPointsRouteImport.update({
   id: "/points",
   path: "/points",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountResetRoute = AccountResetRouteImport.update({
+  id: "/reset",
+  path: "/reset",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountSignUpRoute = AccountSignUpRouteImport.update({
+  id: "/sign-up",
+  path: "/sign-up",
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountVerifyRoute = AccountVerifyRouteImport.update({
+  id: "/verify",
+  path: "/verify",
   getParentRoute: () => AccountRoute,
 } as any)
 const AccountWantListRoute = AccountWantListRouteImport.update({
@@ -388,6 +406,9 @@ export interface FileRoutesByFullPath {
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
   "/account/points": typeof AccountPointsRoute
+  "/account/reset": typeof AccountResetRoute
+  "/account/sign-up": typeof AccountSignUpRoute
+  "/account/verify": typeof AccountVerifyRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
@@ -448,6 +469,9 @@ export interface FileRoutesByTo {
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
   "/account/points": typeof AccountPointsRoute
+  "/account/reset": typeof AccountResetRoute
+  "/account/sign-up": typeof AccountSignUpRoute
+  "/account/verify": typeof AccountVerifyRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
@@ -511,6 +535,9 @@ export interface FileRoutesById {
   "/account/me": typeof AccountMeRoute
   "/account/notifications": typeof AccountNotificationsRoute
   "/account/points": typeof AccountPointsRoute
+  "/account/reset": typeof AccountResetRoute
+  "/account/sign-up": typeof AccountSignUpRoute
+  "/account/verify": typeof AccountVerifyRoute
   "/account/want-list": typeof AccountWantListRoute
   "/account/wants": typeof AccountWantsRoute
   "/c/$token": typeof CTokenRoute
@@ -575,6 +602,9 @@ export interface FileRouteTypes {
     | "/account/me"
     | "/account/notifications"
     | "/account/points"
+    | "/account/reset"
+    | "/account/sign-up"
+    | "/account/verify"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
@@ -635,6 +665,9 @@ export interface FileRouteTypes {
     | "/account/me"
     | "/account/notifications"
     | "/account/points"
+    | "/account/reset"
+    | "/account/sign-up"
+    | "/account/verify"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
@@ -697,6 +730,9 @@ export interface FileRouteTypes {
     | "/account/me"
     | "/account/notifications"
     | "/account/points"
+    | "/account/reset"
+    | "/account/sign-up"
+    | "/account/verify"
     | "/account/want-list"
     | "/account/wants"
     | "/c/$token"
@@ -863,6 +899,27 @@ declare module "@tanstack/react-router" {
       path: "/points"
       fullPath: "/account/points"
       preLoaderRoute: typeof AccountPointsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/reset": {
+      id: "/account/reset"
+      path: "/reset"
+      fullPath: "/account/reset"
+      preLoaderRoute: typeof AccountResetRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/sign-up": {
+      id: "/account/sign-up"
+      path: "/sign-up"
+      fullPath: "/account/sign-up"
+      preLoaderRoute: typeof AccountSignUpRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    "/account/verify": {
+      id: "/account/verify"
+      path: "/verify"
+      fullPath: "/account/verify"
+      preLoaderRoute: typeof AccountVerifyRouteImport
       parentRoute: typeof AccountRoute
     }
     "/account/want-list": {
@@ -1191,6 +1248,9 @@ interface AccountRouteChildren {
   AccountMeRoute: typeof AccountMeRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountPointsRoute: typeof AccountPointsRoute
+  AccountResetRoute: typeof AccountResetRoute
+  AccountSignUpRoute: typeof AccountSignUpRoute
+  AccountVerifyRoute: typeof AccountVerifyRoute
   AccountWantListRoute: typeof AccountWantListRoute
   AccountWantsRoute: typeof AccountWantsRoute
   AccountIndexRoute: typeof AccountIndexRoute
@@ -1211,6 +1271,9 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountMeRoute: AccountMeRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountPointsRoute: AccountPointsRoute,
+  AccountResetRoute: AccountResetRoute,
+  AccountSignUpRoute: AccountSignUpRoute,
+  AccountVerifyRoute: AccountVerifyRoute,
   AccountWantListRoute: AccountWantListRoute,
   AccountWantsRoute: AccountWantsRoute,
   AccountIndexRoute: AccountIndexRoute,
