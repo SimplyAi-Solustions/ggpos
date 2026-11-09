@@ -237,6 +237,11 @@ function CardDetailView({ detail, dealId }: { detail: CardDetail; dealId?: strin
                   <> · from {formatNative(market.chosen.native_market, market.chosen.native_currency)}</>
                 )}
                 {market.chosen.stale && <> · stale</>}
+                {market.chosen.warning && (
+                  <span className="mt-1 block font-semibold text-pop" data-testid="price-warning">
+                    {market.chosen.warning}
+                  </span>
+                )}
               </>
             ) : (
               "No price source yet"

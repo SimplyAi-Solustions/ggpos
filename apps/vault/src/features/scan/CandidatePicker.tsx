@@ -242,6 +242,12 @@ function SelectedIntel({
         </Link>
       </div>
 
+      {data?.market.chosen?.warning && (
+        <p className="rounded-md border border-pop/50 px-3 py-2 text-sm font-semibold text-pop" data-testid="price-warning">
+          {data.market.chosen.warning}. The overseas prices for this card do not match, so look at eBay UK sold listings before you offer or price it.
+        </p>
+      )}
+
       {/* Condition chips, each with its price. */}
       <div role="radiogroup" aria-label="Condition" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] md:mx-0 md:px-0">
         {rows.map((row) => {

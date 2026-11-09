@@ -47,6 +47,8 @@ export interface CardRow {
   illustrator: string
   nm_pence: number | null
   nm_source: string
+  /** "Sources disagree, check eBay" when the chosen price is in doubt. */
+  price_warning?: string
   graded: GradedPrice[]
   /** Items of this card still held: in stock, reserved or listed. 0 on rows without a price. */
   held: number
@@ -62,6 +64,8 @@ export interface PriceSourceRow {
   fetched_at: string
   stale: boolean
   evidence_url: string
+  /** Set when the overseas sources disagree, so staff check UK sold prices. */
+  warning?: string
 }
 
 export interface CardComp {

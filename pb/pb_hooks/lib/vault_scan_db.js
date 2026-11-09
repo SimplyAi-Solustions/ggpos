@@ -125,6 +125,7 @@ function cardRow(app, record, look, withPrice, fetchMissing) {
     illustrator: ext.illustrator || "",
     nm_pence: null,
     nm_source: "",
+    price_warning: "",
     graded: gradedFor(record),
     held: 0,
   };
@@ -134,6 +135,7 @@ function cardRow(app, record, look, withPrice, fetchMissing) {
     if (market.chosen) {
       row.nm_pence = market.chosen.gbp_market;
       row.nm_source = market.chosen.source;
+      row.price_warning = market.chosen.warning || "";
     }
     row.held = require(__hooks + "/lib/vault_snapshots_db.js").heldCount(app, record.id);
   }

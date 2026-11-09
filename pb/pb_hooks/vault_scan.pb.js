@@ -291,6 +291,7 @@ routerAdd(
     const market = db.ensurePriced(e.app, record);
     card.nm_pence = market.chosen ? market.chosen.gbp_market : null;
     card.nm_source = market.chosen ? market.chosen.source : "";
+    card.price_warning = market.chosen && market.chosen.warning ? market.chosen.warning : "";
 
     // UK sold comps: staff-entered and research-completed rows, with the
     // condition from the audit row that recorded them and the listing title

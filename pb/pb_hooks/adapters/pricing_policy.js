@@ -63,6 +63,9 @@ function toRow(candidate, stale) {
  * "sources" being one row per source that has a value, in priority order,
  * every stale one flagged rather than hidden (docs/api-contract.md).
  */
+/** Cardmarket and TCGplayer more than this far apart means one of them is wrong. */
+var DISAGREE_RATIO = 2.5;
+
 function choose(candidates, priority, now) {
   var pricing = require(__hooks + "/lib/shared/pricing.js");
   var result = pricing.chooseMarketPrice(candidates, priority, now, FRESHNESS);
@@ -88,6 +91,36 @@ function choose(candidates, priority, now) {
     // still returned and flagged, never hidden".
     chosenRow = toRow(result.chosen, found ? found.status === "stale" : true);
     if (!found) sources.push(chosenRow);
+  }
+
+  // Sanity check between the two overseas sources. TCGdex sometimes maps
+  // every print of a card in a new set to one Cardmarket product (seen
+  // 09/11/2026: Mega Rayquaza ex 084, 138 SIR and 141 all on product 918912
+  // at about EUR 7, while TCGplayer had $7, $313 and $274). When the chosen
+  // Cardmarket figure and the TCGplayer figure differ by more than
+  // DISAGREE_RATIO, the Cardmarket one is not trusted: TCGplayer (converted)
+  // is used instead and the row carries a warning so staff check UK sold
+  // prices before buying or pricing. UK sources are never overridden.
+  if (chosenRow && chosenRow.source === "cardmarket") {
+    var tp = null;
+    for (var j = 0; j < sources.length; j++) {
+      if (sources[j].source === "tcgplayer" && sources[j].gbp_market > 0) {
+        tp = sources[j];
+        break;
+      }
+    }
+    var cmValue = chosenRow.gbp_market;
+    if (tp && cmValue > 0) {
+      var hi = Math.max(cmValue, tp.gbp_market);
+      var lo = Math.min(cmValue, tp.gbp_market);
+      if (hi / lo > DISAGREE_RATIO) {
+        var replaced = {};
+        for (var key in tp) replaced[key] = tp[key];
+        replaced.warning = "Sources disagree, check eBay";
+        replaced.disagree_with = { source: "cardmarket", gbp_market: cmValue };
+        chosenRow = replaced;
+      }
+    }
   }
 
   return { chosen: chosenRow, sources: sources };
